@@ -1789,6 +1789,397 @@
       "title": "k_exaone_2_750b_a37b"
     },
     {
+      "architecture": "MuseGlimmerForConditionalGeneration",
+      "base_container": "nvcr.io/nvidia/pytorch:26.07-py3",
+      "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+      "entries": [
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "nodes": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron --torch-dtype bfloat16 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-hf-to-megatron-cpu",
+          "expected_result": "On a CPU-only node with no CUDA runtime, the command builds a native 52-layer HybridModel, completes all 1,228 mappings for 29,776,626,688 parameters, and persists iter_0000000. The checkpoint reloads for CPU export, whose exact audit covers all 1,436 source tensors and 29,776,626,688 elements with zero missing, unexpected, shape, dtype, or value mismatches.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_cpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "hf_to_megatron_cpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron --torch-dtype bfloat16 --tp 8 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-hf-to-megatron-gpu",
+          "expected_result": "The eight-GPU command builds the complete native HybridModel, completes all 1,228 mappings, validates the TP8 distributed state, and persists iter_0000000. The checkpoint reloads at TP8 for strict GPU export; its complete round-trip audit is bitwise exact across all 1,436 tensors and 29,776,626,688 elements.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_gpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "hf_to_megatron_gpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "nodes": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron/iter_0000000 --hf-path work/model-verification/muse-glimmer-30b/cpu-hf-export --torch-dtype bfloat16 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-megatron-to-hf-cpu",
+          "expected_result": "Strict export exits successfully. All 1,436 BF16 tensors and 29,776,626,688 elements match the pinned source exactly in keys, shapes, dtypes, and values (maximum absolute difference 0). Transformers 5.15.0 reloads the result as MuseGlimmerForConditionalGeneration with no missing, unexpected, mismatched, or error keys and the same parameter count.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_cpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "megatron_to_hf_cpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --hf-path work/model-verification/muse-glimmer-30b/gpu-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --tp 8 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-megatron-to-hf-gpu",
+          "expected_result": "Strict distributed export exits successfully. Every language, vision, adapter, and projection tensor matches the pinned source bitwise: 1,436 tensors and 29,776,626,688 elements with zero missing, unexpected, shape, dtype, or value mismatches. Transformers 5.15.0 strictly reloads the result with the same class and parameter count.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_gpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "megatron_to_hf_gpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "1",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task model-comparison --hf_model_path meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --model_class MuseGlimmerForConditionalGeneration --megatron_model_path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --image_path docs/images/tp1.png --prompt \"What type of neural network block is shown in this image?\" --tp 8 --pp 1 --ep 1 --etp 1"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-manual-forward-pass",
+          "expected_result": "The repository image is 850 by 477 pixels with SHA-256 a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2. Both implementations consume 584 padded input positions and a 2040-by-1176 processed pixel tensor. The Hugging Face and Megatron next-token predictions match at token 328 (' to'). Logit cosine similarity is 0.999911, above the 0.99 gate; maximum and mean absolute logit differences are 0.734375 and 0.180013, respectively.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.manual_forward_pass",
+          "status": "verified",
+          "variant": null,
+          "workflow": "manual_forward_pass"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "1",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task vlm-generation --hf_model_path meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron_model_path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --image_path docs/images/tp1.png --prompt \"What type of neural network block is shown in this image?\" --max_new_tokens 64 --deterministic --tp 8 --pp 1 --ep 1 --etp 1"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-inference",
+          "expected_result": "Two independent greedy runs reload the complete TP8 HybridModel\ncheckpoint and use the same repository image (SHA-256\na7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2).\nBoth produce finite logits and the same exact 64-token completion without\nEOS. The response identifies the image as a \"Pre-LayerNorm Transformer\nblock\" and accurately describes its attention, feed-forward, and residual\npaths. The literal completion, represented with JSON newline and quote\nescapes, is \" to=self\\u003c|message|\\u003eWhat type of neural network block\nis shown in this image?\\n\\nThe image shows \\u0022Pre-Layernorm Transformer\nBlock\\u0022. Transformers. Shows Layer Norm before Self-Attention, then\nMulti-Headed Attention, Linear, Dropout, residual add, then Layer Norm,\nLinear, Activation, Linear, Dropout,\"",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.inference",
+          "status": "verified",
+          "variant": null,
+          "workflow": "inference"
+        },
+        {
+          "bridge_commit": "8be93c49130954e3257158db774d59075d2beaa6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config --mode pretrain --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/pretrain-reference --save_interval 50 checkpoint.load=null checkpoint.finetune=false checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/pretrain-reference-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-pretrain-h100",
+          "expected_result": "On 32 H100 GPUs at TP8/PP2/DP2, the command trains the complete randomly initialized HybridModel for exactly 100 optimizer steps on the revision-pinned public CORD-v2 multimodal dataset. All losses and gradient norms remain finite, with zero skipped and zero NaN iterations. Loss decreases from 12.23977 to 1.410300; steps 91-100 average 1,035.34 ms, 42.49 model TFLOP/s/GPU, and 247.262 token slots/s/GPU. The persisted post-setup config records the exact runtime. Complete step-50 and step-100 checkpoints each contain 32 nonempty distributed shards and 1,550 state entries, including model, optimizer, scheduler, and RNG state, plus metadata, train state, and the native HybridModel run config.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 1.4103,
+            "initial_loss": 12.23977,
+            "last_10_steps_model_tflops_per_gpu_avg": 42.49,
+            "last_10_steps_step_time_ms_avg": 1035.34,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 247.262
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain"
+        },
+        {
+          "bridge_commit": "c7026ab2cbaac76408c23c87d9ab9a27123603d6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_sft_32gpu_h100_bf16_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_sft_32gpu_h100_bf16_config --mode sft --pretrained_checkpoint work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/sft-checkpoints --save_interval 100 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/sft-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-sft-h100",
+          "expected_result": "On 32 H100 GPUs at TP8/PP2/DP2, the command loads the complete imported HybridModel and performs exactly 100 full-model image-conditioned SFT optimizer steps on the revision-pinned public CORD-v2 dataset. All losses and gradient norms remain finite, with zero skipped and zero NaN iterations. Loss decreases from 0.9772241 to 0.02695329; steps 91-100 average 1,826.64 ms, 94.03 model TFLOP/s/GPU, and 560.592 token slots/s/GPU. The complete 32-shard step-100 full-model checkpoint, metadata, train state, and resolved config are saved and reloadable.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 0.02695329,
+            "initial_loss": 0.9772241,
+            "last_10_steps_model_tflops_per_gpu_avg": 94.03,
+            "last_10_steps_step_time_ms_avg": 1826.64,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 560.592
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft"
+        },
+        {
+          "bridge_commit": "c7026ab2cbaac76408c23c87d9ab9a27123603d6",
+          "command_topologies": [
+            {
+              "expert_parallel": "1",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "2",
+              "pipeline_parallel": "2",
+              "tensor_parallel": "8",
+              "total_gpus": 16
+            },
+            {
+              "gpus_per_node": "1",
+              "nodes": "1",
+              "total_gpus": 1
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --tp 8 --pp 2 --ep 1 --etp 1 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/sft-checkpoints/iter_0000100 --hf-path work/model-verification/muse-glimmer-30b/sft-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --overwrite",
+            "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 1 --hf-model work/model-verification/muse-glimmer-30b/sft-hf-export --image docs/images/tp1.png --prompt \"What type of neural network block is shown in this image?\" --max-new-tokens 64 --chat-template"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-sft-export-inference-h100",
+          "expected_result": "The first command completes all 1,228 MuseGlimmerBridge mappings and\nwrites a complete two-shard BF16 Hugging Face VLM. Transformers 5.15.0\nstrictly reloads all 1,436 tensors with no missing, unexpected,\nmismatched, or error keys. The second command performs one bounded\ngreedy image-conditioned generation and produces exactly 64 new tokens.\nThe literal completion, represented with JSON angle-bracket escapes,\nis: \" \\u003ctransformer_block\\u003e\\u003ctransformer_block_price\\u003e35\\u003c/transformer_block_price\\u003e\\u003ctransformer_block_nm\\u003ePre-Layernorm Transformer Block\\u003c/transformer_block_nm\\u003e\\u003ctransformer_block_cnt\\u003eNx\\u003c/transformer_block_cnt\\u003e\\u003c/transformer_block\\u003e\\u003ctransformer_block\\u003e\\u003ctransformer_sub\\u003e\\u003ctransformer_nm\\u003eLinear\".",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.sft_export_inference.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft_export_inference"
+        },
+        {
+          "bridge_commit": "c7026ab2cbaac76408c23c87d9ab9a27123603d6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config --mode sft --pretrained_checkpoint work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/long-sft-checkpoints --save_interval 100 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/long-sft-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "context_parallel_size": 2,
+            "sequence_packing": "in_batch"
+          },
+          "entry_id": "muse-glimmer-30b-sft-long-context-h100",
+          "expected_result": "On 32 H100 GPUs, the command loads the complete imported HybridModel and completes exactly 100 full-model SFT optimizer steps at sequence length 8192 with in-batch packing, TP1/PP4/CP2, A2A context-parallel communication, and selective core-attention recompute. Every loss and gradient norm is finite, with zero skipped and zero NaN iterations. Loss decreases from 1.034497 to 0.03382061; steps 91-100 average 1,419.91 ms, 16.07 model TFLOP/s/GPU, and 1,442.345 token slots/s/GPU. The complete step-100 full-model checkpoint, metadata, train state, and resolved config are saved and reloadable.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 0.03382061,
+            "initial_loss": 1.034497,
+            "last_10_steps_model_tflops_per_gpu_avg": 16.07,
+            "last_10_steps_step_time_ms_avg": 1419.91,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 1442.345
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft_long_context.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft_long_context"
+        },
+        {
+          "bridge_commit": "8be93c49130954e3257158db774d59075d2beaa6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "recipe": "muse_glimmer_30b_peft_8gpu_h100_bf16_config",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe muse_glimmer_30b_peft_8gpu_h100_bf16_config --mode lora --pretrained_checkpoint work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/peft-checkpoints --save_interval 100 checkpoint.load=null checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/peft-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-peft-h100",
+          "expected_result": "The command loads the complete imported native HybridModel checkpoint, freezes the base model, and inserts LoRA dim 8 / alpha 16 adapters only into the native linear_qkv and linear_proj attention projections. All 100 optimizer-step rows are present exactly once with finite loss, zero skipped iterations, and zero NaN iterations. Loss decreases from 0.7263421 to 0.03298394; steps 91-100 average 4,823.07 ms, 283.36 model TFLOP/s/GPU, and 1,698.503 token slots/s/GPU. The persisted post-setup config records the exact runtime. The complete eight-shard iter_0000100 checkpoint contains all 208 expected adapter tensors, its run config, metadata, and train state. A direct reload restores model and optimizer at step 100, completes finite step 101 with zero skipped or NaN iterations, and saves a distinct complete eight-shard checkpoint.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 0.03298394,
+            "initial_loss": 0.7263421,
+            "last_10_steps_model_tflops_per_gpu_avg": 283.36,
+            "last_10_steps_step_time_ms_avg": 4823.07,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 1698.503
+          },
+          "precision": "bf16",
+          "source_pointer": "items.peft.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "peft"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-checkpoint-resume-h100",
+          "expected_result": "Resume the bounded pretraining run from an intermediate checkpoint, restore model, optimizer, scheduler, data-order, and RNG state, match declared sentinel losses within tolerance, and save a distinct reloadable final checkpoint.\n",
+          "hardware": "H100",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.checkpoint_resume.H100",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "checkpoint_resume"
+        },
+        {
+          "bridge_commit": "8be93c49130954e3257158db774d59075d2beaa6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config --mode pretrain --max_steps 50 checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/performance-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-pretrain-performance-h100",
+          "expected_result": "The exact 32-H100 command completes all 50 fixed-shape mock-token dense decoder steps at TP4/PP4/CP2, a 9|15|15|13 split of all 52 language layers, sequence length 4096, MBS6/GBS192, BF16 model and gradient state, and FP8 current-scaling Transformer GEMMs. The vision and projection towers are frozen and excluded from the fixed-shape decoder workload. Loss remains finite from 12.26882 to 2.442728 with zero skipped or NaN iterations. Steps 41-50 average 9,373.06 ms, 428.24 model TFLOP/s/GPU, and 2,621.983 token slots/s/GPU. The persisted post-setup config records the exact runtime, and the process exits successfully without checkpoint output.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 2.442728,
+            "initial_loss": 12.26882,
+            "last_10_steps_model_tflops_per_gpu_avg": 428.24,
+            "last_10_steps_step_time_ms_avg": 9373.06,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2621.983
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain_performance.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain_performance"
+        }
+      ],
+      "hf_id": "meta-models/Muse-Glimmer-30B",
+      "hf_revision": "f84ecc3a0ea984a4c04542a84269e3d065350a6e",
+      "min_transformers_version": "5.15.0",
+      "slug": "muse-glimmer-30b",
+      "source_card": "examples/model_verification_cards/muse-glimmer-30b/card.yaml",
+      "summary": "Performance scope: pretrain_performance.H100 uses the tuned 32-H100 fixed-shape mock-token dense-decoder recipe; functional training timing and throughput remain sanity checks. This card covers the complete Muse Glimmer 30B vision-language checkpoint through the builder-backed model-config, model-builder, and model bridge path. The modeled architecture includes the vision tower, adapter, projection, and a native Megatron-Core HybridModel text decoder; it does not use a legacy model provider or GPTModel wrapper. Affine decoder and vision norms use Transformer Engine when available and a semantics-equivalent local fallback otherwise; the architecture's weightless norms remain parameter-free. All six modeling gates are verified: CPU and TP8 GPU conversion, exact round-trip tensor equality, numerical forward parity, and deterministic image-conditioned inference. Bounded multimodal pretraining, full SFT, post-SFT export and inference, packed 8K SFT with CP2, LoRA PEFT, and canonical dense-decoder performance are also verified. Checkpoint resume remains unverified.\n",
+      "title": "muse_glimmer_30b"
+    },
+    {
       "architecture": "MiniMaxM3SparseForConditionalGeneration",
       "base_container": "nvcr.io/nvidia/pytorch:26.04-py3",
       "bridge_commit": "6ae8e11630b212ef54f23f574f355a38f0b89d12",
