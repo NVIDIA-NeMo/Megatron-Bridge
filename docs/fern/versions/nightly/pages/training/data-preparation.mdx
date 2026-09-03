@@ -127,7 +127,8 @@ without replacement and repeat only when the ratio requires oversampling.
 Offline packing consumes this blended raw-row stream and writes one packed
 artifact per enabled train or validation split. Bridge stores these artifacts
 under the NeMo datasets cache in an identity-derived directory based on the
-resolved paths, weights, file sizes, and modification times.
+source paths, weights, and file sizes. Replacing content without changing its
+path or byte size requires renaming the source or clearing the derived cache.
 
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 

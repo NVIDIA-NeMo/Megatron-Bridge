@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 from collections import Counter
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -128,7 +129,7 @@ def test_default_pack_path_is_stable_for_equivalent_non_hf_tokenizers(tmp_path):
     assert first.default_pack_path == second.default_pack_path
 
 
-def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path, monkeypatch):
+def test_default_pack_path_fingerprints_blend_paths_weights_and_source_sizes(tmp_path, monkeypatch):
     monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: tmp_path / "cache" / name)
     train_a = tmp_path / "train-a.jsonl"
     train_b = tmp_path / "train-b.jsonl"
@@ -136,11 +137,11 @@ def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path,
     train_b.write_text('{"input": "b", "output": "b"}\n')
     args_path = tmp_path / "per-split.json"
 
-    def build(weights):
+    def build(weights, *, first_source=train_a):
         args_path.write_text(
             json.dumps(
                 {
-                    "train": [str(weights[0]), str(train_a), str(weights[1]), str(train_b)],
+                    "train": [str(weights[0]), str(first_source), str(weights[1]), str(train_b)],
                 }
             )
         )
@@ -165,6 +166,17 @@ def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path,
     assert equal_blend.default_pack_path != weighted_blend.default_pack_path
 
     original_path = weighted_blend.default_pack_path
+    renamed_train_a = tmp_path / "renamed-train-a.jsonl"
+    renamed_train_a.write_text(train_a.read_text())
+    path_changed_source = build((3, 1), first_source=renamed_train_a)
+    assert original_path != path_changed_source.default_pack_path
+
+    source_stat = train_a.stat()
+    os.utime(train_a, ns=(source_stat.st_atime_ns, source_stat.st_mtime_ns + 1_000_000_000))
+    assert train_a.stat().st_mtime_ns != source_stat.st_mtime_ns
+    mtime_changed_source = build((3, 1))
+    assert original_path == mtime_changed_source.default_pack_path
+
     train_a.write_text('{"input": "changed", "output": "a"}\n')
     changed_source = build((3, 1))
     assert original_path != changed_source.default_pack_path

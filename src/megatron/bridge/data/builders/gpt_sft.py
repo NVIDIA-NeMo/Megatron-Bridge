@@ -167,7 +167,7 @@ def _load_gpt_sft_data_blends(config: "GPTSFTDatasetConfig") -> dict[str, _GPTSF
 
 
 def _gpt_sft_blend_identity(config: "GPTSFTDatasetConfig") -> dict[str, Any] | None:
-    """Return cache identity for the resolved per-split JSONL blend."""
+    """Return cache identity from the per-split JSONL paths, sizes, and weights."""
     if config.per_split_data_source_manifest_path is None:
         return None
     split_blends = _load_gpt_sft_data_blends(config)
@@ -176,8 +176,7 @@ def _gpt_sft_blend_identity(config: "GPTSFTDatasetConfig") -> dict[str, Any] | N
         sources = []
         for source_path in blend.paths:
             try:
-                stat = Path(source_path).stat()
-                file_identity = {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+                file_identity = {"size": Path(source_path).stat().st_size}
             except OSError:
                 file_identity = None
             sources.append({"path": source_path, "file": file_identity})

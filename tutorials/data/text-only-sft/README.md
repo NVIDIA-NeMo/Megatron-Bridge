@@ -112,9 +112,11 @@ A split with one path is built through the existing single-file path. With
 offline packing enabled, Bridge blends the raw rows first and then creates one
 packed Parquet cache for the whole train split (and one for validation when
 enabled); it does not pack each source independently. The builder-managed cache
-identity includes the paths, ratios, source file sizes and modification times,
-seed, preprocessing, and packing settings. Set explicit packed output paths
-only when managing cache invalidation yourself.
+identity includes the paths, ratios, source file sizes, seed, preprocessing,
+and packing settings. A same-size in-place source rewrite does not invalidate
+the cache; rename the source or clear its derived cache in that case. Explicit
+packed artifact paths bypass the builder-managed cache identity, so their
+invalidation is managed by the caller.
 
 ## Start from a Hugging Face source
 
