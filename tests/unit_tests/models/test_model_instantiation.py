@@ -832,6 +832,30 @@ class TestGetModel:
             )
 
     @patch("megatron.bridge.models.model_provider._create_model")
+    def test_get_model_explicitly_disables_meta_initialization(self, mock_create_model):
+        """Test that an explicit False overrides meta initialization."""
+
+        class ModelConstructionObserved(Exception):
+            pass
+
+        def record_meta_initialization(model_provider, *_args, **_kwargs):
+            assert model_provider.init_model_with_meta_device is False
+            raise ModelConstructionObserved
+
+        mock_create_model.side_effect = record_meta_initialization
+        model_provider = MockModelProvider()
+        model_provider.init_model_with_meta_device = True
+
+        with pytest.raises(ModelConstructionObserved):
+            get_model(
+                model_provider,
+                DistributedDataParallelConfig(),
+                init_model_with_meta_device=False,
+                wrap_with_ddp=False,
+                pg_collection=_PG(),
+            )
+
+    @patch("megatron.bridge.models.model_provider._create_model")
     def test_get_model_default_preserves_cpu_initialization(self, mock_create_model):
         """Test the direct construction entry point's omitted override."""
 
