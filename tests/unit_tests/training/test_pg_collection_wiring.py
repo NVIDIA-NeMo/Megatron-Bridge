@@ -17,6 +17,8 @@ import signal
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 
 def test_train_step_accepts_pg_collection_argument():
     # Import locally to avoid import-time side effects in unrelated modules
@@ -190,6 +192,117 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
 
     start_nsys_profiler.assert_called_once_with(profiling)
     stop_nsys_profiler.assert_called_once()
+
+
+def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
+    """A rerun-requested exit must close an active Nsys capture."""
+    from megatron.bridge.training import profiling as profiling_module
+    from megatron.bridge.training import train as train_module
+
+    profiling = SimpleNamespace(
+        use_pytorch_profiler=False,
+        use_nsys_profiler=True,
+        profile_step_start=0,
+        profile_step_end=2,
+        profile_ranks=[0],
+        record_shapes=False,
+    )
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            manual_gc=False,
+            check_weight_hash_across_dp_replicas_interval=None,
+            train_iters=2,
+            micro_batch_size=1,
+            iterations_to_skip=set(),
+        ),
+        validation=SimpleNamespace(eval_interval=0, start_eval_at_iter=None),
+        profiling=profiling,
+        straggler=None,
+        ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
+        optimizer=SimpleNamespace(
+            use_distributed_optimizer=False,
+            optimizer_cuda_graph=False,
+        ),
+        model=SimpleNamespace(
+            virtual_pipeline_model_parallel_size=None,
+            cuda_graph_warmup_steps=0,
+            cuda_graph_use_single_mempool=False,
+            moe_expert_rank_capacity_factor=None,
+        ),
+        logger=SimpleNamespace(log_throughput_to_tensorboard=False),
+        checkpoint=SimpleNamespace(save=None, save_interval=None),
+        tensor_inspect=None,
+    )
+    state = SimpleNamespace(
+        cfg=config,
+        train_state=SimpleNamespace(
+            step=0,
+            consumed_train_samples=0,
+            skipped_train_samples=0,
+            floating_point_operations_so_far=0,
+        ),
+        timers=Mock(),
+        straggler_timer=Mock(),
+        energy_monitor=None,
+        nvrx_straggler_manager=None,
+        tensorboard_logger=None,
+        wandb_logger=None,
+        _comet_logger=None,
+    )
+    model_config = SimpleNamespace(cuda_graph_impl=None)
+    rerun_state_machine = SimpleNamespace(current_iteration=0)
+    data_distribution_group = SimpleNamespace(size=lambda: 1)
+    pg_collection = SimpleNamespace(
+        dp=data_distribution_group,
+        pp=SimpleNamespace(size=lambda: 1),
+    )
+    checkpoint_manager = Mock()
+    nsys_context = Mock()
+    start_nsys_profiler = Mock(return_value=nsys_context)
+    stop_nsys_profiler = Mock()
+
+    monkeypatch.setattr(train_module, "get_model_config", lambda _model: model_config)
+    monkeypatch.setattr(train_module, "get_rerun_state_machine", lambda: rerun_state_machine)
+    monkeypatch.setattr(train_module, "get_num_microbatches", lambda: 1)
+    monkeypatch.setattr(train_module, "update_num_microbatches", lambda *args, **kwargs: None)
+    monkeypatch.setattr(train_module, "get_data_distribution_group", lambda *args, **kwargs: data_distribution_group)
+    monkeypatch.setattr(train_module, "should_disable_forward_pre_hook", lambda *args: False)
+    monkeypatch.setattr(train_module, "prepare_forward_step_func", lambda *args: Mock())
+    monkeypatch.setattr(train_module, "get_forward_backward_func", lambda **kwargs: Mock())
+    monkeypatch.setattr(train_module, "is_full_iteration_cuda_graph", lambda _config: False)
+    monkeypatch.setattr(train_module, "P2PCommunicator", lambda **kwargs: Mock())
+    monkeypatch.setattr(train_module, "train_step", lambda *args: ({}, True, False, True, 16, None, None, None))
+    monkeypatch.setattr(train_module, "_delete_cuda_graphs", lambda _helper: None)
+    monkeypatch.setattr(train_module, "safe_shutdown_nvrx_straggler_manager", lambda _manager: None)
+    monkeypatch.setattr(train_module, "tensor_inspect_step_if_enabled", lambda _config: None)
+    monkeypatch.setattr(train_module, "tensor_inspect_end_if_enabled", lambda _config: None)
+    monkeypatch.setattr(train_module, "should_fire", lambda *args: False)
+    monkeypatch.setattr(train_module, "nvtx_range_push", lambda **kwargs: None)
+    monkeypatch.setattr(train_module, "nvtx_range_pop", lambda **kwargs: None)
+    monkeypatch.setattr(train_module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(profiling_module, "start_nsys_profiler", start_nsys_profiler)
+    monkeypatch.setattr(profiling_module, "stop_nsys_profiler", stop_nsys_profiler)
+    monkeypatch.setattr(train_module.fault_tolerance, "on_checkpointing_start", lambda _state: None)
+    monkeypatch.setattr(train_module.fault_tolerance, "on_checkpointing_end", lambda **kwargs: None)
+    monkeypatch.setattr(train_module.fault_tolerance, "on_training_step_start", lambda _state: None)
+    monkeypatch.setattr(train_module.fault_tolerance, "on_training_step_end", lambda _state: None)
+    monkeypatch.setattr(train_module.fault_tolerance, "shutdown", lambda _state: None)
+
+    with pytest.raises(SystemExit, match="16"):
+        train_module.train(
+            forward_step_func=Mock(),
+            model=[Mock()],
+            optimizer=Mock(),
+            scheduler=Mock(),
+            train_data_iterator=None,
+            valid_data_iterator=None,
+            global_state=state,
+            checkpoint_manager=checkpoint_manager,
+            pg_collection=pg_collection,
+        )
+
+    start_nsys_profiler.assert_called_once_with(profiling)
+    stop_nsys_profiler.assert_called_once_with(nsys_context)
 
 
 def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch):

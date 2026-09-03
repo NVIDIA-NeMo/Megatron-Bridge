@@ -547,6 +547,18 @@ def train(
             )
         if should_exit:
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
+            if (
+                prof_config is not None
+                and global_state.train_state.step < prof_config.profile_step_end
+                and (prof is not None or nsys_nvtx_context is not None)
+            ):
+                handle_profiling_stop(
+                    prof_config,
+                    prof_config.profile_step_end,
+                    torch.distributed.get_rank(),
+                    prof,
+                    nsys_nvtx_context,
+                )
             break
 
         # Enable forward pre-hooks after first set of forward and backward passes.
