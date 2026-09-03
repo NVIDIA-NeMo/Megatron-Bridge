@@ -222,7 +222,6 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     seq_length: int
     dataset_root: str | Path | None = None
     per_split_data_source_manifest_path: str | Path | None = None
-    blend_output_root: str | Path | None = None
     hf_dataset: HFDatasetSourceConfig | None = None
     hf_validation_dataset: HFDatasetSourceConfig | None = None
     hf_test_dataset: HFDatasetSourceConfig | None = None
@@ -256,11 +255,6 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("dataset_root must be a non-empty path.")
         if has_blend_source and not str(self.per_split_data_source_manifest_path).strip():
             raise ValueError("per_split_data_source_manifest_path must be a non-empty path.")
-        if self.blend_output_root is not None:
-            if not has_blend_source:
-                raise ValueError("blend_output_root requires per_split_data_source_manifest_path.")
-            if not str(self.blend_output_root).strip():
-                raise ValueError("blend_output_root must be a non-empty path when set.")
         hf_only_fields_set = (
             any(
                 value is not None
@@ -404,8 +398,6 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
     if config.dataset_root is not None:
         return config.dataset_root
     if config.per_split_data_source_manifest_path is not None:
-        if config.blend_output_root is not None:
-            return Path(config.blend_output_root)
         blend_identity = _gpt_sft_blend_identity(config)
         encoded_identity = json.dumps(
             blend_identity,

@@ -125,9 +125,9 @@ blend length is the sum of its source row counts; source-local rows are shuffled
 without replacement and repeat only when the ratio requires oversampling.
 
 Offline packing consumes this blended raw-row stream and writes one packed
-artifact per enabled train or validation split. Set `blend_output_root` to
-choose the builder-managed cache location; otherwise Bridge derives a cache
-root from the resolved paths, weights, file sizes, and modification times.
+artifact per enabled train or validation split. Bridge stores these artifacts
+under the NeMo datasets cache in an identity-derived directory based on the
+resolved paths, weights, file sizes, and modification times.
 
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 

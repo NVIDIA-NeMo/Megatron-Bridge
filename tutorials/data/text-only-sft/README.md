@@ -97,7 +97,6 @@ or test split draws from multiple JSONL files:
 cfg.dataset = GPTSFTDatasetConfig(
     seq_length=4096,
     per_split_data_source_manifest_path="/data/sft_blend.json",
-    blend_output_root="/data/sft_blend_cache",
     preprocessing=PromptCompletionSFTPreprocessingConfig(),
 )
 ```

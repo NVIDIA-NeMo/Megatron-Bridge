@@ -128,7 +128,8 @@ def test_default_pack_path_is_stable_for_equivalent_non_hf_tokenizers(tmp_path):
     assert first.default_pack_path == second.default_pack_path
 
 
-def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path):
+def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: tmp_path / "cache" / name)
     train_a = tmp_path / "train-a.jsonl"
     train_b = tmp_path / "train-b.jsonl"
     train_a.write_text('{"input": "a", "output": "a"}\n')
@@ -147,7 +148,6 @@ def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path)
             config=GPTSFTDatasetConfig(
                 seq_length=128,
                 per_split_data_source_manifest_path=args_path,
-                blend_output_root=tmp_path / "cache",
                 enable_offline_packing=True,
                 offline_packing_specs=PackedSequenceSpecs(
                     packed_sequence_size=128,
@@ -171,6 +171,7 @@ def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path)
 
 
 def test_offline_packing_consumes_one_blended_raw_dataset(tmp_path, monkeypatch):
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: tmp_path / "cache" / name)
     train_a = tmp_path / "train-a.jsonl"
     train_b = tmp_path / "train-b.jsonl"
     for path in (train_a, train_b):
@@ -182,7 +183,6 @@ def test_offline_packing_consumes_one_blended_raw_dataset(tmp_path, monkeypatch)
         config=GPTSFTDatasetConfig(
             seq_length=128,
             per_split_data_source_manifest_path=args_path,
-            blend_output_root=tmp_path / "cache",
             enable_offline_packing=True,
             offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=128,
@@ -208,7 +208,9 @@ def test_offline_packing_consumes_one_blended_raw_dataset(tmp_path, monkeypatch)
     assert blend.weights == (3.0, 1.0)
 
 
-def test_offline_packing_materializes_one_weighted_blend_parquet(tmp_path):
+def test_offline_packing_materializes_one_weighted_blend_parquet(tmp_path, monkeypatch):
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: tmp_path / "cache" / name)
+
     class PackingTokenizer:
         _tokenizer = object()
         eos_id = 127
@@ -234,7 +236,6 @@ def test_offline_packing_materializes_one_weighted_blend_parquet(tmp_path):
         config=GPTSFTDatasetConfig(
             seq_length=32,
             per_split_data_source_manifest_path=args_path,
-            blend_output_root=tmp_path / "cache",
             enable_offline_packing=True,
             offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=32,

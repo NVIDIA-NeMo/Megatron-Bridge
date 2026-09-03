@@ -223,7 +223,6 @@ def test_blend_config_round_trip_is_declarative_and_serializable(tmp_path):
     config = GPTSFTDatasetConfig(
         seq_length=128,
         per_split_data_source_manifest_path=args_path,
-        blend_output_root=tmp_path / "cache",
         do_validation=False,
         do_test=False,
     )
@@ -233,21 +232,10 @@ def test_blend_config_round_trip_is_declarative_and_serializable(tmp_path):
 
     assert isinstance(restored, GPTSFTDatasetConfig)
     assert str(restored.per_split_data_source_manifest_path) == str(args_path)
-    assert str(restored.blend_output_root) == str(tmp_path / "cache")
 
 
-def test_blend_output_root_requires_per_split_data_source_manifest_path(tmp_path):
-    config = GPTSFTDatasetConfig(
-        seq_length=128,
-        dataset_root=tmp_path,
-        blend_output_root=tmp_path / "cache",
-    )
-
-    with pytest.raises(ValueError, match="blend_output_root requires per_split_data_source_manifest_path"):
-        config.validate()
-
-
-def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path):
+def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path, monkeypatch):
+    monkeypatch.setattr("megatron.bridge.data.builders.gpt_sft.get_dataset_root", lambda name: tmp_path / name)
     train_a = tmp_path / "train-a.jsonl"
     train_b = tmp_path / "train-b.jsonl"
     valid = tmp_path / "valid.jsonl"
@@ -262,7 +250,6 @@ def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path):
         config=GPTSFTDatasetConfig(
             seq_length=128,
             per_split_data_source_manifest_path=args_path,
-            blend_output_root=tmp_path / "cache",
             do_test=False,
         ),
         tokenizer=MagicMock(),
@@ -274,7 +261,8 @@ def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path):
     assert builder.validation_path.weights is None
 
 
-def test_per_split_data_source_manifest_requires_every_enabled_split(tmp_path):
+def test_per_split_data_source_manifest_requires_every_enabled_split(tmp_path, monkeypatch):
+    monkeypatch.setattr("megatron.bridge.data.builders.gpt_sft.get_dataset_root", lambda name: tmp_path / name)
     args_path = _write_per_split_data_source_manifest(tmp_path)
 
     with pytest.raises(ValueError, match="missing enabled SFT splits: valid, test"):
@@ -292,7 +280,8 @@ def test_per_split_data_source_manifest_requires_every_enabled_split(tmp_path):
         ["1", "/tmp/a.parquet", "1", "/tmp/b.jsonl"],
     ],
 )
-def test_per_split_data_source_manifest_rejects_invalid_blends(tmp_path, train):
+def test_per_split_data_source_manifest_rejects_invalid_blends(tmp_path, train, monkeypatch):
+    monkeypatch.setattr("megatron.bridge.data.builders.gpt_sft.get_dataset_root", lambda name: tmp_path / name)
     args_path = _write_per_split_data_source_manifest(tmp_path, train=train)
 
     with pytest.raises((ValueError, TypeError)):
