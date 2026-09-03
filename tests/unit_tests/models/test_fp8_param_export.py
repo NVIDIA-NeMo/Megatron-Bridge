@@ -1923,6 +1923,20 @@ class TestFp8ParamExport:
         assert tasks == expected_tasks
         mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(mock_hf, [model])
 
+    def test_iter_local_native_mxfp8_params_uses_public_auto_bridge_api(self):
+        mock_hf = Mock(spec=PreTrainedCausalLM)
+        mock_model_bridge = Mock()
+        tasks = [Mock(spec=WeightConversionTask)]
+        expected_params = [Mock(spec=LocalMXFP8Param)]
+        mock_model_bridge.iter_local_native_mxfp8_params.return_value = iter(expected_params)
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf)
+            params = list(bridge.iter_local_native_mxfp8_params(tasks))
+
+        assert params == expected_params
+        mock_model_bridge.iter_local_native_mxfp8_params.assert_called_once_with(tasks)
+
     def test_build_export_mxfp8_tasks_keeps_remote_placeholders_concrete(self, monkeypatch):
         bridge = DummyBridge()
         global_name = "decoder.layers.0.self_attention.linear_qkv.weight"
