@@ -242,7 +242,11 @@ class DummyBridge(MegatronModelBridge):
 class _IdentityMapping(MegatronParamMapping):
     def __init__(self, hf_param, megatron_param="dummy.megatron.weight", ep_rank=0):
         super().__init__(megatron_param, hf_param)
-        self.ep_rank = ep_rank
+        self._test_ep_rank = ep_rank
+
+    @property
+    def ep_rank(self) -> int:
+        return self._test_ep_rank
 
     def hf_to_megatron(self, hf_weights, _megatron_module):
         return hf_weights
