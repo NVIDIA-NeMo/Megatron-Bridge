@@ -364,6 +364,15 @@ def build_and_load_model(
                 model_cfg.finalize()
             builder_cls = model_cfg.get_builder_cls()
             builder = builder_cls(model_cfg)
+            if dist.is_initialized() and not parallel_state.is_initialized():
+                parallel_state.initialize_model_parallel(
+                    tensor_model_parallel_size=model_cfg.tensor_model_parallel_size,
+                    pipeline_model_parallel_size=model_cfg.pipeline_model_parallel_size,
+                    virtual_pipeline_model_parallel_size=model_cfg.virtual_pipeline_model_parallel_size,
+                    context_parallel_size=model_cfg.context_parallel_size or 1,
+                    expert_model_parallel_size=model_cfg.expert_model_parallel_size or 1,
+                    expert_tensor_parallel_size=model_cfg.expert_tensor_parallel_size,
+                )
             # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
             # unlike the ModelProviderMixin path which passes it directly to
             # `provide_distributed_model`. Instead, it is handled by the

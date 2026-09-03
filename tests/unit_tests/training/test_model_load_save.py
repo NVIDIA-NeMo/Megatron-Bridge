@@ -20,6 +20,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.training.models.base import ModelConfig
 
@@ -443,6 +445,53 @@ class TestLoadMegatronModel:
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_builder_config_initializes_model_parallel_with_existing_default_group(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        tmp_path,
+    ):
+        """Load a builder checkpoint when the caller owns only the default process group."""
+        mock_run_config_fname.return_value = tmp_path / "run_config.yaml"
+        mock_run_config.return_value = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+
+        mock_model = Mock()
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = False
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.finalize = Mock()
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.return_value = [mock_model]
+        mock_model_cfg.get_builder_cls.return_value = Mock(return_value=mock_builder)
+        mock_from_dict.return_value = mock_model_cfg
+
+        (tmp_path / "run_config.yaml").touch()
+        rendezvous = tmp_path / "gloo_rendezvous"
+        dist.init_process_group("gloo", init_method=f"file://{rendezvous}", rank=0, world_size=1)
+        try:
+            assert not parallel_state.is_initialized()
+
+            result = load_megatron_model(tmp_path, use_cpu_init=True)
+
+            assert result == [mock_model]
+            assert parallel_state.is_initialized()
+            mock_builder.build_distributed_models.assert_called_once()
+            mock_load_weights.assert_called_once_with(tmp_path, [mock_model], return_state_dict=False)
+        finally:
+            if parallel_state.is_initialized():
+                parallel_state.destroy_model_parallel()
+            dist.destroy_process_group()
 
     @pytest.mark.parametrize("model_type", ["gpt", "hybrid", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
