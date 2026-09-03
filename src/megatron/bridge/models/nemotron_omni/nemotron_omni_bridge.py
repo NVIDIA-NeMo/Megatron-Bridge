@@ -343,8 +343,16 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             state = StateDict(source)
         source_keys = set(source.get_all_keys())
         for name in self._HF_PASSTHROUGH_KEYS:
-            if name in source_keys:
-                yield from HFWeightTuple(name, state[name]).iter_finalized(cpu=cpu)
+            if name not in source_keys:
+                continue
+            tensor = state[name]
+            # These come straight off disk, so they are on CPU while every
+            # mapped tensor in the stream above is on the current device when
+            # cpu=False. Consumers that batch the whole stream together (RL
+            # refit packs it into one buffer) cannot mix devices.
+            if not cpu and tensor.device.type == "cpu" and torch.cuda.is_available():
+                tensor = tensor.to(device=torch.cuda.current_device())
+            yield from HFWeightTuple(name, tensor).iter_finalized(cpu=cpu)
 
 
 class NemotronOmniLlavaBridge(NemotronOmniBridge):

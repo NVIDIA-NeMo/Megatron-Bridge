@@ -71,7 +71,7 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.8,<=5.12.1",
+    "transformers>=5.15,<=5.15.0",
     "mistral-common>=1.10.0",
     "peft>=0.18.1",
     "datasets>=2.20.0",
@@ -162,7 +162,7 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.17.1+4329ff84"
+version = "2.18.0+27486e03"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
@@ -172,6 +172,7 @@ requires-dist = [
     "onnxscript",
     "onnx",
     "nvdlfw-inspect",
+    "nvidia-cudnn-frontend>=1.25.0",
 ]
 
 [[tool.uv.dependency-metadata]]
@@ -183,7 +184,7 @@ requires-dist = ["torch", "packaging", "ninja"]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "4329ff84bfbdaa778a33cba02a15fb0807c64689" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
 
 [project.optional-dependencies]
 recipes = [

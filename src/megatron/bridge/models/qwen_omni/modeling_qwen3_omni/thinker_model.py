@@ -28,7 +28,10 @@ from transformers.models.qwen3_omni_moe.modeling_qwen3_omni_moe import (
     Qwen3OmniMoeVisionEncoder as Qwen3OmniMoeVisionEncoderHF,
 )
 
-from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import (
+    _get_feat_extract_output_lengths,
+    get_rope_index,
+)
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
@@ -338,7 +341,10 @@ class Qwen3OmniThinkerModel(MegatronModule):
         if expected_audio_token_counts is None:
             return audio_embeds
 
-        _, produced_output_lengths = self.audio_model._get_feat_extract_output_lengths(audio_feature_lengths)
+        produced_output_lengths = _get_feat_extract_output_lengths(
+            audio_feature_lengths,
+            getattr(self.audio_model.config, "n_window", 50),
+        )
         expected_audio_token_counts = expected_audio_token_counts.to(produced_output_lengths.device)
 
         trimmed_embeds = []

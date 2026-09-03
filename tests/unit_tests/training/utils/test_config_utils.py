@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import pytest
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
+from transformers import PreTrainedConfig
 
 from megatron.bridge.models.common import Serializable
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, create_ddp_config
@@ -773,6 +774,24 @@ class TestConfigContainer_EdgeCases:
 
         assert result["optional_field"] is None
         assert result["required_field"] == "required"
+
+    def test_dataclass_pretrained_config_reads_raw_fields(self):
+        """Dataclass config serialization must not invoke guarded dynamic access."""
+
+        @dataclass
+        class HeterogeneousConfig(PreTrainedConfig):
+            num_key_value_heads: int = 8
+
+            def __getattribute__(self, name):
+                if name == "num_key_value_heads":
+                    raise RuntimeError("read this value from the per-layer config")
+                return super().__getattribute__(name)
+
+        config = HeterogeneousConfig()
+
+        serialized = _ConfigContainerBase._convert_pretrained_config_to_dict(config, include_target=True)
+
+        assert serialized["num_key_value_heads"] == 8
 
     def test_config_with_complex_nested_types(self):
         """Test ConfigContainer with complex nested types."""

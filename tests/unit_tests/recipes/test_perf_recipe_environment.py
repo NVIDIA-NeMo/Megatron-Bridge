@@ -125,9 +125,10 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults():
+def test_benchmark_common_disables_checkpoint_io_and_forces_moe_load_balancing():
     cfg = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        validation=SimpleNamespace(eval_iters=1, eval_interval=1),
         tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
         checkpoint=SimpleNamespace(save="checkpoint", load="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
@@ -141,6 +142,8 @@ def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults()
             cuda_graph_impl=None,
             cuda_graph_scope=[],
             moe_flex_dispatcher_backend=None,
+            num_moe_experts=8,
+            moe_router_force_load_balancing=False,
         ),
         mixed_precision=SimpleNamespace(grad_reduce_in_fp32=True),
     )
@@ -149,9 +152,16 @@ def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_defaults()
 
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
+    assert cfg.validation.eval_iters == 1
+    assert cfg.validation.eval_interval == 1
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.checkpoint.save is None
     assert cfg.checkpoint.load is None
+    assert cfg.model.moe_router_force_load_balancing is True
+
+    cfg.model.moe_router_force_load_balancing = False
+    _benchmark_common(cfg)
+    assert cfg.model.moe_router_force_load_balancing is True
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():
