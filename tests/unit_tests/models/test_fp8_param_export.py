@@ -282,7 +282,14 @@ def test_base_mapping_rejects_native_mxfp8_projection():
         )
 
 
-def test_qkv_native_mxfp8_gqa_tp2_preserves_row_order(monkeypatch):
+@pytest.mark.parametrize(
+    "tp_size,packed_rows,expected_shapes",
+    [
+        pytest.param(1, 64, ((32, 64), (16, 64), (16, 64)), id="tp1"),
+        pytest.param(2, 32, ((16, 64), (8, 64), (8, 64)), id="tp2"),
+    ],
+)
+def test_qkv_native_mxfp8_gqa_preserves_row_order(monkeypatch, tp_size, packed_rows, expected_shapes):
     config = SimpleNamespace(
         num_attention_heads=8,
         num_query_groups=4,
@@ -291,9 +298,9 @@ def test_qkv_native_mxfp8_gqa_tp2_preserves_row_order(monkeypatch):
         attention_output_gate=False,
     )
     mapping = QKVMapping("decoder.linear_qkv.weight", "hf.q", "hf.k", "hf.v")
-    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=2))
-    weight = torch.arange(32 * 64, dtype=torch.uint8).view(32, 64).view(torch.float8_e4m3fn)
-    scale = torch.arange(32 * 2, dtype=torch.uint8).view(32, 2)
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=tp_size))
+    weight = torch.arange(packed_rows * 64, dtype=torch.uint8).view(packed_rows, 64).view(torch.float8_e4m3fn)
+    scale = torch.arange(packed_rows * 2, dtype=torch.uint8).view(packed_rows, 2)
 
     params = mapping.local_mxfp8_params(
         weight,
@@ -303,14 +310,14 @@ def test_qkv_native_mxfp8_gqa_tp2_preserves_row_order(monkeypatch):
     )
 
     assert [p.name for p in params] == ["hf.q", "hf.k", "hf.v"]
-    assert [p.weight.shape for p in params] == [(16, 64), (8, 64), (8, 64)]
-    assert [p.weight_scale.shape for p in params] == [(16, 2), (8, 2), (8, 2)]
+    assert [p.weight.shape for p in params] == list(expected_shapes)
+    assert [p.weight_scale.shape for p in params] == [(shape[0], 2) for shape in expected_shapes]
     assert [p.global_weight_shape for p in params] == [(32, 64), (16, 64), (16, 64)]
     assert all(p.shard_group == "tp" and p.shard_dim == 0 for p in params)
 
     local_config = SimpleNamespace(**vars(config))
-    local_config.num_attention_heads = 4
-    local_config.num_query_groups = 2
+    local_config.num_attention_heads //= tp_size
+    local_config.num_query_groups //= tp_size
     expected_weights = split_qkv_weights(local_config, weight, feature_dim=64)
     expected_scales = split_qkv_weights(local_config, scale, feature_dim=2)
     for param, expected_weight, expected_scale in zip(params, expected_weights, expected_scales):
@@ -318,7 +325,14 @@ def test_qkv_native_mxfp8_gqa_tp2_preserves_row_order(monkeypatch):
         assert torch.equal(param.weight_scale, expected_scale)
 
 
-def test_qkv_native_mxfp8_output_gate_tp2_preserves_qz_row_order(monkeypatch):
+@pytest.mark.parametrize(
+    "tp_size,packed_rows,expected_shapes",
+    [
+        pytest.param(1, 96, ((64, 64), (16, 64), (16, 64)), id="tp1"),
+        pytest.param(2, 48, ((32, 64), (8, 64), (8, 64)), id="tp2"),
+    ],
+)
+def test_qkv_native_mxfp8_output_gate_preserves_qz_row_order(monkeypatch, tp_size, packed_rows, expected_shapes):
     config = SimpleNamespace(
         num_attention_heads=8,
         num_query_groups=4,
@@ -327,9 +341,9 @@ def test_qkv_native_mxfp8_output_gate_tp2_preserves_qz_row_order(monkeypatch):
         attention_output_gate=True,
     )
     mapping = QKVMapping("decoder.linear_qkv.weight", "hf.q", "hf.k", "hf.v")
-    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=2))
-    weight = torch.arange(48 * 64, dtype=torch.uint8).view(48, 64).view(torch.float8_e4m3fn)
-    scale = torch.arange(48 * 2, dtype=torch.uint8).view(48, 2)
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=tp_size))
+    weight = torch.arange(packed_rows * 64, dtype=torch.uint8).view(packed_rows, 64).view(torch.float8_e4m3fn)
+    scale = torch.arange(packed_rows * 2, dtype=torch.uint8).view(packed_rows, 2)
 
     params = mapping.local_mxfp8_params(
         weight,
@@ -338,12 +352,55 @@ def test_qkv_native_mxfp8_output_gate_tp2_preserves_qz_row_order(monkeypatch):
         megatron_module=SimpleNamespace(config=config),
     )
 
-    assert [p.weight.shape for p in params] == [(32, 64), (8, 64), (8, 64)]
-    assert [p.weight_scale.shape for p in params] == [(32, 2), (8, 2), (8, 2)]
+    assert [p.weight.shape for p in params] == list(expected_shapes)
+    assert [p.weight_scale.shape for p in params] == [(shape[0], 2) for shape in expected_shapes]
     assert [p.global_weight_shape for p in params] == [(64, 64), (16, 64), (16, 64)]
     local_config = SimpleNamespace(**vars(config))
-    local_config.num_attention_heads = 4
-    local_config.num_query_groups = 2
+    local_config.num_attention_heads //= tp_size
+    local_config.num_query_groups //= tp_size
+    expected_weights = split_qkv_weights(local_config, weight, feature_dim=64)
+    expected_scales = split_qkv_weights(local_config, scale, feature_dim=2)
+    for param, expected_weight, expected_scale in zip(params, expected_weights, expected_scales):
+        assert torch.equal(param.weight.view(torch.uint8), expected_weight.view(torch.uint8))
+        assert torch.equal(param.weight_scale, expected_scale)
+
+
+@pytest.mark.parametrize(
+    "tp_size,packed_rows,expected_shapes",
+    [
+        pytest.param(1, 96, ((32, 64), (32, 64), (32, 64)), id="tp1"),
+        pytest.param(2, 48, ((16, 64), (16, 64), (16, 64)), id="tp2"),
+    ],
+)
+def test_qkv_native_mxfp8_mha_preserves_row_order(monkeypatch, tp_size, packed_rows, expected_shapes):
+    config = SimpleNamespace(
+        num_attention_heads=8,
+        num_query_groups=8,
+        kv_channels=4,
+        hidden_size=128,
+        attention_output_gate=False,
+    )
+    mapping = QKVMapping("decoder.linear_qkv.weight", "hf.q", "hf.k", "hf.v")
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=tp_size))
+    weight = torch.arange(packed_rows * 64, dtype=torch.uint8).view(packed_rows, 64).view(torch.float8_e4m3fn)
+    scale = torch.arange(packed_rows * 2, dtype=torch.uint8).view(packed_rows, 2)
+
+    params = mapping.local_mxfp8_params(
+        weight,
+        scale,
+        global_param_name="decoder.linear_qkv.weight",
+        megatron_module=SimpleNamespace(config=config),
+    )
+
+    assert [p.name for p in params] == ["hf.q", "hf.k", "hf.v"]
+    assert [p.weight.shape for p in params] == list(expected_shapes)
+    assert [p.weight_scale.shape for p in params] == [(shape[0], 2) for shape in expected_shapes]
+    assert [p.global_weight_shape for p in params] == [(32, 64), (32, 64), (32, 64)]
+    assert all(p.shard_group == "tp" and p.shard_dim == 0 for p in params)
+
+    local_config = SimpleNamespace(**vars(config))
+    local_config.num_attention_heads //= tp_size
+    local_config.num_query_groups //= tp_size
     expected_weights = split_qkv_weights(local_config, weight, feature_dim=64)
     expected_scales = split_qkv_weights(local_config, scale, feature_dim=2)
     for param, expected_weight, expected_scale in zip(params, expected_weights, expected_scales):
@@ -379,11 +436,12 @@ def test_qkv_native_mxfp8_rejects_nondivisible_tp_counts(monkeypatch, field, val
         )
 
 
-def test_output_native_mxfp8_row_parallel_tp2_preserves_views(monkeypatch):
+@pytest.mark.parametrize("tp_size,local_k", [pytest.param(1, 64, id="tp1"), pytest.param(2, 32, id="tp2")])
+def test_output_native_mxfp8_row_parallel_preserves_views(monkeypatch, tp_size, local_k):
     mapping = RowParallelMapping("decoder.linear_proj.weight", "hf.o")
-    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=2))
-    weight = torch.arange(64 * 32, dtype=torch.uint8).view(64, 32).view(torch.float8_e4m3fn)
-    scale = torch.arange(64, dtype=torch.uint8).view(64, 1)
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=tp_size))
+    weight = torch.arange(64 * local_k, dtype=torch.uint8).view(64, local_k).view(torch.float8_e4m3fn)
+    scale = torch.arange(64 * local_k // 32, dtype=torch.uint8).view(64, local_k // 32)
 
     params = mapping.local_mxfp8_params(
         weight,
@@ -413,12 +471,13 @@ def test_output_native_mxfp8_rejects_mismatched_scale_shape():
         )
 
 
-def test_output_native_mxfp8_auto_mapping_delegates_only_to_row_parallel(monkeypatch):
+@pytest.mark.parametrize("tp_size,local_k", [pytest.param(1, 64, id="tp1"), pytest.param(2, 32, id="tp2")])
+def test_output_native_mxfp8_auto_mapping_delegates_only_to_row_parallel(monkeypatch, tp_size, local_k):
     mapping = AutoMapping("decoder.linear_proj.weight", "hf.o")
-    monkeypatch.setattr(RowParallelMapping, "tp_size", PropertyMock(return_value=2))
+    monkeypatch.setattr(RowParallelMapping, "tp_size", PropertyMock(return_value=tp_size))
     module = type("RowParallelLinear", (), {})()
-    weight = torch.zeros((64, 32), dtype=torch.float8_e4m3fn)
-    scale = torch.zeros((64, 1), dtype=torch.uint8)
+    weight = torch.zeros((64, local_k), dtype=torch.float8_e4m3fn)
+    scale = torch.zeros((64, local_k // 32), dtype=torch.uint8)
 
     params = mapping.local_mxfp8_params(
         weight,
