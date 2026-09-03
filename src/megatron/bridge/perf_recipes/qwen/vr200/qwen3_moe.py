@@ -16,14 +16,15 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     ConfigContainer,
+    _perf_precision,
 )
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
 )
 
 
@@ -83,7 +84,9 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, NVFP4 (alias of GB300)."""
-    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config()
+    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

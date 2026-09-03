@@ -23,10 +23,10 @@ from megatron.bridge.perf_recipes.nemotronh import (
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config,
-    qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_full_iteration_config,
-    qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_full_iteration_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_full_iteration_config,
+    qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
 )
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -43,13 +43,13 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     ("recipe", "expected_parallelism", "expected_avoid_record_streams", "expected_nvlink_domain_size"),
     [
         (
-            qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_full_iteration_config,
+            qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
             (1, 8, 3, 8),
             1,
             8,
         ),
         (
-            qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config,
+            qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
             (1, 8, 3, 8),
             1,
             8,
@@ -61,7 +61,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             72,
         ),
         (
-            qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_full_iteration_config,
+            qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
             (1, 8, 3, 32),
             0,
             72,
@@ -73,7 +73,7 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             72,
         ),
         (
-            qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_full_iteration_config,
+            qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
             (1, 4, 12, 32),
             0,
             72,
