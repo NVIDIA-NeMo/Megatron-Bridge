@@ -16,7 +16,8 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union, cast
 
 import torch
 import torch.distributed
@@ -242,8 +243,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         megatron_module: nn.Module,
     ) -> tuple[LocalMXFP8Param, ...]:
         raise ValueError(
-            f"Mapping {type(self).__name__} for {global_param_name!r} "
-            "does not support direct native MXFP8 export."
+            f"Mapping {type(self).__name__} for {global_param_name!r} does not support direct native MXFP8 export."
         )
 
     def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
@@ -1252,6 +1252,35 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         original unsharded weight and emits it under the external (HF) name.
     """
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Project a local row-parallel native MXFP8 weight without gathering."""
+        expected_scale_shape = torch.Size((*weight.shape[:-1], weight.shape[-1] // 32))
+        if weight_scale.shape != expected_scale_shape:
+            raise ValueError(
+                f"{global_param_name}: expected native MXFP8 scale shape {tuple(expected_scale_shape)}, "
+                f"got {tuple(weight_scale.shape)}"
+            )
+
+        global_weight_shape = list(weight.shape)
+        global_weight_shape[1] *= self.tp_size
+        return (
+            LocalMXFP8Param(
+                name=str(self.hf_param),
+                weight=weight,
+                weight_scale=weight_scale,
+                global_weight_shape=torch.Size(global_weight_shape),
+                shard_group="tp",
+                shard_dim=1,
+            ),
+        )
+
     def hf_to_megatron(
         self,
         hf_weights: torch.Tensor,
@@ -1669,6 +1698,39 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             f"Currently known module types:\n{json.dumps(known_types, indent=2)}"
         )
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Delegate direct native MXFP8 export only to a row-parallel mapping."""
+        if self.permute_dims is not None or getattr(self, "transpose_on_export", False):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support mapping transforms")
+        if megatron_module is None or _module_uses_fsdp(megatron_module):
+            raise ValueError(f"{global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+
+        if self._mapping is None:
+            try:
+                self._detected_type = self._detect_parallelism_type(megatron_module)
+                self._mapping = self._get_or_create_mapping(self._detected_type)
+            except ValueError as error:
+                raise ValueError(f"{global_param_name}: {error}") from error
+
+        if not isinstance(self._mapping, RowParallelMapping):
+            raise ValueError(
+                f"{global_param_name}: native MXFP8 export requires RowParallelMapping, "
+                f"got {type(self._mapping).__name__}"
+            )
+        return self._mapping.local_mxfp8_params(
+            weight,
+            weight_scale,
+            global_param_name=global_param_name,
+            megatron_module=megatron_module,
+        )
+
     def hf_to_megatron(
         self,
         hf_weights: torch.Tensor,
@@ -1837,6 +1899,57 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # This keeps the format-handling (merge/split) concerns separate from
         # TP/PP distribution mechanics.
         self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Split a local native MXFP8 QKV shard into canonical Q, K, and V parameters."""
+        config = self._get_config(megatron_module)
+        if config.num_attention_heads % self.tp_size:
+            raise ValueError(
+                f"{global_param_name}: num_attention_heads={config.num_attention_heads} "
+                f"is not divisible by tp_size={self.tp_size}"
+            )
+        if config.num_query_groups % self.tp_size:
+            raise ValueError(
+                f"{global_param_name}: num_query_groups={config.num_query_groups} "
+                f"is not divisible by tp_size={self.tp_size}"
+            )
+
+        local_config = cast(
+            TransformerConfig,
+            SimpleNamespace(
+                num_attention_heads=config.num_attention_heads // self.tp_size,
+                num_query_groups=config.num_query_groups // self.tp_size,
+                kv_channels=config.kv_channels,
+                hidden_size=config.hidden_size,
+                attention_output_gate=getattr(config, "attention_output_gate", False),
+            ),
+        )
+        qkv_weights = split_qkv_weights(local_config, weight, feature_dim=weight.shape[-1])
+        qkv_scales = split_qkv_weights(local_config, weight_scale, feature_dim=weight_scale.shape[-1])
+        names = (self.hf_param["q"], self.hf_param["k"], self.hf_param["v"])
+
+        params = []
+        for name, component_weight, component_scale in zip(names, qkv_weights, qkv_scales):
+            global_weight_shape = list(component_weight.shape)
+            global_weight_shape[0] *= self.tp_size
+            params.append(
+                LocalMXFP8Param(
+                    name=name,
+                    weight=component_weight,
+                    weight_scale=component_scale,
+                    global_weight_shape=torch.Size(global_weight_shape),
+                    shard_group="tp",
+                    shard_dim=0,
+                )
+            )
+        return tuple(params)
 
     def hf_to_megatron(
         self,
