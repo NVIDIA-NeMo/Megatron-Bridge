@@ -46,10 +46,15 @@ from megatron.bridge.models.conversion.quant_bridge import (
     _lookup_grouped_expert_mapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.stepfun.step35_bridge import (
+    StackedExpertAutoMapping,
+    StackedExpertGatedMLPMapping,
+)
 
 
 _QKV_GLOBAL = "decoder.layers.0.self_attention.linear_qkv.weight"
 _MODEL_MB = "megatron.bridge.models.conversion.model_bridge"
+_PARAM_MB = "megatron.bridge.models.conversion.param_mapping"
 _QUANT_MB = "megatron.bridge.models.conversion.quant_bridge"
 
 
@@ -561,7 +566,13 @@ def test_fc1_native_mxfp8_projects_paired_expert_views(monkeypatch):
         gate="model.layers.0.mlp.experts.2.gate_proj.weight",
         up="model.layers.0.mlp.experts.2.up_proj.weight",
     )
-    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    tp_group = object()
+    etp_group = object()
+    mapping.set_process_groups_from_pg_collection(SimpleNamespace(pp=None, ep=None, tp=tp_group, expt_tp=etp_group))
+    monkeypatch.setattr(
+        f"{_PARAM_MB}.get_pg_size",
+        lambda group: {tp_group: 4, etp_group: 2}[group],
+    )
     weight = torch.arange(8 * 64, dtype=torch.uint8).view(8, 64).view(torch.float8_e4m3fn)
     scale = torch.arange(8 * 2, dtype=torch.uint8).view(8, 2)
 
@@ -578,6 +589,7 @@ def test_fc1_native_mxfp8_projects_paired_expert_views(monkeypatch):
     ]
     assert [param.global_weight_shape for param in projected] == [(8, 64), (8, 64)]
     assert all(param.shard_group == "etp" and param.shard_dim == 0 for param in projected)
+    assert mapping._etp_group is etp_group
     torch.testing.assert_close(projected[0].weight.view(torch.uint8), weight[:4].view(torch.uint8))
     torch.testing.assert_close(projected[1].weight.view(torch.uint8), weight[4:].view(torch.uint8))
     torch.testing.assert_close(projected[0].weight_scale, scale[:4])
@@ -589,7 +601,13 @@ def test_fc2_native_mxfp8_projects_ordinary_expert_with_etp_metadata(monkeypatch
         "decoder.layers.0.mlp.experts.local_experts.2.linear_fc2.weight",
         "model.layers.0.mlp.experts.2.down_proj.weight",
     )
-    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    tp_group = object()
+    etp_group = object()
+    mapping.set_process_groups_from_pg_collection(SimpleNamespace(pp=None, ep=None, tp=tp_group, expt_tp=etp_group))
+    monkeypatch.setattr(
+        f"{_PARAM_MB}.get_pg_size",
+        lambda group: {tp_group: 4, etp_group: 2}[group],
+    )
     module = type("TERowParallelLinear", (), {})()
     weight = torch.arange(64 * 32, dtype=torch.uint8).view(64, 32).view(torch.float8_e4m3fn)
     scale = torch.arange(64, dtype=torch.uint8).view(64, 1)
@@ -610,6 +628,99 @@ def test_fc2_native_mxfp8_projects_ordinary_expert_with_etp_metadata(monkeypatch
     assert projected[0].shard_dim == 1
 
 
+def test_explicit_expert_row_mapping_uses_etp_metadata(monkeypatch):
+    mapping = RowParallelMapping(
+        "decoder.layers.0.mlp.experts.local_experts.2.linear_fc2.weight",
+        "model.layers.0.mlp.experts.2.down_proj.weight",
+    )
+    tp_group = object()
+    etp_group = object()
+    mapping.set_process_groups_from_pg_collection(SimpleNamespace(pp=None, ep=None, tp=tp_group, expt_tp=etp_group))
+    monkeypatch.setattr(
+        f"{_PARAM_MB}.get_pg_size",
+        lambda group: {tp_group: 4, etp_group: 2}[group],
+    )
+
+    projected = mapping.local_mxfp8_params(
+        torch.zeros((64, 32), dtype=torch.float8_e4m3fn),
+        torch.zeros((64, 1), dtype=torch.uint8),
+        global_param_name="decoder.layers.0.mlp.experts.local_experts.2.linear_fc2.weight",
+        megatron_module=SimpleNamespace(),
+    )
+
+    assert projected[0].global_weight_shape == (64, 64)
+    assert projected[0].shard_group == "etp"
+    assert projected[0].shard_dim == 1
+
+
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        pytest.param(
+            StackedExpertAutoMapping(
+                "decoder.layers.0.mlp.experts.linear_fc2.weight2",
+                "model.layers.0.moe.down_proj.weight",
+            ),
+            id="stacked-auto",
+        ),
+        pytest.param(
+            StackedExpertGatedMLPMapping(
+                "decoder.layers.0.mlp.experts.linear_fc1.weight2",
+                gate="model.layers.0.moe.gate_proj.weight",
+                up="model.layers.0.moe.up_proj.weight",
+            ),
+            id="stacked-gated",
+        ),
+    ],
+)
+def test_stacked_expert_mappings_reject_native_mxfp8_projection(mapping):
+    module = type("TERowParallelLinear", (), {})()
+
+    with pytest.raises(ValueError, match=r"decoder\.layers\.0.*canonical local HF views"):
+        mapping.local_mxfp8_params(
+            torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+            torch.zeros((8, 2), dtype=torch.uint8),
+            global_param_name=mapping.megatron_param,
+            megatron_module=module,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mapping", "expected_names"),
+    [
+        pytest.param(
+            FusedGatedExpertMapping(
+                "decoder.layers.0.mlp.experts.linear_fc1.weight2",
+                "model.layers.0.mlp.experts.gate_up_proj.weight",
+            ),
+            [
+                "model.layers.0.mlp.experts.2.gate_proj.weight",
+                "model.layers.0.mlp.experts.2.up_proj.weight",
+            ],
+            id="fc1",
+        ),
+        pytest.param(
+            FusedExpertMapping(
+                "decoder.layers.0.mlp.experts.linear_fc2.weight2",
+                "model.layers.0.mlp.experts.down_proj.weight",
+            ),
+            ["model.layers.0.mlp.experts.2.down_proj.weight"],
+            id="fc2",
+        ),
+    ],
+)
+def test_fused_expert_native_mxfp8_accepts_weight_suffixed_hf_names(mapping, expected_names, monkeypatch):
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=1))
+    projected = mapping.local_mxfp8_params(
+        torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+        torch.zeros((8, 2), dtype=torch.uint8),
+        global_param_name=mapping.megatron_param,
+        megatron_module=SimpleNamespace(),
+    )
+
+    assert [param.name for param in projected] == expected_names
+
+
 def test_grouped_fc1_native_mxfp8_uses_global_expert_ids(monkeypatch):
     mapping = FusedGatedExpertMapping(
         "decoder.layers.0.mlp.experts.linear_fc1.weight0",
@@ -617,7 +728,7 @@ def test_grouped_fc1_native_mxfp8_uses_global_expert_ids(monkeypatch):
     )
     monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=1))
     monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=2))
-    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=2))
     members = torch.arange(2 * 8 * 64, dtype=torch.uint8).view(2, 8, 64).view(torch.float8_e4m3fn)
     scales = torch.arange(2 * 8 * 2, dtype=torch.uint8).view(2, 8, 2)
 
@@ -651,7 +762,7 @@ def test_grouped_fc2_native_mxfp8_uses_global_expert_ids(monkeypatch):
     )
     monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=1))
     monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=2))
-    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=2))
     members = torch.arange(2 * 64 * 32, dtype=torch.uint8).view(2, 64, 32).view(torch.float8_e4m3fn)
     scales = torch.arange(2 * 64, dtype=torch.uint8).view(2, 64, 1)
 
@@ -913,7 +1024,7 @@ class TestFp8ParamExport:
         )
         monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=1))
         monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=2))
-        monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+        monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=2))
         members = []
         for expert_id in range(2):
             member = _FakeNativeMXFP8Tensor()
