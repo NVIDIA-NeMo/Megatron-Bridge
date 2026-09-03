@@ -51,7 +51,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.optimizer.lr = 0.0006
-    cfg.optimizer.min_lr = 0.0006
+    cfg.optimizer.min_lr = 5.9999999999999995e-05
     cfg.validation.eval_interval = 768
     cfg.validation.eval_iters = 64
     cfg.scheduler.lr_warmup_iters = 128
@@ -110,7 +110,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = True
     cfg.optimizer.overlap_param_gather = True
     cfg.optimizer.lr = 0.0004
-    cfg.optimizer.min_lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
     cfg.validation.eval_interval = 768
     cfg.validation.eval_iters = 64
     cfg.scheduler.lr_warmup_iters = 128
@@ -163,7 +163,7 @@ def gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.optimizer.lr = 0.0006
-    cfg.optimizer.min_lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
     cfg.validation.eval_interval = 341
     cfg.validation.eval_iters = 29
     cfg.scheduler.lr_warmup_iters = 64
@@ -218,7 +218,7 @@ def gpt_oss_20b_pretrain_72gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.optimizer.lr = 0.0004
-    cfg.optimizer.min_lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
     cfg.validation.eval_interval = 341
     cfg.validation.eval_iters = 29
     cfg.scheduler.lr_warmup_iters = 256
@@ -273,7 +273,7 @@ def gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = 7
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.optimizer.lr = 0.00052
-    cfg.optimizer.min_lr = 0.00052
+    cfg.optimizer.min_lr = 5.2e-05
     cfg.validation.eval_interval = 192
     cfg.validation.eval_iters = 16
     cfg.scheduler.lr_warmup_iters = 32

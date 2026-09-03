@@ -52,7 +52,7 @@ def gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.optimizer.lr = 0.0005
-    cfg.optimizer.min_lr = 0.0005
+    cfg.optimizer.min_lr = 5e-05
     cfg.validation.eval_interval = 512
     cfg.validation.eval_iters = 43
     cfg.scheduler.lr_warmup_iters = 256
@@ -102,11 +102,11 @@ def gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
-    cfg.optimizer.lr = 0.0006
-    cfg.optimizer.min_lr = 0.0006
-    cfg.validation.eval_interval = 768
-    cfg.validation.eval_iters = 64
-    cfg.scheduler.lr_warmup_iters = 128
+    cfg.optimizer.lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
+    cfg.validation.eval_interval = 512
+    cfg.validation.eval_iters = 43
+    cfg.scheduler.lr_warmup_iters = 192
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -158,7 +158,7 @@ def gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.optimizer.lr = 0.0004
-    cfg.optimizer.min_lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
     cfg.validation.eval_interval = 341
     cfg.validation.eval_iters = 29
     cfg.scheduler.lr_warmup_iters = 256
@@ -209,7 +209,7 @@ def gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.optimizer.lr = 0.0006
-    cfg.optimizer.min_lr = 0.0006
+    cfg.optimizer.min_lr = 5.9999999999999995e-05
     cfg.validation.eval_interval = 341
     cfg.validation.eval_iters = 29
     cfg.scheduler.lr_warmup_iters = 64
@@ -265,7 +265,7 @@ def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.sequence_parallel = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.optimizer.lr = 0.00052
-    cfg.optimizer.min_lr = 0.00052
+    cfg.optimizer.min_lr = 5.2e-05
     cfg.validation.eval_interval = 192
     cfg.validation.eval_iters = 16
     cfg.scheduler.lr_warmup_iters = 32
