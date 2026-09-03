@@ -28,6 +28,60 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
     gpt_oss_120b_pretrain_config,
 )
 
+def gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 20B pretrain: 8× GB300, FP8-MX."""
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 24
+    cfg.train.micro_batch_size = 3
+
+    _benchmark_common(cfg)
+    _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
+    _apply_gpt_oss_20b_common_configs(cfg)
+
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_modules = "full_iteration"
+    cfg.model.cuda_graph_scope = None
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.optimizer.lr = 0.0005
+    cfg.optimizer.min_lr = 5e-05
+    cfg.validation.eval_interval = 512
+    cfg.validation.eval_iters = 43
+    cfg.scheduler.lr_warmup_iters = 256
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 1,
+        "NCCL_CTA_POLICY": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 1,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
 
 def gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 8× GB300, NVFP4."""
@@ -35,22 +89,79 @@ def gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.mixed_precision = _gpt_oss_20b_nvfp4_precision()
 
     cfg.model.tensor_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 2
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 24
+    cfg.train.micro_batch_size = 3
+
+    _benchmark_common(cfg)
+    _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
+    _apply_gpt_oss_20b_common_configs(cfg)
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.optimizer.lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
+    cfg.validation.eval_interval = 512
+    cfg.validation.eval_iters = 43
+    cfg.scheduler.lr_warmup_iters = 192
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 1,
+        "NCCL_CTA_POLICY": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 2,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 20B pretrain: 72× GB300, MXFP8."""
+    cfg = gpt_oss_20b_pretrain_config()
+    cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
+
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.context_parallel_size = 2
     cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 4
+    cfg.train.global_batch_size = 36
     cfg.train.micro_batch_size = 1
 
     _benchmark_common(cfg)
-    _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
+    _apply_gpt_oss_20b_common_configs(cfg)
 
-    cfg.optimizer.lr = 0.0006
-    cfg.optimizer.min_lr = 0.0006
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_modules = "full_iteration"
+    cfg.model.cuda_graph_scope = None
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_expert_rank_capacity_factor = 5
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.optimizer.lr = 0.0004
+    cfg.optimizer.min_lr = 4e-05
     cfg.validation.eval_interval = 341
     cfg.validation.eval_iters = 29
-    cfg.scheduler.lr_warmup_iters = 64
+    cfg.scheduler.lr_warmup_iters = 256
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -92,11 +203,13 @@ def gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
 
     _benchmark_common(cfg)
-    _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
+    _apply_gpt_oss_20b_common_configs(cfg)
 
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.optimizer.lr = 0.0006
-    cfg.optimizer.min_lr = 0.0006
+    cfg.optimizer.min_lr = 5.9999999999999995e-05
     cfg.validation.eval_interval = 341
     cfg.validation.eval_iters = 29
     cfg.scheduler.lr_warmup_iters = 64
@@ -141,13 +254,18 @@ def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
 
     _benchmark_common(cfg)
-    _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_local_graph_configs(cfg)
+    _apply_gpt_oss_20b_common_configs(cfg)
 
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_modules = "full_iteration"
+    cfg.model.cuda_graph_scope = None
+    cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_expert_rank_capacity_factor = 7
     cfg.model.sequence_parallel = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.optimizer.lr = 0.00052
-    cfg.optimizer.min_lr = 0.00052
+    cfg.optimizer.min_lr = 5.2e-05
     cfg.validation.eval_interval = 192
     cfg.validation.eval_iters = 16
     cfg.scheduler.lr_warmup_iters = 32
