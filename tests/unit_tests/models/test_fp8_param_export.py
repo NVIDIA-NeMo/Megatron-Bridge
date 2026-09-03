@@ -14,9 +14,11 @@
 
 """Unit tests for FP8 export behavior."""
 
+import gc
 import logging
 import sys
 import types
+import weakref
 from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
 
@@ -897,6 +899,58 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    def test_native_mxfp8_materialization_releases_preflight_projections_between_tasks(self, monkeypatch):
+        bridge = DummyBridge()
+        projected_weight_refs = []
+        parameters = []
+        tasks = []
+
+        for task_id in range(3):
+            global_name = f"decoder.layers.{task_id}.self_attention.linear_proj.weight"
+            parameter = _FakeNativeMXFP8Tensor()
+            parameter.shape = torch.Size((8, 64))
+            parameter.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+            parameter.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+            mapping = RowParallelMapping(global_name, f"hf.{task_id}")
+
+            def project(weight, weight_scale, *, global_param_name, megatron_module, hf_name=f"hf.{task_id}"):
+                del global_param_name, megatron_module
+                projected_weight = weight.clone()
+                projected_weight_refs.append(weakref.ref(projected_weight))
+                return (
+                    LocalMXFP8Param(
+                        name=hf_name,
+                        weight=projected_weight,
+                        weight_scale=weight_scale.clone(),
+                        global_weight_shape=torch.Size(projected_weight.shape),
+                        shard_group="tp",
+                        shard_dim=1,
+                    ),
+                )
+
+            monkeypatch.setattr(mapping, "local_mxfp8_params", project)
+            parameters.append(parameter)
+            tasks.append(
+                WeightConversionTask(
+                    param_name=global_name,
+                    global_param_name=global_name,
+                    mapping=mapping,
+                    megatron_module=SimpleNamespace(),
+                    param_weight=parameter,
+                )
+            )
+
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight in parameters)
+
+        iterator = bridge.iter_local_native_mxfp8_params(tasks)
+        first = next(iterator)
+        gc.collect()
+
+        assert len(projected_weight_refs) == len(tasks) + 1
+        assert all(ref() is None for ref in projected_weight_refs[: len(tasks)])
+        assert projected_weight_refs[-1]() is first.weight
+
     def test_native_mxfp8_materialization_validates_all_tasks_before_exposing_results(self, monkeypatch):
         bridge = DummyBridge()
         first_name = "decoder.layers.0.self_attention.linear_proj.weight"
@@ -1262,7 +1316,7 @@ class TestFp8ParamExport:
             "model.layers.1.mlp.experts.3.up_proj.weight",
             "hf.o",
         ]
-        assert grouped_member_calls == [(grouped, False)]
+        assert grouped_member_calls == [(grouped, False), (grouped, False)]
 
     def test_native_mxfp8_materialization_live_storage_refresh(self, monkeypatch):
         bridge = DummyBridge()

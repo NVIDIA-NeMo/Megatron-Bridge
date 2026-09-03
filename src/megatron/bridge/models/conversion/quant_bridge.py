@@ -410,61 +410,64 @@ class MegatronQuantizationBridge:
         self,
         tasks: Iterable["WeightConversionTask"],
     ) -> Iterator["LocalMXFP8Param"]:
-        """Materialize validated local views for native MXFP8 conversion tasks.
+        """Yield validated local views for native MXFP8 conversion tasks.
 
         Args:
             tasks: Conversion tasks in the order they should be materialized.
 
-        Returns:
-            Iterator over a fully validated sequence of canonical local MXFP8
-            value and scale pairs in task, local-expert, and mapping order.
+        Yields:
+            Canonical local MXFP8 value and scale pairs in task, local-expert,
+            and mapping order after every task passes preflight validation.
 
         Raises:
             ValueError: If a native task cannot be represented without conversion.
         """
-        materialized: list[LocalMXFP8Param] = []
-        for task in tasks:
-            if task.param_weight is None:
-                continue
-            if _uses_dtensor_or_fsdp(task.param_weight, task.megatron_module):
-                raise ValueError(
-                    f"{task.global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters"
-                )
-            if is_grouped_mxfp8tensor(task.param_weight):
-                if self._is_mtp_param(task.global_param_name):
-                    raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
-                if not _supports_native_grouped_mxfp8(task.mapping):
-                    raise ValueError(f"{task.global_param_name}: unsupported grouped MXFP8 expert mapping")
-                try:
-                    members = get_grouped_quantized_members(task.param_weight, create_if_missing=False)
-                except (AttributeError, RuntimeError, TypeError, ValueError) as error:
-                    raise ValueError(
-                        f"{task.global_param_name}: unable to access cached grouped MXFP8 members"
-                    ) from error
-                materialized.extend(self._iter_grouped_native_mxfp8_params(task, members))
-                continue
-            if not is_mxfp8tensor(task.param_weight):
-                continue
+        task_sequence = tuple(tasks)
+        # Mapping projections may allocate reordered tensors, so preflight one task at a time.
+        for task in task_sequence:
+            self._materialize_local_native_mxfp8_task(task)
+
+        for task in task_sequence:
+            yield from self._materialize_local_native_mxfp8_task(task)
+
+    def _materialize_local_native_mxfp8_task(
+        self,
+        task: "WeightConversionTask",
+    ) -> tuple["LocalMXFP8Param", ...]:
+        """Materialize and validate one native MXFP8 conversion task."""
+        if task.param_weight is None:
+            return ()
+        if _uses_dtensor_or_fsdp(task.param_weight, task.megatron_module):
+            raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
+        if is_grouped_mxfp8tensor(task.param_weight):
             if self._is_mtp_param(task.global_param_name):
                 raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
-            if not _supports_native_mxfp8_mapping(task.mapping):
-                raise ValueError(
-                    f"{task.global_param_name}: mapping {type(task.mapping).__name__} does not explicitly support "
-                    "exact native MXFP8 projection"
-                )
-            storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
-            materialized.extend(
-                _validate_local_native_mxfp8_params(
-                    task.mapping.local_mxfp8_params(
-                        storage.weight,
-                        storage.weight_scale,
-                        global_param_name=task.global_param_name,
-                        megatron_module=task.megatron_module,
-                    ),
-                    task.global_param_name,
-                )
+            if not _supports_native_grouped_mxfp8(task.mapping):
+                raise ValueError(f"{task.global_param_name}: unsupported grouped MXFP8 expert mapping")
+            try:
+                members = get_grouped_quantized_members(task.param_weight, create_if_missing=False)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+                raise ValueError(f"{task.global_param_name}: unable to access cached grouped MXFP8 members") from error
+            return tuple(self._iter_grouped_native_mxfp8_params(task, members))
+        if not is_mxfp8tensor(task.param_weight):
+            return ()
+        if self._is_mtp_param(task.global_param_name):
+            raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
+        if not _supports_native_mxfp8_mapping(task.mapping):
+            raise ValueError(
+                f"{task.global_param_name}: mapping {type(task.mapping).__name__} does not explicitly support "
+                "exact native MXFP8 projection"
             )
-        return iter(tuple(materialized))
+        storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
+        return _validate_local_native_mxfp8_params(
+            task.mapping.local_mxfp8_params(
+                storage.weight,
+                storage.weight_scale,
+                global_param_name=task.global_param_name,
+                megatron_module=task.megatron_module,
+            ),
+            task.global_param_name,
+        )
 
     def _iter_grouped_native_mxfp8_params(
         self,
