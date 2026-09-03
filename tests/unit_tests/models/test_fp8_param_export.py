@@ -32,13 +32,19 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
     LocalMXFP8Param,
     MegatronParamMapping,
     QKVMapping,
     RowParallelMapping,
     split_qkv_weights,
 )
-from megatron.bridge.models.conversion.quant_bridge import _extract_native_mxfp8_storage
+from megatron.bridge.models.conversion.quant_bridge import (
+    _extract_native_mxfp8_storage,
+    _lookup_grouped_expert_mapping,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -549,6 +555,184 @@ def test_output_native_mxfp8_auto_mapping_rejects_fsdp(monkeypatch):
         )
 
 
+def test_fc1_native_mxfp8_projects_paired_expert_views(monkeypatch):
+    mapping = GatedMLPMapping(
+        "decoder.layers.0.mlp.experts.local_experts.2.linear_fc1.weight",
+        gate="model.layers.0.mlp.experts.2.gate_proj.weight",
+        up="model.layers.0.mlp.experts.2.up_proj.weight",
+    )
+    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    weight = torch.arange(8 * 64, dtype=torch.uint8).view(8, 64).view(torch.float8_e4m3fn)
+    scale = torch.arange(8 * 2, dtype=torch.uint8).view(8, 2)
+
+    projected = mapping.local_mxfp8_params(
+        weight,
+        scale,
+        global_param_name="decoder.layers.0.mlp.experts.local_experts.2.linear_fc1.weight",
+        megatron_module=SimpleNamespace(),
+    )
+
+    assert [param.name for param in projected] == [
+        "model.layers.0.mlp.experts.2.gate_proj.weight",
+        "model.layers.0.mlp.experts.2.up_proj.weight",
+    ]
+    assert [param.global_weight_shape for param in projected] == [(8, 64), (8, 64)]
+    assert all(param.shard_group == "etp" and param.shard_dim == 0 for param in projected)
+    torch.testing.assert_close(projected[0].weight.view(torch.uint8), weight[:4].view(torch.uint8))
+    torch.testing.assert_close(projected[1].weight.view(torch.uint8), weight[4:].view(torch.uint8))
+    torch.testing.assert_close(projected[0].weight_scale, scale[:4])
+    torch.testing.assert_close(projected[1].weight_scale, scale[4:])
+
+
+def test_fc2_native_mxfp8_projects_ordinary_expert_with_etp_metadata(monkeypatch):
+    mapping = AutoMapping(
+        "decoder.layers.0.mlp.experts.local_experts.2.linear_fc2.weight",
+        "model.layers.0.mlp.experts.2.down_proj.weight",
+    )
+    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    module = type("TERowParallelLinear", (), {})()
+    weight = torch.arange(64 * 32, dtype=torch.uint8).view(64, 32).view(torch.float8_e4m3fn)
+    scale = torch.arange(64, dtype=torch.uint8).view(64, 1)
+
+    projected = mapping.local_mxfp8_params(
+        weight,
+        scale,
+        global_param_name="decoder.layers.0.mlp.experts.local_experts.2.linear_fc2.weight",
+        megatron_module=module,
+    )
+
+    assert len(projected) == 1
+    assert projected[0].name == "model.layers.0.mlp.experts.2.down_proj.weight"
+    assert projected[0].weight is weight
+    assert projected[0].weight_scale is scale
+    assert projected[0].global_weight_shape == (64, 64)
+    assert projected[0].shard_group == "etp"
+    assert projected[0].shard_dim == 1
+
+
+def test_grouped_fc1_native_mxfp8_uses_global_expert_ids(monkeypatch):
+    mapping = FusedGatedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+        "model.layers.0.mlp.experts.gate_up_proj",
+    )
+    monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=1))
+    monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=2))
+    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    members = torch.arange(2 * 8 * 64, dtype=torch.uint8).view(2, 8, 64).view(torch.float8_e4m3fn)
+    scales = torch.arange(2 * 8 * 2, dtype=torch.uint8).view(2, 8, 2)
+
+    projected = []
+    for local_expert_id in range(2):
+        global_expert_id = mapping.ep_rank * 2 + local_expert_id
+        projected.extend(
+            mapping.local_mxfp8_params(
+                members[local_expert_id],
+                scales[local_expert_id],
+                global_param_name=f"decoder.layers.0.mlp.experts.linear_fc1.weight{global_expert_id}",
+                megatron_module=SimpleNamespace(),
+            )
+        )
+
+    assert [param.name for param in projected] == [
+        "model.layers.0.mlp.experts.2.gate_proj.weight",
+        "model.layers.0.mlp.experts.2.up_proj.weight",
+        "model.layers.0.mlp.experts.3.gate_proj.weight",
+        "model.layers.0.mlp.experts.3.up_proj.weight",
+    ]
+    assert all(param.shard_group == "etp" and param.shard_dim == 0 for param in projected)
+    assert all(param.weight.shape == (4, 64) and param.weight_scale.shape == (4, 2) for param in projected)
+    assert all(param.global_weight_shape == (8, 64) for param in projected)
+
+
+def test_grouped_fc2_native_mxfp8_uses_global_expert_ids(monkeypatch):
+    mapping = FusedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        "model.layers.0.mlp.experts.down_proj",
+    )
+    monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=1))
+    monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=2))
+    monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+    members = torch.arange(2 * 64 * 32, dtype=torch.uint8).view(2, 64, 32).view(torch.float8_e4m3fn)
+    scales = torch.arange(2 * 64, dtype=torch.uint8).view(2, 64, 1)
+
+    projected = []
+    for local_expert_id in range(2):
+        global_expert_id = mapping.ep_rank * 2 + local_expert_id
+        projected.extend(
+            mapping.local_mxfp8_params(
+                members[local_expert_id],
+                scales[local_expert_id],
+                global_param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{global_expert_id}",
+                megatron_module=SimpleNamespace(),
+            )
+        )
+
+    assert [param.name for param in projected] == [
+        "model.layers.0.mlp.experts.2.down_proj.weight",
+        "model.layers.0.mlp.experts.3.down_proj.weight",
+    ]
+    assert all(param.shard_group == "etp" and param.shard_dim == 1 for param in projected)
+    assert all(param.weight.shape == (64, 32) and param.weight_scale.shape == (64, 1) for param in projected)
+    assert all(param.global_weight_shape == (64, 64) for param in projected)
+
+
+def test_fc1_native_mxfp8_rejects_odd_rows():
+    mapping = GatedMLPMapping(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+        gate="model.layers.0.mlp.experts.0.gate_proj.weight",
+        up="model.layers.0.mlp.experts.0.up_proj.weight",
+    )
+
+    with pytest.raises(ValueError, match=r"decoder\.layers\.0.*even"):
+        mapping.local_mxfp8_params(
+            torch.zeros((7, 64), dtype=torch.float8_e4m3fn),
+            torch.zeros((7, 2), dtype=torch.uint8),
+            global_param_name="decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+            megatron_module=SimpleNamespace(),
+        )
+
+
+def test_fc1_native_mxfp8_rejects_fsdp(monkeypatch):
+    mapping = GatedMLPMapping(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+        gate="model.layers.0.mlp.experts.0.gate_proj.weight",
+        up="model.layers.0.mlp.experts.0.up_proj.weight",
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.param_mapping._module_uses_fsdp",
+        lambda _module: True,
+    )
+
+    with pytest.raises(ValueError, match=r"decoder\.layers\.0.*DTensor/FSDP"):
+        mapping.local_mxfp8_params(
+            torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+            torch.zeros((8, 2), dtype=torch.uint8),
+            global_param_name="decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+            megatron_module=SimpleNamespace(),
+        )
+
+
+@pytest.mark.parametrize("mapping_cls", [FusedGatedExpertMapping, FusedExpertMapping])
+@pytest.mark.parametrize("transform", ["permute_dims", "transpose_on_export"])
+def test_grouped_native_mxfp8_rejects_export_transforms(mapping_cls, transform):
+    kwargs = {transform: (1, 0) if transform == "permute_dims" else True}
+    suffix = "linear_fc1.weight0" if mapping_cls is FusedGatedExpertMapping else "linear_fc2.weight0"
+    hf_name = "gate_up_proj" if mapping_cls is FusedGatedExpertMapping else "down_proj"
+    mapping = mapping_cls(
+        f"decoder.layers.0.mlp.experts.{suffix}",
+        f"model.layers.0.mlp.experts.{hf_name}",
+        **kwargs,
+    )
+
+    with pytest.raises(ValueError, match=r"decoder\.layers\.0.*mapping transforms"):
+        mapping.local_mxfp8_params(
+            torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+            torch.zeros((8, 2), dtype=torch.uint8),
+            global_param_name=f"decoder.layers.0.mlp.experts.{suffix}",
+            megatron_module=SimpleNamespace(),
+        )
+
+
 class TestHFNameSuffixMapping:
     def test_getattr(self):
         base = SimpleNamespace(megatron_param="m.w", hf_param="h.w", extra=123)
@@ -601,6 +785,163 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    def test_build_export_mxfp8_tasks_keeps_resolved_expert_mapping_ordinary(self):
+        global_name = "decoder.layers.0.mlp.experts.local_experts.2.linear_fc1.weight"
+        mapping = FusedGatedExpertMapping(global_name, "model.layers.0.mlp.experts.gate_up_proj")
+
+        class Registry:
+            def megatron_to_hf_lookup(self, name):
+                return mapping if name == global_name else None
+
+        assert _lookup_grouped_expert_mapping(Registry(), global_name) is None
+
+    def test_build_export_mxfp8_tasks_classifies_grouped_experts_by_mapping(self, monkeypatch):
+        bridge = DummyBridge()
+        grouped = "decoder.layers.0.mlp.pool.experts.linear_fc1.weight"
+        parameter = torch.nn.Parameter(torch.zeros(2, 8, 64))
+        mapping = FusedGatedExpertMapping(
+            f"{grouped}0",
+            "model.layers.0.mlp.experts.gate_up_proj",
+        )
+
+        class Registry:
+            def set_process_groups_from_pg_collection(self, _pg_collection):
+                pass
+
+            def megatron_to_hf_lookup(self, name):
+                return mapping if name == f"{grouped}0" else None
+
+        config = SimpleNamespace(
+            expert_model_parallel_size=1,
+            moe_single_grouped_weight=True,
+            num_moe_experts=2,
+            share_embeddings_and_output_weights=False,
+        )
+        model = SimpleNamespace(config=config, named_parameters=lambda: [(grouped, parameter)])
+        grouped_member_calls = []
+        monkeypatch.setattr(bridge, "mapping_registry", Registry)
+        monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+        monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: [grouped])
+        monkeypatch.setattr(bridge, "_validate_conversion_mappings", lambda _registry, names, _hf_keys: {})
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 0)
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda models: models)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
+        monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *_args: grouped)
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda *_args: (SimpleNamespace(config=config), parameter),
+        )
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is parameter)
+        monkeypatch.setattr(
+            f"{_QUANT_MB}.get_grouped_quantized_members",
+            lambda weight, *, create_if_missing: (
+                grouped_member_calls.append((weight, create_if_missing)) or list(weight.unbind(0))
+            ),
+        )
+
+        tasks = bridge.build_export_mxfp8_tasks(SimpleNamespace(config=SimpleNamespace()), [model])
+
+        assert [task.global_param_name for task in tasks] == [grouped]
+        assert tasks[0].mapping is mapping
+        assert tasks[0].param_weight is parameter
+        assert grouped_member_calls == [(parameter, True)]
+
+    def test_build_export_mxfp8_tasks_rejects_grouped_member_count_mismatch(self, monkeypatch):
+        bridge = DummyBridge()
+        grouped = "decoder.layers.0.mlp.pool.experts.linear_fc2.weight"
+        parameter = torch.nn.Parameter(torch.zeros(2, 64, 32))
+        mapping = FusedExpertMapping(f"{grouped}0", "model.layers.0.mlp.experts.down_proj")
+
+        class Registry:
+            def set_process_groups_from_pg_collection(self, _pg_collection):
+                pass
+
+            def megatron_to_hf_lookup(self, name):
+                return mapping if name == f"{grouped}0" else None
+
+        config = SimpleNamespace(
+            expert_model_parallel_size=1,
+            moe_single_grouped_weight=True,
+            num_moe_experts=2,
+            share_embeddings_and_output_weights=False,
+        )
+        model = SimpleNamespace(config=config, named_parameters=lambda: [(grouped, parameter)])
+        monkeypatch.setattr(bridge, "mapping_registry", Registry)
+        monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+        monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda _models: [grouped])
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 0)
+        monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda models: models)
+        monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
+        monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *_args: grouped)
+        monkeypatch.setattr(
+            f"{_MODEL_MB}.get_module_and_param_from_name",
+            lambda *_args: (SimpleNamespace(config=config), parameter),
+        )
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is parameter)
+        monkeypatch.setattr(
+            f"{_QUANT_MB}.get_grouped_quantized_members",
+            lambda _weight, *, create_if_missing: [parameter[0]],
+        )
+
+        with pytest.raises(ValueError, match=rf"{grouped}.*1 local members.*expected 2"):
+            bridge.build_export_mxfp8_tasks(SimpleNamespace(config=SimpleNamespace()), [model])
+
+    def test_grouped_native_mxfp8_rejects_missing_cached_members():
+        bridge = DummyBridge()
+        grouped = "decoder.layers.0.mlp.experts.linear_fc2.weight"
+        task = WeightConversionTask(
+            pp_rank=0,
+            vp_stage=0,
+            param_name=grouped,
+            global_param_name=grouped,
+            megatron_module=SimpleNamespace(config=SimpleNamespace(num_moe_experts=2)),
+            param_weight=torch.nn.Parameter(torch.zeros(2, 64, 32)),
+            mapping=FusedExpertMapping(f"{grouped}0", "model.layers.0.mlp.experts.down_proj"),
+        )
+
+        with pytest.raises(ValueError, match=rf"{grouped}.*cached grouped MXFP8 members"):
+            tuple(bridge._iter_grouped_native_mxfp8_params(task, None))
+
+    def test_grouped_native_mxfp8_projection_computes_global_expert_ids(self, monkeypatch):
+        bridge = DummyBridge()
+        grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
+        mapping = FusedGatedExpertMapping(
+            f"{grouped}0",
+            "model.layers.0.mlp.experts.gate_up_proj",
+        )
+        monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=1))
+        monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=2))
+        monkeypatch.setattr(type(mapping), "etp_size", PropertyMock(return_value=2))
+        members = []
+        for expert_id in range(2):
+            member = _FakeNativeMXFP8Tensor()
+            member.shape = torch.Size((8, 64))
+            member.data_bytes = torch.full((8, 64), expert_id, dtype=torch.uint8)
+            member.scale_bytes = torch.full((8, 2), expert_id + 1, dtype=torch.uint8)
+            members.append(member)
+        task = WeightConversionTask(
+            pp_rank=0,
+            vp_stage=0,
+            param_name=grouped,
+            global_param_name=grouped,
+            megatron_module=SimpleNamespace(config=SimpleNamespace(num_moe_experts=4)),
+            param_weight=torch.nn.Parameter(torch.zeros(2, 8, 64)),
+            mapping=mapping,
+        )
+
+        projected = tuple(bridge._iter_grouped_native_mxfp8_params(task, members))
+
+        assert [param.name for param in projected] == [
+            "model.layers.0.mlp.experts.2.gate_proj.weight",
+            "model.layers.0.mlp.experts.2.up_proj.weight",
+            "model.layers.0.mlp.experts.3.gate_proj.weight",
+            "model.layers.0.mlp.experts.3.up_proj.weight",
+        ]
+        assert [torch.unique(param.weight.view(torch.uint8)).item() for param in projected] == [0, 0, 1, 1]
+        assert [torch.unique(param.weight_scale).item() for param in projected] == [1, 1, 2, 2]
+
     def test_build_export_mxfp8_tasks_keeps_native_grouped_global_order_and_vp_stage(self, monkeypatch):
         bridge = DummyBridge()
         dense_first = "decoder.layers.0.self_attention.linear_qkv.weight"
@@ -615,7 +956,10 @@ class TestFp8ParamExport:
         }
         mappings = {
             dense_first: _IdentityMapping("hf.dense_first", dense_first),
-            f"{grouped}0": _IdentityMapping("hf.grouped.0", f"{grouped}0"),
+            f"{grouped}0": FusedGatedExpertMapping(
+                f"{grouped}0",
+                "hf.grouped.gate_up_proj",
+            ),
             dense_last: _IdentityMapping("hf.dense_last", dense_last),
         }
 
@@ -780,7 +1124,6 @@ class TestFp8ParamExport:
             lambda *_args: (SimpleNamespace(config=config), parameter),
         )
         monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
-
         tasks = bridge.build_export_mxfp8_tasks(SimpleNamespace(config=SimpleNamespace()), [model])
 
         assert [task.global_param_name for task in tasks] == [f"{grouped}2", f"{grouped}3"]
@@ -810,6 +1153,9 @@ class TestFp8ParamExport:
         class Registry:
             def set_process_groups_from_pg_collection(self, _pg_collection):
                 pass
+
+            def megatron_to_hf_lookup(self, _name):
+                return None
 
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
