@@ -98,6 +98,8 @@ class LocalHFParamSpec:
 
 @dataclass(frozen=True)
 class LocalMXFP8Param:
+    """A local native MXFP8 weight and its matching E8M0 scale tensor."""
+
     name: str
     weight: torch.Tensor
     weight_scale: torch.Tensor
