@@ -36,6 +36,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 _QKV_GLOBAL = "decoder.layers.0.self_attention.linear_qkv.weight"
 _MODEL_MB = "megatron.bridge.models.conversion.model_bridge"
+_QUANT_MB = "megatron.bridge.models.conversion.quant_bridge"
 
 
 def _make_qkv_mapping_type(global_name: str = _QKV_GLOBAL):
@@ -226,15 +227,12 @@ class TestFp8ParamExport:
                 weights_by_vp[(vp_stage, local_name)],
             ),
         )
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is native_grouped_weight)
         monkeypatch.setattr(
-            f"{_MODEL_MB}.is_grouped_mxfp8tensor", lambda weight: weight is native_grouped_weight, raising=False
-        )
-        monkeypatch.setattr(
-            f"{_MODEL_MB}.get_grouped_quantized_members",
+            f"{_QUANT_MB}.get_grouped_quantized_members",
             lambda weight, *, create_if_missing: (
                 grouped_member_calls.append((weight, create_if_missing)) or list(weight.unbind(0))
             ),
-            raising=False,
         )
         hf_pretrained = SimpleNamespace(
             config=SimpleNamespace(),
@@ -291,7 +289,7 @@ class TestFp8ParamExport:
             f"{_MODEL_MB}.get_module_and_param_from_name",
             lambda *_args: (SimpleNamespace(config=config), parameter),
         )
-        monkeypatch.setattr(f"{_MODEL_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
         hf_pretrained = SimpleNamespace(config=SimpleNamespace())
 
         tasks = bridge.build_export_mxfp8_tasks(hf_pretrained, [model])
