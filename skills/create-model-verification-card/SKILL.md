@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce the required core inventory, convergence-versus-performance contracts, optional canonical performance item, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, performance, or weak-scaling results, or preparing a model-support PR. Enforce the required core inventory, convergence-versus-performance contracts, optional performance items, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -110,6 +110,37 @@ shape when there is only one FSDP run. A precision variant repeats its
 precision as a scalar so agents do not have to infer workload facts from a
 mapping key.
 
+Add `pretrain_weak_scaling` only when at least two completed runs use the same
+canonical performance recipe, precision, sequence length, maximum step count,
+and GPUs per node while global batch size grows in direct proportion to total
+GPU count. Omit it from models without measured scaling data. Put it last in
+`items`, key it by public hardware, and keep shared provenance on the hardware
+leaf. Each ordered point records only its GPU count, GBS, public command, and
+the standard five training metrics:
+
+```yaml
+pretrain_weak_scaling:
+  GB300:
+    status: verified
+    precision: fp8_mx
+    bridge_commit: 0123456789abcdef0123456789abcdef01234567
+    last_verified: 2026-08-15
+    points:
+      - num_gpus: 8
+        global_batch_size: 512
+        command: >
+          ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+          --recipe example_pretrain_config --mode pretrain --max_steps 50
+          --seq_length 4096 --global_batch_size 512
+        metrics: # standard five training metrics
+    expected_result: All points complete with finite metrics and no skipped or NaN iterations.
+```
+
+The weak-scaling item is the sole exception that may set global batch size in
+the public command. It must not override micro batch size. Record raw point
+metrics only; derive aggregate throughput and scaling efficiency when reading
+the card rather than storing comparison payloads.
+
 A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
 performance recipe exists for that hardware. Its item status states whether
 the card's benchmark run has been verified; an `unverified` leaf still records
@@ -147,8 +178,9 @@ items:
 
 The hardware-scoped names are `pretrain`, `sft`, `sft_export_inference`,
 `sft_long_context`, `peft`, `checkpoint_resume`, and optional
-`pretrain_performance` and `pretrain_fsdp`. Use canonical public accelerator
-identifiers such as `H100`, `B200`, or `GB200`, never a private cluster name.
+`pretrain_performance`, `pretrain_fsdp`, and `pretrain_weak_scaling`. Use
+canonical public accelerator identifiers such as `H100`, `B200`, or `GB200`,
+never a private cluster name.
 The validator's public-hardware allowlist is authoritative and must be updated
 when a new accelerator target is introduced. The hardware key replaces the old
 `gpu_type` field. Each hardware leaf is independent and must carry its own
@@ -178,7 +210,8 @@ hardware-scoped items: `pretrain`, `sft`, `sft_export_inference`,
 `pretrain_performance` item separate under `performance`; omit `performance`
 when the card has no canonical performance recipe. Keep optional
 `pretrain_fsdp` leaves separate under `fsdp`; omit `fsdp` when the card has no
-FSDP recipe.
+FSDP recipe. Mirror optional `pretrain_weak_scaling` leaves under
+`weak_scaling`; omit that index when the card has no measured scaling item.
 
 Group item names under the same four status names used by the detailed items.
 For an explicitly indexed hardware target with no corresponding item leaf,
@@ -222,6 +255,13 @@ When an FSDP recipe exists, mirror only its concrete leaves:
 ```yaml
   fsdp:
     GB200: verified
+```
+
+When weak-scaling measurements exist, mirror only their concrete leaves:
+
+```yaml
+  weak_scaling:
+    GB300: verified
 ```
 
 For a multi-variant FSDP hardware container, this scalar mirrors the aggregate
@@ -690,7 +730,9 @@ preserves semantics, and require the resume loss sentinels to pass.
 Use the batch sizes defined by the selected recipe. A model verification card
 must not override global or micro batch size. If a recipe batch size is wrong,
 change and validate the recipe separately instead of hiding the change in the
-card command.
+card command. The only exception is `pretrain_weak_scaling`: explicitly set GBS
+at every point and scale it proportionally with total GPUs while leaving MBS
+and the rest of the recipe unchanged.
 
 ### 6. Record training metrics consistently
 
@@ -700,7 +742,23 @@ For every verified training item, record:
 - `final_loss`: loss at its final optimizer step;
 - `last_10_steps_step_time_ms_avg`: arithmetic mean over the final 10 executed
   optimizer steps;
-- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
+- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows;
+- `last_10_steps_tokens_per_second_per_gpu_avg`: token-slot throughput derived
+  from the same final-10-step average. Compute token slots per optimizer step as
+  `packed_sequence_size * global_batch_size` for packed training, or
+  `effective_seq_length * global_batch_size` otherwise, then divide by
+  `(last_10_steps_step_time_ms_avg / 1000) * total_gpus`.
+
+For `pretrain_weak_scaling`, record these five metrics independently under
+every point. The validator derives `total_gpus` from the command, checks the
+recorded GPU count and TPS/GPU, and requires constant token slots per GPU per
+step across the ordered points.
+
+Use recipe-owned batch size and the resolved sequence or pack length, and
+derive `total_gpus` from the public command's positive node and GPU counts.
+Count total token slots, not supervised or loss-bearing tokens. This metric is
+training-only; do not add it to inference results. When a training leaf is not
+verified, record this metric as `null` alongside its other training metrics.
 
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
@@ -774,6 +832,9 @@ an item verified merely to make validation pass.
   recipe has a completed standalone verification run. Use precision-keyed
   variants under one hardware container when multiple FSDP runs exist for the
   same hardware, and make the container status summarize every variant.
+- Include `pretrain_weak_scaling` only after at least two proportional-GBS
+  points complete on the same public hardware, recipe, precision, sequence
+  length, step count, and GPUs-per-node layout; otherwise omit it.
 - Start the summary with the exact untuned performance disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
@@ -797,7 +858,7 @@ an item verified merely to make validation pass.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Put every training result under its canonical public hardware key and include
-  all four metrics for each verified training leaf; never record a private
+  all five metrics for each verified training leaf; never record a private
   cluster name or retain the old `gpu_type` field.
 - Keep `verification_index` synchronized with `items`, omit empty status
   buckets, list every item name explicitly, and never use the scalar `all` in
@@ -811,7 +872,9 @@ an item verified merely to make validation pass.
 - Keep performance leaves free of control payloads, computed deltas, speedups,
   and comparison prose. Mention two runs together only to warn that differing
   convergence contracts make them unsuitable for comparison.
-- Leave recipe global and micro batch sizes unchanged in card commands.
+- Leave recipe global and micro batch sizes unchanged in ordinary card
+  commands. Only weak-scaling points may set proportional GBS; never override
+  MBS there.
 - Save full SFT, export it to HF, and record the deterministic HF completion
   plus actual generated-token count under an explicit maximum bound in a
   two-command ordered list.

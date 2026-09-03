@@ -69,6 +69,7 @@ def _load_module():
         "energon",
         "squad",
         "tulu3",
+        "coderforge",
         "openmathinstruct2",
         "openmathinstruct2-thinking",
         "gsm8k",
@@ -475,7 +476,7 @@ def test_benchmark_finetuning_recipes_use_unified_runner(monkeypatch, mode, task
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
-def test_library_only_canonical_name_bootstraps_environment_without_enabling_benchmark_runtime():
+def test_library_only_canonical_name_applies_runtime_environment_without_restart():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
 
@@ -488,8 +489,38 @@ def test_library_only_canonical_name_bootstraps_environment_without_enabling_ben
         ]
     )
 
-    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    handles.recipe_runner.apply_runtime_environment.assert_called_once_with(
+        handles.recipe_runner.load_recipe.return_value
+    )
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
+
+
+def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("NVTE_CPU_OFFLOAD_V1", raising=False)
+    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    bootstrap_call = handles.recipe_runner.bootstrap_recipe_environment.call_args
+    assert bootstrap_call.args == (config,)
+    assert bootstrap_call.kwargs["script_path"].endswith("scripts/training/run_recipe.py")
+    handles.recipe_runner.apply_runtime_environment.assert_not_called()
+
+
+def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("NVTE_CPU_OFFLOAD_V1", "0")
+    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
+
+    handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
 
 
 def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):
@@ -895,12 +926,13 @@ def test_named_finetuning_dataset_maps_to_internal_config():
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, [])
 
 
-def test_tulu3_dataset_is_listed_in_launcher_help():
+@pytest.mark.parametrize("dataset_name", ["tulu3", "coderforge"])
+def test_named_dataset_is_listed_in_launcher_help(dataset_name):
     module, _ = _load_module()
 
     help_text = module._build_parser().format_help()
 
-    assert "tulu3" in help_text
+    assert dataset_name in help_text
 
 
 @pytest.mark.parametrize(
@@ -1444,4 +1476,5 @@ def test_config_container_overrides_are_forwarded_directly():
         config,
         ["train.train_iters=3", "train.global_batch_size=8", "train.micro_batch_size=1"],
     )
-    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()

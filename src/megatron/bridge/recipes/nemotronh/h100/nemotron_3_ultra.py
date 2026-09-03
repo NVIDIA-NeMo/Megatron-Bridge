@@ -206,8 +206,8 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.model.init_model_with_meta_device = True
 
-    # EP64 leaves one expert-data-parallel replica at this scale, so HSDP is
-    # disabled and the dense DP64 group is a single FSDP shard.
+    # Use one distributed-optimizer instance so this memory-feasible profile
+    # uses pure FSDP rather than an outer HSDP group.
     cfg.ddp.num_distributed_optimizer_instances = 1
     cfg.ddp.outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.float32

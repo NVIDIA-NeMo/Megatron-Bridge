@@ -1,5 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+import json
+
 import pytest
 
 from megatron.bridge.data.sources import hf as source_module
@@ -229,6 +231,29 @@ def test_tulu3_preset_uses_current_native_chat_dataset(monkeypatch):
     assert resolved.schema_adapter is None
     assert calls == [("allenai/tulu-3-sft-mixture", "train", {})]
     assert adapted == rows
+
+
+def test_coderforge_preset_selects_swe_rebench_and_decodes_rows(monkeypatch):
+    messages = [{"role": "assistant", "content": "done"}]
+    tools = [{"type": "function", "function": {"name": "finish"}}]
+    calls = []
+
+    def _load_dataset(path, subset, *, split, **kwargs):
+        calls.append((path, subset, split, kwargs))
+        return [{"messages": json.dumps(messages), "tools": json.dumps(tools), "image": "runner/image"}]
+
+    monkeypatch.setattr(source_module, "load_dataset", _load_dataset)
+    source = HFDatasetSourceConfig(dataset_name="coderforge", split="SWE_Rebench[:64]")
+
+    resolved = resolve_hf_dataset_source(source)
+    adapted = load_and_adapt_hf_dataset(source)
+
+    assert resolved.path_or_dataset == "togethercomputer/CoderForge-Preview"
+    assert resolved.subset == "trajectories"
+    assert resolved.split == "SWE_Rebench[:64]"
+    assert resolved.schema_adapter == "coderforge"
+    assert calls == [("togethercomputer/CoderForge-Preview", "trajectories", "SWE_Rebench[:64]", {})]
+    assert adapted == [{"messages": messages, "tools": tools, "environment_image": "runner/image"}]
 
 
 def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):

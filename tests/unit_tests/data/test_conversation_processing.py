@@ -1310,6 +1310,106 @@ def test_gpt_oss_harmony_assistant_mask_covers_analysis_and_final_channels():
     assert all(mask[position] for position in reasoning_positions + answer_positions)
 
 
+class _Gemma4ToolCallBoundaryTokenizer(_Tokenizer):
+    chat_template = (
+        "{% if add_generation_prompt %}<|turn>model\n{% endif %}"
+        "{% for message in messages %}<|turn>{{ message.role }}{{ message.content }}"
+        "{% if message.tool_calls %}<|tool_call>{{ message.tool_calls }}<tool_call|><|tool_response>{% endif %}"
+        "<turn|>{% endfor %}"
+    )
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<|turn>model\n": [10],
+            "<turn|>": [11],
+            "<|tool_response>": [12],
+            "<tool_response|>": [13],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        **kwargs,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = []
+        previous_non_tool_role = None
+        for turn_index, turn in enumerate(conversation):
+            role = turn["role"]
+            if role == "user":
+                input_ids.extend([20, 21, 11])
+            elif role == "assistant":
+                if previous_non_tool_role != "assistant":
+                    input_ids.append(10)
+                if turn.get("tool_calls"):
+                    input_ids.append(30)
+                    following_turn = conversation[turn_index + 1] if turn_index + 1 < len(conversation) else None
+                    if following_turn is not None and following_turn["role"] == "tool":
+                        input_ids.extend([12, 40, 13])
+                    else:
+                        input_ids.append(12)
+                if turn.get("content"):
+                    input_ids.append(50)
+                if not turn.get("tool_calls"):
+                    input_ids.append(11)
+                previous_non_tool_role = role
+        return {"input_ids": input_ids}
+
+
+@pytest.mark.parametrize(
+    ("trailing_messages", "expected_input_ids", "expected_mask", "expected_final_start"),
+    [
+        ([], [20, 21, 11, 10, 30, 12], [False, False, False, False, True, True], 4),
+        (
+            [
+                {"role": "tool", "tool_call_id": "call-1", "content": '{"temperature":"72F"}'},
+                {"role": "assistant", "content": "It is 72F."},
+            ],
+            [20, 21, 11, 10, 30, 12, 40, 13, 50, 11],
+            [False, False, False, False, True, True, False, False, True, True],
+            8,
+        ),
+    ],
+)
+def test_gemma4_tool_call_assistant_mask_and_generation_boundary(
+    trailing_messages,
+    expected_input_ids,
+    expected_mask,
+    expected_final_start,
+):
+    messages = [
+        {"role": "user", "content": "Weather?"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": '{"city":"Denver"}'},
+                }
+            ],
+        },
+        *trailing_messages,
+    ]
+
+    tokenized = tokenize_chat_example(
+        {"messages": messages},
+        _Gemma4ToolCallBoundaryTokenizer(),
+        return_final_assistant_start=True,
+    )
+
+    assert tokenized.input_ids.tolist() == expected_input_ids
+    assert tokenized.assistant_mask.tolist() == expected_mask
+    assert tokenized.final_assistant_start == expected_final_start
+
+
 @pytest.mark.parametrize("column", ["messages", "conversation", "conversations"])
 def test_shared_chat_preprocessing_supports_all_declared_conversation_columns(column):
     turns = [
@@ -1337,6 +1437,48 @@ def test_shared_chat_preprocessing_normalizes_sharegpt_roles_before_templating()
 
     assert [turn["role"] for turn in tokenized.conversation] == ["user", "assistant"]
     assert tokenized.assistant_mask.any()
+
+
+def test_normalize_chat_conversation_normalizes_openai_tool_calls_without_mutating_input():
+    row = {
+        "messages": [
+            {"role": "user", "content": "Weather?"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {"name": "lookup", "arguments": '{"city":"Seattle"}'},
+                    }
+                ],
+            },
+        ]
+    }
+
+    normalized = normalize_chat_conversation(row)
+
+    assert normalized[1]["content"] == ""
+    assert normalized[1]["tool_calls"][0]["function"]["arguments"] == {"city": "Seattle"}
+    assert row["messages"][1]["content"] is None
+    assert row["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"city":"Seattle"}'
+
+
+@pytest.mark.parametrize("arguments", ["not JSON", "[]", '"Seattle"'])
+def test_normalize_chat_conversation_rejects_invalid_openai_tool_call_arguments(arguments):
+    row = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"type": "function", "function": {"name": "lookup", "arguments": arguments}}],
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match=r"function\.arguments must be (valid JSON|a JSON object)"):
+        normalize_chat_conversation(row)
 
 
 def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():

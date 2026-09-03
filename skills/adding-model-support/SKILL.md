@@ -178,6 +178,36 @@ reusable across multiple model families.
 Shared conversion infrastructure provides hooks and base classes — subclass them locally rather
 than adding conditionals to shared code.
 
+#### Prefer Transformer Engine normalization
+
+Before implementing a model-specific normalization with raw PyTorch operations, inspect the exact
+Transformer Engine revision in `pyproject.toml`/`uv.lock`, its upstream module API, and Megatron-Core's
+`TENorm` adapter. Production Bridge model code should assume Transformer Engine is installed. Use
+`TENorm` or the corresponding TE module directly for LayerNorm and RMSNorm; do not add model-local
+norm wrappers, copy an existing norm implementation, gate the norm on `HAVE_TE`, or provide a
+`torch.nn` fallback. Preserve `eps`, parameter dtype/device initialization, sequence-parallel
+metadata, and `zero_centered_gamma`; standard-gamma and zero-centered-gamma norms are not
+interchangeable. The attention/linear backend and normalization choice are independent, so a local
+attention spec should still use TE normalization.
+
+Treat a custom norm implementation as an architectural exception, not a compatibility pattern. It
+is allowed only when the pinned TE API cannot represent the model's exact mathematical and parameter
+contract, such as a genuinely parameter-free RMSNorm while TE requires an affine weight. Prefer a
+framework-native module such as `torch.nn.RMSNorm(elementwise_affine=False)` or a direct functional
+call over a model-local wrapper or copied formula. Document the missing TE capability and test that
+the exception introduces no checkpoint parameter. Do not create a wrapper or fallback for ordinary
+affine normalization.
+
+Do not introduce a dummy affine parameter merely to reach a fused kernel. For example, current TE
+RMSNorm always owns a learnable `weight`, so a genuinely weightless/scaleless RMSNorm must retain a
+parameter-free implementation until TE exposes matching semantics. Adding an all-ones frozen weight
+would change state-dict keys, optimizer state, distributed-checkpoint schema, and conversion coverage.
+
+TE and reference framework kernels can differ numerically even when their architecture and weights
+match. Keep exact HF↔Megatron weight round-trip as the conversion gate, then assess forward behavior
+with the correlation criteria in the parity-testing skill rather than reverting to a slower norm only
+to reproduce one framework's operation ordering.
+
 #### Strategy 1: Create a local mapping subclass
 
 If the model has a layer whose weight layout doesn't match any existing mapping class, create a

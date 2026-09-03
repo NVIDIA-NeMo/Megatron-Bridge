@@ -28,7 +28,10 @@ from megatron.bridge.training.mixed_precision import (
 )
 
 
-def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> None:
+def _benchmark_common(
+    cfg: ConfigContainer,
+    cross_entropy_impl: str = "te",
+) -> None:
     """Apply benchmark-mode defaults that prioritize throughput measurement over convergence.
 
     Intended for performance benchmark recipes only. Sets short training runs,
@@ -64,6 +67,9 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
     cfg.scheduler.lr_warmup_iters = 10
 
+    if getattr(cfg.model, "num_moe_experts", None):
+        cfg.model.moe_router_force_load_balancing = True
+
     if hasattr(cfg.model, "use_transformer_engine_op_fuser") and cfg.model.use_transformer_engine_op_fuser:
         cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.apply_rope_fusion = True
@@ -87,13 +93,6 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
 
     if getattr(cfg.model, "moe_flex_dispatcher_backend", None) == "hybridep":
         cfg.model.moe_hybridep_num_sms = 32
-
-
-def _enable_overlap_param_gather_with_optimizer_step(cfg: ConfigContainer) -> None:
-    """Enable optimizer-step parameter gather overlap on optimizer and comm-overlap configs."""
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = True
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
 
 def _perf_precision(compute_dtype: str):

@@ -518,6 +518,7 @@ class TestQwen35MoEBridge:
         assert result.moe_grouped_gemm is True
         assert result.moe_shared_expert_intermediate_size == mock_qwen3_5_moe_config.shared_expert_intermediate_size
         assert result.moe_shared_expert_gate is True
+        assert result.moe_router_dtype == "fp32"
 
     def test_provider_bridge_normalization(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test normalization configuration."""

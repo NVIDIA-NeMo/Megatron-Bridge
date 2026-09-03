@@ -110,6 +110,7 @@ def ministral3_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -225,6 +226,7 @@ def ministral3_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -340,6 +342,7 @@ def ministral3_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -464,6 +467,7 @@ def ministral3_3b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -588,6 +592,7 @@ def ministral3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -712,6 +717,7 @@ def ministral3_14b_peft_2gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") 
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False

@@ -67,6 +67,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.transformer_config import _enable_safe_hybridep_dispatch
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -497,6 +498,16 @@ class TrainingConfig(MTrainTrainingConfig):
 class CheckpointConfig(MTrainCheckpointConfig):
     """Configuration settings for model checkpointing (saving and loading)."""
 
+    stage_precision_aware_optimizer_state_on_cpu: bool = False
+    """Stage expanded precision-aware Transformer Engine optimizer state on CPU.
+
+    Enable this when reduced-precision Adam state fits during training but its
+    portable FP32 checkpoint representation would exceed available GPU memory.
+    The checkpoint values and dtypes are unchanged; only their device during
+    state-dict construction is affected. Supported only for ``torch_dist``
+    checkpoints.
+    """
+
     pretrained_checkpoint: Optional[str] = None
     """Directory containing a pretrained model checkpoint for finetuning.
 
@@ -598,9 +609,22 @@ class CheckpointConfig(MTrainCheckpointConfig):
         if self.load_main_params_from_ckpt:
             assert not self.load_optim, "load_main_params_from_ckpt must be used with load_optim=False"
 
+        if self.stage_precision_aware_optimizer_state_on_cpu and self.ckpt_format != "torch_dist":
+            raise ValueError("stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'.")
+
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
+
+        if self.save_retain_interval is not None:
+            if self.save_retain_interval <= 0:
+                raise ValueError("save_retain_interval must be positive.")
+            if self.save_interval is None or self.save_interval <= 0:
+                raise ValueError("save_retain_interval requires a positive save_interval.")
+            if self.save_retain_interval % self.save_interval != 0:
+                raise ValueError("save_retain_interval must be divisible by save_interval.")
+            if self.most_recent_k != -1:
+                raise ValueError("save_retain_interval and most_recent_k cannot be enabled together.")
 
         if self.also_save_hf_checkpoint:
             if self.ckpt_format == "fsdp_dtensor":
@@ -759,8 +783,8 @@ class ProfilingConfig(MTrainProfilingConfig):
         )
         assert self.profile_step_start >= 0, f"profile_step_start must be >= 0, got {self.profile_step_start}"
         assert self.profile_step_end >= 0, f"profile_step_end must be >= 0, got {self.profile_step_end}"
-        assert self.profile_step_end >= self.profile_step_start, (
-            f"profile_step_end ({self.profile_step_end}) must be >= profile_step_start ({self.profile_step_start})"
+        assert self.profile_step_end > self.profile_step_start, (
+            f"profile_step_end ({self.profile_step_end}) must be > profile_step_start ({self.profile_step_start})"
         )
 
 
@@ -1140,7 +1164,6 @@ class ConfigContainer(Container):
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
             "context_parallel_size",
-            "expert_model_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1149,11 +1172,11 @@ class ConfigContainer(Container):
         ]
         if configured_parallelisms:
             raise ValueError(
-                "MFSDP V2 currently supports DP-only training; unsupported settings: "
-                + ", ".join(configured_parallelisms)
+                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
             )
-        if self.model.num_moe_experts is not None:
-            raise ValueError("MFSDP V2 does not currently support MoE models.")
+        if self.model.expert_model_parallel_size > 1:
+            if self.model.num_moe_experts is None:
+                raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
         if self.model.virtual_pipeline_model_parallel_size is not None:
             raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
         if self.dist.use_tp_pp_dp_mapping:
@@ -1272,6 +1295,7 @@ class ConfigContainer(Container):
         )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+        uses_thd = enable_offline_packing or enable_in_batch_packing or enable_energon_packing
 
         if enable_offline_packing and enable_in_batch_packing:
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
@@ -1312,7 +1336,7 @@ class ConfigContainer(Container):
         # multiples so normalization cannot hide an invalid user value.
         if isinstance(
             self.dataset,
-            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+            (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
         ):
             self.dataset.validate()
 
@@ -1364,8 +1388,8 @@ class ConfigContainer(Container):
                 self.dataset,
                 (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
             )
-            and self.dataset.seq_length % collate_padding_multiple != 0
-        ):
+            or (isinstance(self.dataset, GPTSFTDatasetConfig) and enable_in_batch_packing)
+        ) and self.dataset.seq_length % collate_padding_multiple != 0:
             raise ValueError(
                 f"{type(self.dataset).__name__}.seq_length must be divisible by the CP/SP collate padding multiple "
                 f"({collate_padding_multiple})."
@@ -1373,8 +1397,8 @@ class ConfigContainer(Container):
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
+        transformer_config = getattr(self.model, "transformer", self.model)
         if enable_in_batch_packing or enable_energon_packing:
-            transformer_config = getattr(self.model, "transformer", self.model)
             transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
@@ -1386,6 +1410,8 @@ class ConfigContainer(Container):
                 self.dataset.pad_to_multiple_of,
                 collate_padding_multiple,
             )
+
+        _enable_safe_hybridep_dispatch(transformer_config, uses_thd=uses_thd)
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1399,6 +1425,17 @@ class ConfigContainer(Container):
         validate_cuda_graph_configuration(self.model)
         if hasattr(self.model, "finalize"):
             self.model.finalize()
+
+        from megatron.bridge.training.gtp import is_gtp_remat_active
+
+        if is_gtp_remat_active(self.model):
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "GTP is not supported with dist.use_decentralized_pg=True. "
+                    "Set dist.use_decentralized_pg=False to use the standard MCore process-group runtime."
+                )
+            if self.ddp.average_in_collective:
+                raise ValueError("GTP requires ddp.average_in_collective=False.")
 
         self.logger.finalize()
         self.train.finalize()
@@ -1647,7 +1684,7 @@ class ConfigContainer(Container):
                     f"Sequence length in dataset config: {data_seq_length}"
                 )
 
-        # Validate DeepEP or HybridEP is supported for the current GPU architecture
+        # Validate the selected flex dispatcher backend for the current GPU architecture
         if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:
@@ -2044,7 +2081,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     Keeps (safe for MegatronMIMO):
     - Recipe environment variable defaults
     - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
-    - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
+    - Sub-config finalization (dataset, optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
     - Deterministic mode validation
 
@@ -2066,6 +2103,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     # Finalize sub-configs that don't depend on model construction order.
     # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
     # config and is called inside setup_megatron_mimo() right before build_infra().
+    if hasattr(cfg.dataset, "finalize"):
+        cfg.dataset.finalize()
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):

@@ -46,6 +46,7 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
     {
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
+        "deepseek_v4_flash_peft_openmath_thinking_packed_config",
         "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",
@@ -385,6 +386,15 @@ def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
     return getattr(mod, name)()
 
 
+def test_deepseek_v4_portable_peft_recipe_disables_recompute(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_peft_openmath_thinking_packed_config", monkeypatch)
+
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+
+
 def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_pretrain_mxfp8_config", monkeypatch)
 
@@ -456,6 +466,33 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.train.global_batch_size == 128
     assert cfg.train.micro_batch_size == 1
+
+
+@pytest.mark.parametrize(
+    ("recipe_name", "expected_dispatcher"),
+    [
+        ("deepseek_v4_flash_pretrain_config", "alltoall"),
+        ("deepseek_v4_flash_pretrain_mxfp8_config", "alltoall"),
+        ("deepseek_v4_flash_pretrain_muon_config", "alltoall"),
+        ("deepseek_v4_flash_sft_config", "alltoall"),
+        ("deepseek_v4_flash_no_mtp_sft_config", "alltoall"),
+        ("deepseek_v4_pro_pretrain_config", "alltoall"),
+        ("deepseek_v4_pro_pretrain_mxfp8_config", "alltoall"),
+        ("deepseek_v4_flash_pretrain_gb200_config", "flex"),
+        ("deepseek_v4_flash_pretrain_mxfp8_gb200_config", "flex"),
+        ("deepseek_v4_flash_pretrain_muon_gb200_config", "flex"),
+    ],
+)
+def test_deepseek_v4_recipes_keep_hardware_qualified_dispatcher(
+    recipe_name: str, expected_dispatcher: str, monkeypatch: pytest.MonkeyPatch
+):
+    cfg = _build_deepseek_v4_recipe(recipe_name, monkeypatch)
+
+    assert cfg.model.moe_token_dispatcher_type == expected_dispatcher
+    if expected_dispatcher == "flex":
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.model.moe_flex_dispatcher_num_sms == 16
+        assert getattr(cfg.model, "moe_hybridep_num_sms", None) is None
 
 
 @pytest.mark.parametrize(

@@ -37,12 +37,103 @@ from megatron.bridge.training.train import (
     maybe_synchronize_training_step,
     save_checkpoint_and_time,
     should_disable_forward_pre_hook,
+    train,
     train_step,
 )
 from megatron.bridge.training.utils.train_utils import maybe_inject_state
 
 
 pytestmark = pytest.mark.unit
+
+
+class TestCheckpointManagerLifecycle:
+    """Tests for checkpoint manager ownership across the training lifecycle."""
+
+    def test_natural_completion_terminates_checkpoint_manager_once(self):
+        """The outer lifecycle should own the only terminal manager finalization."""
+
+        class OneShotCheckpointManager:
+            def __init__(self):
+                self.finalize_calls = []
+                self.terminated = False
+
+            def finalize_async_saves(self, state, blocking=False, terminate=False):
+                if self.terminated:
+                    raise RuntimeError("checkpoint manager was used after termination")
+                self.finalize_calls.append((blocking, terminate))
+                self.terminated = terminate
+
+        model_config = SimpleNamespace(cuda_graph_impl=None, fp8_recipe=None, param_sync_func=None)
+        config = SimpleNamespace(
+            train=SimpleNamespace(
+                train_iters=1,
+                manual_gc=False,
+                check_weight_hash_across_dp_replicas_interval=None,
+            ),
+            validation=SimpleNamespace(),
+            checkpoint=SimpleNamespace(save=None),
+            logger=SimpleNamespace(log_throughput_to_tensorboard=False),
+            model=SimpleNamespace(
+                virtual_pipeline_model_parallel_size=None,
+                cuda_graph_warmup_steps=0,
+                cuda_graph_use_single_mempool=False,
+                moe_expert_rank_capacity_factor=None,
+            ),
+            optimizer=SimpleNamespace(
+                use_distributed_optimizer=False,
+                optimizer_cuda_graph=False,
+                reuse_grad_buf_for_mxfp8_param_ag=False,
+            ),
+            ddp=SimpleNamespace(use_megatron_fsdp=False, overlap_param_gather=False),
+            straggler=None,
+            profiling=None,
+            tensor_inspect=None,
+        )
+        state = SimpleNamespace(
+            cfg=config,
+            train_state=SimpleNamespace(step=1, floating_point_operations_so_far=0.0),
+            timers=Mock(return_value=Mock()),
+            straggler_timer=Mock(),
+            energy_monitor=None,
+            nvrx_straggler_manager=None,
+            tensorboard_logger=None,
+            wandb_logger=None,
+            _comet_logger=None,
+        )
+        pg_collection = SimpleNamespace(
+            pp=SimpleNamespace(size=Mock(return_value=1)),
+            dp=SimpleNamespace(size=Mock(return_value=1)),
+        )
+        checkpoint_manager = OneShotCheckpointManager()
+
+        with (
+            patch("megatron.bridge.training.train.get_model_config", return_value=model_config),
+            patch(
+                "megatron.bridge.training.train.get_rerun_state_machine",
+                return_value=SimpleNamespace(current_iteration=1),
+            ),
+            patch("megatron.bridge.training.train.get_num_microbatches", return_value=1),
+            patch("megatron.bridge.training.train.get_forward_backward_func", return_value=Mock()),
+            patch("megatron.bridge.training.train.P2PCommunicator", return_value=Mock()),
+            patch("megatron.bridge.training.train._delete_cuda_graphs"),
+            patch("megatron.bridge.training.train.safe_shutdown_nvrx_straggler_manager"),
+            patch("megatron.bridge.training.train.destroy_global_state"),
+            patch("megatron.bridge.training.train.fault_tolerance"),
+        ):
+            train(
+                Mock(),
+                [Mock()],
+                Mock(),
+                Mock(),
+                None,
+                None,
+                state,
+                checkpoint_manager,
+                pg_collection,
+            )
+            _finish_train(state, checkpoint_manager)
+
+        assert checkpoint_manager.finalize_calls == [(True, False), (True, True)]
 
 
 class TestTrainStepAttentionLogitMonitoring:
@@ -1143,6 +1234,31 @@ class TestCheckpointAndDecideExit:
         mock_save_checkpoint.assert_called_once()
         save_call_args = mock_save_checkpoint.call_args
         assert save_call_args[1]["non_persistent_ckpt"] is True
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_local_checkpoint_does_not_suppress_persistent_exit_checkpoint(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """A planned exit must persist state even when a local save is also due."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            checkpoint_save_interval=100,
+            exit_interval=10,
+            step=10,
+        )
+        state.cfg.checkpoint.non_persistent_save_interval = 10
+        state.cfg.checkpoint.non_persistent_ckpt_type = "local"
+
+        result = checkpoint_and_decide_exit(state, **self._create_mock_args())
+
+        assert result is True
+        assert mock_save_checkpoint.call_count == 2
+        assert mock_save_checkpoint.call_args_list[0].kwargs["non_persistent_ckpt"] is True
+        assert mock_save_checkpoint.call_args_list[1].kwargs.get("non_persistent_ckpt", False) is False
 
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
     @patch("megatron.bridge.training.train.barrier_and_log")

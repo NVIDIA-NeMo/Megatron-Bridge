@@ -29,7 +29,10 @@ from torch.distributed.checkpoint.stateful import Stateful
 from torch.utils.tensorboard.writer import SummaryWriter
 
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.nvrx_straggler import NVRxStragglerDetectionManager
+from megatron.bridge.training.nvrx_straggler import (
+    NVRxStragglerDetectionManager,
+    safe_shutdown_nvrx_straggler_manager,
+)
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import safe_serialize
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
@@ -502,6 +505,7 @@ class GlobalState:
             self._signal_handler.release()
         self._signal_handler = None
         self._straggler_timer = None
+        safe_shutdown_nvrx_straggler_manager(self._nvrx_straggler_manager)
         self._nvrx_straggler_manager = None
         self._nvrx_straggler_created = False
 

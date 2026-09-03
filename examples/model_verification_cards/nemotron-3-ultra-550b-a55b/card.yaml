@@ -3,49 +3,45 @@
 
 title: nemotron_3_ultra_550b_a55b
 summary: >
-  Nemotron 3 Ultra 550B-A55B has public large-scale BF16 H100 and MXFP8 GB200
-  library pretraining recipes. They adopt memory-feasible large-scale execution
-  settings while retaining natural routing, numerical checks, and the library
-  training objective. The exact 256-H100 real-data support run is verified;
-  the 256-GB200 MXFP8 Megatron-FSDP real-data support run remains pending. The
-  model also has public packed full-SFT and packed PEFT recipes. The separately
-  scoped BF16 pretrain_performance.GB200 measurement remains unverified.
-  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip is
-  verified. CPU conversion, portable manual-forward and deterministic-inference
-  reruns, remaining functional training, checkpoint resume, and the separately
-  scoped GB200 MXFP8 and H100 BF16 FSDP workloads still require completed
-  verification runs before those support claims are promoted.
+  Nemotron 3 Ultra 550B-A55B has exported 256-GPU BF16 library pretraining
+  recipes for H100 and GB200, plus public packed full-SFT and packed PEFT
+  recipes. Exact pretraining reruns in the card's current base container remain
+  unverified. The separately scoped
+  pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
+  their canonical 256-GPU MXFP8 recipes. Its pinned 24-GPU BF16
+  Hugging Face-to-Megatron-to-Hugging Face round trip,
+  single-process CPU export, and checkpoint-backed deterministic inference are
+  verified. CPU import, portable manual-forward, fine-tuning, and checkpoint
+  resume still require completed verification runs before those support claims
+  are promoted.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
+      - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - manual_forward_pass
-      - inference
   training:
     H100:
-      verified: [pretrain]
-      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
       unsupported: [sft_long_context]
     GB200:
       unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
       unsupported: [sft_long_context]
   performance:
-    GB200: unverified
-  fsdp:
-    GB200: unverified
-    H100: unverified
+    GB200: verified
+    GB300: verified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
   hf_revision: 624ba927cfbef0427354998700de3d51173c8c04  # pragma: allowlist secret
   architecture: NemotronHForCausalLM
   min_transformers_version: "5.8.0"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 69bd20947c629aff4aaafebfcdce4062666cffbc  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: d352aceda8ed4136f1db787bcf449c1b210a2438  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -85,23 +81,27 @@ items:
       shapes, dtypes, and values.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu
       --nodes 1
       --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16
       --hf-revision 624ba927cfbef0427354998700de3d51173c8c04
-      --megatron-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-megatron/iter_0000000
+      --megatron-path
+      work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
       --hf-path work/model-verification/nemotron-3-ultra-550b-a55b/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-08-26
     expected_result: >
-      The CPU export must write a complete source-native Hugging Face
-      checkpoint: BF16 model weights plus the source FP32 expert-score
-      correction biases. Configuration, generation configuration, tokenizer
-      assets, tensor names, shapes, dtypes, and values must match the pinned
-      source and reload natively as NemotronHForCausalLM.
+      The single-process CPU export exits successfully and writes all 51,023
+      tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload
+      bytes. Keys, shapes, dtypes, and values are bitwise identical to the
+      pinned source with no dtype conversions, preserving its BF16 model
+      weights and FP32 expert-score correction biases. Transformers strictly
+      reloads the output natively as NemotronHForCausalLM with all 927 state
+      tensors and no loading discrepancies.
 
   megatron_to_hf_gpu:
     status: verified
@@ -141,7 +141,7 @@ items:
       orchestration path must produce equivalent evidence before promotion.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 3 --gpus-per-node 8
@@ -153,20 +153,19 @@ items:
       --prompt "Explain why the sky appears blue in one sentence."
       --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
       --legacy-full-prefix
-    last_verified: null
+    last_verified: 2026-08-25
     expected_result: >
-      The distributed Megatron execution must reload the pinned BF16
-      checkpoint and complete an exact 32-token deterministic greedy decode
-      without an earlier EOS. The expected JSON-escaped literal completion is
-      "The user wants a one-sentence explanation for why the sky appears
+      The public launcher exited successfully after reloading the pinned BF16
+      checkpoint at TP1/PP3/EP8/ETP1. Against the 32-token maximum, greedy
+      decoding produced exactly 32 tokens over generation steps 0-31 without
+      an earlier EOS and emitted the exact JSON-escaped literal completion "The
+      user wants a one-sentence explanation for why the sky appears
       blue.\u003c/think\u003eThe sky appears blue because Earth's atmosphere
-      scatters shorter (blue)". Historical direct-entry-point evidence
-      produced this completion, but the public launcher command must be rerun
-      before the item is promoted.
+      scatters shorter (blue)".
 
   pretrain:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features: {}
       command: >
@@ -187,49 +186,54 @@ items:
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-h100-resolved.yaml
         logger.tensorboard_dir=null
-      last_verified: 2026-08-14
+      last_verified: null
       metrics:
-        initial_loss: 11.23305
-        final_loss: 9.966628
-        last_10_steps_step_time_ms_avg: 388228.080
-        last_10_steps_model_tflops_per_gpu_avg: 14.670
-        peak_allocated_memory_gib: 41.934
-        peak_reserved_memory_gib: 45.188
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On 2026-08-14 the public 256-H100 BF16 library recipe completed exactly
-        10 bounded real RedPajama2 head_01 optimizer steps at
+        In the card's current base container, the public BF16 library recipe
+        must complete all 10 bounded RedPajama2 head_01 optimizer steps at
         TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192.
         Megatron-FSDP, natural expert routing, standard all-to-all dispatch,
-        FP32 gradient communication, numerical checks, all-108-layer block
-        recompute, and the library recipe's optimizer and constant-LR schedule
-        remained active. Every keyed step had finite loss, throughput, and
-        gradient norm with zero skipped and zero NaN iterations. Peak allocated
-        and reserved memory remained 41.934 and 45.188 GiB. This verifies
-        bounded functional pretraining support, not full convergence or tuned
-        performance. Checkpoint resume remains a separate unverified item
-        because one Ultra checkpoint exceeds the available verification quota.
+        FP32 gradient communication, numerical checks, full-layer block
+        recompute, and the library optimizer and constant-LR schedule must
+        remain active. Every keyed step must have finite loss, throughput, and
+        gradient norm with zero skipped and zero NaN iterations.
 
     GB200:
       status: unverified
-      precision: fp8_mx
+      precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
-        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config
-        --mode pretrain --dataset megatron-indexed --max_steps 100 --wait
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config
+        --mode pretrain --dataset megatron-indexed --max_steps 12 --wait
         'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200
+        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200-ep16
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
         tokenizer.tokenizer_type=SentencePieceTokenizer
         tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
-        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
-        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
+        tokenizer.use_tokenizer_vocab_size=false
+        model.moe_router_force_load_balancing=false
+        checkpoint.load=null
+        checkpoint.pretrained_checkpoint=work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron
+        checkpoint.finetune=true checkpoint.load_optim=false
+        checkpoint.load_rng=false checkpoint.dist_ckpt_strictness=log_all
+        checkpoint.save=null checkpoint.async_save=false
+        validation.eval_global_batch_size=256
+        validation.eval_micro_batch_size=1
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
-        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-resolved.yaml
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-ep16-resolved.yaml
         logger.tensorboard_dir=null
       last_verified: null
       metrics:
@@ -237,17 +241,19 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        The public 256-GB200 MXFP8 Megatron-FSDP library recipe must complete
-        all 100 bounded
-        public RedPajama2 head_01 optimizer steps at TP2/PP1/CP1/EP64/ETP1,
-        GBS/MBS 256/1, and sequence length 8192. HybridEP, natural expert
-        routing, quantization padding, BF16 gradient communication,
-        optim-grads-params sharding, targeted fused expert-MLP activation
-        offload, selective moe_act recompute, numerical checks, and the library
-        recipe's optimizer and constant-LR schedule must remain active. Loss
-        must remain finite with no skipped or NaN iterations and all four
-        metrics. No checkpoint save or resume behavior is claimed by this run.
+        In the card's current base container, the public checkpoint-initialized
+        BF16 library recipe must complete all 12 bounded RedPajama2 head_01
+        optimizer steps at TP4/PP4/CP1/EP16/ETP1, GBS/MBS 256/1, and sequence
+        length 8192. Natural expert routing, non-FSDP distributed optimizer,
+        HybridEP, targeted expert-activation offload, selective
+        attention/layernorm recompute, numerical checks, and the library
+        optimizer and constant-LR schedule must remain active. Every keyed step
+        must have finite loss, throughput, and gradient norm with zero skipped
+        and zero NaN iterations.
 
   sft:
     H100:
@@ -282,6 +288,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The public 192-H100 packed OpenMathInstruct-2 full-SFT recipe must use
         the pinned dataset revision and bounded train_1M first-ten-percent
@@ -289,7 +296,7 @@ items:
         GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra
         contract is support verification rather than the 8K/GBS8
         qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no
-        skipped or NaN iterations, all four metrics, a persisted post-setup
+        skipped or NaN iterations, all five metrics, a persisted post-setup
         configuration, audited supervised-token counts, and a complete
         reloadable final checkpoint.
 
@@ -304,6 +311,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         No GB200-specific Ultra full-SFT configuration is verified by this PR.
         The H100 library recipe must be adapted and validated independently
@@ -344,6 +352,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Megatron Bridge does not publish a dedicated Ultra packed long-context
         recipe. The only published Ultra full-SFT recipe fixes sequence length
@@ -362,6 +371,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         Megatron Bridge does not publish a dedicated Ultra packed long-context
         recipe for GB200.
@@ -399,6 +409,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         The public 32-H100 packed OpenMathInstruct-2 LoRA recipe must use the
         same pinned bounded dataset and pad_seq_to_mult 2 as full SFT, match all
@@ -406,7 +417,7 @@ items:
         optimizer steps at sequence length 4096 and GBS/MBS 128/1. This
         published Ultra contract is support verification rather than the
         8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite
-        with no skipped or NaN iterations, all four metrics, audited
+        with no skipped or NaN iterations, all five metrics, audited
         supervised-token counts, a persisted post-setup configuration, and a
         reloadable adapter checkpoint.
 
@@ -421,6 +432,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         No GB200-specific Ultra PEFT configuration is verified by this PR.
 
@@ -436,6 +448,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -459,6 +472,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -471,115 +485,50 @@ items:
 
   pretrain_performance:
     GB200:
-      status: unverified
-      precision: bf16
-      command: >
-        ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
-        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_config
-        --max_steps 50 --wait
-      last_verified: null
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-      expected_result: >
-        On 256 GB200 GPUs, the exact canonical BF16 distributed-optimizer
-        recipe must complete all 50 optimizer steps at
-        TP2/PP4/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192 with
-        finite loss, no skipped or NaN iterations, and all four training
-        metrics. HybridEP, natural expert routing, FP32 gradient reduction, and
-        targeted fused expert-MLP activation offload must remain active.
-        Activation recompute remains disabled because BF16 does not select the
-        fused grouped-MLP path required by TE 2.16 moe_act recompute. Forced
-        expert balancing, MXFP8, and disabled numerical checks are not part of
-        this verification workload.
-
-  pretrain_fsdp:
-    GB200:
-      status: unverified
+      status: verified
       precision: fp8_mx
-      enabled_features:
-        moe_dispatcher: hybridep
-        megatron_fsdp: optim_grads_params
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
       command: >
-        ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
-        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_fsdp_config
-        --mode pretrain --dataset megatron-indexed --max_steps 100 --wait
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
-        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
-        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
-        validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        logger.log_interval=1 logger.log_throughput=true
-        logger.log_device_memory_used=true
-        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-resolved.yaml
-        logger.tensorboard_dir=null
-      last_verified: null
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/gb200-performance/ConfigContainer.yaml
+      last_verified: 2026-08-19
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        peak_allocated_memory_gib: null
-        peak_reserved_memory_gib: null
+        initial_loss: 12.1668
+        final_loss: 6.738161
+        last_10_steps_step_time_ms_avg: 3213.970
+        last_10_steps_model_tflops_per_gpu_avg: 917.750
+        last_10_steps_tokens_per_second_per_gpu_avg: 2548.873
       expected_result: >
-        The same exact 256-GB200 real-data workload used by pretrain.GB200 must
-        complete all 100 optimizer steps with the MXFP8 Megatron-FSDP library
-        recipe at TP2/PP1/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length
-        8192. HybridEP, natural routing, quantization padding, BF16 gradient
-        communication, optim-grads-params sharding, targeted fused expert-MLP
-        activation offload, selective moe_act recompute, and all numerical
-        checks must remain active. Every keyed step must have finite loss,
-        timing, throughput, and memory values with no skipped or NaN
-        iterations. No checkpoint save or resume behavior is claimed.
+        On exactly 256 GB200s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP2/PP1/CP1/EP64/ETP1, GBS/MBS 256/1,
+        and sequence length 8192 using Megatron-FSDP HSDP. All 50 keyed rows
+        have finite loss with zero skipped or NaN iterations. Loss moves from
+        12.1668 to 6.738161; the final ten steps average 3213.970 ms, 917.750
+        TFLOP/s/GPU, and 2548.873 tokens/s/GPU. The resolved configuration
+        persists.
 
-    H100:
-      status: unverified
-      precision: bf16
-      enabled_features:
-        megatron_fsdp: optim_grads_params
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: fc704f7809f84461c6e2cbf476acb28c4a5654c0  # pragma: allowlist secret
       command: >
-        ./scripts/training/train.sh --nodes 32 --gpus-per-node 8
-        --recipe nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config
-        --max_steps 50 --wait
-      last_verified: null
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-07-25
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        peak_allocated_memory_gib: null
-        peak_reserved_memory_gib: null
+        initial_loss: 12.20118
+        final_loss: 7.019335
+        last_10_steps_step_time_ms_avg: 2282.400
+        last_10_steps_model_tflops_per_gpu_avg: 1306.850
+        last_10_steps_tokens_per_second_per_gpu_avg: 3589.204
       expected_result: >
-        On 256 H100 GPUs, the exact canonical mock-data FSDP recipe must
-        complete all 50 optimizer steps at TP4/PP1/CP1/EP64/ETP1,
-        GBS/MBS 512/1, and sequence length 8192 with finite loss, no skipped or
-        NaN iterations, all four training metrics, and peak allocated and
-        reserved memory. BF16, standard all-to-all MoE dispatch, fine-grained
-        parameter gather, FP32 fused weight-gradient accumulation and FP32
-        gradient communication, and Megatron-FSDP must remain active with
-        full-layer block recompute for all 108 main HybridStack layers
-        (54 Mamba/expert pairs) while leaving MTP on its normal backward
-        path, a one-element FSDP
-        communication unit that disables
-        next-bucket parameter prefetch, and the native expandable-segment
-        allocator. The training MLP path must use sixty-four sequence chunks to
-        bound the grouped-MoE working set, and the Mamba SSD path must use
-        256-token chunks to bound its chunk-state working set. The generic
-        hybrid-stack checkpoint must preserve every MTP latent-projection fused
-        gradient; the unsupported specialized whole-MoE replay path must not be
-        used. TE grouped linears and fused weighted squared-ReLU must remain active
-        through the non-op-fuser path. Eight CUDA device connections must retain
-        Megatron-FSDP stream independence while bounding Hopper driver resources.
-        256-KiB NCCL pair buffers must bound communication workspace, with no CPU
-        activation offload.
-        Gradient and loss NaN checks must remain enabled.
-        Standard all-to-all avoids replaying stateful HybridEP communication;
-        disabling the operation fuser retains the H100-supported TE grouped
-        linears and fused activation outside the SM100-only fused
-        implementation.
+        On exactly 256 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 256/1,
+        and sequence length 8192. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.20118 to 7.019335; the
+        final ten steps average 2282.400 ms, 1306.850 TFLOP/s/GPU, and 3589.204
+        tokens/s/GPU. The resolved configuration persists.
