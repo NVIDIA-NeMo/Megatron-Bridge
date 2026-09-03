@@ -7,7 +7,7 @@ You configure the data with `GPTSFTDatasetConfig`; the training framework uses `
 Choose exactly one source:
 
 - `dataset_root` for local `training.jsonl`, optional `validation.jsonl`, and optional `test.jsonl` files.
-- `per_split_data_args_path` for one or more local JSONL files per split, with optional MLM-style blend ratios.
+- `per_split_data_source_manifest_path` for one or more local JSONL files per split, with optional MLM-style blend ratios.
 - `hf_dataset` for a declarative Hugging Face source plus an optional registered schema adapter.
 
 ## Prepare local JSONL
@@ -82,7 +82,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 ## Blend local JSONL sources
 
-Use an MLM-compatible per-split data-arguments file when the train, validation,
+Use an MLM-compatible per-split data source manifest when the train, validation,
 or test split draws from multiple JSONL files:
 
 ```json
@@ -96,7 +96,7 @@ or test split draws from multiple JSONL files:
 ```python
 cfg.dataset = GPTSFTDatasetConfig(
     seq_length=4096,
-    per_split_data_args_path="/data/sft_blend.json",
+    per_split_data_source_manifest_path="/data/sft_blend.json",
     blend_output_root="/data/sft_blend_cache",
     preprocessing=PromptCompletionSFTPreprocessingConfig(),
 )
@@ -205,7 +205,7 @@ For the complete constraints and runtime behavior, see [Packed Sequences](../../
 
 | Area | Knobs | Purpose |
 | --- | --- | --- |
-| Source | `dataset_root`, `per_split_data_args_path`, `hf_dataset` | Exactly one local-root, local-blend, or Hugging Face source |
+| Source | `dataset_root`, `per_split_data_source_manifest_path`, `hf_dataset` | Exactly one local-root, local-blend, or Hugging Face source |
 | Core | `seq_length`, `seed`, `memmap_workers`, `max_train_samples` | Shape, reproducibility, indexing, and train cap |
 | Splits | `do_validation`, `do_test` | Build optional split files |
 | Preprocessing | `ChatSFTPreprocessingConfig`, `PromptCompletionSFTPreprocessingConfig` | Chat rendering and assistant loss, or raw paired-text formatting and completion/full loss |

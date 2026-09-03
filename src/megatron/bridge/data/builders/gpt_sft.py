@@ -95,7 +95,7 @@ class _GPTSFTDataBlend:
 
 
 def _parse_gpt_sft_data_blend(value: Any, *, split_name: str) -> _GPTSFTDataBlend:
-    """Parse one MLM-style list of JSONL paths or alternating weights and paths."""
+    """Parse paths; an even-length list with numeric even-index entries is weight/path pairs."""
     if isinstance(value, str):
         entries = value.split()
     elif isinstance(value, list):
@@ -140,17 +140,19 @@ def _parse_gpt_sft_data_blend(value: Any, *, split_name: str) -> _GPTSFTDataBlen
 
 
 def _load_gpt_sft_data_blends(config: "GPTSFTDatasetConfig") -> dict[str, _GPTSFTDataBlend]:
-    """Load and validate an MLM-compatible per-split SFT data-arguments file."""
-    path = config.per_split_data_args_path
+    """Load and validate an MLM-compatible per-split SFT data source manifest."""
+    path = config.per_split_data_source_manifest_path
     if path is None:
         return {}
     try:
         with Path(path).open(encoding="utf-8") as input_file:
             raw_splits = json.load(input_file)
     except OSError as error:
-        raise FileNotFoundError(f"Could not read per_split_data_args_path: {path}") from error
+        raise FileNotFoundError(f"Could not read per_split_data_source_manifest_path: {path}") from error
     if not isinstance(raw_splits, dict):
-        raise TypeError("per_split_data_args_path must contain a JSON object with train/valid/test entries.")
+        raise TypeError(
+            "per_split_data_source_manifest_path must contain a JSON object with train/valid/test entries."
+        )
 
     required_splits = ["train"]
     if config.do_validation:
@@ -160,13 +162,13 @@ def _load_gpt_sft_data_blends(config: "GPTSFTDatasetConfig") -> dict[str, _GPTSF
     missing_splits = [split for split in required_splits if split not in raw_splits]
     if missing_splits:
         missing = ", ".join(missing_splits)
-        raise ValueError(f"per_split_data_args_path is missing enabled SFT splits: {missing}.")
+        raise ValueError(f"per_split_data_source_manifest_path is missing enabled SFT splits: {missing}.")
     return {split: _parse_gpt_sft_data_blend(raw_splits[split], split_name=split) for split in required_splits}
 
 
 def _gpt_sft_blend_identity(config: "GPTSFTDatasetConfig") -> dict[str, Any] | None:
     """Return cache identity for the resolved per-split JSONL blend."""
-    if config.per_split_data_args_path is None:
+    if config.per_split_data_source_manifest_path is None:
         return None
     split_blends = _load_gpt_sft_data_blends(config)
     identity: dict[str, Any] = {}
@@ -210,7 +212,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     """Serializable configuration for text-only ``GPTSFTDataset`` construction.
 
     Exactly one source is required: ``dataset_root`` selects existing local
-    JSONL/packed artifacts, ``per_split_data_args_path`` selects MLM-style
+    JSONL/packed artifacts, ``per_split_data_source_manifest_path`` selects MLM-style
     JSONL blends, and ``hf_dataset`` selects a declarative Hugging Face source
     that is materialized before construction. New callers should set
     ``preprocessing`` explicitly. ``None`` preserves the established local
@@ -219,7 +221,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
 
     seq_length: int
     dataset_root: str | Path | None = None
-    per_split_data_args_path: str | Path | None = None
+    per_split_data_source_manifest_path: str | Path | None = None
     blend_output_root: str | Path | None = None
     hf_dataset: HFDatasetSourceConfig | None = None
     hf_validation_dataset: HFDatasetSourceConfig | None = None
@@ -243,19 +245,20 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     def validate(self) -> None:
         """Validate source selection and text-only SFT settings."""
         has_local_source = self.dataset_root is not None
-        has_blend_source = self.per_split_data_args_path is not None
+        has_blend_source = self.per_split_data_source_manifest_path is not None
         has_hf_source = self.hf_dataset is not None
         if sum((has_local_source, has_blend_source, has_hf_source)) != 1:
             raise ValueError(
-                "Exactly one text-only SFT source must be set: dataset_root, per_split_data_args_path, or hf_dataset."
+                "Exactly one text-only SFT source must be set: dataset_root, "
+                "per_split_data_source_manifest_path, or hf_dataset."
             )
         if has_local_source and not str(self.dataset_root).strip():
             raise ValueError("dataset_root must be a non-empty path.")
-        if has_blend_source and not str(self.per_split_data_args_path).strip():
-            raise ValueError("per_split_data_args_path must be a non-empty path.")
+        if has_blend_source and not str(self.per_split_data_source_manifest_path).strip():
+            raise ValueError("per_split_data_source_manifest_path must be a non-empty path.")
         if self.blend_output_root is not None:
             if not has_blend_source:
-                raise ValueError("blend_output_root requires per_split_data_args_path.")
+                raise ValueError("blend_output_root requires per_split_data_source_manifest_path.")
             if not str(self.blend_output_root).strip():
                 raise ValueError("blend_output_root must be a non-empty path when set.")
         hf_only_fields_set = (
@@ -400,7 +403,7 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
     config.validate()
     if config.dataset_root is not None:
         return config.dataset_root
-    if config.per_split_data_args_path is not None:
+    if config.per_split_data_source_manifest_path is not None:
         if config.blend_output_root is not None:
             return Path(config.blend_output_root)
         blend_identity = _gpt_sft_blend_identity(config)

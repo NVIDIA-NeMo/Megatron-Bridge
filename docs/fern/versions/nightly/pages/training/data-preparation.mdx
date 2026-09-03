@@ -99,7 +99,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
-To blend independent JSONL files, set `per_split_data_args_path` to a JSON file
+To blend independent JSONL files, set `per_split_data_source_manifest_path` to a JSON file
 with the same alternating weight/path form as Megatron-LM:
 
 ```json
@@ -113,7 +113,7 @@ with the same alternating weight/path form as Megatron-LM:
 ```python
 dataset = GPTSFTDatasetConfig(
     seq_length=4096,
-    per_split_data_args_path="/data/sft_blend.json",
+    per_split_data_source_manifest_path="/data/sft_blend.json",
     preprocessing=PromptCompletionSFTPreprocessingConfig(),
 )
 ```

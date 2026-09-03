@@ -49,7 +49,7 @@ row; it does not materialize an offline dataset or load the full source into
 RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
 in-batch packing does not support the global-batch `batch` dataloader.
 
-Local GPT-SFT data can also use `per_split_data_args_path` with MLM-style
+Local GPT-SFT data can also use `per_split_data_source_manifest_path` with MLM-style
 alternating ratios and JSONL paths. Offline packing resolves the weighted raw
 row stream first and writes one packed Parquet cache for the blended split.
 The input JSONL files remain memory-mapped; blending does not concatenate them

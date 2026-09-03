@@ -748,8 +748,9 @@ class GPTSFTBlendDataset(Dataset):
 
     Args:
         datasets: Compatible GPT SFT datasets, one per logical source.
-        weights: Positive relative sampling weights. When omitted, each source
-            contributes all of its rows once on average.
+        weights: Positive relative sampling weights. When omitted, weights are
+            proportional to source lengths, so the default-size blend includes
+            every source row exactly once.
         size: Number of rows exposed by the blend. Defaults to the sum of the
             source lengths.
         seed: Seed for deterministic source-local shuffling.

@@ -146,7 +146,7 @@ def test_default_pack_path_fingerprints_blend_weights_and_source_files(tmp_path)
         return GPTSFTDatasetBuilder(
             config=GPTSFTDatasetConfig(
                 seq_length=128,
-                per_split_data_args_path=args_path,
+                per_split_data_source_manifest_path=args_path,
                 blend_output_root=tmp_path / "cache",
                 enable_offline_packing=True,
                 offline_packing_specs=PackedSequenceSpecs(
@@ -181,7 +181,7 @@ def test_offline_packing_consumes_one_blended_raw_dataset(tmp_path, monkeypatch)
     builder = GPTSFTDatasetBuilder(
         config=GPTSFTDatasetConfig(
             seq_length=128,
-            per_split_data_args_path=args_path,
+            per_split_data_source_manifest_path=args_path,
             blend_output_root=tmp_path / "cache",
             enable_offline_packing=True,
             offline_packing_specs=PackedSequenceSpecs(
@@ -233,7 +233,7 @@ def test_offline_packing_materializes_one_weighted_blend_parquet(tmp_path):
     builder = GPTSFTDatasetBuilder(
         config=GPTSFTDatasetConfig(
             seq_length=32,
-            per_split_data_args_path=args_path,
+            per_split_data_source_manifest_path=args_path,
             blend_output_root=tmp_path / "cache",
             enable_offline_packing=True,
             offline_packing_specs=PackedSequenceSpecs(

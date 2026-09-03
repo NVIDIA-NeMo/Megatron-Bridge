@@ -47,13 +47,13 @@ def _hf_config(tmp_path, **source_overrides):
     )
 
 
-def _write_per_split_data_args(tmp_path, *, train=None, valid=None, test=None):
+def _write_per_split_data_source_manifest(tmp_path, *, train=None, valid=None, test=None):
     data = {"train": train or [str(tmp_path / "train.jsonl")]}
     if valid is not None:
         data["valid"] = valid
     if test is not None:
         data["test"] = test
-    path = tmp_path / "per_split_data.json"
+    path = tmp_path / "per_split_data_sources.json"
     path.write_text(json.dumps(data))
     return path
 
@@ -187,7 +187,7 @@ def test_packed_specs_reject_invalid_max_single_sequence_length(max_single_seque
 
 
 @pytest.mark.parametrize(
-    ("dataset_root", "per_split_data_args_path", "hf_dataset"),
+    ("dataset_root", "per_split_data_source_manifest_path", "hf_dataset"),
     [
         (None, None, None),
         (
@@ -203,11 +203,11 @@ def test_packed_specs_reject_invalid_max_single_sequence_length(max_single_seque
         ),
     ],
 )
-def test_config_requires_exactly_one_source(dataset_root, per_split_data_args_path, hf_dataset):
+def test_config_requires_exactly_one_source(dataset_root, per_split_data_source_manifest_path, hf_dataset):
     config = GPTSFTDatasetConfig(
         seq_length=128,
         dataset_root=dataset_root,
-        per_split_data_args_path=per_split_data_args_path,
+        per_split_data_source_manifest_path=per_split_data_source_manifest_path,
         hf_dataset=hf_dataset,
     )
 
@@ -216,13 +216,13 @@ def test_config_requires_exactly_one_source(dataset_root, per_split_data_args_pa
 
 
 def test_blend_config_round_trip_is_declarative_and_serializable(tmp_path):
-    args_path = _write_per_split_data_args(
+    args_path = _write_per_split_data_source_manifest(
         tmp_path,
         train=["0.75", str(tmp_path / "a.jsonl"), "0.25", str(tmp_path / "b.jsonl")],
     )
     config = GPTSFTDatasetConfig(
         seq_length=128,
-        per_split_data_args_path=args_path,
+        per_split_data_source_manifest_path=args_path,
         blend_output_root=tmp_path / "cache",
         do_validation=False,
         do_test=False,
@@ -232,18 +232,18 @@ def test_blend_config_round_trip_is_declarative_and_serializable(tmp_path):
     restored = instantiate(serialized)
 
     assert isinstance(restored, GPTSFTDatasetConfig)
-    assert str(restored.per_split_data_args_path) == str(args_path)
+    assert str(restored.per_split_data_source_manifest_path) == str(args_path)
     assert str(restored.blend_output_root) == str(tmp_path / "cache")
 
 
-def test_blend_output_root_requires_per_split_data_args_path(tmp_path):
+def test_blend_output_root_requires_per_split_data_source_manifest_path(tmp_path):
     config = GPTSFTDatasetConfig(
         seq_length=128,
         dataset_root=tmp_path,
         blend_output_root=tmp_path / "cache",
     )
 
-    with pytest.raises(ValueError, match="blend_output_root requires per_split_data_args_path"):
+    with pytest.raises(ValueError, match="blend_output_root requires per_split_data_source_manifest_path"):
         config.validate()
 
 
@@ -253,7 +253,7 @@ def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path):
     valid = tmp_path / "valid.jsonl"
     for path in (train_a, train_b, valid):
         path.write_text("{}\n")
-    args_path = _write_per_split_data_args(
+    args_path = _write_per_split_data_source_manifest(
         tmp_path,
         train=["3", str(train_a), "1", str(train_b)],
         valid=str(valid),
@@ -261,7 +261,7 @@ def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path):
     builder = GPTSFTDatasetBuilder(
         config=GPTSFTDatasetConfig(
             seq_length=128,
-            per_split_data_args_path=args_path,
+            per_split_data_source_manifest_path=args_path,
             blend_output_root=tmp_path / "cache",
             do_test=False,
         ),
@@ -274,12 +274,12 @@ def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path):
     assert builder.validation_path.weights is None
 
 
-def test_per_split_data_args_requires_every_enabled_split(tmp_path):
-    args_path = _write_per_split_data_args(tmp_path)
+def test_per_split_data_source_manifest_requires_every_enabled_split(tmp_path):
+    args_path = _write_per_split_data_source_manifest(tmp_path)
 
     with pytest.raises(ValueError, match="missing enabled SFT splits: valid, test"):
         GPTSFTDatasetBuilder(
-            config=GPTSFTDatasetConfig(seq_length=128, per_split_data_args_path=args_path),
+            config=GPTSFTDatasetConfig(seq_length=128, per_split_data_source_manifest_path=args_path),
             tokenizer=MagicMock(),
         )
 
@@ -292,14 +292,14 @@ def test_per_split_data_args_requires_every_enabled_split(tmp_path):
         ["1", "/tmp/a.parquet", "1", "/tmp/b.jsonl"],
     ],
 )
-def test_per_split_data_args_rejects_invalid_blends(tmp_path, train):
-    args_path = _write_per_split_data_args(tmp_path, train=train)
+def test_per_split_data_source_manifest_rejects_invalid_blends(tmp_path, train):
+    args_path = _write_per_split_data_source_manifest(tmp_path, train=train)
 
     with pytest.raises((ValueError, TypeError)):
         GPTSFTDatasetBuilder(
             config=GPTSFTDatasetConfig(
                 seq_length=128,
-                per_split_data_args_path=args_path,
+                per_split_data_source_manifest_path=args_path,
                 do_validation=False,
                 do_test=False,
             ),
