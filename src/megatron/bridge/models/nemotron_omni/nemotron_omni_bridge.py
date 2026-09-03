@@ -231,7 +231,16 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
     # ------------------------------------------------------------------
 
     def _mtp_hf_prefix(self) -> str:
-        """Return the HF prefix applied to Nemotron-H MTP weights."""
+        """Return the HF prefix applied to Nemotron-H MTP weights.
+
+        Legacy public Omni checkpoints keep MTP at the top level (``mtp.*``).
+        New-pipeline checkpoints (``model_type: nemotron_h_omni``) nest it
+        under ``language_model.`` regardless of which architecture name they
+        declare — e.g. Super-Omni-named checkpoints exported by the new HF
+        pipeline. Dispatch on model_type so both layouts convert.
+        """
+        if getattr(getattr(self, "hf_config", None), "model_type", "") == "nemotron_h_omni":
+            return "language_model."
         return ""
 
     def _llava_mapping_registry(self) -> MegatronMappingRegistry:
