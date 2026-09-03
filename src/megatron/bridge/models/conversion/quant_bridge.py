@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import itertools
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Iterable, List, Mapping, Optional, Tuple, TypeVar, Union
 
 import torch
-from megatron.core.fp8_utils import get_grouped_quantized_members, is_grouped_mxfp8tensor
+from megatron.core.fp8_utils import get_grouped_quantized_members, is_grouped_mxfp8tensor, is_mxfp8tensor  # noqa: F401
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
@@ -27,6 +28,68 @@ if TYPE_CHECKING:
 
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 HFPreTrained = TypeVar("HFPreTrained")
+
+
+@dataclass(frozen=True)
+class _NativeMXFP8Storage:
+    weight: torch.Tensor
+    weight_scale: torch.Tensor
+
+
+def _extract_native_mxfp8_storage(
+    param: torch.Tensor,
+    global_param_name: str,
+) -> _NativeMXFP8Storage:
+    """Return validated, unconverted native MXFP8 storage views."""
+    get_metadata = getattr(param, "get_metadata", None)
+    if not callable(get_metadata):
+        raise ValueError(f"{global_param_name}: native MXFP8 storage is missing metadata")
+
+    try:
+        metadata = get_metadata()
+    except (AttributeError, RuntimeError, TypeError) as error:
+        raise ValueError(f"{global_param_name}: native MXFP8 storage metadata is unavailable") from error
+    if not isinstance(metadata, Mapping):
+        raise ValueError(f"{global_param_name}: native MXFP8 storage metadata is invalid")
+
+    logical_shape = torch.Size(param.shape)
+    if not logical_shape:
+        raise ValueError(f"{global_param_name}: native MXFP8 storage must have a K dimension")
+    if logical_shape[-1] % 32:
+        raise ValueError(f"{global_param_name}: K={logical_shape[-1]} is not divisible by 32")
+
+    rowwise_data = metadata.get("rowwise_data")
+    rowwise_scale = metadata.get("rowwise_scale_inv")
+    expected_scale_shape = torch.Size((*logical_shape[:-1], logical_shape[-1] // 32))
+    if (
+        not isinstance(rowwise_data, torch.Tensor)
+        or rowwise_data.dtype != torch.uint8
+        or not rowwise_data.is_contiguous()
+    ):
+        raise ValueError(f"{global_param_name}: invalid native MXFP8 rowwise_data")
+    if (
+        not isinstance(rowwise_scale, torch.Tensor)
+        or rowwise_scale.dtype != torch.uint8
+        or not rowwise_scale.is_contiguous()
+    ):
+        raise ValueError(f"{global_param_name}: invalid native MXFP8 rowwise_scale_inv")
+    if metadata.get("is_2D_scaled") is not False:
+        raise ValueError(f"{global_param_name}: expected native MXFP8 rowwise scale storage")
+    if getattr(metadata.get("quantizer"), "block_len", None) != 32:
+        raise ValueError(f"{global_param_name}: expected an MXFP8 block length of 32")
+    if rowwise_data.ndim != len(logical_shape) or rowwise_scale.ndim != len(expected_scale_shape):
+        raise ValueError(f"{global_param_name}: native MXFP8 storage rank mismatch")
+    if any(actual < expected for actual, expected in zip(rowwise_data.shape, logical_shape)):
+        raise ValueError(f"{global_param_name}: native MXFP8 value storage is too small")
+    if any(actual < expected for actual, expected in zip(rowwise_scale.shape, expected_scale_shape)):
+        raise ValueError(f"{global_param_name}: native MXFP8 scale storage is too small")
+
+    data_slices = tuple(slice(0, size) for size in logical_shape)
+    scale_slices = tuple(slice(0, size) for size in expected_scale_shape)
+    return _NativeMXFP8Storage(
+        weight=rowwise_data[data_slices].view(torch.float8_e4m3fn),
+        weight_scale=rowwise_scale[scale_slices],
+    )
 
 
 class MegatronQuantizationBridge:

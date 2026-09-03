@@ -35,12 +35,116 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     split_qkv_weights,
 )
+from megatron.bridge.models.conversion.quant_bridge import _extract_native_mxfp8_storage
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 _QKV_GLOBAL = "decoder.layers.0.self_attention.linear_qkv.weight"
 _MODEL_MB = "megatron.bridge.models.conversion.model_bridge"
 _QUANT_MB = "megatron.bridge.models.conversion.quant_bridge"
+
+
+class _FakeNativeMXFP8Tensor:
+    shape = torch.Size((5, 64))
+    ndim = 2
+
+    def __init__(self):
+        self.data_bytes = torch.arange(5 * 64, dtype=torch.uint8).view(5, 64)
+        self.scale_bytes = torch.zeros((128, 4), dtype=torch.uint8)
+
+    def get_metadata(self):
+        return {
+            "rowwise_data": self.data_bytes,
+            "rowwise_scale_inv": self.scale_bytes,
+            "is_2D_scaled": False,
+            "quantizer": SimpleNamespace(block_len=32),
+        }
+
+
+def test_native_mxfp8_storage_crops_only_documented_padding():
+    param = _FakeNativeMXFP8Tensor()
+    storage = _extract_native_mxfp8_storage(param, "decoder.linear.weight")
+    assert storage.weight.dtype == torch.float8_e4m3fn
+    assert storage.weight.shape == (5, 64)
+    assert storage.weight_scale.dtype == torch.uint8
+    assert storage.weight_scale.shape == (5, 2)
+    assert storage.weight.untyped_storage().data_ptr() == param.data_bytes.untyped_storage().data_ptr()
+    assert storage.weight_scale.untyped_storage().data_ptr() == param.scale_bytes.untyped_storage().data_ptr()
+
+
+def test_native_mxfp8_storage_preserves_zero_scale_bytes():
+    param = _FakeNativeMXFP8Tensor()
+    storage = _extract_native_mxfp8_storage(param, "decoder.linear.weight")
+    assert torch.count_nonzero(storage.weight_scale) == 0
+
+
+def test_native_mxfp8_storage_crops_rank_generic_scale_padding():
+    param = _FakeNativeMXFP8Tensor()
+    param.shape = torch.Size((2, 5, 64))
+    param.ndim = 3
+    param.data_bytes = torch.arange(2 * 5 * 64, dtype=torch.uint8).view(2, 5, 64)
+    param.scale_bytes = torch.zeros((4, 128, 4), dtype=torch.uint8)
+
+    storage = _extract_native_mxfp8_storage(param, "decoder.linear.weight")
+
+    assert storage.weight.shape == (2, 5, 64)
+    assert storage.weight_scale.shape == (2, 5, 2)
+    assert storage.weight.untyped_storage().data_ptr() == param.data_bytes.untyped_storage().data_ptr()
+    assert storage.weight_scale.untyped_storage().data_ptr() == param.scale_bytes.untyped_storage().data_ptr()
+
+
+@pytest.mark.parametrize(
+    "configure",
+    [
+        pytest.param(lambda param: setattr(param, "get_metadata", lambda: None), id="missing-metadata"),
+        pytest.param(
+            lambda param: setattr(param, "data_bytes", param.data_bytes.float()),
+            id="wrong-value-dtype",
+        ),
+        pytest.param(
+            lambda param: setattr(param, "scale_bytes", param.scale_bytes.float()),
+            id="wrong-scale-dtype",
+        ),
+        pytest.param(
+            lambda param: setattr(
+                param,
+                "data_bytes",
+                torch.zeros((64, 5), dtype=torch.uint8).transpose(0, 1),
+            ),
+            id="noncontiguous-value-storage",
+        ),
+        pytest.param(
+            lambda param: (
+                setattr(param, "shape", torch.Size((5, 63))),
+                setattr(param, "ndim", 2),
+            ),
+            id="K-not-divisible-by-32",
+        ),
+        pytest.param(
+            lambda param: setattr(param, "scale_bytes", torch.zeros((4, 2), dtype=torch.uint8)),
+            id="scale-storage-too-small",
+        ),
+        pytest.param(
+            lambda param: setattr(
+                param,
+                "get_metadata",
+                lambda: {
+                    "rowwise_data": param.data_bytes,
+                    "rowwise_scale_inv": param.scale_bytes,
+                    "is_2D_scaled": True,
+                    "quantizer": SimpleNamespace(block_len=32),
+                },
+            ),
+            id="swizzled-scale-storage",
+        ),
+    ],
+)
+def test_native_mxfp8_storage_rejects_malformed_storage(configure):
+    param = _FakeNativeMXFP8Tensor()
+    configure(param)
+
+    with pytest.raises(ValueError, match="decoder\\.linear\\.weight"):
+        _extract_native_mxfp8_storage(param, "decoder.linear.weight")
 
 
 def _make_qkv_mapping_type(global_name: str = _QKV_GLOBAL):
