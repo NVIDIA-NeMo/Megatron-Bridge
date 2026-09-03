@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from unittest.mock import Mock, patch
 
 import pytest
@@ -23,6 +24,16 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.hybrid import hybrid_provider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
 
 
 class TestHybridModelProvider:
@@ -93,6 +104,41 @@ class TestHybridModelProvider:
                 assert result == mock_instance
                 mock_model.assert_called_once()
                 assert mock_model.call_args.kwargs["hybrid_stack_spec"] is hybrid_provider.default_hybrid_stack_spec
+
+    def test_provide_preserves_runtime_config_identity_without_copying_process_groups(self):
+        class UncopyableProcessGroupCollection:
+            pp = object()
+
+            def __deepcopy__(self, memo):
+                raise TypeError("runtime process groups cannot be copied")
+
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+        )
+        pg_collection = UncopyableProcessGroupCollection()
+        provider._pg_collection = pg_collection
+
+        def create_model(**kwargs):
+            assert kwargs["config"] is provider
+            assert kwargs["config"]._pg_collection is None
+            copied_config = _copy_attention_config(kwargs["config"])
+            assert copied_config._pg_collection is None
+            return Mock(config=kwargs["config"])
+
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel", side_effect=create_model
+        ) as mock_model:
+            model = provider.provide(pre_process=True, post_process=True)
+
+        assert provider._pg_collection is pg_collection
+        assert mock_model.call_args.kwargs["pg_collection"] is pg_collection
+
+        runtime_grad_sync = Mock()
+        provider.grad_sync_func = runtime_grad_sync
+        assert model.config.grad_sync_func is runtime_grad_sync
 
     def test_provide_method_with_vocab_padding(self):
         provider = HybridModelProvider(
