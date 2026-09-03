@@ -315,6 +315,43 @@ class MegatronQuantizationBridge:
                 )
         return [tasks_by_name[name] for name in ordered_names]
 
+    def iter_local_native_mxfp8_params(
+        self,
+        tasks: Iterable["WeightConversionTask"],
+    ) -> Iterator["LocalMXFP8Param"]:
+        """Yield canonical local views for native MXFP8 conversion tasks.
+
+        Args:
+            tasks: Conversion tasks in the order they should be materialized.
+
+        Yields:
+            Canonical local MXFP8 value and scale pairs in task, local-expert,
+            and mapping order.
+
+        Raises:
+            ValueError: If a native task cannot be represented without conversion.
+        """
+        for task in tasks:
+            if task.param_weight is None:
+                continue
+            if is_grouped_mxfp8tensor(task.param_weight):
+                if self._is_mtp_param(task.global_param_name):
+                    raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
+                members = get_grouped_quantized_members(task.param_weight, create_if_missing=False)
+                yield from self._iter_grouped_native_mxfp8_params(task, members)
+                continue
+            if not is_mxfp8tensor(task.param_weight):
+                continue
+            if self._is_mtp_param(task.global_param_name):
+                raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
+            storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
+            yield from task.mapping.local_mxfp8_params(
+                storage.weight,
+                storage.weight_scale,
+                global_param_name=task.global_param_name,
+                megatron_module=task.megatron_module,
+            )
+
     def _iter_grouped_native_mxfp8_params(
         self,
         task: "WeightConversionTask",

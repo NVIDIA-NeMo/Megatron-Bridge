@@ -896,6 +896,273 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    def test_native_mxfp8_materialization_preserves_task_expert_and_mapping_order(self, monkeypatch):
+        bridge = DummyBridge()
+        qkv_name = "decoder.layers.0.self_attention.linear_qkv.weight"
+        grouped_name = "decoder.layers.1.mlp.experts.linear_fc1.weight"
+        output_name = "decoder.layers.2.self_attention.linear_proj.weight"
+        qkv = _FakeNativeMXFP8Tensor()
+        qkv.shape = torch.Size((64, 64))
+        qkv.data_bytes = torch.arange(64 * 64, dtype=torch.uint8).view(64, 64)
+        qkv.scale_bytes = torch.arange(64 * 2, dtype=torch.uint8).view(64, 2)
+        grouped = torch.nn.Parameter(torch.zeros(2, 8, 64))
+        members = []
+        for expert_id in range(2):
+            member = _FakeNativeMXFP8Tensor()
+            member.shape = torch.Size((8, 64))
+            member.data_bytes = torch.full((8, 64), expert_id, dtype=torch.uint8)
+            member.scale_bytes = torch.full((8, 2), expert_id + 1, dtype=torch.uint8)
+            members.append(member)
+        output = _FakeNativeMXFP8Tensor()
+        output.shape = torch.Size((8, 64))
+        output.data_bytes = torch.full((8, 64), 7, dtype=torch.uint8)
+        output.scale_bytes = torch.full((8, 2), 8, dtype=torch.uint8)
+
+        qkv_mapping = QKVMapping(qkv_name, "hf.q", "hf.k", "hf.v")
+        grouped_mapping = FusedGatedExpertMapping(
+            f"{grouped_name}0",
+            "model.layers.1.mlp.experts.gate_up_proj",
+        )
+        output_mapping = RowParallelMapping(output_name, "hf.o")
+        monkeypatch.setattr(type(qkv_mapping), "tp_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(type(grouped_mapping), "ep_rank", PropertyMock(return_value=1))
+        monkeypatch.setattr(type(grouped_mapping), "ep_size", PropertyMock(return_value=2))
+        monkeypatch.setattr(type(grouped_mapping), "tp_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(type(output_mapping), "tp_size", PropertyMock(return_value=1))
+
+        grouped_member_calls = []
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is grouped)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: isinstance(weight, _FakeNativeMXFP8Tensor))
+        monkeypatch.setattr(
+            f"{_QUANT_MB}.get_grouped_quantized_members",
+            lambda weight, *, create_if_missing: grouped_member_calls.append((weight, create_if_missing)) or members,
+        )
+
+        tasks = [
+            WeightConversionTask(
+                param_name="remote.weight",
+                global_param_name="remote.weight",
+                mapping=_IdentityMapping("hf.remote", "remote.weight"),
+                param_weight=None,
+            ),
+            WeightConversionTask(
+                param_name=qkv_name,
+                global_param_name=qkv_name,
+                mapping=qkv_mapping,
+                megatron_module=SimpleNamespace(
+                    config=SimpleNamespace(
+                        num_attention_heads=8,
+                        num_query_groups=4,
+                        kv_channels=4,
+                        hidden_size=64,
+                        attention_output_gate=False,
+                    )
+                ),
+                param_weight=qkv,
+            ),
+            WeightConversionTask(
+                param_name="decoder.layers.0.mlp.linear_fc1.weight",
+                global_param_name="decoder.layers.0.mlp.linear_fc1.weight",
+                mapping=_IdentityMapping("hf.bf16"),
+                param_weight=torch.zeros((8, 64), dtype=torch.bfloat16),
+            ),
+            WeightConversionTask(
+                param_name=grouped_name,
+                global_param_name=grouped_name,
+                mapping=grouped_mapping,
+                megatron_module=SimpleNamespace(config=SimpleNamespace(num_moe_experts=4)),
+                param_weight=grouped,
+            ),
+            WeightConversionTask(
+                param_name=output_name,
+                global_param_name=output_name,
+                mapping=output_mapping,
+                megatron_module=SimpleNamespace(),
+                param_weight=output,
+            ),
+        ]
+
+        params = list(bridge.iter_local_native_mxfp8_params(tasks))
+
+        assert [param.name for param in params] == [
+            "hf.q",
+            "hf.k",
+            "hf.v",
+            "model.layers.1.mlp.experts.2.gate_proj.weight",
+            "model.layers.1.mlp.experts.2.up_proj.weight",
+            "model.layers.1.mlp.experts.3.gate_proj.weight",
+            "model.layers.1.mlp.experts.3.up_proj.weight",
+            "hf.o",
+        ]
+        assert grouped_member_calls == [(grouped, False)]
+
+    def test_native_mxfp8_materialization_live_storage_refresh(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        parameter.shape = torch.Size((8, 64))
+        parameter.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+        parameter.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+        mapping = RowParallelMapping(global_name, "hf.o")
+        monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(),
+            param_weight=parameter,
+        )
+
+        first = list(bridge.iter_local_native_mxfp8_params([task]))[0]
+        parameter.data_bytes.fill_(3)
+        parameter.scale_bytes.fill_(5)
+        second = list(bridge.iter_local_native_mxfp8_params([task]))[0]
+
+        assert torch.count_nonzero(first.weight.view(torch.uint8) != 3) == 0
+        assert torch.count_nonzero(first.weight_scale != 5) == 0
+        assert torch.count_nonzero(second.weight.view(torch.uint8) != 3) == 0
+        assert torch.count_nonzero(second.weight_scale != 5) == 0
+        assert second.weight.untyped_storage().data_ptr() == parameter.data_bytes.untyped_storage().data_ptr()
+        assert second.weight_scale.untyped_storage().data_ptr() == parameter.scale_bytes.untyped_storage().data_ptr()
+
+    def test_native_mxfp8_materialization_uses_no_payload_collectives(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        parameter.shape = torch.Size((8, 64))
+        parameter.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+        parameter.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+        mapping = RowParallelMapping(global_name, "hf.o")
+        monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+
+        def payload_collective_called(*_args, **_kwargs):
+            raise AssertionError("native MXFP8 materialization called a payload collective")
+
+        monkeypatch.setattr(torch.distributed, "broadcast", payload_collective_called)
+        monkeypatch.setattr(torch.distributed, "all_gather", payload_collective_called)
+        monkeypatch.setattr(torch.distributed, "all_gather_into_tensor", payload_collective_called)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(),
+            param_weight=parameter,
+        )
+
+        params = list(bridge.iter_local_native_mxfp8_params([task]))
+
+        assert [param.name for param in params] == ["hf.o"]
+
+    def test_native_mxfp8_materialization_rejects_unsupported_mapping(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.unsupported.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=_IdentityMapping("hf.unsupported", global_name),
+            megatron_module=SimpleNamespace(),
+            param_weight=parameter,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*does not support direct native MXFP8 export"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    def test_native_mxfp8_materialization_rejects_mtp(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "mtp.decoder.layers.0.self_attention.linear_proj.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=RowParallelMapping(global_name, "hf.o"),
+            megatron_module=SimpleNamespace(),
+            param_weight=parameter,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*co-trained MTP"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    def test_native_mxfp8_materialization_rejects_fsdp(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        mapping = AutoMapping(global_name, "hf.o")
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        monkeypatch.setattr(f"{_PARAM_MB}._module_uses_fsdp", lambda _module: True)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=type("RowParallelLinear", (), {})(),
+            param_weight=parameter,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*DTensor/FSDP"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    @pytest.mark.parametrize(
+        "configure",
+        [
+            pytest.param(
+                lambda parameter: setattr(parameter, "shape", torch.Size((5, 63))),
+                id="bad-k-alignment",
+            ),
+            pytest.param(
+                lambda parameter: setattr(parameter, "scale_bytes", torch.zeros((5, 1), dtype=torch.uint8)),
+                id="bad-scale-shape",
+            ),
+        ],
+    )
+    def test_native_mxfp8_materialization_rejects_malformed_storage(self, monkeypatch, configure):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        configure(parameter)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=RowParallelMapping(global_name, "hf.o"),
+            megatron_module=SimpleNamespace(),
+            param_weight=parameter,
+        )
+
+        with pytest.raises(ValueError, match=global_name):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    def test_native_mxfp8_materialization_rejects_bad_grouped_count(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.mlp.experts.linear_fc2.weight"
+        grouped = torch.nn.Parameter(torch.zeros(1, 8, 64))
+        mapping = FusedExpertMapping(f"{global_name}0", "model.layers.0.mlp.experts.down_proj")
+        monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is grouped)
+        monkeypatch.setattr(
+            f"{_QUANT_MB}.get_grouped_quantized_members",
+            lambda _weight, *, create_if_missing: [_FakeNativeMXFP8Tensor()],
+        )
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(config=SimpleNamespace(num_moe_experts=2)),
+            param_weight=grouped,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*1 local members.*expected 2"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
     def test_build_export_mxfp8_tasks_keeps_resolved_expert_mapping_ordinary(self):
         global_name = "decoder.layers.0.mlp.experts.local_experts.2.linear_fc1.weight"
         mapping = FusedGatedExpertMapping(global_name, "model.layers.0.mlp.experts.gate_up_proj")
