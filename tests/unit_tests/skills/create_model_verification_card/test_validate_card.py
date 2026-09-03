@@ -107,6 +107,8 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 32): (4096, 2048, 32),
     ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 128): (4096, 8192, 128),
     ("qwen3-30b-a3b", "pretrain_weak_scaling", "GB300", 256): (4096, 16384, 256),
+    ("qwen3-235b-a22b", "pretrain", "GB200"): (4096, 8192, 256),
+    ("qwen3-235b-a22b", "checkpoint_resume", "GB200"): (4096, 8192, 256),
     ("qwen3-235b-a22b", "pretrain_performance", "GB300"): (4096, 8192, 256),
     ("qwen3-235b-a22b", "pretrain_performance", "GB200"): (4096, 8192, 256),
     ("qwen3-8b", "pretrain", "H100"): (4096, 1024, 16),
@@ -734,3 +736,105 @@ def test_resume_reference_only_warm_start(resume_initialization, expected_errors
     )
 
     assert errors == expected_errors
+
+
+def test_resume_accepts_declared_allowlisted_execution_only_override():
+    validator = _load_validator()
+    errors = []
+    common_command = (
+        "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+        "--recipe example_pretrain --mode pretrain --max_steps 100"
+    )
+
+    validator._validate_resume_against_pretrain(
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} --load_dir work/reference --save_dir work/resume "
+                "checkpoint.ckpt_step=50 model.cuda_graph_impl=none "
+                "logger.save_config_filepath=work/resume.yaml"
+            ),
+            "resume_comparison": {"execution_only_overrides": ["model.cuda_graph_impl"]},
+        },
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} --save_dir work/reference checkpoint.load=null "
+                "logger.save_config_filepath=work/reference.yaml"
+            ),
+        },
+        resume_path=("items", "checkpoint_resume", "GB200"),
+        pretrain_path=("items", "pretrain", "GB200"),
+        default_bridge_commit=None,
+        errors=errors,
+    )
+
+    assert errors == []
+
+
+def test_resume_rejects_undeclared_execution_only_override():
+    validator = _load_validator()
+    errors = []
+    common_command = (
+        "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+        "--recipe example_pretrain --mode pretrain --max_steps 100"
+    )
+
+    validator._validate_resume_against_pretrain(
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} --load_dir work/reference --save_dir work/resume "
+                "checkpoint.ckpt_step=50 model.cuda_graph_impl=none"
+            ),
+        },
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": f"{common_command} --save_dir work/reference checkpoint.load=null",
+        },
+        resume_path=("items", "checkpoint_resume", "GB200"),
+        pretrain_path=("items", "pretrain", "GB200"),
+        default_bridge_commit=None,
+        errors=errors,
+    )
+
+    assert errors == [
+        "/items/checkpoint_resume/GB200/command: reference and resume launch settings must match; "
+        "differences found in model.cuda_graph_impl"
+    ]
+
+
+def test_resume_rejects_unallowlisted_execution_only_override():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_resume(
+        {
+            "depends_on": "pretrain",
+            "command": (
+                "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+                "--recipe example_pretrain --mode pretrain --max_steps 100 "
+                "--load_dir work/reference --save_dir work/resume checkpoint.ckpt_step=50"
+            ),
+            "resume_comparison": {
+                "reference_item": "pretrain",
+                "sentinel_steps": [51, 100],
+                "loss_relative_tolerance": 1.0e-2,
+                "loss_absolute_tolerance": 1.0e-6,
+                "sentinels_match": True,
+                "execution_only_overrides": ["model.moe_router_force_load_balancing"],
+            },
+        },
+        item_path=("items", "checkpoint_resume", "GB200"),
+        status="verified",
+        errors=errors,
+    )
+
+    assert errors == [
+        "/items/checkpoint_resume/GB200/resume_comparison/execution_only_overrides: "
+        "unsupported execution-only fields: model.moe_router_force_load_balancing"
+    ]

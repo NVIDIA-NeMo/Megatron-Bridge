@@ -701,7 +701,13 @@ result. Private executor configuration stays outside the card.
   from `--pretrained_checkpoint`, omit that fallback from the resume command;
   the middle checkpoint already contains the initialized model state. Persist
   each run's post-setup config to its own path so the resume does not overwrite
-  the reference evidence.
+  the reference evidence. If a demonstrated resume defect requires changing an
+  allowlisted execution-only field, record its exact name under
+  `resume_comparison.execution_only_overrides` and explain the deviation in
+  `expected_result`. Currently only `model.cuda_graph_impl` is allowlisted.
+  The resumed command must otherwise match the reference, and every resumed
+  step must pass the same loss gate; a sentinel-only comparison is insufficient
+  for this exception.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
   run and state public hardware plus thresholds.

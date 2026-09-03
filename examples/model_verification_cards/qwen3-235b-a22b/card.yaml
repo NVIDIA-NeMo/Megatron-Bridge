@@ -4,8 +4,9 @@
 title: qwen3_235b_a22b
 summary: >
   Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300
-  are verified with their tuned canonical 256-GPU MXFP8 recipes. Model-level
-  and functional training workflows remain unverified in this card.
+  are verified with their tuned canonical 256-GPU MXFP8 recipes. Functional
+  pretraining and checkpoint resume are verified on GB200 as bounded support
+  checks; model-level and the remaining functional workflows are unverified.
 verification_index:
   model_level:
     unverified:
@@ -18,6 +19,9 @@ verification_index:
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+    GB200:
+      verified: [pretrain, checkpoint_resume]
+      unverified: [sft, sft_export_inference, sft_long_context, peft]
   performance:
     GB300: verified
     GB200: verified
@@ -28,7 +32,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08
-  bridge_commit: bc09410353986ac7255ffd31fb2b720fb9007107  # pragma: allowlist secret
+  bridge_commit: 135f8d67684b625f8ec3f1bd1a81f4ed69c1719f  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -101,6 +105,53 @@ items:
       expected_result: >
         This workflow remains unverified and requires a bounded public run with
         the model's pinned revision and all applicable verification gates.
+
+    GB200:
+      status: verified
+      precision: fp8_mx
+      enabled_features:
+        cuda_graph:
+          implementation: transformer_engine
+          scopes: [moe_router, moe_preprocess]
+        moe_dispatcher: deepep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe qwen3_235b_a22b_256gpu_gb200_fp8mx_pretrain_config
+        --mode pretrain --dataset megatron-indexed --seq_length 4096
+        --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/rp2/head_01"],null]'
+        dataset.path_to_cache=work/cache/qwen3-235b-a22b/rp2
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        scheduler.lr_decay_iters=100
+        model.moe_router_force_load_balancing=false
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        dist.distributed_timeout_minutes=30
+        --save_dir work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-reference-checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-reference-config.yaml
+      last_verified: 2026-08-28
+      metrics:
+        initial_loss: 11.176840
+        final_loss: 6.856652
+        last_10_steps_step_time_ms_avg: 72553.930
+        last_10_steps_model_tflops_per_gpu_avg: 262.340
+        last_10_steps_tokens_per_second_per_gpu_avg: 1806.546
+      expected_result: >
+        On exactly 256 GB200s, this support-verification workload completes
+        exactly 100 bounded RP2 optimizer steps with TP1/PP16/CP1/EP16/ETP1,
+        DP1, SP off, GBS/MBS 8192/1, and sequence length 4096. MXFP8 compute,
+        natural routing, DeepEP, and Transformer Engine CUDA graphs for
+        moe_router and moe_preprocess remain active. Loss is finite from
+        11.176840 to 6.856652 with no skipped or NaN iterations, all five
+        metrics are recorded, the post-setup configuration persists, and
+        complete iter_0000050 and iter_0000100 checkpoints are saved. GBS8192
+        makes this support verification rather than cross-model convergence
+        evidence for the GBS1024 cohort.
 
   sft:
     H100:
@@ -186,6 +237,60 @@ items:
       expected_result: >
         This workflow remains unverified and requires a bounded public run with
         the model's pinned revision and all applicable verification gates.
+
+    GB200:
+      status: verified
+      precision: fp8_mx
+      depends_on: pretrain
+      command: >
+        ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
+        --recipe qwen3_235b_a22b_256gpu_gb200_fp8mx_pretrain_config
+        --mode pretrain --dataset megatron-indexed --seq_length 4096
+        --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/rp2/head_01"],null]'
+        dataset.path_to_cache=work/cache/qwen3-235b-a22b/rp2
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        scheduler.lr_decay_iters=100
+        model.moe_router_force_load_balancing=false
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        validation.eval_iters=0 validation.eval_interval=0
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        dist.distributed_timeout_minutes=30
+        --load_dir work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-reference-checkpoints
+        --save_dir work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-resumed-checkpoints
+        --save_interval 50 checkpoint.ckpt_step=50
+        model.cuda_graph_impl=none
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/qwen3-235b-a22b/pretrain-mxfp8-gb200-resume-config.yaml
+      last_verified: 2026-08-28
+      metrics:
+        initial_loss: 7.353207
+        final_loss: 6.856652
+        last_10_steps_step_time_ms_avg: 80779.180
+        last_10_steps_model_tflops_per_gpu_avg: 235.760
+        last_10_steps_tokens_per_second_per_gpu_avg: 1622.596
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: true
+        execution_only_overrides: [model.cuda_graph_impl]
+      expected_result: >
+        The command restores optimizer, scheduler, data-order, and RNG state
+        directly from iter_0000050, begins at step 51, and finishes at step 100
+        in a distinct output root. Scoped CUDA graph capture is disabled only
+        for the continuation to avoid a resume-time communication deadlock;
+        routing, precision, batches, data, optimizer, and schedule remain
+        unchanged. All 50 resumed LM-loss values match the uninterrupted
+        reference exactly; auxiliary losses differ by at most 1e-6, including
+        exact step-51 values 7.353207/4.872377 and step-100 values
+        6.856652/1.976203. Both sentinels match, no iteration is skipped or NaN,
+        all five metrics are recorded, the post-setup configuration persists,
+        and a complete iter_0000100 checkpoint is saved.
 
   pretrain_performance:
     GB300:

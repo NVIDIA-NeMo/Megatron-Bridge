@@ -841,6 +841,135 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     assert perf_cfg.model.cuda_graph_scope == []
 
 
+@pytest.mark.parametrize(
+    ("main_recipe_name", "perf_module_name", "perf_recipe_name"),
+    [
+        (
+            "qwen3_235b_a22b_256gpu_gb200_fp8mx_pretrain_config",
+            "megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe",
+            "qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config",
+        ),
+        (
+            "qwen3_235b_a22b_256gpu_gb300_fp8mx_pretrain_config",
+            "megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe",
+            "qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config",
+        ),
+    ],
+)
+def test_qwen3_235b_blackwell_main_recipes_match_measured_perf_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    main_recipe_name: str,
+    perf_module_name: str,
+    perf_recipe_name: str,
+):
+    """Natural-routing candidates preserve measured knobs except convergence-safe scheduling."""
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeMoeBridge)
+
+    main_recipe = getattr(_qwen_module, main_recipe_name)
+    perf_recipe = getattr(importlib.import_module(perf_module_name), perf_recipe_name)
+    main_cfg = main_recipe()
+    perf_cfg = perf_recipe()
+
+    assert main_cfg.mixed_precision == perf_cfg.mixed_precision
+    if "gb200" in main_recipe_name:
+        assert main_cfg.comm_overlap.tp_comm_overlap is True
+        assert main_cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+        assert main_cfg.comm_overlap.delay_wgrad_compute is False
+        assert perf_cfg.comm_overlap.tp_comm_overlap is True
+        assert perf_cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+        assert perf_cfg.comm_overlap.delay_wgrad_compute is True
+    else:
+        assert main_cfg.comm_overlap == perf_cfg.comm_overlap
+    hybridep_domain_key = "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"
+    assert {k: v for k, v in main_cfg.env_vars.items() if k != hybridep_domain_key} == {
+        k: v for k, v in perf_cfg.env_vars.items() if k != hybridep_domain_key
+    }
+    assert hybridep_domain_key not in main_cfg.env_vars
+    assert perf_cfg.env_vars[hybridep_domain_key] == 32
+    assert main_cfg.logger.tensorboard_dir == perf_cfg.logger.tensorboard_dir is None
+    assert main_cfg.train.global_batch_size == perf_cfg.train.global_batch_size
+    assert main_cfg.train.micro_batch_size == perf_cfg.train.micro_batch_size
+
+    equivalent_model_fields = (
+        "tensor_model_parallel_size",
+        "context_parallel_size",
+        "expert_tensor_parallel_size",
+        "sequence_parallel",
+        "moe_hybridep_num_sms",
+        "offload_modules",
+        "bias_activation_fusion",
+        "apply_rope_fusion",
+        "moe_router_fusion",
+    )
+    for field_name in equivalent_model_fields:
+        assert getattr(main_cfg.model, field_name) == getattr(perf_cfg.model, field_name)
+
+    assert main_cfg.model.moe_flex_dispatcher_backend == "deepep"
+    assert main_cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert perf_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert perf_cfg.model.moe_token_dispatcher_type == "flex"
+
+    if "gb200" in main_recipe_name:
+        assert main_cfg.model.pipeline_model_parallel_size == 16
+        assert main_cfg.model.virtual_pipeline_model_parallel_size is None
+        assert perf_cfg.model.pipeline_model_parallel_size == 8
+        assert perf_cfg.model.virtual_pipeline_model_parallel_size == 3
+    else:
+        assert main_cfg.model.pipeline_model_parallel_size == 8
+        assert main_cfg.model.virtual_pipeline_model_parallel_size == 3
+        assert perf_cfg.model.pipeline_model_parallel_size == 4
+        assert perf_cfg.model.virtual_pipeline_model_parallel_size == 12
+    assert main_cfg.model.expert_model_parallel_size == 16
+    assert perf_cfg.model.expert_model_parallel_size == 32
+
+    # Full-iteration graphs conflict with the main recipe's loss-NaN check and
+    # therefore remain benchmark-only.
+    assert main_cfg.model.cuda_graph_impl == "transformer_engine"
+    assert main_cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
+    assert perf_cfg.model.cuda_graph_impl == "full_iteration"
+    assert perf_cfg.model.cuda_graph_scope == []
+
+    # Only the benchmark owns synthetic routing and the short-run policy.
+    assert main_cfg.model.moe_router_force_load_balancing is False
+    assert perf_cfg.model.moe_router_force_load_balancing is True
+    assert main_cfg.tokenizer.use_tokenizer_vocab_size is True
+    assert perf_cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert main_cfg.checkpoint.save is not None
+    assert perf_cfg.checkpoint.save is None
+    assert main_cfg.ddp.check_for_nan_in_grad is True
+    assert perf_cfg.ddp.check_for_nan_in_grad is False
+    assert main_cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert perf_cfg.rerun_state_machine.check_for_nan_in_loss is False
+    assert main_cfg.model.use_transformer_engine_op_fuser is False
+    assert perf_cfg.model.use_transformer_engine_op_fuser is True
+    assert main_cfg.model.moe_pad_experts_for_cuda_graph_inference is True
+    assert perf_cfg.model.moe_pad_experts_for_cuda_graph_inference is True
+    assert getattr(main_cfg.model, "moe_paged_stash", False) is False
+    assert perf_cfg.model.moe_paged_stash is True
+    assert getattr(main_cfg.model, "moe_expert_rank_capacity_factor", None) is None
+    assert perf_cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert main_cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert perf_cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
+    assert main_cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert perf_cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert main_cfg.model.recompute_granularity == "selective"
+    assert main_cfg.model.recompute_modules == ["moe_act"]
+    assert perf_cfg.model.recompute_granularity is None
+    assert perf_cfg.model.recompute_modules is None
+    assert main_cfg.train.train_iters == 100
+    assert perf_cfg.train.train_iters == 50
+    assert main_cfg.train.global_batch_size == 8192
+    assert main_cfg.train.micro_batch_size == (1 if "gb200" in main_recipe_name else 2)
+    assert main_cfg.scheduler.lr_warmup_iters == 40
+    assert main_cfg.scheduler.lr_decay_iters == 100
+    assert main_cfg.checkpoint.save_interval == 100
+    assert perf_cfg.checkpoint.save_interval == 500
+    assert main_cfg.validation.eval_iters == main_cfg.validation.eval_interval == 0
+    assert perf_cfg.validation.eval_iters == 32
+    assert perf_cfg.validation.eval_interval == 500
+
+
 def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B LoRA has correct default parallelism."""
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
