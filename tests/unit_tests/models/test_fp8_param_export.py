@@ -46,6 +46,7 @@ from megatron.bridge.models.conversion.quant_bridge import (
     _lookup_grouped_expert_mapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import MiMoV2FlashQKVMapping
 from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
@@ -896,6 +897,273 @@ class TestHFNameSuffixMapping:
 
 
 class TestFp8ParamExport:
+    def test_native_mxfp8_materialization_validates_all_tasks_before_exposing_results(self, monkeypatch):
+        bridge = DummyBridge()
+        first_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        malformed_name = "decoder.layers.1.self_attention.linear_proj.weight"
+        first = _FakeNativeMXFP8Tensor()
+        first.shape = torch.Size((8, 64))
+        first.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+        first.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+        malformed = _FakeNativeMXFP8Tensor()
+        malformed.shape = torch.Size((8, 63))
+        malformed.data_bytes = torch.zeros((8, 63), dtype=torch.uint8)
+        malformed.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+        first_mapping = RowParallelMapping(first_name, "hf.first")
+        malformed_mapping = RowParallelMapping(malformed_name, "hf.malformed")
+        monkeypatch.setattr(type(first_mapping), "tp_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(
+            f"{_QUANT_MB}.is_mxfp8tensor",
+            lambda weight: weight in (first, malformed),
+        )
+        tasks = [
+            WeightConversionTask(
+                param_name=first_name,
+                global_param_name=first_name,
+                mapping=first_mapping,
+                megatron_module=SimpleNamespace(),
+                param_weight=first,
+            ),
+            WeightConversionTask(
+                param_name=malformed_name,
+                global_param_name=malformed_name,
+                mapping=malformed_mapping,
+                megatron_module=SimpleNamespace(),
+                param_weight=malformed,
+            ),
+        ]
+        exposed = []
+
+        with pytest.raises(ValueError, match=malformed_name):
+            exposed.extend(bridge.iter_local_native_mxfp8_params(tasks))
+
+        assert exposed == []
+
+    def test_native_mxfp8_materialization_rejects_fsdp_before_native_classification(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_proj.weight"
+
+        class FakeDTensor:
+            pass
+
+        def classification_called(_weight):
+            raise AssertionError("native MXFP8 classification ran for a DTensor/FSDP task")
+
+        monkeypatch.setattr(f"{_PARAM_MB}.DTensor", FakeDTensor)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", classification_called)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", classification_called)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=RowParallelMapping(global_name, "hf.o"),
+            megatron_module=SimpleNamespace(_parameters={"weight": FakeDTensor()}),
+            param_weight=torch.zeros((8, 64), dtype=torch.bfloat16),
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*DTensor/FSDP"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    def test_native_mxfp8_materialization_wraps_grouped_cache_errors(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.mlp.experts.linear_fc2.weight"
+        grouped = torch.nn.Parameter(torch.zeros(2, 8, 64))
+        mapping = FusedExpertMapping(f"{global_name}0", "model.layers.0.mlp.experts.down_proj")
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is grouped)
+
+        def missing_cache(_weight, *, create_if_missing):
+            assert create_if_missing is False
+            raise RuntimeError("cached members are unavailable")
+
+        monkeypatch.setattr(f"{_QUANT_MB}.get_grouped_quantized_members", missing_cache)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(config=SimpleNamespace(num_moe_experts=2)),
+            param_weight=grouped,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*cached grouped MXFP8 members"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    def test_native_mxfp8_materialization_rejects_inherited_specialized_mapping(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_qkv.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        parameter.shape = torch.Size((64, 64))
+        parameter.data_bytes = torch.zeros((64, 64), dtype=torch.uint8)
+        parameter.scale_bytes = torch.zeros((64, 2), dtype=torch.uint8)
+        mapping = MiMoV2FlashQKVMapping(global_name, "hf.q", "hf.k", "hf.v")
+        monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(
+                config=SimpleNamespace(
+                    num_attention_heads=8,
+                    num_query_groups=4,
+                    kv_channels=4,
+                    v_head_dim=2,
+                    hidden_size=64,
+                    attention_output_gate=False,
+                )
+            ),
+            param_weight=parameter,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*exact native MXFP8 projection"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    @pytest.mark.parametrize(
+        "result",
+        [
+            pytest.param(SimpleNamespace(), id="wrong-record-type"),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.uint8),
+                    weight_scale=torch.zeros((8, 2), dtype=torch.uint8),
+                    global_weight_shape=torch.Size((8, 64)),
+                    shard_group="tp",
+                    shard_dim=1,
+                ),
+                id="wrong-weight-dtype",
+            ),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 2), dtype=torch.float32),
+                    global_weight_shape=torch.Size((8, 64)),
+                    shard_group="tp",
+                    shard_dim=1,
+                ),
+                id="wrong-scale-dtype",
+            ),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 1), dtype=torch.uint8),
+                    global_weight_shape=torch.Size((8, 64)),
+                    shard_group="tp",
+                    shard_dim=1,
+                ),
+                id="wrong-scale-shape",
+            ),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 2), dtype=torch.uint8),
+                    global_weight_shape=(8, 64),
+                    shard_group="tp",
+                    shard_dim=1,
+                ),
+                id="wrong-global-shape-type",
+            ),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 2), dtype=torch.uint8),
+                    global_weight_shape=torch.Size((9, 64)),
+                    shard_group="tp",
+                    shard_dim=1,
+                ),
+                id="inconsistent-global-shape",
+            ),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 2), dtype=torch.uint8),
+                    global_weight_shape=torch.Size((8, 64)),
+                    shard_group="dp",
+                    shard_dim=1,
+                ),
+                id="wrong-shard-group",
+            ),
+            pytest.param(
+                LocalMXFP8Param(
+                    name="hf.o",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 2), dtype=torch.uint8),
+                    global_weight_shape=torch.Size((8, 64)),
+                    shard_group="tp",
+                    shard_dim=None,
+                ),
+                id="missing-shard-dim",
+            ),
+        ],
+    )
+    def test_native_mxfp8_materialization_rejects_malformed_mapping_result(self, monkeypatch, result):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        parameter = _FakeNativeMXFP8Tensor()
+        parameter.shape = torch.Size((8, 64))
+        parameter.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+        parameter.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+        mapping = RowParallelMapping(global_name, "hf.o")
+        monkeypatch.setattr(mapping, "local_mxfp8_params", lambda *_args, **_kwargs: (result,))
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight is parameter)
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(),
+            param_weight=parameter,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}.*invalid native MXFP8 mapping result"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
+    def test_native_mxfp8_materialization_validates_grouped_mapping_results(self, monkeypatch):
+        bridge = DummyBridge()
+        global_name = "decoder.layers.0.mlp.experts.linear_fc2.weight"
+        grouped = torch.nn.Parameter(torch.zeros(1, 8, 64))
+        member = _FakeNativeMXFP8Tensor()
+        member.shape = torch.Size((8, 64))
+        member.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+        member.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+        mapping = FusedExpertMapping(f"{global_name}0", "model.layers.0.mlp.experts.down_proj")
+        monkeypatch.setattr(type(mapping), "ep_rank", PropertyMock(return_value=0))
+        monkeypatch.setattr(type(mapping), "ep_size", PropertyMock(return_value=1))
+        monkeypatch.setattr(
+            mapping,
+            "local_mxfp8_params",
+            lambda *_args, **_kwargs: (
+                LocalMXFP8Param(
+                    name="model.layers.0.mlp.experts.0.down_proj.weight",
+                    weight=torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+                    weight_scale=torch.zeros((8, 1), dtype=torch.uint8),
+                    global_weight_shape=torch.Size((8, 64)),
+                    shard_group="etp",
+                    shard_dim=1,
+                ),
+            ),
+        )
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is grouped)
+        monkeypatch.setattr(
+            f"{_QUANT_MB}.get_grouped_quantized_members",
+            lambda _weight, *, create_if_missing: [member],
+        )
+        task = WeightConversionTask(
+            param_name=global_name,
+            global_param_name=global_name,
+            mapping=mapping,
+            megatron_module=SimpleNamespace(config=SimpleNamespace(num_moe_experts=1)),
+            param_weight=grouped,
+        )
+
+        with pytest.raises(ValueError, match=rf"{global_name}0.*invalid native MXFP8 mapping result"):
+            list(bridge.iter_local_native_mxfp8_params([task]))
+
     def test_native_mxfp8_materialization_preserves_task_expert_and_mapping_order(self, monkeypatch):
         bridge = DummyBridge()
         qkv_name = "decoder.layers.0.self_attention.linear_qkv.weight"
@@ -1071,7 +1339,9 @@ class TestFp8ParamExport:
             param_weight=parameter,
         )
 
-        with pytest.raises(ValueError, match=rf"{global_name}.*does not support direct native MXFP8 export"):
+        with pytest.raises(
+            ValueError, match=rf"{global_name}.*does not explicitly support exact native MXFP8 projection"
+        ):
             list(bridge.iter_local_native_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_rejects_mtp(self, monkeypatch):

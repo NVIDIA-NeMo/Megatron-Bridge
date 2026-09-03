@@ -109,7 +109,98 @@ def _lookup_grouped_expert_mapping(
 def _supports_native_grouped_mxfp8(mapping: "MegatronParamMapping") -> bool:
     from megatron.bridge.models.conversion.param_mapping import FusedExpertMapping, FusedGatedExpertMapping
 
-    return isinstance(mapping, (FusedGatedExpertMapping, FusedExpertMapping))
+    return type(mapping) in (FusedGatedExpertMapping, FusedExpertMapping)
+
+
+def _supports_native_mxfp8_mapping(mapping: "MegatronParamMapping") -> bool:
+    """Return whether a mapping class explicitly implements the native contract."""
+    from megatron.bridge.models.conversion.param_mapping import (
+        AutoMapping,
+        FusedExpertMapping,
+        FusedGatedExpertMapping,
+        GatedMLPMapping,
+        QKVMapping,
+        RowParallelMapping,
+    )
+
+    return type(mapping) in (
+        AutoMapping,
+        FusedExpertMapping,
+        FusedGatedExpertMapping,
+        GatedMLPMapping,
+        QKVMapping,
+        RowParallelMapping,
+    )
+
+
+def _uses_dtensor_or_fsdp(param_weight: torch.Tensor, megatron_module: Any) -> bool:
+    """Return whether local materialization would inspect distributed storage."""
+    from megatron.bridge.models.conversion.param_mapping import DTensor, _module_uses_fsdp
+
+    return isinstance(param_weight, DTensor) or (megatron_module is not None and _module_uses_fsdp(megatron_module))
+
+
+def _validate_local_native_mxfp8_param(
+    param: object,
+    global_param_name: str,
+) -> "LocalMXFP8Param":
+    """Validate one final mapping result before it can leave the Bridge."""
+    from megatron.bridge.models.conversion.param_mapping import LocalMXFP8Param
+
+    error_prefix = f"{global_param_name}: invalid native MXFP8 mapping result"
+    if not isinstance(param, LocalMXFP8Param):
+        raise ValueError(f"{error_prefix}: expected LocalMXFP8Param")
+    if not isinstance(param.name, str) or not param.name:
+        raise ValueError(f"{error_prefix}: parameter name must be non-empty")
+    if not isinstance(param.weight, torch.Tensor) or param.weight.dtype != torch.float8_e4m3fn:
+        raise ValueError(f"{error_prefix}: weight must be an E4M3 tensor")
+    if param.weight.ndim != 2 or any(size <= 0 for size in param.weight.shape):
+        raise ValueError(f"{error_prefix}: weight must have a non-empty two-dimensional shape")
+    if param.weight.shape[-1] % 32:
+        raise ValueError(f"{error_prefix}: weight K dimension must be divisible by 32")
+    if not isinstance(param.weight_scale, torch.Tensor) or param.weight_scale.dtype != torch.uint8:
+        raise ValueError(f"{error_prefix}: weight_scale must be a uint8 E8M0 tensor")
+    expected_scale_shape = torch.Size((*param.weight.shape[:-1], param.weight.shape[-1] // 32))
+    if param.weight_scale.shape != expected_scale_shape:
+        raise ValueError(
+            f"{error_prefix}: expected weight_scale shape {tuple(expected_scale_shape)}, "
+            f"got {tuple(param.weight_scale.shape)}"
+        )
+    if param.weight_scale.device != param.weight.device:
+        raise ValueError(f"{error_prefix}: weight and weight_scale must be on the same device")
+    if not isinstance(param.global_weight_shape, torch.Size) or len(param.global_weight_shape) != param.weight.ndim:
+        raise ValueError(f"{error_prefix}: global_weight_shape must be a matching torch.Size")
+    if any(size <= 0 for size in param.global_weight_shape):
+        raise ValueError(f"{error_prefix}: global_weight_shape must be non-empty")
+    if param.shard_group not in ("tp", "etp", "replicated"):
+        raise ValueError(f"{error_prefix}: unsupported shard_group {param.shard_group!r}")
+
+    if param.shard_group == "replicated":
+        if param.shard_dim is not None or param.global_weight_shape != param.weight.shape:
+            raise ValueError(f"{error_prefix}: replicated metadata is inconsistent with the local weight")
+        return param
+
+    if type(param.shard_dim) is not int or not 0 <= param.shard_dim < param.weight.ndim:
+        raise ValueError(f"{error_prefix}: sharded metadata requires a valid shard_dim")
+    for dim, (local_size, global_size) in enumerate(zip(param.weight.shape, param.global_weight_shape)):
+        if dim == param.shard_dim:
+            if global_size < local_size or global_size % local_size:
+                raise ValueError(f"{error_prefix}: global shard dimension is inconsistent with the local weight")
+        elif global_size != local_size:
+            raise ValueError(f"{error_prefix}: unsharded dimensions must match the local weight")
+    return param
+
+
+def _validate_local_native_mxfp8_params(
+    params: Iterable[object],
+    global_param_name: str,
+) -> tuple["LocalMXFP8Param", ...]:
+    """Materialize and validate all mapping results for one source parameter."""
+    try:
+        materialized = tuple(params)
+    except TypeError as error:
+        raise ValueError(f"{global_param_name}: invalid native MXFP8 mapping result sequence") from error
+    return tuple(_validate_local_native_mxfp8_param(param, global_param_name) for param in materialized)
 
 
 class MegatronQuantizationBridge:
@@ -319,38 +410,61 @@ class MegatronQuantizationBridge:
         self,
         tasks: Iterable["WeightConversionTask"],
     ) -> Iterator["LocalMXFP8Param"]:
-        """Yield canonical local views for native MXFP8 conversion tasks.
+        """Materialize validated local views for native MXFP8 conversion tasks.
 
         Args:
             tasks: Conversion tasks in the order they should be materialized.
 
-        Yields:
-            Canonical local MXFP8 value and scale pairs in task, local-expert,
-            and mapping order.
+        Returns:
+            Iterator over a fully validated sequence of canonical local MXFP8
+            value and scale pairs in task, local-expert, and mapping order.
 
         Raises:
             ValueError: If a native task cannot be represented without conversion.
         """
+        materialized: list[LocalMXFP8Param] = []
         for task in tasks:
             if task.param_weight is None:
                 continue
+            if _uses_dtensor_or_fsdp(task.param_weight, task.megatron_module):
+                raise ValueError(
+                    f"{task.global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters"
+                )
             if is_grouped_mxfp8tensor(task.param_weight):
                 if self._is_mtp_param(task.global_param_name):
                     raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
-                members = get_grouped_quantized_members(task.param_weight, create_if_missing=False)
-                yield from self._iter_grouped_native_mxfp8_params(task, members)
+                if not _supports_native_grouped_mxfp8(task.mapping):
+                    raise ValueError(f"{task.global_param_name}: unsupported grouped MXFP8 expert mapping")
+                try:
+                    members = get_grouped_quantized_members(task.param_weight, create_if_missing=False)
+                except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+                    raise ValueError(
+                        f"{task.global_param_name}: unable to access cached grouped MXFP8 members"
+                    ) from error
+                materialized.extend(self._iter_grouped_native_mxfp8_params(task, members))
                 continue
             if not is_mxfp8tensor(task.param_weight):
                 continue
             if self._is_mtp_param(task.global_param_name):
                 raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
+            if not _supports_native_mxfp8_mapping(task.mapping):
+                raise ValueError(
+                    f"{task.global_param_name}: mapping {type(task.mapping).__name__} does not explicitly support "
+                    "exact native MXFP8 projection"
+                )
             storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
-            yield from task.mapping.local_mxfp8_params(
-                storage.weight,
-                storage.weight_scale,
-                global_param_name=task.global_param_name,
-                megatron_module=task.megatron_module,
+            materialized.extend(
+                _validate_local_native_mxfp8_params(
+                    task.mapping.local_mxfp8_params(
+                        storage.weight,
+                        storage.weight_scale,
+                        global_param_name=task.global_param_name,
+                        megatron_module=task.megatron_module,
+                    ),
+                    task.global_param_name,
+                )
             )
+        return iter(tuple(materialized))
 
     def _iter_grouped_native_mxfp8_params(
         self,
@@ -358,11 +472,9 @@ class MegatronQuantizationBridge:
         members: Optional[Iterable[torch.Tensor]],
     ) -> Iterator["LocalMXFP8Param"]:
         """Project cached grouped MXFP8 members in local expert order."""
-        from megatron.bridge.models.conversion.param_mapping import FusedExpertMapping, FusedGatedExpertMapping
-
         if members is None:
             raise ValueError(f"{task.global_param_name}: missing cached grouped MXFP8 members")
-        if not isinstance(task.mapping, (FusedGatedExpertMapping, FusedExpertMapping)) or not task.mapping.is_expert:
+        if not _supports_native_grouped_mxfp8(task.mapping) or not task.mapping.is_expert:
             raise ValueError(f"{task.global_param_name}: unsupported grouped MXFP8 expert mapping")
 
         ep_size = int(task.mapping.ep_size)
@@ -385,11 +497,14 @@ class MegatronQuantizationBridge:
             global_expert_id = expert_offset + local_expert_id
             member_name = f"{task.global_param_name}{global_expert_id}"
             storage = _extract_native_mxfp8_storage(member, member_name)
-            yield from task.mapping.local_mxfp8_params(
-                storage.weight,
-                storage.weight_scale,
-                global_param_name=member_name,
-                megatron_module=task.megatron_module,
+            yield from _validate_local_native_mxfp8_params(
+                task.mapping.local_mxfp8_params(
+                    storage.weight,
+                    storage.weight_scale,
+                    global_param_name=member_name,
+                    megatron_module=task.megatron_module,
+                ),
+                member_name,
             )
 
     @staticmethod
