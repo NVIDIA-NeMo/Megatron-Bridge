@@ -37,11 +37,36 @@ class _NativeMXFP8Storage:
     weight_scale: torch.Tensor
 
 
-def _extract_native_mxfp8_storage(
+@dataclass(frozen=True)
+class _NativeMXFP8StorageSpec:
+    weight_shape: torch.Size
+    weight_scale_shape: torch.Size
+
+
+@dataclass(frozen=True)
+class _LocalMXFP8ParamSpec:
+    name: str
+    weight_shape: torch.Size
+    weight_dtype: torch.dtype
+    weight_scale_shape: torch.Size
+    weight_scale_dtype: torch.dtype
+    global_weight_shape: torch.Size
+    shard_group: str
+    shard_dim: Optional[int]
+
+
+@dataclass(frozen=True)
+class _NativeMXFP8TaskPlan:
+    task: Any
+    grouped: bool
+    output_specs: tuple[_LocalMXFP8ParamSpec, ...]
+
+
+def _validate_native_mxfp8_storage(
     param: torch.Tensor,
     global_param_name: str,
-) -> _NativeMXFP8Storage:
-    """Return validated, unconverted native MXFP8 storage views."""
+) -> tuple[_NativeMXFP8StorageSpec, torch.Tensor, torch.Tensor]:
+    """Validate native MXFP8 backing metadata without projecting its payload."""
     get_metadata = getattr(param, "get_metadata", None)
     if not callable(get_metadata):
         raise ValueError(f"{global_param_name}: native MXFP8 storage is missing metadata")
@@ -84,12 +109,48 @@ def _extract_native_mxfp8_storage(
         raise ValueError(f"{global_param_name}: native MXFP8 value storage is too small")
     if any(actual < expected for actual, expected in zip(rowwise_scale.shape, expected_scale_shape)):
         raise ValueError(f"{global_param_name}: native MXFP8 scale storage is too small")
+    if rowwise_data.device != rowwise_scale.device:
+        raise ValueError(f"{global_param_name}: native MXFP8 value and scale storage must use the same device")
 
-    data_slices = tuple(slice(0, size) for size in logical_shape)
-    scale_slices = tuple(slice(0, size) for size in expected_scale_shape)
+    return (
+        _NativeMXFP8StorageSpec(
+            weight_shape=logical_shape,
+            weight_scale_shape=expected_scale_shape,
+        ),
+        rowwise_data,
+        rowwise_scale,
+    )
+
+
+def _inspect_native_mxfp8_storage(
+    param: torch.Tensor,
+    global_param_name: str,
+) -> _NativeMXFP8StorageSpec:
+    """Return an allocation-free description of native MXFP8 storage."""
+    storage_spec, _, _ = _validate_native_mxfp8_storage(param, global_param_name)
+    return storage_spec
+
+
+def _extract_native_mxfp8_storage(
+    param: torch.Tensor,
+    global_param_name: str,
+) -> _NativeMXFP8Storage:
+    """Return validated, unconverted native MXFP8 storage views."""
+    storage_spec, rowwise_data, rowwise_scale = _validate_native_mxfp8_storage(param, global_param_name)
+
+    data_slices = tuple(slice(0, size) for size in storage_spec.weight_shape)
+    scale_slices = tuple(slice(0, size) for size in storage_spec.weight_scale_shape)
     return _NativeMXFP8Storage(
         weight=rowwise_data[data_slices].view(torch.float8_e4m3fn),
         weight_scale=rowwise_scale[scale_slices],
+    )
+
+
+def _make_meta_native_mxfp8_storage(storage_spec: _NativeMXFP8StorageSpec) -> _NativeMXFP8Storage:
+    """Create storage-free tensors for structural mapping validation."""
+    return _NativeMXFP8Storage(
+        weight=torch.empty(storage_spec.weight_shape, dtype=torch.float8_e4m3fn, device="meta"),
+        weight_scale=torch.empty(storage_spec.weight_scale_shape, dtype=torch.uint8, device="meta"),
     )
 
 
@@ -201,6 +262,47 @@ def _validate_local_native_mxfp8_params(
     except TypeError as error:
         raise ValueError(f"{global_param_name}: invalid native MXFP8 mapping result sequence") from error
     return tuple(_validate_local_native_mxfp8_param(param, global_param_name) for param in materialized)
+
+
+def _local_native_mxfp8_param_specs(
+    params: tuple["LocalMXFP8Param", ...],
+) -> tuple[_LocalMXFP8ParamSpec, ...]:
+    """Describe validated mapping results without retaining their tensors."""
+    return tuple(
+        _LocalMXFP8ParamSpec(
+            name=param.name,
+            weight_shape=param.weight.shape,
+            weight_dtype=param.weight.dtype,
+            weight_scale_shape=param.weight_scale.shape,
+            weight_scale_dtype=param.weight_scale.dtype,
+            global_weight_shape=param.global_weight_shape,
+            shard_group=param.shard_group,
+            shard_dim=param.shard_dim,
+        )
+        for param in params
+    )
+
+
+def _describe_local_native_mxfp8_params(
+    params: Iterable[object],
+    global_param_name: str,
+) -> tuple[_LocalMXFP8ParamSpec, ...]:
+    """Validate mapping results and retain only their structural metadata."""
+    validated = _validate_local_native_mxfp8_params(params, global_param_name)
+    return _local_native_mxfp8_param_specs(validated)
+
+
+def _validate_local_native_mxfp8_params_against_specs(
+    params: Iterable[object],
+    expected_specs: tuple[_LocalMXFP8ParamSpec, ...],
+    global_param_name: str,
+) -> tuple["LocalMXFP8Param", ...]:
+    """Validate real mapping results against their preflight structure."""
+    validated = _validate_local_native_mxfp8_params(params, global_param_name)
+    actual_specs = _local_native_mxfp8_param_specs(validated)
+    if actual_specs != expected_specs:
+        raise ValueError(f"{global_param_name}: native MXFP8 mapping result changed after structural preflight")
+    return validated
 
 
 class MegatronQuantizationBridge:
@@ -422,21 +524,22 @@ class MegatronQuantizationBridge:
         Raises:
             ValueError: If a native task cannot be represented without conversion.
         """
-        task_sequence = tuple(tasks)
-        # Mapping projections may allocate reordered tensors, so preflight one task at a time.
-        for task in task_sequence:
-            self._materialize_local_native_mxfp8_task(task)
+        plans = []
+        for task in tasks:
+            plan = self._preflight_local_native_mxfp8_task(task)
+            if plan is not None:
+                plans.append(plan)
 
-        for task in task_sequence:
-            yield from self._materialize_local_native_mxfp8_task(task)
+        for plan in plans:
+            yield from self._materialize_local_native_mxfp8_task(plan)
 
-    def _materialize_local_native_mxfp8_task(
+    def _preflight_local_native_mxfp8_task(
         self,
         task: "WeightConversionTask",
-    ) -> tuple["LocalMXFP8Param", ...]:
-        """Materialize and validate one native MXFP8 conversion task."""
+    ) -> Optional[_NativeMXFP8TaskPlan]:
+        """Validate one task using storage-free mapping inputs."""
         if task.param_weight is None:
-            return ()
+            return None
         if _uses_dtensor_or_fsdp(task.param_weight, task.megatron_module):
             raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
         if is_grouped_mxfp8tensor(task.param_weight):
@@ -444,13 +547,13 @@ class MegatronQuantizationBridge:
                 raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
             if not _supports_native_grouped_mxfp8(task.mapping):
                 raise ValueError(f"{task.global_param_name}: unsupported grouped MXFP8 expert mapping")
-            try:
-                members = get_grouped_quantized_members(task.param_weight, create_if_missing=False)
-            except (AttributeError, RuntimeError, TypeError, ValueError) as error:
-                raise ValueError(f"{task.global_param_name}: unable to access cached grouped MXFP8 members") from error
-            return tuple(self._iter_grouped_native_mxfp8_params(task, members))
+            members = self._get_cached_grouped_native_mxfp8_members(task)
+            output_specs = []
+            for member_name, member in self._grouped_native_mxfp8_member_contexts(task, members):
+                output_specs.extend(self._preflight_native_mxfp8_mapping(task, member, member_name))
+            return _NativeMXFP8TaskPlan(task=task, grouped=True, output_specs=tuple(output_specs))
         if not is_mxfp8tensor(task.param_weight):
-            return ()
+            return None
         if self._is_mtp_param(task.global_param_name):
             raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
         if not _supports_native_mxfp8_mapping(task.mapping):
@@ -458,23 +561,78 @@ class MegatronQuantizationBridge:
                 f"{task.global_param_name}: mapping {type(task.mapping).__name__} does not explicitly support "
                 "exact native MXFP8 projection"
             )
-        storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
-        return _validate_local_native_mxfp8_params(
+        return _NativeMXFP8TaskPlan(
+            task=task,
+            grouped=False,
+            output_specs=self._preflight_native_mxfp8_mapping(
+                task,
+                task.param_weight,
+                task.global_param_name,
+            ),
+        )
+
+    def _preflight_native_mxfp8_mapping(
+        self,
+        task: "WeightConversionTask",
+        param_weight: torch.Tensor,
+        global_param_name: str,
+    ) -> tuple[_LocalMXFP8ParamSpec, ...]:
+        """Validate one mapping projection with meta tensors."""
+        storage_spec = _inspect_native_mxfp8_storage(param_weight, global_param_name)
+        meta_storage = _make_meta_native_mxfp8_storage(storage_spec)
+        return _describe_local_native_mxfp8_params(
             task.mapping.local_mxfp8_params(
+                meta_storage.weight,
+                meta_storage.weight_scale,
+                global_param_name=global_param_name,
+                megatron_module=task.megatron_module,
+            ),
+            global_param_name,
+        )
+
+    def _materialize_local_native_mxfp8_task(
+        self,
+        plan: _NativeMXFP8TaskPlan,
+    ) -> tuple["LocalMXFP8Param", ...]:
+        """Materialize and validate one native MXFP8 conversion task."""
+        task = plan.task
+        if plan.grouped:
+            materialized = tuple(
+                self._iter_grouped_native_mxfp8_params(
+                    task,
+                    self._get_cached_grouped_native_mxfp8_members(task),
+                )
+            )
+        else:
+            storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
+            materialized = task.mapping.local_mxfp8_params(
                 storage.weight,
                 storage.weight_scale,
                 global_param_name=task.global_param_name,
                 megatron_module=task.megatron_module,
-            ),
+            )
+        return _validate_local_native_mxfp8_params_against_specs(
+            materialized,
+            plan.output_specs,
             task.global_param_name,
         )
 
-    def _iter_grouped_native_mxfp8_params(
+    def _get_cached_grouped_native_mxfp8_members(
+        self,
+        task: "WeightConversionTask",
+    ) -> Optional[Iterable[torch.Tensor]]:
+        """Return cached grouped members with task-qualified failures."""
+        try:
+            return get_grouped_quantized_members(task.param_weight, create_if_missing=False)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as error:
+            raise ValueError(f"{task.global_param_name}: unable to access cached grouped MXFP8 members") from error
+
+    def _grouped_native_mxfp8_member_contexts(
         self,
         task: "WeightConversionTask",
         members: Optional[Iterable[torch.Tensor]],
-    ) -> Iterator["LocalMXFP8Param"]:
-        """Project cached grouped MXFP8 members in local expert order."""
+    ) -> tuple[tuple[str, torch.Tensor], ...]:
+        """Validate and name cached grouped members in local expert order."""
         if members is None:
             raise ValueError(f"{task.global_param_name}: missing cached grouped MXFP8 members")
         if not _supports_native_grouped_mxfp8(task.mapping) or not task.mapping.is_expert:
@@ -496,9 +654,18 @@ class MegatronQuantizationBridge:
             )
 
         expert_offset = int(task.mapping.ep_rank) * experts_per_rank
-        for local_expert_id, member in enumerate(local_members):
-            global_expert_id = expert_offset + local_expert_id
-            member_name = f"{task.global_param_name}{global_expert_id}"
+        return tuple(
+            (f"{task.global_param_name}{expert_offset + local_expert_id}", member)
+            for local_expert_id, member in enumerate(local_members)
+        )
+
+    def _iter_grouped_native_mxfp8_params(
+        self,
+        task: "WeightConversionTask",
+        members: Optional[Iterable[torch.Tensor]],
+    ) -> Iterator["LocalMXFP8Param"]:
+        """Project cached grouped MXFP8 members in local expert order."""
+        for member_name, member in self._grouped_native_mxfp8_member_contexts(task, members):
             storage = _extract_native_mxfp8_storage(member, member_name)
             yield from _validate_local_native_mxfp8_params(
                 task.mapping.local_mxfp8_params(

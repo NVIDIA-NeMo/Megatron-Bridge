@@ -994,6 +994,65 @@ class TestFp8ParamExport:
 
         assert exposed == []
 
+    def test_native_mxfp8_structural_preflight_rejects_late_mapping_result_before_real_projection(self, monkeypatch):
+        bridge = DummyBridge()
+        first_name = "decoder.layers.0.self_attention.linear_proj.weight"
+        malformed_name = "decoder.layers.1.self_attention.linear_proj.weight"
+        projection_devices = []
+        tasks = []
+        parameters = []
+
+        for global_name, malformed in ((first_name, False), (malformed_name, True)):
+            parameter = _FakeNativeMXFP8Tensor()
+            parameter.shape = torch.Size((8, 64))
+            parameter.data_bytes = torch.zeros((8, 64), dtype=torch.uint8)
+            parameter.scale_bytes = torch.zeros((8, 2), dtype=torch.uint8)
+            mapping = RowParallelMapping(global_name, f"hf.{len(tasks)}")
+
+            def project(
+                weight,
+                weight_scale,
+                *,
+                global_param_name,
+                megatron_module,
+                malformed=malformed,
+            ):
+                del megatron_module
+                projection_devices.append((global_param_name, weight.device.type))
+                projected_scale = weight_scale[:, :1] if malformed else weight_scale
+                return (
+                    LocalMXFP8Param(
+                        name=f"hf.{global_param_name}",
+                        weight=weight,
+                        weight_scale=projected_scale,
+                        global_weight_shape=torch.Size(weight.shape),
+                        shard_group="tp",
+                        shard_dim=1,
+                    ),
+                )
+
+            monkeypatch.setattr(mapping, "local_mxfp8_params", project)
+            parameters.append(parameter)
+            tasks.append(
+                WeightConversionTask(
+                    param_name=global_name,
+                    global_param_name=global_name,
+                    mapping=mapping,
+                    megatron_module=SimpleNamespace(),
+                    param_weight=parameter,
+                )
+            )
+
+        monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
+        monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight in parameters)
+        exposed = []
+
+        with pytest.raises(ValueError, match=rf"{malformed_name}.*expected weight_scale shape"):
+            exposed.extend(bridge.iter_local_native_mxfp8_params(tasks))
+
+        assert exposed == []
+        assert projection_devices == [(first_name, "meta"), (malformed_name, "meta")]
+
     def test_native_mxfp8_materialization_rejects_fsdp_before_native_classification(self, monkeypatch):
         bridge = DummyBridge()
         global_name = "decoder.layers.0.self_attention.linear_proj.weight"
@@ -1246,6 +1305,21 @@ class TestFp8ParamExport:
             "model.layers.1.mlp.experts.gate_up_proj",
         )
         output_mapping = RowParallelMapping(output_name, "hf.o")
+        qkv_projection_devices = []
+        grouped_projection_devices = []
+        qkv_projection = qkv_mapping.local_mxfp8_params
+        grouped_projection = grouped_mapping.local_mxfp8_params
+
+        def track_qkv_projection(weight, weight_scale, **kwargs):
+            qkv_projection_devices.append(weight.device.type)
+            return qkv_projection(weight, weight_scale, **kwargs)
+
+        def track_grouped_projection(weight, weight_scale, **kwargs):
+            grouped_projection_devices.append(weight.device.type)
+            return grouped_projection(weight, weight_scale, **kwargs)
+
+        monkeypatch.setattr(qkv_mapping, "local_mxfp8_params", track_qkv_projection)
+        monkeypatch.setattr(grouped_mapping, "local_mxfp8_params", track_grouped_projection)
         monkeypatch.setattr(type(qkv_mapping), "tp_size", PropertyMock(return_value=1))
         monkeypatch.setattr(type(grouped_mapping), "ep_rank", PropertyMock(return_value=1))
         monkeypatch.setattr(type(grouped_mapping), "ep_size", PropertyMock(return_value=2))
@@ -1317,6 +1391,8 @@ class TestFp8ParamExport:
             "hf.o",
         ]
         assert grouped_member_calls == [(grouped, False), (grouped, False)]
+        assert qkv_projection_devices == ["meta", "cpu"]
+        assert grouped_projection_devices == ["meta", "meta", "cpu", "cpu"]
 
     def test_native_mxfp8_materialization_live_storage_refresh(self, monkeypatch):
         bridge = DummyBridge()
