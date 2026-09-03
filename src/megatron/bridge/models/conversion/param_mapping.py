@@ -16,7 +16,7 @@ import json
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.distributed
@@ -40,6 +40,7 @@ from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 WeightType = TypeVar("WeightType", torch.Tensor, Dict[str, torch.Tensor])
+MXFP8ShardGroup = Literal["tp", "etp", "replicated"]
 
 import logging
 
@@ -92,6 +93,16 @@ class LocalHFParamSpec:
             )
         selected[dim] //= self.split_count
         return torch.Size(selected)
+
+
+@dataclass(frozen=True)
+class LocalMXFP8Param:
+    name: str
+    weight: torch.Tensor
+    weight_scale: torch.Tensor
+    global_weight_shape: torch.Size
+    shard_group: MXFP8ShardGroup
+    shard_dim: int | None
 
 
 def _module_uses_fsdp(megatron_module: nn.Module) -> bool:
@@ -221,6 +232,19 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         ):
             return ()
         return (LocalHFParamSpec(self.hf_param),)
+
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        raise ValueError(
+            f"Mapping {type(self).__name__} for {global_param_name!r} "
+            "does not support direct native MXFP8 export."
+        )
 
     def set_process_groups_from_pg_collection(self, pg_collection: Any) -> None:
         """Override snapshotted Megatron-Core globals with a ``ProcessGroupCollection``.

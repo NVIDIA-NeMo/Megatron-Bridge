@@ -30,7 +30,11 @@ from megatron.bridge.models.conversion.model_bridge import (
     WeightConversionTask,
     _HFNameSuffixMapping,
 )
-from megatron.bridge.models.conversion.param_mapping import split_qkv_weights
+from megatron.bridge.models.conversion.param_mapping import (
+    LocalMXFP8Param,
+    MegatronParamMapping,
+    split_qkv_weights,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -95,10 +99,9 @@ class DummyBridge(MegatronModelBridge):
         return MegatronMappingRegistry()
 
 
-class _IdentityMapping:
+class _IdentityMapping(MegatronParamMapping):
     def __init__(self, hf_param, megatron_param="dummy.megatron.weight", ep_rank=0):
-        self.hf_param = hf_param
-        self.megatron_param = megatron_param
+        super().__init__(megatron_param, hf_param)
         self.ep_rank = ep_rank
 
     def hf_to_megatron(self, hf_weights, _megatron_module):
@@ -108,7 +111,35 @@ class _IdentityMapping:
         return {"model.weight": megatron_weights}
 
     def resolve(self, _captures):
-        return _IdentityMapping(self.hf_param, self.megatron_param)
+        return _IdentityMapping(self.hf_param, self.megatron_param, self.ep_rank)
+
+
+def test_local_mxfp8_param_keeps_value_and_scale_atomic():
+    weight = torch.zeros((8, 64), dtype=torch.float8_e4m3fn)
+    scale = torch.zeros((8, 2), dtype=torch.uint8)
+    result = LocalMXFP8Param(
+        name="model.layers.0.self_attn.o_proj.weight",
+        weight=weight,
+        weight_scale=scale,
+        global_weight_shape=torch.Size((8, 128)),
+        shard_group="tp",
+        shard_dim=1,
+    )
+    assert result.weight is weight
+    assert result.weight_scale is scale
+    assert result.shard_group == "tp"
+    assert result.shard_dim == 1
+
+
+def test_base_mapping_rejects_native_mxfp8_projection():
+    mapping = _IdentityMapping("hf.weight", "decoder.weight")
+    with pytest.raises(ValueError, match="does not support direct native MXFP8 export"):
+        mapping.local_mxfp8_params(
+            torch.zeros((8, 64), dtype=torch.float8_e4m3fn),
+            torch.zeros((8, 2), dtype=torch.uint8),
+            global_param_name="decoder.weight",
+            megatron_module=SimpleNamespace(),
+        )
 
 
 class TestHFNameSuffixMapping:
