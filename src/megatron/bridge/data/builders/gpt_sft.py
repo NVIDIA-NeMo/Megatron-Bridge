@@ -610,6 +610,9 @@ class GPTSFTDatasetBuilder:
         self._num_tokenizer_workers = (
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.num_tokenizer_workers
         )
+        self._stream_packed_parquet = (
+            False if config.offline_packing_specs is None else config.offline_packing_specs.stream_packed_parquet
+        )
         self._rewrite_packed_data = config.hf_dataset is not None and config.hf_rewrite
         self._packing_fingerprint = _packing_fingerprint(config, config.dataset_kwargs)
 
@@ -707,6 +710,7 @@ class GPTSFTDatasetBuilder:
             dataset_kwargs=self.dataset_kwargs,
             pad_seq_to_mult=self._pad_seq_to_mult,
             num_tokenizer_workers=self._num_tokenizer_workers,
+            stream_packed_parquet=self._stream_packed_parquet,
             dataset_builder=build_gpt_sft_split,
         )
 

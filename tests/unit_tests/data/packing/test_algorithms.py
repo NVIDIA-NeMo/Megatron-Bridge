@@ -23,6 +23,7 @@ from megatron.bridge.data.packing.algorithms import (
     create_hist,
     first_fit,
     first_fit_decreasing,
+    iter_packing_strategy,
 )
 
 
@@ -98,6 +99,44 @@ def test_create_hist_skips_oversize_sequences(caplog):
     assert sequences[3] == [in_range]
     assert 4 not in sequences
     assert "Skipped 1 sequences longer than the maximum packed sequence length 3" in caplog.text
+
+
+def test_iter_packing_strategy_converts_only_the_current_pack():
+    """Streaming fill must not expand every tokenized sample up front."""
+    converted = []
+
+    class DeferredList:
+        def __init__(self, values, label):
+            self.values = values
+            self.label = label
+
+        def tolist(self):
+            converted.append(self.label)
+            return list(self.values)
+
+    sequences = {
+        0: [],
+        1: [
+            {
+                "input_ids": DeferredList([10, 11], "ids-0"),
+                "loss_mask": DeferredList([True, True], "mask-0"),
+            },
+            {
+                "input_ids": DeferredList([20, 21], "ids-1"),
+                "loss_mask": DeferredList([False, True], "mask-1"),
+            },
+        ],
+        2: [],
+    }
+
+    np.random.seed(0)
+    rows = iter_packing_strategy([[1], [1]], sequences, pack_size=2, pad_id=0)
+    first_row = next(rows)
+
+    assert first_row["input_ids"] in ([10, 11], [20, 21])
+    assert len(converted) == 2
+    assert len(list(rows)) == 1
+    assert sorted(converted) == ["ids-0", "ids-1", "mask-0", "mask-1"]
 
 
 class TestSegmentTreeMatchesLinearScan:

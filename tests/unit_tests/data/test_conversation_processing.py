@@ -17,6 +17,7 @@ import json
 import pytest
 import torch
 
+import megatron.bridge.data.conversation_processing as conversation_processing
 from megatron.bridge.data.collators.sft import text_chat_collate_fn
 from megatron.bridge.data.conversation_processing import (
     _MAX_SCANNED_REPR_CHARS,
@@ -261,6 +262,7 @@ class _LiteralChatMLBoundaryTokenizer(_ChatMLBoundaryTokenizer):
         "literal assistant start": [20, 102, 30],
         "quoted assistant turn": [20, 102, 30, 103, 31],
         "answer with quoted end": [40, 103, 41],
+        "answer with quoted user start": [40, 100, 41],
         "structured with quoted end": [40, 103, 41],
     }
 
@@ -701,6 +703,44 @@ def test_chatml_boundary_mask_does_not_treat_literal_control_markers_as_structur
         True,
         True,
     ]
+
+
+def test_chatml_boundary_uses_direct_scan_for_marker_clean_conversation(monkeypatch):
+    def fail_on_prefix_render(*args, **kwargs):
+        raise AssertionError("marker-clean conversations should not render every prefix")
+
+    monkeypatch.setattr(conversation_processing, "_assistant_mask_from_conversation_turns", fail_on_prefix_render)
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": ""},
+            ]
+        },
+        _LiteralChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False, False, False, True, True]
+
+
+def test_chatml_boundary_direct_scan_ignores_nonloss_marker_when_loss_boundaries_are_clean(monkeypatch):
+    def fail_on_prefix_render(*args, **kwargs):
+        raise AssertionError("a uniquely extraneous non-loss marker should not require prefix renders")
+
+    monkeypatch.setattr(conversation_processing, "_assistant_mask_from_conversation_turns", fail_on_prefix_render)
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer with quoted user start"},
+            ]
+        },
+        _LiteralChatMLBoundaryTokenizer(),
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False, False, False, True, True, True, True, True]
 
 
 def test_chatml_boundary_mask_remains_role_safe_through_right_truncation():

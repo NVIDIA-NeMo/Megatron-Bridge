@@ -67,6 +67,12 @@ def main() -> None:
         default=1,
         help="Tokenizer worker processes. Values less than or equal to 1 run serially (default: 1).",
     )
+    parser.add_argument(
+        "--stream-packed-parquet",
+        action="store_true",
+        default=None,
+        help="Fill and write Parquet row groups incrementally to bound token-list conversion memory.",
+    )
     args = parser.parse_args()
 
     import megatron.bridge.recipes as all_recipes
@@ -107,10 +113,13 @@ def main() -> None:
         sys.exit(f"Error: recipe '{args.recipe}' has no offline packing specs.")
 
     offline_packing_specs.num_tokenizer_workers = args.num_tokenizer_workers
+    if args.stream_packed_parquet is not None:
+        offline_packing_specs.stream_packed_parquet = args.stream_packed_parquet
 
     logger.info("Recipe:   %s", args.recipe)
     logger.info("Seq len:  %s", offline_packing_specs.packed_sequence_size)
     logger.info("Workers:  %s", offline_packing_specs.num_tokenizer_workers)
+    logger.info("Streaming Parquet: %s", offline_packing_specs.stream_packed_parquet)
 
     logger.info("Building tokenizer...")
     tokenizer = build_tokenizer(cfg.tokenizer)
@@ -144,6 +153,7 @@ def main() -> None:
             dataset_kwargs=builder.dataset_kwargs,
             pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
             num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
+            stream_packed_parquet=offline_packing_specs.stream_packed_parquet,
             dataset_builder=build_gpt_sft_split,
         )
 
@@ -159,6 +169,7 @@ def main() -> None:
                 dataset_kwargs=builder.dataset_kwargs,
                 pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
                 num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
+                stream_packed_parquet=offline_packing_specs.stream_packed_parquet,
                 dataset_builder=build_gpt_sft_split,
             )
         elif args.val_input_path or args.packed_val_data_path:

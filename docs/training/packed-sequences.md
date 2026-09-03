@@ -49,6 +49,17 @@ row; it does not materialize an offline dataset or load the full source into
 RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
 in-batch packing does not support the global-batch `batch` dataloader.
 
+### Bounded-memory Parquet preparation
+
+For large offline Parquet preparations, set
+`cfg.dataset.offline_packing_specs.stream_packed_parquet = True` or pass
+`--stream-packed-parquet`. This fills one pack at a time and flushes Parquet
+row groups at a bounded token count, avoiding corpus-sized Python token lists.
+The logical rows, sequence boundaries, loss masks, and packing metadata are
+unchanged, although the physical Parquet bytes and row-group layout differ.
+Streaming is supported only for Parquet output; the legacy NumPy format still
+uses materialized output.
+
 ## When to Use It
 
 Packed sequences are a good fit when all of the following are true:

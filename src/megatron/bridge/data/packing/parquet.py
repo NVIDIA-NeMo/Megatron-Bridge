@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import bisect
 import logging
+from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from tempfile import NamedTemporaryFile
+from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
@@ -97,6 +100,113 @@ def write_packed_parquet(
             f.write(buf.getvalue().to_pybytes())
     else:
         pq.write_table(table, str(output_path), row_group_size=row_group_size)
+
+
+def write_packed_parquet_streaming(
+    rows: Iterable[dict],
+    output_path: str | Path,
+    row_group_size: int = 500,
+    max_row_group_tokens: int = 4 * 1024 * 1024,
+    *,
+    _publish_on_completion: bool = True,
+) -> None:
+    """Incrementally write packed rows with bounded Python-list memory.
+
+    A 128K packed dataset can otherwise place about 64 million tokens in one
+    500-row conversion batch. This writer retains the existing row-count cap
+    while also flushing once the current batch reaches a token budget.
+
+    Args:
+        rows: Iterable of packed row dictionaries.
+        output_path: Path to write the Parquet file.
+        row_group_size: Maximum rows per Parquet row group.
+        max_row_group_tokens: Approximate maximum input tokens converted to
+            Arrow in one row group. A single longer row is still written.
+        _publish_on_completion: Write to a temporary sibling and publish only
+            after all rows finish. Local publication uses an atomic replace;
+            MSC remote publication uses its staged rename. Offline preparation
+            disables this only when it owns a wider output-plus-metadata
+            transaction.
+
+    Raises:
+        ValueError: If either row-group limit is not positive.
+    """
+    if row_group_size <= 0:
+        raise ValueError("row_group_size must be positive.")
+    if max_row_group_tokens <= 0:
+        raise ValueError("max_row_group_tokens must be positive.")
+
+    pa, pq = _lazy_import_pyarrow()
+    schema = pa.schema(
+        [
+            pa.field("input_ids", pa.list_(pa.int64())),
+            pa.field("loss_mask", pa.list_(pa.int8())),
+            pa.field("seq_start_id", pa.list_(pa.int64())),
+        ]
+    )
+
+    def make_table(batch: list[dict]) -> Any:
+        return pa.table(
+            {
+                "input_ids": [row["input_ids"] for row in batch],
+                "loss_mask": pa.array(
+                    [[int(value) for value in row["loss_mask"]] for row in batch],
+                    type=pa.list_(pa.int8()),
+                ),
+                "seq_start_id": [row["seq_start_id"] for row in batch],
+            },
+            schema=schema,
+        )
+
+    msc_enabled = MultiStorageClientFeature.is_enabled()
+    msc = MultiStorageClientFeature.import_package() if msc_enabled else None
+    destination_path = msc.Path(str(output_path)) if msc is not None else Path(output_path)
+    write_path = destination_path
+    if _publish_on_completion:
+        write_path = destination_path.with_name(f".{destination_path.name}.{uuid4().hex}.tmp")
+
+    def write_rows(writer: Any) -> None:
+        batch: list[dict] = []
+        batch_tokens = 0
+        for row in rows:
+            row_tokens = len(row["input_ids"])
+            if batch and (len(batch) >= row_group_size or batch_tokens + row_tokens > max_row_group_tokens):
+                writer.write_table(make_table(batch))
+                batch = []
+                batch_tokens = 0
+            batch.append(row)
+            batch_tokens += row_tokens
+        if batch:
+            writer.write_table(make_table(batch))
+
+    completed = False
+    local_stage_path = None
+    try:
+        if msc is not None:
+            # MSC 0.51 object-write handles use BytesIO. Write to a local file
+            # instead, then use upload_file's filename route so remote output
+            # remains bounded by disk rather than corpus-sized process memory.
+            suffix = Path(str(output_path)).suffix or ".parquet"
+            with NamedTemporaryFile(prefix="bridge-packed-", suffix=suffix, delete=False) as local_stage:
+                local_stage_path = Path(local_stage.name)
+            with pq.ParquetWriter(str(local_stage_path), schema) as writer:
+                write_rows(writer)
+            msc.upload_file(str(write_path), str(local_stage_path))
+        else:
+            with pq.ParquetWriter(str(write_path), schema) as writer:
+                write_rows(writer)
+
+        if _publish_on_completion:
+            if msc is not None:
+                write_path.rename(destination_path)
+            else:
+                write_path.replace(destination_path)
+        completed = True
+    finally:
+        if local_stage_path is not None:
+            local_stage_path.unlink(missing_ok=True)
+        if not completed:
+            write_path.unlink(missing_ok=True)
 
 
 class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):

@@ -19,7 +19,9 @@ import numpy as np
 import pytest
 import torch
 
+import megatron.bridge.data.packing.offline as offline_module
 from megatron.bridge.data.packing.offline import (
+    _get_shared_dataset_item,
     _init_shared_dataset_worker,
     _materialize_dataset_items,
     _pre_pad_data_point,
@@ -31,7 +33,20 @@ from megatron.bridge.data.packing.offline import (
 PAD_ID = 0
 
 
-def test_configured_seed_controls_offline_packing(monkeypatch):
+def test_worker_error_identifies_dataset_index():
+    class FailingDataset:
+        def __getitem__(self, index):
+            raise ValueError(f"invalid row {index}")
+
+    _init_shared_dataset_worker(FailingDataset())
+
+    with pytest.raises(ValueError, match="invalid row 17") as error:
+        _get_shared_dataset_item(17)
+
+    assert error.value.__notes__ == ["Failed to prepare packed-SFT dataset index 17."]
+
+
+def test_configured_seed_controls_offline_packing(monkeypatch, tmp_path):
     """Identical input and configured seed must produce identical packed rows."""
 
     class TinyDataset:
@@ -57,10 +72,15 @@ def test_configured_seed_controls_offline_packing(monkeypatch):
     def prepare_with_ambient_seed(ambient_seed):
         packed_outputs = []
         np.random.seed(ambient_seed)
-        monkeypatch.setattr(np, "save", lambda _, rows: packed_outputs.append(rows))
+
+        def save_staged(path, rows):
+            packed_outputs.append(rows)
+            Path(path).write_bytes(b"staged numpy")
+
+        monkeypatch.setattr(np, "save", save_staged)
         prepare_gpt_sft_packed_data(
             input_path=Path("unused.jsonl"),
-            output_path=Path("unused.npy"),
+            output_path=tmp_path / "unused.npy",
             output_metadata_path=None,
             packed_sequence_size=10,
             tokenizer=SimpleNamespace(eos_id=PAD_ID),
@@ -75,8 +95,172 @@ def test_configured_seed_controls_offline_packing(monkeypatch):
     assert prepare_with_ambient_seed(0) == prepare_with_ambient_seed(4)
 
 
+def test_streaming_packing_rejects_legacy_numpy_output():
+    """The bounded writer is specific to Parquet output."""
+    with pytest.raises(ValueError, match="requires a Parquet output path"):
+        prepare_gpt_sft_packed_data(
+            input_path=Path("unused.jsonl"),
+            output_path=Path("unused.npy"),
+            output_metadata_path=None,
+            packed_sequence_size=8,
+            tokenizer=SimpleNamespace(eos_id=PAD_ID),
+            max_seq_length=8,
+            stream_packed_parquet=True,
+            dataset_builder=lambda *args, **kwargs: pytest.fail("validation must precede dataset construction"),
+        )
+
+
+def test_streaming_output_is_not_published_when_metadata_write_fails(tmp_path, monkeypatch):
+    output_path = tmp_path / "packed.idx.parquet"
+    metadata_path = tmp_path / "missing" / "packed.metadata.json"
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.tokenize_dataset", lambda *args, **kwargs: [])
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_hist", lambda *args: ([], {}))
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.offline.create_packing_strategy",
+        lambda *args: ([], {"packing_efficiency": 100.0}),
+    )
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.iter_packing_strategy", lambda *args: iter(()))
+
+    def write_staged_output(rows, path, *, _publish_on_completion):
+        assert list(rows) == []
+        assert _publish_on_completion is False
+        Path(path).write_bytes(b"staged parquet")
+
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.parquet.write_packed_parquet_streaming",
+        write_staged_output,
+    )
+
+    with pytest.raises(FileNotFoundError):
+        prepare_gpt_sft_packed_data(
+            input_path=Path("unused.jsonl"),
+            output_path=output_path,
+            output_metadata_path=metadata_path,
+            packed_sequence_size=8,
+            tokenizer=SimpleNamespace(eos_id=PAD_ID),
+            max_seq_length=8,
+            stream_packed_parquet=True,
+            dataset_builder=lambda *args, **kwargs: pytest.fail("tokenization is stubbed"),
+        )
+
+    assert not output_path.exists()
+    assert sorted(item.name for item in tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("output_suffix", [".idx.parquet", ".npy"])
+def test_materialized_output_is_not_published_when_metadata_write_fails(
+    tmp_path,
+    monkeypatch,
+    output_suffix,
+):
+    output_path = tmp_path / f"packed{output_suffix}"
+    metadata_path = tmp_path / "missing" / "packed.metadata.json"
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.tokenize_dataset", lambda *args, **kwargs: [])
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_hist", lambda *args: ([], {}))
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.offline.create_packing_strategy",
+        lambda *args: ([], {"packing_efficiency": 100.0}),
+    )
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.fill_packing_strategy", lambda *args: [])
+
+    if output_suffix == ".idx.parquet":
+        monkeypatch.setattr(
+            "megatron.bridge.data.packing.parquet.write_packed_parquet",
+            lambda rows, path: Path(path).write_bytes(b"staged parquet"),
+        )
+    else:
+        monkeypatch.setattr(
+            "megatron.bridge.data.packing.offline.np.save",
+            lambda path, rows: Path(path).write_bytes(b"staged numpy"),
+        )
+
+    with pytest.raises(FileNotFoundError):
+        prepare_gpt_sft_packed_data(
+            input_path=Path("unused.jsonl"),
+            output_path=output_path,
+            output_metadata_path=metadata_path,
+            packed_sequence_size=8,
+            tokenizer=SimpleNamespace(eos_id=PAD_ID),
+            max_seq_length=8,
+            dataset_builder=lambda *args, **kwargs: pytest.fail("tokenization is stubbed"),
+        )
+
+    assert not output_path.exists()
+    assert sorted(item.name for item in tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("stream_packed_parquet", [False, True])
+@pytest.mark.parametrize("existing_metadata", [False, True])
+def test_metadata_is_rolled_back_when_output_publication_fails(
+    tmp_path,
+    monkeypatch,
+    stream_packed_parquet,
+    existing_metadata,
+):
+    output_path = tmp_path / "packed.idx.parquet"
+    metadata_path = tmp_path / "packed.metadata.json"
+    original_metadata = b'[{"existing": true}]'
+    if existing_metadata:
+        metadata_path.write_bytes(original_metadata)
+
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.tokenize_dataset", lambda *args, **kwargs: [])
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_hist", lambda *args: ([], {}))
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.offline.create_packing_strategy",
+        lambda *args: ([], {"packing_efficiency": 100.0}),
+    )
+
+    if stream_packed_parquet:
+        monkeypatch.setattr("megatron.bridge.data.packing.offline.iter_packing_strategy", lambda *args: iter(()))
+
+        def write_staged_output(rows, path, *, _publish_on_completion):
+            assert list(rows) == []
+            assert _publish_on_completion is False
+            Path(path).write_bytes(b"staged parquet")
+
+        monkeypatch.setattr(
+            "megatron.bridge.data.packing.parquet.write_packed_parquet_streaming",
+            write_staged_output,
+        )
+    else:
+        monkeypatch.setattr("megatron.bridge.data.packing.offline.fill_packing_strategy", lambda *args: [])
+        monkeypatch.setattr(
+            "megatron.bridge.data.packing.parquet.write_packed_parquet",
+            lambda rows, path: Path(path).write_bytes(b"staged parquet"),
+        )
+
+    publish_staged_path = offline_module._publish_staged_path
+
+    def fail_output_publication(staged_path, destination_path):
+        if Path(destination_path) == output_path:
+            raise OSError("synthetic output publication failure")
+        publish_staged_path(staged_path, destination_path)
+
+    monkeypatch.setattr(offline_module, "_publish_staged_path", fail_output_publication)
+
+    with pytest.raises(OSError, match="synthetic output publication failure"):
+        prepare_gpt_sft_packed_data(
+            input_path=Path("unused.jsonl"),
+            output_path=output_path,
+            output_metadata_path=metadata_path,
+            packed_sequence_size=8,
+            tokenizer=SimpleNamespace(eos_id=PAD_ID),
+            max_seq_length=8,
+            stream_packed_parquet=stream_packed_parquet,
+            dataset_builder=lambda *args, **kwargs: pytest.fail("tokenization is stubbed"),
+        )
+
+    assert not output_path.exists()
+    if existing_metadata:
+        assert metadata_path.read_bytes() == original_metadata
+        assert sorted(item.name for item in tmp_path.iterdir()) == [metadata_path.name]
+    else:
+        assert not metadata_path.exists()
+        assert sorted(item.name for item in tmp_path.iterdir()) == []
+
+
 def test_pre_pad_data_point_chat_tensors_do_not_raise():
-    """Chat path returns torch tensors; padding must not raise TypeError (see issue #2610)."""
+    """Chat tensors should retain compact storage while being padded (see issue #2610)."""
     data = {
         "input_ids": torch.LongTensor([5, 6, 7]),
         "loss_mask": torch.BoolTensor([False, True, True]),
@@ -85,14 +269,38 @@ def test_pre_pad_data_point_chat_tensors_do_not_raise():
     # stored max_stored_length_to_pad=9 -> input_ids padded to length 9
     _pre_pad_data_point(data, max_seq_length=16, max_stored_length_to_pad=9, pad_id=PAD_ID)
 
-    assert isinstance(data["input_ids"], list)
-    assert isinstance(data["loss_mask"], list)
+    assert isinstance(data["input_ids"], torch.Tensor)
+    assert isinstance(data["loss_mask"], torch.Tensor)
     # loss_mask must end up the same length as input_ids, otherwise fill_packing_strategy's
     # np.array([...loss_mask...]) raises an inhomogeneous-shape error when samples are grouped.
     assert len(data["loss_mask"]) == len(data["input_ids"])
     # padded loss_mask positions carry 0 (no loss on pad tokens)
-    assert data["loss_mask"][3:] == [0] * (len(data["loss_mask"]) - 3)
-    assert data["input_ids"][3:] == [PAD_ID] * (len(data["input_ids"]) - 3)
+    assert data["loss_mask"][3:].tolist() == [False] * (len(data["loss_mask"]) - 3)
+    assert data["input_ids"][3:].tolist() == [PAD_ID] * (len(data["input_ids"]) - 3)
+
+
+def test_pre_pad_data_point_numpy_arrays_retain_compact_storage():
+    data = {
+        "input_ids": np.asarray([5, 6, 7], dtype=np.int64),
+        "loss_mask": np.asarray([False, True, True], dtype=np.bool_),
+    }
+
+    _pre_pad_data_point(data, max_seq_length=16, max_stored_length_to_pad=9, pad_id=PAD_ID)
+
+    assert isinstance(data["input_ids"], np.ndarray)
+    assert isinstance(data["loss_mask"], np.ndarray)
+    assert data["input_ids"].tolist() == [5, 6, 7] + [PAD_ID] * 6
+    assert data["loss_mask"].tolist() == [False, True, True] + [False] * 6
+
+
+def test_pre_pad_data_point_truncated_tensor_releases_original_storage():
+    data = {"input_ids": torch.arange(20), "loss_mask": torch.ones(20, dtype=torch.bool)}
+
+    _pre_pad_data_point(data, max_seq_length=16, max_stored_length_to_pad=9, pad_id=PAD_ID)
+
+    assert data["input_ids"].tolist() == list(range(9))
+    assert data["input_ids"].untyped_storage().nbytes() == 9 * data["input_ids"].element_size()
+    assert data["loss_mask"].untyped_storage().nbytes() == 9 * data["loss_mask"].element_size()
 
 
 def test_pre_pad_data_point_equalizes_loss_mask_lengths():
@@ -263,6 +471,52 @@ def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(mon
 
     assert _materialize_dataset_items(TinyDataset(), -1).tolist() == [10, 11, 12]
     assert _materialize_dataset_items(TinyDataset(), 0).tolist() == [10, 11, 12]
+
+
+def test_materialize_dataset_items_discards_fields_unused_by_packing():
+    """The packing boundary keeps only compact fields consumed by packing."""
+
+    class TinyDataset:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            assert index == 0
+            return {
+                "input_ids": [10, 11, 12],
+                "loss_mask": [False, True, True],
+                "context_ids": [10],
+                "answer_ids": [11, 12],
+                "metadata": {"tools": [{"large": "unused"}]},
+            }
+
+    item = _materialize_dataset_items(TinyDataset(), 1)[0]
+    assert set(item) == {"input_ids", "loss_mask"}
+    assert isinstance(item["input_ids"], np.ndarray)
+    assert isinstance(item["loss_mask"], np.ndarray)
+    assert item["input_ids"].tolist() == [10, 11, 12]
+    assert item["loss_mask"].tolist() == [False, True, True]
+
+
+def test_materialize_dataset_items_converts_chat_tensors_before_worker_return():
+    """Compact NumPy values avoid retaining one shared-memory tensor file per field and sample."""
+
+    class TinyDataset:
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            assert index == 0
+            return {
+                "input_ids": torch.tensor([10, 11, 12]),
+                "loss_mask": torch.tensor([False, True, True]),
+            }
+
+    item = _materialize_dataset_items(TinyDataset(), 1)[0]
+    assert isinstance(item["input_ids"], np.ndarray)
+    assert isinstance(item["loss_mask"], np.ndarray)
+    assert item["input_ids"].dtype == np.int64
+    assert item["loss_mask"].dtype == np.bool_
 
 
 @pytest.mark.parametrize("pool_fails", [False, True])
