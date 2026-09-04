@@ -66,6 +66,7 @@ from megatron.bridge.training.config import (
     apply_environment_variables,
     megatron_mimo_runtime_config_update,
 )
+from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.utils.cuda_graph import (
@@ -2318,6 +2319,51 @@ class TestConfigContainerValidation:
         try:
             with pytest.raises(AssertionError):
                 container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.skipif(
+        not MCORE_HAS_MEGATRON_FSDP_V2, reason="MFSDP v2 is unavailable in this MCore revision"
+    )
+    @pytest.mark.parametrize(
+        "optimizer_overrides,ddp_overrides",
+        [
+            pytest.param({"clip_grad": 1.0}, {}, id="clip_grad"),
+            pytest.param({"use_precision_aware_optimizer": True}, {}, id="precision_aware_optimizer"),
+            pytest.param({"optimizer_cuda_graph": True}, {}, id="optimizer_cuda_graph"),
+            pytest.param(
+                {},
+                {"num_distributed_optimizer_instances": 2, "outer_dp_sharding_strategy": "optim"},
+                id="hsdp",
+            ),
+        ],
+    )
+    def test_megatron_fsdp_v2_accepts_supported_settings(self, optimizer_overrides, ddp_overrides):
+        """MFSDP v2 accepts the settings its MCore adapter supports."""
+        gpt_model_cfg = create_test_gpt_config(bf16=True, params_dtype=torch.bfloat16)
+        train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+        dist_cfg = create_test_distributed_init_config(use_megatron_fsdp=True)
+        optimizer_cfg = create_test_optimizer_config(bf16=True, **optimizer_overrides)
+        ddp_cfg = create_test_ddp_config(
+            use_megatron_fsdp=True,
+            megatron_fsdp_version=2,
+            use_distributed_optimizer=False,
+            data_parallel_sharding_strategy="optim_grads_params",
+            **ddp_overrides,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=optimizer_cfg,
+            ddp_config=ddp_cfg,
+        )
+        try:
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
