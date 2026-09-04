@@ -2191,7 +2191,7 @@ requires-dist = [
     { name = "timm" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", specifier = ">=4.67.1" },
-    { name = "transformers", specifier = "<=5.15.0,>=5.15" },
+    { name = "transformers", specifier = ">=5.12.1,<=5.15.0" },
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.25.0" },
 ]
