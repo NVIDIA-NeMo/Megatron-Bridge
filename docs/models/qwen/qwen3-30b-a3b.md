@@ -93,10 +93,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-30b-a3b-sft-long-context-h100" aria-controls="qwen3-30b-a3b-sft-long-context-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="qwen3-30b-a3b-sft-long-context-h100" aria-controls="qwen3-30b-a3b-sft-long-context-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -418,59 +418,45 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="qwen3-30b-a3b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="qwen3-30b-a3b-sft-long-context-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-03</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.012319</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.6570727</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>127,308.300 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>168.790 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>2,059.127 tokens/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Peak allocated memory</dt>
-            <dd>54.782 GiB</dd>
-          </div>
-          <div>
-            <dt>Peak reserved memory</dt>
-            <dd>63.955 GiB</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen3_30b_a3b_sft_16gpu_h100_bf16_config --mode sft --dataset coderforge --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000 --max_steps 12 --seq_length 131072 -tp 1 -pp 1 -cp 16 -ep 16 -etp 1 &#x27;dataset.hf_dataset.split=&quot;SWE_Rebench[:2048]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;060fca96cf723b2ebab3181e9e59fafd273df3cb&quot;,data_files:{SWE_Rebench:&quot;trajectories/SWE_Rebench-*&quot;},verification_mode:no_checks}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;ad44e777bcd18fa416d9da3bd8f70d33ebb85d39&quot;&#x27; dataset.hf_output_root=work/data/coderforge/qwen3-30b-a3b-128k-dcp dataset.hf_rewrite=false dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:131072,pad_seq_to_mult:32,num_tokenizer_workers:8}&#x27; model.dynamic_context_parallel=true model.sequence_packing_scheduler=default_dynamic_cp model.max_seqlen_per_dp_cp_rank=8192 model.min_dynamic_context_parallel_size=1 model.calculate_per_token_loss=true model.cross_entropy_loss_fusion=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 ddp.average_in_collective=false ddp.nccl_ub=false dist.use_decentralized_pg=false scheduler.lr_decay_iters=12 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null &#x27;~env_vars.NCCL_GRAPH_REGISTER=0&#x27; &#x27;~env_vars.NCCL_NVLS_ENABLE=0&#x27; &#x27;~env_vars.PYTORCH_CUDA_ALLOC_CONF=&quot;expandable_segments:True&quot;&#x27; &#x27;~env_vars.TORCH_NCCL_AVOID_RECORD_STREAMS=1&#x27; &#x27;~env_vars.TORCH_NCCL_HIGH_PRIORITY=1&#x27;</code></pre>
-        </div>
+        <p>No runnable command is recorded for this status.</p>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 16-H100 run completes exactly 12 CoderForge SFT steps at sequence length 131072 with TP1/PP1/CP16/EP16/ETP1, DP1, SP off, GBS/MBS 32/1, and framework-owned THD materialization. Offline packing is 93.38% efficient with 2.387 sequences per packed row. Dynamic CP preserves the 32-row logical global batch while scheduling its internal sequences onto runtime CP4, CP8, and CP16 groups. LM loss is finite from 1.012319 to 0.6570727 with no skipped or NaN iterations, and all seven metrics are recorded. Against the matched static-CP16 run, mean step time is 5.387% lower and configured-token throughput is 5.694% higher.
+        <p>A recipe-owned 128K CoderForge SFT workload must verify that dynamic CP replaces GPTSFTDataset collate-time packing while preserving the logical global batch, materializing framework-owned THD fields, and completing with finite loss, zero skipped or NaN iterations, a saved post-setup configuration, and all five metrics. The earlier offline-packed result does not exercise this contract and is no longer accepted as verification evidence.
 </p>
       </section>
     </article>

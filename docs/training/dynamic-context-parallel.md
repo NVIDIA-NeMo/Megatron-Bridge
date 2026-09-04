@@ -5,9 +5,9 @@ variable-length sequence instead of running every sequence on the configured
 maximum CP size. It is useful for long-context SFT and RL batches whose sequence
 lengths vary enough that static CP leaves many ranks underutilized.
 
-This guide uses offline-packed CoderForge SFT at 128K as a concrete example.
-DCP changes where the already-selected samples execute; it does not redefine
-the logical global batch.
+This guide uses CoderForge GPT SFT with 128K runtime in-batch packing as a
+concrete example. DCP replaces `GPTSFTDataset`'s collate-time packer after the
+logical global batch has been selected; it does not redefine that batch.
 
 ## Ownership Boundaries
 
@@ -27,16 +27,19 @@ same MCore placement and transport APIs while supplying its own materializer
 for fields such as advantages, returns, or old log-probabilities. Multimodal
 callers similarly remain responsible for their model-specific metadata.
 
-The configured global batch size still counts logical packed rows. The number
-of execution microbatches may change after DCP scheduling, but optimizer and
-learning-rate sample accounting continue to use the original global batch.
+The configured global batch size still counts source samples, not the
+rank-local THD rows produced by DCP. The number of execution microbatches may
+change after scheduling, but optimizer and learning-rate sample accounting
+continue to use the original global batch.
 
 ## Current Bridge Scope
 
 The initial Bridge integration supports:
 
-- text-only GPT SFT with offline-packed THD data
-- `dataloader_type="batch"` and `micro_batch_size=1`
+- text-only GPT SFT with `enable_in_batch_packing=True`; offline-packed input is
+  intentionally rejected
+- `dataloader_type="single"`, `"cyclic"`, or `"batch"`; the configured
+  micro-batch size remains a logical data-selection quantity
 - pipeline parallel size 1 with no virtual pipeline parallelism
 - eager training and loss evaluation
 - runtime CP groups selected from power-of-two factors of the configured
@@ -68,8 +71,8 @@ checkpoint and output roots with paths available to your environment.
   --recipe qwen3_30b_a3b_sft_16gpu_h100_bf16_config \
   --mode sft --dataset coderforge \
   --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000 \
-  --max_steps 20 --seq_length 131072 \
-  --global_batch_size 32 --micro_batch_size 1 \
+  --max_steps 12 --seq_length 131072 \
+  --global_batch_size 32 --micro_batch_size 2 \
   -tp 1 -pp 1 -cp 16 -ep 16 -etp 1 \
   'dataset.hf_dataset.split="SWE_Rebench[:2048]"' \
   'dataset.hf_dataset.load_kwargs={revision:"060fca96cf723b2ebab3181e9e59fafd273df3cb",data_files:{SWE_Rebench:"trajectories/SWE_Rebench-*"},verification_mode:no_checks}' \
@@ -77,80 +80,89 @@ checkpoint and output roots with paths available to your environment.
   dataset.hf_output_root=work/data/coderforge/qwen3-30b-a3b-128k-dcp \
   dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 \
   dataset.do_validation=false dataset.hf_validation_proportion=null \
-  dataset.enable_offline_packing=true \
-  'dataset.offline_packing_specs={packed_sequence_size:131072,pad_seq_to_mult:32,num_tokenizer_workers:8}' \
+  dataset.dataloader_type=cyclic dataset.enable_in_batch_packing=true \
   model.dynamic_context_parallel=true \
   model.sequence_packing_scheduler=default_dynamic_cp \
   model.max_seqlen_per_dp_cp_rank=8192 \
-  model.min_dynamic_context_parallel_size=1 \
+  model.min_dynamic_context_parallel_size=8 \
   model.calculate_per_token_loss=true \
   model.cross_entropy_loss_fusion=false \
   model.recompute_granularity=full \
   model.recompute_method=uniform model.recompute_num_layers=1 \
   ddp.average_in_collective=false ddp.nccl_ub=false \
   dist.use_decentralized_pg=false \
-  scheduler.lr_decay_iters=20 \
+  scheduler.lr_decay_iters=12 \
   validation.eval_iters=0 validation.eval_interval=0 \
   checkpoint.load=null checkpoint.save=null \
-  logger.log_interval=1 logger.log_throughput=true \
-  '~env_vars.NCCL_GRAPH_REGISTER=0' \
-  '~env_vars.NCCL_NVLS_ENABLE=0' \
-  '~env_vars.PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"' \
-  '~env_vars.TORCH_NCCL_AVOID_RECORD_STREAMS=1' \
-  '~env_vars.TORCH_NCCL_HIGH_PRIORITY=1'
+  logger.log_interval=1 logger.log_throughput=true
 ```
 
-`pad_seq_to_mult=32` supplies the `2 * CP` alignment required by THD context
-parallelism. `max_seqlen_per_dp_cp_rank=8192` is the scheduler's per-rank
+Bridge derives the per-sequence THD alignment from the topology, so CP16 uses a
+multiple of 32. `max_seqlen_per_dp_cp_rank=8192` is the scheduler's per-rank
 sequence-length budget; lower values favor larger runtime CP groups, while
-higher values give short sequences fewer ranks. Tune it against memory headroom
-and step time rather than treating it as a model context limit.
+higher values give short sequences fewer ranks. Tune it against memory
+headroom and step time rather than treating it as a model context limit. The
+example bounds the runtime to CP8 or CP16 so a smaller TE P2P topology cannot
+be introduced for the first time after steady-state memory is resident.
 
-After the first run prepares the packed dataset, set `dataset.hf_rewrite=false`
-for comparisons. To measure the static-CP baseline, keep the same data, seed,
-batch, and topology, then set:
+After the first run materializes the GPTSFT JSONL, set
+`dataset.hf_rewrite=false` for comparisons. To measure the static-CP baseline,
+keep the same source rows, order, seed, logical batch, and topology, then set:
 
 ```text
 model.dynamic_context_parallel=false
 model.sequence_packing_scheduler=null
 ```
 
+With DCP disabled, the same `enable_in_batch_packing=True` request goes through
+the original `GPTSFTDataset._collate_in_batch` path. Keep logical MBS greater
+than one for this matched legacy baseline.
+
 Check the log for the number of source sequences, scheduled execution
 microbatches, and runtime CP group histogram. Compare the last ten completed
 steps after warmup; a one-step smoke test establishes functionality but is not
 a performance result.
 
-## Measured 128K Comparison
+## Diagnostic 128K Comparison
 
-The command above was measured with the same packed artifacts, seeds, and
-TP1/PP1/CP16/EP16/ETP1 topology for both modes. Each run completed 12 optimizer
-steps on 16 H100 GPUs; the table averages steps 3 through 12.
+A bring-up comparison used the same materialized source snapshot, seeds,
+logical GBS/MBS 32/2, and TP1/PP1/CP16/EP16/ETP1 topology for both modes. It did
+not capture and replay exact logical batches, so the independent runs are not
+convergence-parity evidence. Each mode completed 12 optimizer steps on 16 H100
+GPUs; the table averages steps 3 through 12.
 
-| Mode | Step time (ms) | Configured tokens/s/GPU | Reported TFLOP/s/GPU | Peak reserved memory (GiB) |
-| --- | ---: | ---: | ---: | ---: |
-| Static CP16 | 134,556.920 | 1,948.202 | 336.750 | 67.650 |
-| Dynamic CP | 127,308.300 | 2,059.127 | 168.790 | 63.955 |
-| DCP change | -5.387% | +5.694% | not comparable | -5.462% |
+| Mode | Step time (ms) | Configured tokens/s/GPU | Reported TFLOP/s/GPU | Peak allocated (GiB) | Peak reserved (GiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Static CP16 | 55,885.210 | 4,690.758 | 406.270 | 57.615 | 70.578 |
+| Dynamic CP8/16 | 75,769.620 | 3,459.751 | 116.780 | 54.466 | 74.113 |
+| DCP change | +35.581% | -26.243% | not comparable | -5.466% | +5.009% |
 
-Both runs completed with zero skipped and zero NaN iterations. The packed
-dataset was 93.38% efficient and averaged 2.387 sequences per packed row. DCP
-preserved the 32-row logical global batch, materialized roughly 70--85 internal
-sequences per step, and selected runtime CP4, CP8, and CP16 groups; most groups
-were CP8 or CP16, which limits the available gain for this particular length
-distribution.
+Both completed runs had finite loss with zero skipped and zero NaN iterations.
+DCP preserved the 32-sample logical global batch, scheduled 13--16 execution
+microbatches per step, and used runtime CP8 and CP16 groups. The original
+collate-time packer already produced 16 efficient THD microbatches, so the
+small reduction in execution-microbatch count did not offset runtime-group and
+scheduling overhead. DCP was therefore slower for this length distribution.
+
+An earlier run with `min_dynamic_context_parallel_size=1` completed ten steps,
+then failed when CP4 first appeared: Transformer Engine's unbatched P2P path
+tried to create a new pairwise NCCL communicator after steady-state memory was
+resident. Restricting the run to CP8/16 completed all 12 steps. The diagnostic
+launcher also omitted the recipe's allocator environment defaults, so treat
+the memory values and failure threshold as bring-up evidence rather than a
+canonical performance result.
 
 Use step time or the identically computed configured-token rate for this
-comparison. The reported TFLOP/s values intentionally use different FLOP
-numerators: the static path estimates fixed 128K pack slots, while DCP uses the
-actual per-sequence attention lengths and drops zero-logical tail padding.
-Consequently, the lower DCP TFLOP/s number does not mean that DCP executed more
-slowly. Configured-token throughput still includes padded and masked capacity;
-measure supervised-token throughput separately when comparing dataset utility.
+comparison. The reported TFLOP/s values use different FLOP numerators: the
+static CP path falls back to a configured 128K BSHD estimate, while DCP supplies
+the actual per-sequence attention lengths. Configured-token throughput still
+includes padded and masked capacity; measure supervised-token throughput
+separately when comparing dataset utility.
 
 ## Tuning and Failure Checks
 
-- Use identical packed artifacts for DCP on/off comparisons. Repacking can
-  change sample membership and invalidate the comparison.
+- Use identical materialized source rows, order, and logical batch settings for
+  DCP on/off comparisons.
 - Keep the largest physical sequence divisible by twice the largest runtime CP
   size. For a configured CP of 16, pad internal THD segments to a multiple of
   32.
@@ -159,6 +171,13 @@ measure supervised-token throughput separately when comparing dataset utility.
   scheduler threshold.
 - If short sequences use smaller groups but step time does not improve, inspect
   scheduler imbalance, MoE communication, and host-side launch gaps separately.
+- Leave headroom for runtime-CP communicator initialization. A CP size that
+  first appears in a later batch can trigger lazy NCCL P2P communicator
+  allocation after model and activation memory are already resident. If that
+  fails near the memory limit, raise `min_dynamic_context_parallel_size`, lower
+  the per-rank sequence budget to avoid the smaller group, or warm the actual
+  Transformer Engine P2P peer pattern before training. A collective barrier on
+  each process group does not initialize these pairwise communicators.
 - Treat useful-token throughput and model TFLOP/s as different measurements.
   Packed padding and masked labels can make configured token capacity larger
   than actual supervised tokens.

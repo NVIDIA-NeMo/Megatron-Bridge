@@ -47,7 +47,9 @@ read, parse, and tokenize only the rows selected for the current logical
 microbatch. Collation then concatenates those rows into one physical THD batch
 row; it does not materialize an offline dataset or load the full source into
 RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
-in-batch packing does not support the global-batch `batch` dataloader.
+collate-time in-batch packing does not support the global-batch `batch`
+dataloader. Dynamic context parallelism is an exception because it defers THD
+materialization until after logical global-batch selection.
 
 ## When to Use It
 
@@ -131,15 +133,25 @@ sees one physical THD row. `enable_in_batch_packing` and
 `enable_offline_packing` are mutually exclusive. The `batch` dataloader is not
 supported for GPT-SFT in-batch packing; use `single` or `cyclic`.
 
+With `model.dynamic_context_parallel=true`, retain
+`dataset.enable_in_batch_packing=true`, but do not enable offline packing.
+Bridge bypasses `GPTSFTDataset._collate_in_batch`, collects the logical global
+batch as padded source samples, asks MCore to place and reroute opaque tensor
+fields, and then materializes rank-local THD batches. This replacement accepts
+`single`, `cyclic`, or `batch`; labels, loss masks, position IDs, and any
+framework-specific fields remain owned by the Bridge or RL materializer.
+
 ## Stable Constraints
 
 The durable constraints for packed sequences in Bridge are:
 
 - offline packed SFT requires configured `micro_batch_size == 1`
-- GPT-SFT/Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
-  collation flattens those input rows into one physical THD batch row
-- GPT-SFT in-batch packing requires `dataloader_type="single"` or `"cyclic"`;
-  the global-batch `"batch"` dataloader is not supported
+- ordinary GPT-SFT/Direct-HF/VLM in-batch packing requires configured
+  `micro_batch_size > 1`; collation flattens those input rows into one physical
+  THD batch row
+- ordinary GPT-SFT in-batch packing requires `dataloader_type="single"` or
+  `"cyclic"`; the DCP replacement also accepts `"batch"` and may use logical
+  `micro_batch_size == 1`
 - Energon online packing currently supports the eager Qwen-VL collator path,
   requires physical `micro_batch_size == 1`, the generic `vlm_step`, per-token loss, and
   `ddp.average_in_collective=False`

@@ -117,7 +117,17 @@ dataset and performs tokenization lazily. Both prompt/completion
 (`GPTSFTDataset`) and chat (`GPTSFTChatDataset`) preserve their loss-mask
 semantics. Use `dataloader_type="single"` or `"cyclic"` so every DataLoader
 yield is one logical microbatch; GPT-SFT in-batch packing does not support the
-global-batch `"batch"` dataloader.
+global-batch `"batch"` dataloader in the ordinary collate-time path.
+
+Dynamic context parallelism is the exception. With
+`model.dynamic_context_parallel=True`, keep
+`dataset.enable_in_batch_packing=True` as the semantic request. Bridge defers
+`GPTSFTDataset._collate_in_batch`, gathers the already-selected logical global
+batch, calls MCore for placement and opaque tensor rerouting, then materializes
+rank-local THD tensors including labels, loss masks, and position IDs. This
+DCP path accepts `single`, `cyclic`, or `batch`; it rejects offline-packed
+input. The configured micro-batch size remains a logical selection quantity
+and may be one, while the scheduled execution-microbatch count may differ.
 
 Energon online packing for Qwen-VL uses Energon's per-worker candidate buffer
 instead of limiting selection to one collator micro batch:
@@ -266,14 +276,18 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
 
 ## Pitfalls
 
-1. Offline packed SFT, runtime in-batch packing, and Energon online packing are different features. Offline and Energon packing use physical MBS1; runtime in-batch packing uses MBS greater than one.
-2. GPT-SFT in-batch packing requires `dataloader_type="single"` or `"cyclic"`; it does not support `"batch"`.
+1. Offline packed SFT, runtime in-batch packing, and Energon online packing are different features. Offline and Energon packing use physical MBS1; ordinary collate-time in-batch packing uses MBS greater than one. DCP replaces GPT-SFT collate-time packing and may use logical MBS1.
+2. Ordinary GPT-SFT in-batch packing requires `dataloader_type="single"` or `"cyclic"`. The DCP replacement also accepts `"batch"` because THD materialization happens after logical global-batch selection.
 3. When CP is enabled, packed sequence lengths must respect `2 * context_parallel_size` divisibility.
 4. For finetuning with CP, `calculate_per_token_loss=True` and `ddp.average_in_collective=False` are required.
 5. `pad_cu_seqlens=True` also requires `pad_to_max_length=True`.
-6. Packing support is model-family-specific. `Qwen3-Next`, `GLM-4.5`, and `Qwen3.5-VL` contain explicit opt-outs in different paths.
-7. MTP finetuning is documented as incompatible with packed sequences.
-8. Synthetic padding rows, including negative indices remapped through `samples_mapping`, must retain an all-zero loss mask.
+6. DCP process-group barriers do not initialize Transformer Engine's pairwise
+   P2P communicators. If a smaller runtime CP size first appears after memory
+   is full, communicator creation can OOM; preserve allocator headroom, bound
+   the minimum CP size, or pre-warm the actual P2P peer pattern.
+7. Packing support is model-family-specific. `Qwen3-Next`, `GLM-4.5`, and `Qwen3.5-VL` contain explicit opt-outs in different paths.
+8. MTP finetuning is documented as incompatible with packed sequences.
+9. Synthetic padding rows, including negative indices remapped through `samples_mapping`, must retain an all-zero loss mask.
 9. `global_batch_size` must be divisible by and no smaller than data parallel size when offline packing uses MBS1.
 10. Derive `pad_seq_to_mult` from CP/TP/SP for both SFT and PEFT; do not hardcode different values by workload type.
 11. `pad_to_max_length` controls final pack width and is conditional on fixed-shape execution requirements.
@@ -302,6 +316,7 @@ Success criteria:
 - all selected tests pass
 - offline and in-batch configuration validation remains mutually exclusive
 - packed metadata reaches the training step in MCore THD form
-- GPT-SFT in-batch packing rejects the global-batch `"batch"` dataloader
+- ordinary GPT-SFT in-batch packing rejects the global-batch `"batch"`
+  dataloader; DCP deferral accepts it
 - native Energon packing restores pending groups exactly and flushes finite partial buffers without dropping samples
 - mapped padding rows do not contribute to loss
