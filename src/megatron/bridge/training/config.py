@@ -1183,26 +1183,16 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support use_tp_pp_dp_mapping.")
         if self.rng.data_parallel_random_init:
             raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
-        if self.ddp.num_distributed_optimizer_instances != 1:
-            raise ValueError("MFSDP V2 does not currently support HSDP.")
-        if self.ddp.outer_dp_sharding_strategy != "no_shard":
-            raise ValueError("MFSDP V2 does not currently support outer DP sharding.")
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
         if self.checkpoint.pretrained_checkpoint is not None:
             raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
         if self.optimizer.loss_scale is not None:
             raise ValueError("MFSDP V2 does not support loss scaling.")
-        if self.optimizer.clip_grad > 0.0:
-            raise ValueError("MFSDP V2 does not currently support gradient clipping.")
-        if self.optimizer.use_precision_aware_optimizer:
-            raise ValueError("MFSDP V2 does not support precision-aware optimizer.")
         if self.optimizer.optimizer_cpu_offload:
             raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
         if self.optimizer.use_layer_wise_distributed_optimizer:
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
-        if self.optimizer.optimizer_cuda_graph:
-            raise ValueError("MFSDP V2 does not support optimizer CUDA graphs.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
         if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
