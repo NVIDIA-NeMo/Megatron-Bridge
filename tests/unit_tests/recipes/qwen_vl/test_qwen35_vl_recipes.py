@@ -1144,6 +1144,62 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
     assert cfg.train.micro_batch_size == 2
 
 
+class _FakeModelCfgWithoutExpertTensorParallel(_FakeModelCfg):
+    """Fake model configuration that leaves expert tensor parallelism unset."""
+
+    def __init__(self):
+        super().__init__()
+        # Megatron-Core resolves an unset value to the dense tensor parallel size.
+        self.expert_tensor_parallel_size = None
+
+
+class _FakeAutoBridgeWithoutExpertTensorParallel:
+    """Fake AutoBridge whose provider leaves expert tensor parallelism unset."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        return _FakeAutoBridgeWithoutExpertTensorParallel()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfgWithoutExpertTensorParallel()
+
+
+@pytest.mark.parametrize(
+    ("recipe_func", "world_size"),
+    [
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config, 8),
+        (_qwen35_vl_h100_module.qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config, 128),
+        (_qwen35_vl_h100_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config, 512),
+    ],
+)
+def test_qwen35_vl_moe_pretrain_mock_grids_divide_their_named_world_size(
+    recipe_func: Callable,
+    world_size: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """MoE pretrain mock recipes own dense and expert grids that divide the world size they name."""
+    patch_recipe_module_global(
+        monkeypatch,
+        _qwen35_vl_h100_module,
+        "AutoBridge",
+        _FakeAutoBridgeWithoutExpertTensorParallel,
+    )
+
+    cfg = recipe_func()
+
+    assert cfg.model.expert_tensor_parallel_size == 1
+    dense_grid = (
+        cfg.model.tensor_model_parallel_size * cfg.model.context_parallel_size * cfg.model.pipeline_model_parallel_size
+    )
+    expert_grid = (
+        cfg.model.expert_tensor_parallel_size
+        * cfg.model.expert_model_parallel_size
+        * cfg.model.pipeline_model_parallel_size
+    )
+    assert world_size % dense_grid == 0, f"dense grid {dense_grid} does not divide {world_size}"
+    assert world_size % expert_grid == 0, f"expert grid {expert_grid} does not divide {world_size}"
+
+
 def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 122B-A10B pretrain mock has correct large MoE parallelism."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
