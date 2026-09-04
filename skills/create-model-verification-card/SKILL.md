@@ -46,11 +46,14 @@ identifier and the exact Bridge commit used for verification. Put them in
 the container, record the mounted checkout commit. Never substitute a private
 image path for the public base container identifier.
 
-The top-level Bridge commit is the default for every item leaf. If one verified
-item was run from a different clean checkout, put that exact 40-hex commit in
-the leaf's optional `bridge_commit` field. Omit the field when it would repeat
-the top-level value, and never use a commit field to disguise uncommitted
-runtime changes. Items that are not verified must not carry a commit override.
+The top-level base container and Bridge commit are the defaults for every item
+leaf. If one verified item was run in a different public NVIDIA NeMo or PyTorch
+container, put that exact identifier in the leaf's optional `base_container`
+field. Likewise, if it used a different clean checkout, put that exact 40-hex
+commit in the leaf's optional `bridge_commit` field. Omit fields that would
+repeat the top-level values, and never use provenance overrides to disguise
+private images or uncommitted runtime changes. Items that are not verified must
+not carry provenance overrides.
 
 ### 2. Create the core inventory and add performance when available
 

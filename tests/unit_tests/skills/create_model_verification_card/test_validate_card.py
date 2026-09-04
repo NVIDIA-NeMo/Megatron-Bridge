@@ -96,7 +96,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3-30b-a3b", "pretrain", "H100"): (4096, 1024, 16),
     ("qwen3-30b-a3b", "pretrain", "GB200"): (4096, 512, 8),
     ("qwen3-30b-a3b", "sft", "H100"): (2048, 32, 16),
-    ("qwen3-30b-a3b", "sft_long_context", "H100"): (32768, 32, 16),
+    ("qwen3-30b-a3b", "sft_long_context", "H100"): (131072, 32, 16),
     ("qwen3-30b-a3b", "peft", "H100"): (2048, 32, 4),
     ("qwen3-30b-a3b", "checkpoint_resume", "H100"): (4096, 1024, 16),
     ("qwen3-30b-a3b", "checkpoint_resume", "GB200"): (4096, 512, 8),

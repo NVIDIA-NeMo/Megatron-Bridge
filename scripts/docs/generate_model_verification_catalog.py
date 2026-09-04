@@ -287,7 +287,7 @@ def _entry(
     if variant:
         identity.append(variant)
     entry_id = _slug("-".join(identity))
-    return {
+    entry: dict[str, object] = {
         "entry_id": entry_id,
         "source_pointer": source_pointer,
         "workflow": workflow,
@@ -304,6 +304,10 @@ def _entry(
         "metrics": _json_value(merged.get("metrics", {})),
         "expected_result": _text(merged.get("expected_result")),
     }
+    base_container = _text(merged.get("base_container"))
+    if base_container is not None:
+        entry["base_container"] = base_container
+    return entry
 
 
 def _normal_item_entries(
@@ -347,6 +351,7 @@ def _normal_item_entries(
                     "status",
                     "precision",
                     "last_verified",
+                    "base_container",
                     "bridge_commit",
                     "command",
                     "commands",

@@ -127,6 +127,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      base_container: nvcr.io/nvidia/pytorch:26.06-py3
       command: run --nodes 1 --gpus-per-node 8 --precision bf16
       last_verified: 2026-08-24
       metrics: {loss: 1.0}
@@ -167,6 +168,10 @@ items:
         "not_applicable",
     }
     assert len({entry["source_pointer"] for entry in entries}) == len(entries)
+    assert next(entry for entry in entries if entry["hardware"] == "H100")["base_container"] == (
+        "nvcr.io/nvidia/pytorch:26.06-py3"
+    )
+    assert "base_container" not in next(entry for entry in entries if entry["hardware"] == "GB200")
 
 
 def test_catalog_is_a_simple_model_directory(generator: ModuleType, catalog: dict[str, object]) -> None:

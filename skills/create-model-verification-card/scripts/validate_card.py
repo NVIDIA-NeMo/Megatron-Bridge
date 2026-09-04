@@ -142,6 +142,7 @@ ITEM_KEYS = frozenset(
     {
         "status",
         "precision",
+        "base_container",
         "bridge_commit",
         "depends_on",
         "command",
@@ -1536,6 +1537,13 @@ def _validate_item(
         if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
             errors.append(f"{_pointer(*path, 'bridge_commit')}: expected an immutable 40-hex commit")
 
+    base_container = item.get("base_container")
+    if "base_container" in item:
+        if status != "verified":
+            errors.append(f"{_pointer(*path, 'base_container')}: item overrides are allowed only when verified")
+        if not isinstance(base_container, str) or PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is None:
+            errors.append(f"{_pointer(*path, 'base_container')}: expected a public NVIDIA NeMo or PyTorch container")
+
     precision = item.get("precision")
     if precision is not None and (not isinstance(precision, str) or precision not in PRECISIONS):
         errors.append(f"{_pointer(*path, 'precision')}: expected one of {sorted(PRECISIONS)} or null")
@@ -1918,7 +1926,7 @@ def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[s
 
 def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, ...], errors: list[str]) -> None:
     for path, key in _walk_keys(card):
-        if path == ("verification_environment",) and key == "base_container":
+        if key == "base_container" and (path == ("verification_environment",) or path[:1] == ("items",)):
             continue
         normalized = key.lower().replace("-", "_")
         if any(fragment in normalized for fragment in FORBIDDEN_KEY_FRAGMENTS):
@@ -1930,6 +1938,12 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
         base_container = environment.get("base_container")
         if isinstance(base_container, str) and PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is not None:
             privacy_raw = privacy_raw.replace(base_container, "")
+    items = card.get("items")
+    if isinstance(items, Mapping):
+        for _, _, item, _ in _iter_item_leaves(items):
+            base_container = item.get("base_container")
+            if isinstance(base_container, str) and PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is not None:
+                privacy_raw = privacy_raw.replace(base_container, "")
 
     if re.search(r"\bcluster\b", privacy_raw, re.IGNORECASE):
         errors.append("/: execution-environment names do not belong in the card")
@@ -2134,8 +2148,18 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                 )
 
         if environment is not None:
+            default_base_container = environment.get("base_container")
             default_bridge_commit = environment.get("bridge_commit")
             for _, _, item, path in item_leaves:
+                if (
+                    isinstance(default_base_container, str)
+                    and "base_container" in item
+                    and item.get("base_container") == default_base_container
+                ):
+                    errors.append(
+                        f"{_pointer(*path, 'base_container')}: "
+                        "omit a redundant override of verification_environment.base_container"
+                    )
                 if (
                     isinstance(default_bridge_commit, str)
                     and "bridge_commit" in item

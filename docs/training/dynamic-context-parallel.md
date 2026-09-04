@@ -47,6 +47,16 @@ forward path also does not automatically carry arbitrary RL or multimodal
 fields; those frameworks should provide their own materialization and forward
 contracts.
 
+## Megatron Core Prerequisite
+
+This integration requires the companion MCore Dynamic CP V2 stack, including
+runtime CP-group-aware `PackedSeqParams`, attention group restoration, and the
+framework-facing `gather_global_sequence_lengths()` and
+`reroute_tensor_fields_to_dcp_ranks()` APIs. The validation below used MCore
+commit `70ef3ebbf65f97da207a8ee069c105844e60f78e`. Until equivalent changes are
+included in Bridge's published MCore pin, check out that companion commit in
+`3rdparty/Megatron-LM` before running this guide.
+
 ## 128K CoderForge Example
 
 The following command starts Qwen3-30B-A3B SFT on 16 H100 GPUs. Replace the
@@ -109,6 +119,33 @@ Check the log for the number of source sequences, scheduled execution
 microbatches, and runtime CP group histogram. Compare the last ten completed
 steps after warmup; a one-step smoke test establishes functionality but is not
 a performance result.
+
+## Measured 128K Comparison
+
+The command above was measured with the same packed artifacts, seeds, and
+TP1/PP1/CP16/EP16/ETP1 topology for both modes. Each run completed 12 optimizer
+steps on 16 H100 GPUs; the table averages steps 3 through 12.
+
+| Mode | Step time (ms) | Configured tokens/s/GPU | Reported TFLOP/s/GPU | Peak reserved memory (GiB) |
+| --- | ---: | ---: | ---: | ---: |
+| Static CP16 | 134,556.920 | 1,948.202 | 336.750 | 67.650 |
+| Dynamic CP | 127,308.300 | 2,059.127 | 168.790 | 63.955 |
+| DCP change | -5.387% | +5.694% | not comparable | -5.462% |
+
+Both runs completed with zero skipped and zero NaN iterations. The packed
+dataset was 93.38% efficient and averaged 2.387 sequences per packed row. DCP
+preserved the 32-row logical global batch, materialized roughly 70--85 internal
+sequences per step, and selected runtime CP4, CP8, and CP16 groups; most groups
+were CP8 or CP16, which limits the available gain for this particular length
+distribution.
+
+Use step time or the identically computed configured-token rate for this
+comparison. The reported TFLOP/s values intentionally use different FLOP
+numerators: the static path estimates fixed 128K pack slots, while DCP uses the
+actual per-sequence attention lengths and drops zero-logical tail padding.
+Consequently, the lower DCP TFLOP/s number does not mean that DCP executed more
+slowly. Configured-token throughput still includes padded and masked capacity;
+measure supervised-token throughput separately when comparing dataset utility.
 
 ## Tuning and Failure Checks
 

@@ -365,6 +365,28 @@ def test_performance_comparison_payload_is_not_an_item_key():
     assert errors == ["/items/pretrain/GB200/matched_non_fsdp_comparison: unknown key"]
 
 
+def test_item_base_container_is_allowed_and_exempt_from_registry_privacy_check():
+    module = _load_validator()
+    base_container = "nvcr.io/nvidia/pytorch:26.06-py3"
+    errors = []
+
+    module._check_keys(
+        {"base_container": base_container},
+        allowed=module.ITEM_KEYS,
+        required=frozenset(),
+        path=("items", "sft_long_context", "H100"),
+        errors=errors,
+    )
+    module._validate_privacy(
+        f"base_container: {base_container}",
+        {"items": {"sft_long_context": {"H100": {"base_container": base_container}}}},
+        (),
+        errors,
+    )
+
+    assert errors == []
+
+
 def test_verified_fsdp_metrics_require_peak_memory():
     module = _load_validator()
     item = {"metrics": _fsdp_metrics()}

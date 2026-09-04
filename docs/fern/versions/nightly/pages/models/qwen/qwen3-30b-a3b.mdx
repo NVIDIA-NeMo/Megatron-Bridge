@@ -423,30 +423,38 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-20</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-03</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.645009</dd>
+            <dd>1.012319</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.468103</dd>
+            <dd>0.6570727</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>142,663.710 ms</dd>
+            <dd>127,308.300 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>26.120 TFLOP/s/GPU</dd>
+            <dd>168.790 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>459.374 tokens/s/GPU</dd>
+            <dd>2,059.127 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>54.782 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>63.955 GiB</dd>
           </div>
         </dl>
       </section>
@@ -457,12 +465,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen3_30b_a3b_sft_8gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000 --max_steps 20 --seq_length 32768 --context_parallel_size 2 -tp 8 -pp 1 -ep 8 --lr 1e-6 --min_lr 0 --warmup_iters 2 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;ad44e777bcd18fa416d9da3bd8f70d33ebb85d39&quot;&#x27; dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-long-context-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=16 model.cp_comm_type=p2p model.cross_entropy_loss_fusion=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen3_30b_a3b_sft_16gpu_h100_bf16_config --mode sft --dataset coderforge --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000 --max_steps 12 --seq_length 131072 -tp 1 -pp 1 -cp 16 -ep 16 -etp 1 &#x27;dataset.hf_dataset.split=&quot;SWE_Rebench[:2048]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;060fca96cf723b2ebab3181e9e59fafd273df3cb&quot;,data_files:{SWE_Rebench:&quot;trajectories/SWE_Rebench-*&quot;},verification_mode:no_checks}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;ad44e777bcd18fa416d9da3bd8f70d33ebb85d39&quot;&#x27; dataset.hf_output_root=work/data/coderforge/qwen3-30b-a3b-128k-dcp dataset.hf_rewrite=false dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:131072,pad_seq_to_mult:32,num_tokenizer_workers:8}&#x27; model.dynamic_context_parallel=true model.sequence_packing_scheduler=default_dynamic_cp model.max_seqlen_per_dp_cp_rank=8192 model.min_dynamic_context_parallel_size=1 model.calculate_per_token_loss=true model.cross_entropy_loss_fusion=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 ddp.average_in_collective=false ddp.nccl_ub=false dist.use_decentralized_pg=false scheduler.lr_decay_iters=12 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null &#x27;~env_vars.NCCL_GRAPH_REGISTER=0&#x27; &#x27;~env_vars.NCCL_NVLS_ENABLE=0&#x27; &#x27;~env_vars.PYTORCH_CUDA_ALLOC_CONF=&quot;expandable_segments:True&quot;&#x27; &#x27;~env_vars.TORCH_NCCL_AVOID_RECORD_STREAMS=1&#x27; &#x27;~env_vars.TORCH_NCCL_HIGH_PRIORITY=1&#x27;</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 16-GPU run completes exactly 20 Tulu3 SFT steps at sequence length 32768 with TP8/PP1/CP2/EP8/SP-on, DeepEP, and explicit pad-16 offline packing. LM loss is 1.645009 to 1.468103; skipped/NaN totals are 0/0. The persisted post-setup runtime config matches the command, packing is 99.28%, and the sampled training window contains 13,573,663 actual supervised tokens. PP=1 keeps tokens, labels, loss masks, and packed-sequence boundaries on one pipeline stage.
+        <p>The immutable-revision 16-H100 run completes exactly 12 CoderForge SFT steps at sequence length 131072 with TP1/PP1/CP16/EP16/ETP1, DP1, SP off, GBS/MBS 32/1, and framework-owned THD materialization. Offline packing is 93.38% efficient with 2.387 sequences per packed row. Dynamic CP preserves the 32-row logical global batch while scheduling its internal sequences onto runtime CP4, CP8, and CP16 groups. LM loss is finite from 1.012319 to 0.6570727 with no skipped or NaN iterations, and all seven metrics are recorded. Against the matched static-CP16 run, mean step time is 5.387% lower and configured-token throughput is 5.694% higher.
 </p>
       </section>
     </article>
