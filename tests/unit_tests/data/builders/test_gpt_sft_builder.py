@@ -24,6 +24,22 @@ from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
+def test_dynamic_cp_defer_disables_dataset_collate_packing(tmp_path):
+    builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=tmp_path,
+            seq_length=128,
+            enable_in_batch_packing=True,
+            defer_in_batch_packing_to_step=True,
+            dataloader_type="batch",
+        ),
+        tokenizer=MagicMock(),
+    )
+
+    assert builder.enable_in_batch_packing is True
+    assert builder._collate_in_batch_packing is False
+
+
 @pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])
 def test_default_pack_path_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, mkdir_error):
     """Network filesystems can leak mkdir races even with exist_ok=True."""

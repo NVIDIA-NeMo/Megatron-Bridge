@@ -1295,6 +1295,21 @@ class ConfigContainer(Container):
         )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+        dynamic_context_parallel = bool(getattr(self.model, "dynamic_context_parallel", False))
+
+        if dynamic_context_parallel:
+            if not isinstance(self.dataset, GPTSFTDatasetConfig):
+                raise ValueError("Bridge Dynamic CP currently requires GPTSFTDatasetConfig.")
+            if enable_offline_packing:
+                raise ValueError(
+                    "Bridge Dynamic CP replaces GPTSFT in-batch packing and cannot consume offline-packed data."
+                )
+            if not enable_in_batch_packing:
+                raise ValueError("Bridge Dynamic CP requires dataset.enable_in_batch_packing=True.")
+            self.dataset.defer_in_batch_packing_to_step = True
+        elif getattr(self.dataset, "defer_in_batch_packing_to_step", False):
+            raise ValueError("GPTSFT defer_in_batch_packing_to_step is reserved for Bridge Dynamic CP.")
+
         uses_thd = enable_offline_packing or enable_in_batch_packing or enable_energon_packing
 
         if enable_offline_packing and enable_in_batch_packing:
@@ -1653,7 +1668,7 @@ class ConfigContainer(Container):
                     f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
                 )
 
-        if enable_in_batch_packing and self.train.micro_batch_size == 1:
+        if enable_in_batch_packing and self.train.micro_batch_size == 1 and not dynamic_context_parallel:
             raise ValueError(
                 "micro_batch_size should be greater than 1 when using enable_in_batch_packing=True. "
                 "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "

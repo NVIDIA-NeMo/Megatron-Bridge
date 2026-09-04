@@ -119,10 +119,34 @@ def test_config_rejects_batch_dataloader_with_in_batch_packing(tmp_path):
         config.validate()
 
 
+def test_config_allows_batch_dataloader_when_dynamic_cp_defers_in_batch_packing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        enable_in_batch_packing=True,
+        defer_in_batch_packing_to_step=True,
+        dataloader_type="batch",
+    )
+
+    config.validate()
+
+
+def test_config_rejects_deferred_packing_without_in_batch_packing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=tmp_path,
+        defer_in_batch_packing_to_step=True,
+    )
+
+    with pytest.raises(ValueError, match="requires enable_in_batch_packing=True"):
+        config.validate()
+
+
 @pytest.mark.parametrize(
     "dataset_kwargs",
     [
         {"enable_in_batch_packing": True},
+        {"defer_in_batch_packing_to_step": True},
         {"in_batch_packing_pad_to_multiple_of": 8},
     ],
 )

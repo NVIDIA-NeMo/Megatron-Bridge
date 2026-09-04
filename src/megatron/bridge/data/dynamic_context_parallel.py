@@ -85,23 +85,20 @@ class _UnpackedBatch:
     padded_lengths: list[int]
 
 
-def _as_boundary_rows(value: Any, *, field_name: str, batch_size: int) -> torch.Tensor:
-    """Normalize one THD boundary tensor to ``[batch, boundaries]`` on CPU."""
-    if not isinstance(value, torch.Tensor):
-        raise ValueError(f"Dynamic CP requires tensor field '{field_name}'.")
-    if value.dim() == 1:
-        if batch_size != 1:
-            raise ValueError(f"Dynamic CP field '{field_name}' is 1D but the sequence batch has {batch_size} rows.")
-        value = value.unsqueeze(0)
-    if value.dim() != 2 or value.size(0) != batch_size:
-        raise ValueError(
-            f"Dynamic CP field '{field_name}' must have shape [batch, boundaries], got {tuple(value.shape)}."
-        )
-    return value.detach().to(device="cpu", dtype=torch.int64)
+def _ceil_to_multiple(value: int, multiple: int) -> int:
+    """Round one logical sequence length up to its physical THD alignment."""
+    return ((value + multiple - 1) // multiple) * multiple
 
 
-def _unpack_thd_global_batch(batch: Mapping[str, Any], policy: DynamicCPBatchPolicy) -> _UnpackedBatch:
-    """Split a collated THD global batch into unpadded framework-owned rows."""
+def _unpack_padded_global_batch(
+    batch: Mapping[str, Any],
+    policy: DynamicCPBatchPolicy,
+    *,
+    pad_to_multiple_of: int,
+) -> _UnpackedBatch:
+    """Extract unpadded GPTSFT samples before its legacy in-batch packer runs."""
+    if pad_to_multiple_of < 1:
+        raise ValueError("Dynamic CP pad_to_multiple_of must be >= 1.")
     fields = tuple(policy.sequence_field_pad_values)
     first_field = batch.get(fields[0])
     if not isinstance(first_field, torch.Tensor) or first_field.dim() != 2:
@@ -114,56 +111,35 @@ def _unpack_thd_global_batch(batch: Mapping[str, Any], policy: DynamicCPBatchPol
                 f"Dynamic CP field '{field_name}' must match {fields[0]} shape {tuple(first_field.shape)}."
             )
 
-    logical_rows = _as_boundary_rows(batch.get("cu_seqlens_q"), field_name="cu_seqlens_q", batch_size=batch_size)
-    padded_value = batch.get("cu_seqlens_q_padded")
-    if padded_value is None:
-        raise ValueError(
-            "Dynamic CP requires cu_seqlens_q_padded so Bridge can preserve physical THD alignment. "
-            "Configure offline packing with pad_seq_to_mult >= 2 * context_parallel_size."
-        )
-    padded_rows = _as_boundary_rows(padded_value, field_name="cu_seqlens_q_padded", batch_size=batch_size)
-    if logical_rows.shape != padded_rows.shape:
-        raise ValueError(
-            "Dynamic CP logical and physical THD boundary tensors must have identical shapes, got "
-            f"{tuple(logical_rows.shape)} and {tuple(padded_rows.shape)}."
-        )
+    sequence_lengths = batch.get("sequence_lengths")
+    if isinstance(sequence_lengths, torch.Tensor):
+        if sequence_lengths.numel() != batch_size:
+            raise ValueError(
+                "Dynamic CP sequence_lengths must contain one value per padded sample row, got "
+                f"{sequence_lengths.numel()} values for {batch_size} rows."
+            )
+        lengths = sequence_lengths.detach().to(device="cpu", dtype=torch.int64).reshape(-1).tolist()
+    elif isinstance(sequence_lengths, Sequence) and not isinstance(sequence_lengths, (str, bytes)):
+        lengths = [int(length) for length in sequence_lengths]
+        if len(lengths) != batch_size:
+            raise ValueError(
+                "Dynamic CP sequence_lengths must contain one value per padded sample row, got "
+                f"{len(lengths)} values for {batch_size} rows."
+            )
+    else:
+        raise ValueError("Dynamic CP requires GPTSFT collation to provide sequence_lengths before in-batch packing.")
 
     samples: list[dict[str, torch.Tensor]] = []
     logical_lengths: list[int] = []
     padded_lengths: list[int] = []
-    for row_idx in range(batch_size):
-        logical = logical_rows[row_idx].tolist()
-        padded = padded_rows[row_idx].tolist()
-        if logical[0] != 0 or padded[0] != 0:
-            raise ValueError("Dynamic CP THD boundaries must start at zero.")
-        if any(end < start for start, end in zip(logical, logical[1:])) or any(
-            end < start for start, end in zip(padded, padded[1:])
-        ):
-            raise ValueError("Dynamic CP THD boundaries must be nondecreasing.")
-        if padded[-1] > physical_width:
-            raise ValueError(f"Dynamic CP physical boundary {padded[-1]} exceeds tensor width {physical_width}.")
-
-        for segment_idx in range(len(logical) - 1):
-            logical_length = logical[segment_idx + 1] - logical[segment_idx]
-            padded_length = padded[segment_idx + 1] - padded[segment_idx]
-            if logical_length == 0:
-                # Fixed-width offline packing represents its trailing fill as a
-                # zero-logical-length THD segment. It is not a training sample.
-                continue
-            if logical_length > padded_length:
-                raise ValueError(
-                    f"Dynamic CP logical length {logical_length} exceeds physical length {padded_length}."
-                )
-            physical_start = padded[segment_idx]
-            physical_end = physical_start + logical_length
-            samples.append(
-                {
-                    field_name: batch[field_name][row_idx, physical_start:physical_end].reshape(-1)
-                    for field_name in fields
-                }
+    for row_idx, logical_length in enumerate(lengths):
+        if logical_length < 1 or logical_length > physical_width:
+            raise ValueError(
+                f"Dynamic CP sequence length {logical_length} must be within padded row width {physical_width}."
             )
-            logical_lengths.append(logical_length)
-            padded_lengths.append(padded_length)
+        samples.append({field_name: batch[field_name][row_idx, :logical_length].reshape(-1) for field_name in fields})
+        logical_lengths.append(logical_length)
+        padded_lengths.append(_ceil_to_multiple(logical_length, pad_to_multiple_of))
 
     if not samples:
         raise ValueError("Dynamic CP cannot schedule a logical batch with no non-empty sequences.")
@@ -281,6 +257,9 @@ def prepare_dynamic_cp_batch(
     data_iterator: Iterator[Mapping[str, Any]] | None,
     *,
     num_microbatches: int,
+    micro_batch_size: int,
+    dataloader_type: str,
+    pad_to_multiple_of: int,
     model_config: Any,
     pg_collection: Any,
     policy: DynamicCPBatchPolicy | None = None,
@@ -288,32 +267,46 @@ def prepare_dynamic_cp_batch(
     """Schedule and materialize one already-selected logical global batch.
 
     The dataloader/framework remains responsible for global-batch selection.
-    This function starts after that decision: it decomposes THD rows, delegates
-    placement and opaque tensor transport to MCore, then reconstructs the local
-    framework batch including labels and masks.
+    This function replaces GPTSFTDataset's legacy in-batch packer. It collects
+    one logical global batch of padded samples, delegates placement and opaque
+    tensor transport to MCore, then constructs the rank-local THD batches,
+    including labels and masks.
     """
     if data_iterator is None:
         raise ValueError("Dynamic CP requires a data iterator on every participating rank.")
     if num_microbatches < 1:
         raise ValueError("Dynamic CP requires at least one logical microbatch.")
+    if micro_batch_size < 1:
+        raise ValueError("Dynamic CP requires micro_batch_size >= 1.")
+    if dataloader_type not in {"single", "cyclic", "batch"}:
+        raise ValueError("Bridge Dynamic CP requires GPTSFT dataloader_type 'single', 'cyclic', or 'batch'.")
     if getattr(model_config, "virtual_pipeline_model_parallel_size", None) not in (None, 1):
         raise ValueError("Bridge Dynamic CP materialization does not yet support virtual pipeline parallelism.")
     if pg_collection.pp.size() != 1:
         raise ValueError("Bridge Dynamic CP materialization currently requires pipeline parallel size 1.")
 
     policy = policy or DynamicCPBatchPolicy()
-    global_batch = next(data_iterator)
-    token_batch = global_batch.get("tokens")
-    if not isinstance(token_batch, torch.Tensor) or token_batch.dim() != 2:
-        raise ValueError("Dynamic CP requires a 2D 'tokens' tensor in the selected logical batch.")
-    if token_batch.size(0) != num_microbatches:
-        raise ValueError(
-            "Bridge Dynamic CP currently requires micro_batch_size=1: selected batch has "
-            f"{token_batch.size(0)} packed rows for {num_microbatches} logical microbatches."
+    logical_batches_to_collect = 1 if dataloader_type == "batch" else num_microbatches
+    unpacked_batches = [
+        _unpack_padded_global_batch(
+            next(data_iterator),
+            policy,
+            pad_to_multiple_of=pad_to_multiple_of,
         )
-    unpacked = _unpack_thd_global_batch(global_batch, policy)
-    if len(unpacked.samples) < 1:
-        raise ValueError("Dynamic CP requires at least one sequence in the selected logical batch.")
+        for _ in range(logical_batches_to_collect)
+    ]
+    unpacked = _UnpackedBatch(
+        samples=[sample for batch in unpacked_batches for sample in batch.samples],
+        logical_lengths=[length for batch in unpacked_batches for length in batch.logical_lengths],
+        padded_lengths=[length for batch in unpacked_batches for length in batch.padded_lengths],
+    )
+    expected_local_samples = num_microbatches * micro_batch_size
+    if len(unpacked.samples) != expected_local_samples:
+        raise ValueError(
+            "Dynamic CP must collect exactly one logical global batch: this rank received "
+            f"{len(unpacked.samples)} samples, expected {num_microbatches} microbatches x "
+            f"{micro_batch_size} samples."
+        )
 
     dev = torch.cuda.current_device()
     padded_lengths = torch.tensor(unpacked.padded_lengths, dtype=torch.int32, device=dev)
@@ -348,10 +341,8 @@ def prepare_dynamic_cp_batch(
         )
     if pg_collection.dp_cp.rank() == 0:
         logger.info(
-            "Dynamic CP scheduled %d sequences from %d logical packed rows into %d execution microbatches; "
-            "runtime CP group histogram=%s.",
+            "Dynamic CP scheduled %d logical samples into %d execution microbatches; runtime CP group histogram=%s.",
             len(global_id_seqlens),
-            token_batch.size(0) * dp_size,
             len(sample_id_groups),
             _runtime_cp_group_histogram(sample_id_groups),
         )

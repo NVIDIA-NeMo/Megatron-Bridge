@@ -238,7 +238,10 @@ class TestTrainStepDynamicContextParallel:
                     qk_clip=False,
                     log_max_attention_logit=False,
                 ),
-                dataset=SimpleNamespace(dataloader_type="batch"),
+                dataset=SimpleNamespace(
+                    dataloader_type="cyclic",
+                    in_batch_packing_pad_to_multiple_of=32,
+                ),
                 dist=SimpleNamespace(use_decentralized_pg=True),
                 ddp=SimpleNamespace(overlap_param_gather=False),
                 optimizer=SimpleNamespace(
@@ -285,13 +288,16 @@ class TestTrainStepDynamicContextParallel:
             )
 
         prepare_dynamic_cp_batch.assert_called_once()
+        assert prepare_dynamic_cp_batch.call_args.kwargs["micro_batch_size"] == 1
+        assert prepare_dynamic_cp_batch.call_args.kwargs["dataloader_type"] == "cyclic"
+        assert prepare_dynamic_cp_batch.call_args.kwargs["pad_to_multiple_of"] == 32
         assert forward_backward_func.call_args.kwargs["data_iterator"] is scheduled_iterator
         assert forward_backward_func.call_args.kwargs["num_microbatches"] == 3
         assert global_state._scheduled_num_microbatches == 3
         assert global_state._flops_global_seqlen_sum == 250_000
         assert global_state._flops_global_seqlen_sq_sum == 9_000_000_000
         # Optimizer scheduling still advances by the framework-selected logical
-        # batch: 2 packed samples/rank * 1 MBS * 4 DP ranks.
+        # batch: 2 logical microbatches/rank * 1 MBS * 4 DP ranks.
         scheduler.step.assert_called_once_with(increment=8)
 
 

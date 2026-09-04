@@ -1214,6 +1214,56 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_dynamic_cp_replaces_gpt_sft_in_batch_materialization(self, monkeypatch):
+        """DCP keeps the packing request but defers THD construction to the training step."""
+        gpt_model_cfg = create_test_gpt_config(
+            dynamic_context_parallel=True,
+            max_seqlen_per_dp_cp_rank=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "batch"
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert dataset_cfg.defer_in_batch_packing_to_step is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_dynamic_cp_rejects_offline_packing(self, monkeypatch):
+        """DCP replaces GPTSFT in-batch packing rather than consuming offline THD rows."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            dynamic_context_parallel=True,
+            max_seqlen_per_dp_cp_rank=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="cannot consume offline-packed data"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_in_batch_packing_enables_variable_pp_shapes_for_builder_model(self, monkeypatch):
         """Test builder-backed GPT configs use dynamic PP shapes for packed batches."""
         model_cfg = BridgeGPTModelConfig(

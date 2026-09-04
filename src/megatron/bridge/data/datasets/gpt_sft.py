@@ -706,6 +706,7 @@ class GPTSFTDataset(Dataset):
         else:
             max_length = min(self.max_seq_length, self._ceil_to_nearest(max_length, self.pad_seq_length_to_mult))
         assert max_length <= self.max_seq_length
+        sequence_lengths = torch.LongTensor([min(len(sequence), max_length) for sequence in input_ids])
 
         if not self.get_attention_mask_from_fusion:
             attention_mask = [self._create_attention_mask(max_length) for _ in batch]
@@ -727,6 +728,7 @@ class GPTSFTDataset(Dataset):
             "labels": labels,
             "loss_mask": loss_mask,
             "position_ids": position_ids,
+            "sequence_lengths": sequence_lengths,
             "contexts": contexts,
             "context_lengths": context_lengths,
             "answers": answers,
@@ -948,6 +950,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
                 self._ceil_to_nearest(max_length, max(16, self.pad_seq_length_to_mult)),
             )
         assert max_length <= self.max_seq_length
+        sequence_lengths = torch.LongTensor([min(len(sequence), max_length) for sequence in input_ids])
 
         position_ids = [list(range(max_length)) for _ in batch]
         position_ids = torch.LongTensor(position_ids)
@@ -965,6 +968,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
             "labels": labels,
             "loss_mask": loss_mask,
             "position_ids": position_ids,
+            "sequence_lengths": sequence_lengths,
             "contexts": contexts,
             "context_lengths": context_lengths,
             "answers": answers,

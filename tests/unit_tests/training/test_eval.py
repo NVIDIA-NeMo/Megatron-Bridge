@@ -130,7 +130,8 @@ def _run_evaluate(
 
 def test_evaluate_dynamic_cp_uses_framework_materialized_schedule():
     state = _make_evaluate_state(eval_iters=1)
-    state.cfg.dataset.dataloader_type = "batch"
+    state.cfg.dataset.dataloader_type = "cyclic"
+    state.cfg.dataset.in_batch_packing_pad_to_multiple_of = 32
     model = _ModeTrackingModel()
     callback_manager = CallbackManager()
     forward_backward_func = MagicMock(return_value=[{}])
@@ -151,6 +152,9 @@ def test_evaluate_dynamic_cp_uses_framework_materialized_schedule():
 
     assert result == ({}, None, False)
     prepare_dynamic_cp_batch.assert_called_once()
+    assert prepare_dynamic_cp_batch.call_args.kwargs["micro_batch_size"] == 1
+    assert prepare_dynamic_cp_batch.call_args.kwargs["dataloader_type"] == "cyclic"
+    assert prepare_dynamic_cp_batch.call_args.kwargs["pad_to_multiple_of"] == 32
     assert forward_backward_func.call_args.kwargs["data_iterator"] is scheduled_iterator
     assert forward_backward_func.call_args.kwargs["num_microbatches"] == 3
 

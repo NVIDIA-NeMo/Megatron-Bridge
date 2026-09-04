@@ -2,46 +2,50 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from megatron.bridge.data.dynamic_context_parallel import (
     DynamicCPBatchPolicy,
     _materialize_microbatch,
     _runtime_cp_group_histogram,
-    _unpack_thd_global_batch,
+    _unpack_padded_global_batch,
     prepare_dynamic_cp_batch,
 )
 
 
-def _packed_global_batch() -> dict[str, torch.Tensor | int | None]:
-    tokens = torch.zeros((1, 16), dtype=torch.long)
+def _padded_logical_batch() -> dict[str, torch.Tensor | None]:
+    tokens = torch.zeros((2, 6), dtype=torch.long)
     labels = torch.zeros_like(tokens)
     loss_mask = torch.zeros_like(tokens)
     position_ids = torch.zeros_like(tokens)
     tokens[0, :3] = torch.tensor([10, 11, 12])
-    tokens[0, 4:9] = torch.tensor([20, 21, 22, 23, 24])
+    tokens[1, :5] = torch.tensor([20, 21, 22, 23, 24])
     labels.copy_(tokens + 100)
     loss_mask[0, :3] = 1
-    loss_mask[0, 4:9] = 1
+    loss_mask[1, :5] = 1
     position_ids[0, :3] = torch.arange(3)
-    position_ids[0, 4:9] = torch.arange(5)
+    position_ids[1, :5] = torch.arange(5)
     return {
         "tokens": tokens,
         "labels": labels,
         "loss_mask": loss_mask,
         "position_ids": position_ids,
+        "sequence_lengths": torch.tensor([3, 5]),
         "attention_mask": None,
-        "cu_seqlens_q": torch.tensor([[0, 3, 8, 8]], dtype=torch.int32),
-        "cu_seqlens_kv": torch.tensor([[0, 3, 8, 8]], dtype=torch.int32),
-        "cu_seqlens_q_padded": torch.tensor([[0, 4, 12, 16]], dtype=torch.int32),
-        "cu_seqlens_kv_padded": torch.tensor([[0, 4, 12, 16]], dtype=torch.int32),
-        "max_seqlen_q": 8,
-        "max_seqlen_kv": 8,
     }
 
 
-def test_unpack_thd_global_batch_uses_physical_starts_and_drops_fill_segment():
-    unpacked = _unpack_thd_global_batch(_packed_global_batch(), DynamicCPBatchPolicy())
+def _select_padded_row(batch: dict[str, torch.Tensor | None], row: int) -> dict[str, torch.Tensor | None]:
+    return {key: value[row : row + 1] if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
+
+
+def test_unpack_padded_global_batch_uses_explicit_lengths_and_dcp_alignment():
+    unpacked = _unpack_padded_global_batch(
+        _padded_logical_batch(),
+        DynamicCPBatchPolicy(),
+        pad_to_multiple_of=4,
+    )
 
     assert unpacked.logical_lengths == [3, 5]
     assert unpacked.padded_lengths == [4, 8]
@@ -105,7 +109,8 @@ def test_runtime_cp_group_histogram_counts_distinct_groups_per_microbatch():
     assert _runtime_cp_group_histogram(sample_id_groups) == {1: 2, 2: 1, 4: 1}
 
 
-def test_prepare_dynamic_cp_batch_delegates_placement_and_transport(monkeypatch):
+@pytest.mark.parametrize("dataloader_type", ["cyclic", "batch"])
+def test_prepare_dynamic_cp_batch_delegates_placement_and_transport(monkeypatch, dataloader_type):
     import megatron.bridge.data.dynamic_context_parallel as dcp
 
     group = SimpleNamespace(size=lambda: 1, rank=lambda: 0)
@@ -124,9 +129,21 @@ def test_prepare_dynamic_cp_batch_delegates_placement_and_transport(monkeypatch)
     monkeypatch.setattr(dcp, "gather_global_sequence_lengths", _gather)
     monkeypatch.setattr(torch.cuda, "current_device", lambda: torch.device("cpu"))
 
+    padded_batch = _padded_logical_batch()
+    if dataloader_type == "batch":
+        batches = [padded_batch]
+        num_microbatches = 1
+        micro_batch_size = 2
+    else:
+        batches = [_select_padded_row(padded_batch, 0), _select_padded_row(padded_batch, 1)]
+        num_microbatches = 2
+        micro_batch_size = 1
     result = prepare_dynamic_cp_batch(
-        iter([_packed_global_batch()]),
-        num_microbatches=1,
+        iter(batches),
+        num_microbatches=num_microbatches,
+        micro_batch_size=micro_batch_size,
+        dataloader_type=dataloader_type,
+        pad_to_multiple_of=4,
         model_config=model_config,
         pg_collection=pg_collection,
     )

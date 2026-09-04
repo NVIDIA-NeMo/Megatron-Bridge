@@ -213,28 +213,30 @@ def evaluate(
             eval_data_iterator = data_iterator  # Default for pretraining
             scheduled_eval_num_microbatches = eval_num_microbatches
 
-            if state.cfg.dataset.dataloader_type == "batch":
-                if getattr(model_config, "dynamic_context_parallel", False):
-                    from megatron.bridge.data.dynamic_context_parallel import prepare_dynamic_cp_batch
+            if getattr(model_config, "dynamic_context_parallel", False):
+                from megatron.bridge.data.dynamic_context_parallel import prepare_dynamic_cp_batch
 
-                    if isinstance(data_iterator, list):
-                        raise ValueError("Bridge Dynamic CP does not yet support virtual pipeline iterators.")
-                    dynamic_cp_batch = prepare_dynamic_cp_batch(
-                        data_iterator=data_iterator,
-                        num_microbatches=eval_num_microbatches,
-                        model_config=model_config,
-                        pg_collection=pg_collection,
-                    )
-                    eval_data_iterator = dynamic_cp_batch.data_iterator
-                    scheduled_eval_num_microbatches = dynamic_cp_batch.num_microbatches
-                else:
-                    # Finetuning path: prepare batch and extract dynamic seq_length
-                    eval_data_iterator, seq_length = prepare_finetuning_batch(
-                        data_iterator=data_iterator,
-                        num_microbatches=eval_num_microbatches,
-                        default_seq_length=default_seq_length,
-                        seq_key="tokens",
-                    )
+                if isinstance(data_iterator, list):
+                    raise ValueError("Bridge Dynamic CP does not yet support virtual pipeline iterators.")
+                dynamic_cp_batch = prepare_dynamic_cp_batch(
+                    data_iterator=data_iterator,
+                    num_microbatches=eval_num_microbatches,
+                    micro_batch_size=(state.cfg.validation.eval_micro_batch_size or state.cfg.train.micro_batch_size),
+                    dataloader_type=state.cfg.dataset.dataloader_type,
+                    pad_to_multiple_of=getattr(state.cfg.dataset, "in_batch_packing_pad_to_multiple_of", 1),
+                    model_config=model_config,
+                    pg_collection=pg_collection,
+                )
+                eval_data_iterator = dynamic_cp_batch.data_iterator
+                scheduled_eval_num_microbatches = dynamic_cp_batch.num_microbatches
+            elif state.cfg.dataset.dataloader_type == "batch":
+                # Finetuning path: prepare batch and extract dynamic seq_length
+                eval_data_iterator, seq_length = prepare_finetuning_batch(
+                    data_iterator=data_iterator,
+                    num_microbatches=eval_num_microbatches,
+                    default_seq_length=default_seq_length,
+                    seq_key="tokens",
+                )
 
             if len(model) > 1:
                 # Convert to list of iterators for virtual pipeline parallelism

@@ -291,7 +291,9 @@ class TestDataGPTSFTDataset:
                 "token_count": 4,
             },
         ]
-        dataset.collate_fn(batch)
+        result = dataset.collate_fn(batch)
+
+        assert result["sequence_lengths"].tolist() == [4, 3]
 
     def test_in_batch_packing_emits_exact_thd_batch(self, tmp_path):
         dataset, _ = get_gpt_sft(
@@ -647,7 +649,9 @@ class TestDataGPTSFTChatDataset:
                 "token_count": 4,
             },
         ]
-        dataset.collate_fn(batch)
+        result = dataset.collate_fn(batch)
+
+        assert result["sequence_lengths"].tolist() == [4, 3]
 
     def test_in_batch_packing_preserves_chat_loss_mask(self, tmp_path):
         dataset, _ = get_gpt_sft(

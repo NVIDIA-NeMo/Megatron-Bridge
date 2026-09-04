@@ -125,6 +125,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     max_train_samples: int | None = None
     preprocessing: SFTPreprocessingConfig | None = None
     enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
     in_batch_packing_pad_to_multiple_of: int = 1
     enable_offline_packing: bool = False
     offline_packing_specs: PackedSequenceSpecs | None = None
@@ -197,7 +198,13 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
-        if self.enable_in_batch_packing and self.dataloader_type == "batch":
+        if self.defer_in_batch_packing_to_step and not self.enable_in_batch_packing:
+            raise ValueError("defer_in_batch_packing_to_step=True requires enable_in_batch_packing=True.")
+        if (
+            self.enable_in_batch_packing
+            and self.dataloader_type == "batch"
+            and not self.defer_in_batch_packing_to_step
+        ):
             raise ValueError(
                 "GPT-SFT in-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
             )
@@ -222,6 +229,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("Set max_train_samples directly; dataset_kwargs must not contain max_num_samples.")
         typed_packing_kwargs = {
             "enable_in_batch_packing",
+            "defer_in_batch_packing_to_step",
             "in_batch_packing_pad_to_multiple_of",
         }.intersection(self.dataset_kwargs or {})
         if typed_packing_kwargs:
@@ -591,6 +599,8 @@ class GPTSFTDatasetBuilder:
         self.memmap_workers = config.memmap_workers
         self.max_train_samples = config.max_train_samples
         self.enable_in_batch_packing = config.enable_in_batch_packing
+        self.defer_in_batch_packing_to_step = config.defer_in_batch_packing_to_step
+        self._collate_in_batch_packing = self.enable_in_batch_packing and not self.defer_in_batch_packing_to_step
         self.in_batch_packing_pad_to_multiple_of = config.in_batch_packing_pad_to_multiple_of
         self.enable_offline_packing = config.enable_offline_packing
         self.offline_packing_specs = config.offline_packing_specs
@@ -789,7 +799,7 @@ class GPTSFTDatasetBuilder:
             pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
             pad_cu_seqlens=self._pad_cu_seqlens,
             pad_seq_to_mult=self._pad_seq_to_mult,
-            enable_in_batch_packing=self.enable_in_batch_packing,
+            enable_in_batch_packing=self._collate_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
             dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
         )
@@ -805,7 +815,7 @@ class GPTSFTDatasetBuilder:
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
                 pad_cu_seqlens=self._pad_cu_seqlens,
                 pad_seq_to_mult=self._pad_seq_to_mult,
-                enable_in_batch_packing=self.enable_in_batch_packing,
+                enable_in_batch_packing=self._collate_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
@@ -821,7 +831,7 @@ class GPTSFTDatasetBuilder:
                 memmap_workers=self.memmap_workers,
                 seed=self.seed,
                 packed_sequence_size=-1,
-                enable_in_batch_packing=self.enable_in_batch_packing,
+                enable_in_batch_packing=self._collate_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
