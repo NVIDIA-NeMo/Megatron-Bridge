@@ -33,17 +33,21 @@ This module provides three bridges:
 """
 
 import logging
+import os
+from collections.abc import Iterable
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ConcatenatedQKVMapping,
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.qwen.qwen35_bridge import (
@@ -51,6 +55,7 @@ from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35MoEBridge,
     _apply_qwen35_common_config,
     _apply_qwen35_moe_config,
+    _apply_qwen35_moe_text_config,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
@@ -168,6 +173,9 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
     checkpoint config. For example, Qwen3.5-397B-A17B has 60 language layers,
     while Qwen3.6-35B-A3B has 40.
 
+    ``QWEN35_CONVERSION_MODE`` dispatch (text / auto / vl): ``text`` converts the
+    language model only, as a plain GPTModel with no vision tower.
+
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-397B-A17B")
@@ -177,7 +185,10 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLMoEModelProvider:
+    # HF keys passed through verbatim from the source checkpoint on text-mode export.
+    _HF_PASSTHROUGH_PREFIXES = ("model.visual.",)
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen35VLMoEModelProvider | GPTModelProvider":
         """
         Create a Qwen35VLMoEModelProvider from a HuggingFace pretrained model.
 
@@ -195,6 +206,9 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
         # Use base class utility to extract common config fields
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+
+        if self._conversion_mode() == "text":
+            return self._build_moe_text_provider(provider_kwargs, text_config)
 
         vision_config = hf_config.vision_config
         vision_config.torch_dtype = provider_kwargs.get("params_dtype", torch.float32)
@@ -266,19 +280,68 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                 mtp_experts_packed = True
         experts_packed = moe_experts_stored_packed(hf_pretrained, "model.language_model.layers.")
 
+        megatron_prefix = "" if self._conversion_mode() == "text" else "language_model."
+
         mapping_list = []
         mapping_list.extend(
             Qwen35MoEBridge._get_moe_lm_mappings(
-                hf_prefix="model.language_model.", megatron_prefix="language_model.", experts_packed=experts_packed
+                hf_prefix="model.language_model.", megatron_prefix=megatron_prefix, experts_packed=experts_packed
             )
         )
         mapping_list.extend(
             Qwen35MoEBridge._get_moe_mtp_mappings(
-                megatron_prefix="language_model.", mtp_experts_packed=mtp_experts_packed
+                megatron_prefix=megatron_prefix, mtp_experts_packed=mtp_experts_packed
             )
         )
-        mapping_list.extend(_get_vision_mappings())
+        if self._conversion_mode() != "text":
+            mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
+
+    def _conversion_mode(self) -> str:
+        mode = getattr(self, "qwen35_conversion_mode", None) or os.environ.get("QWEN35_CONVERSION_MODE", "auto")
+        mode = mode.lower()
+        if mode not in {"auto", "text", "vl"}:
+            raise ValueError(f"Invalid QWEN35_CONVERSION_MODE={mode!r}; expected auto, text, or vl.")
+        return mode
+
+    def _build_moe_text_provider(self, provider_kwargs: dict, text_config) -> GPTModelProvider:
+        """Text-only GPT provider for a VL checkpoint."""
+        provider_kwargs.pop("_mla_rope_params", None)
+        valid_fields = GPTModelProvider.__dataclass_fields__
+        provider = GPTModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
+        _apply_qwen35_moe_text_config(provider, text_config)
+        return provider
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: Qwen3VLModel | GPTModel | list[Qwen3VLModel | GPTModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+    ) -> Iterable[HFWeightTuple]:
+        """Export weights; in text mode also pass the untouched vision tower through from the source."""
+        yield from super().stream_weights_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        )
+        if self._conversion_mode() != "text":
+            return
+        source = getattr(getattr(hf_pretrained, "state", None), "source", None)
+        if source is None:
+            return
+        # All ranks yield (mirroring the converted stream), so distributed saves stay correct.
+        for name in source.get_all_keys():
+            if name.startswith(self._HF_PASSTHROUGH_PREFIXES):
+                yield from HFWeightTuple(name, source[name]).iter_finalized(cpu=cpu)
 
 
 @MegatronModelBridge.register_bridge(
