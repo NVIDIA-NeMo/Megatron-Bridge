@@ -1,8 +1,11 @@
 name: Claude Code Review
 
 on:
-  pull_request:
-    types: [opened, reopened, ready_for_review]
+  workflow_run:
+    workflows: ["CICD NeMo"]
+    types: [requested]
+    branches:
+      - "pull-request/[0-9]+"
   issue_comment:
     types: [created]
 
@@ -13,54 +16,91 @@ permissions:
   id-token: write
 
 jobs:
-  pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
-    with:
-      default_runner_prefix: ubuntu-latest
-      sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
-    secrets:
-      NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
-
   auto-review:
     name: Claude Review (auto)
-    needs: [pre-flight]
-    # Auto-review same-repository, non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
-    # Fork pull_request workflows cannot access the secrets or OIDC token required by the review action.
-    # Subsequent commits do not re-trigger; re-request a review by commenting
-    # "/claude review" (handled by the manual-review job below).
+    # Auto-review trusted, non-draft PRs when copy-pr-bot's
+    # pull-request/<number> push requests the CICD NeMo workflow.
     # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
     # auto cherry-picks (`cherry-pick-*`).
     if: |
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      needs.pre-flight.outputs.is_member == 'true' &&
-      github.event.pull_request.draft == false &&
-      !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&
-      !startsWith(github.event.pull_request.head.ref, 'cherry-pick-')
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.actor.login == 'copy-pr-bot[bot]'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
     steps:
-      - name: Checkout repository
+      - name: Get PR info
+        id: pr
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const branch = context.payload.workflow_run.head_branch;
+            const number = Number(branch.split("/").pop());
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: number,
+            });
+            const shouldReview =
+              pr.state === "open" &&
+              pr.head.sha === context.payload.workflow_run.head_sha &&
+              !pr.draft &&
+              !pr.head.ref.startsWith("bump-ci-container-") &&
+              !pr.head.ref.startsWith("cherry-pick-");
+            core.setOutput("number", String(number));
+            core.setOutput("author", pr.user.login);
+            core.setOutput("base_sha", pr.base.sha);
+            core.setOutput("should_review", String(shouldReview));
+
+      - name: Check NVIDIA SSO membership
+        id: check-sso
+        if: steps.pr.outputs.should_review == 'true'
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-nvidia-sso@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
+        with:
+          username: ${{ steps.pr.outputs.author }}
+          github_token: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
+          sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
+
+      - name: Checkout trusted base
+        if: steps.pr.outputs.should_review == 'true' && steps.check-sso.outputs.is_member == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          fetch-depth: 1
+          ref: ${{ steps.pr.outputs.base_sha }}
+          fetch-depth: 0
+
+      - name: Fetch trusted PR commit
+        if: steps.pr.outputs.should_review == 'true' && steps.check-sso.outputs.is_member == 'true'
+        shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: git fetch --no-tags origin "$PR_HEAD_SHA"
 
       - name: Run Claude Code Review
+        if: steps.pr.outputs.should_review == 'true' && steps.check-sso.outputs.is_member == 'true'
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1
         env:
           ANTHROPIC_BASE_URL: ${{ secrets.NVIDIA_INFERENCE_URL }}
           CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1"
           DISABLE_PROMPT_CACHING: "1"
         with:
+          allowed_bots: "copy-pr-bot[bot]"
           anthropic_api_key: ${{ secrets.NVIDIA_INFERENCE_KEY }}
+          github_token: ${{ github.token }}
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr review:*),Read"
+            --allowedTools "Bash(git diff:*),Bash(gh pr comment:*),Read"
             --model "${{ vars.CLAUDE_MODEL }}"
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR NUMBER: ${{ steps.pr.outputs.number }}
+            PR BASE SHA: ${{ steps.pr.outputs.base_sha }}
+            PR HEAD SHA: ${{ github.event.workflow_run.head_sha }}
 
             Mandatory workflow — never skip or reorder:
-            1. Read the PR diff first (gh pr diff).
+            1. Read the exact authorized diff first with `git diff <PR BASE SHA>...<PR HEAD SHA>`.
+               Do not use `gh pr diff`; it can change after this run is authorized.
             2. Based on the changed files and areas, identify relevant skills from skills/<name>/SKILL.md.
                Common skill names: linting-and-formatting, testing, cicd, build-and-dependency,
                adding-model-support, perf-activation-recompute, perf-memory-tuning, etc.
@@ -81,8 +121,7 @@ jobs:
             - Architectural opinions or refactoring ideas
             - Performance unless there is a clear, measurable issue
 
-            Provide feedback using inline comments for specific code suggestions.
-            Use top-level comments for general observations.
+            Post feedback as a top-level PR comment.
 
             Always end the review with a "Suggested test cases" bullet list, derived
             from the diff.
@@ -113,9 +152,7 @@ jobs:
             redirection, or HEREDOCs — the action sandbox blocks all three.
             The body must include the "Suggested test cases" list. If there
             is nothing to flag, the body is just "LGTM" followed by the
-            test-case list. Inline comments via
-            mcp__github_inline_comment__create_inline_comment are optional —
-            use them only for specific code suggestions.
+            test-case list.
 
   manual-review:
     if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
