@@ -1996,18 +1996,17 @@ class TestGroupedExpertLinearAdapter:
             in_features=2,
             out_features=2,
             dim=2,
-            alpha=4,
-            num_local_experts=2,
+            alpha=3,
+            num_local_experts=3,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
             input_is_parallel=False,
             model_parallel_config=MockModelParallelConfig(),
         )
         with torch.no_grad():
-            adapter.linear_in.weight[0].copy_(torch.eye(2))
-            adapter.linear_in.weight[1].copy_(torch.eye(2))
-            adapter.linear_out.weight[0].copy_(torch.eye(2))
-            adapter.linear_out.weight[1].copy_(torch.eye(2))
+            for expert_idx in range(3):
+                adapter.linear_in.weight[expert_idx].copy_(torch.eye(2))
+                adapter.linear_out.weight[expert_idx].copy_(torch.eye(2))
 
         projection_inputs = {}
         original_projection = GroupedExpertLinearAdapter._forward_grouped_projection
@@ -2034,10 +2033,10 @@ class TestGroupedExpertLinearAdapter:
                 create=True,
             ),
         ):
-            output = adapter(x, [1, 2])
+            output = adapter(x, [1, 0, 2])
 
         scale = adapter.alpha / adapter.dim
-        assert scale == 2.0
+        assert scale == 1.5
         # The output projection consumes the already-scaled bottleneck, so no
         # full-width temporary is needed to apply the scale afterwards.
         torch.testing.assert_close(projection_inputs["linear_out"], projection_inputs["linear_in"] * scale)
@@ -2049,7 +2048,7 @@ class TestGroupedExpertLinearAdapter:
             in_features=2,
             out_features=2,
             dim=2,
-            alpha=4,
+            alpha=3,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
@@ -2062,11 +2061,17 @@ class TestGroupedExpertLinearAdapter:
             adapter.linear_out.weight[0].copy_(torch.eye(2))
             adapter.linear_out.weight[1].copy_(torch.eye(2))
 
-        x = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]], requires_grad=True)
         with patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=False):
             output = adapter(x, [1, 2])
 
-        torch.testing.assert_close(output, x * (adapter.alpha / adapter.dim))
+        scale = adapter.alpha / adapter.dim
+        assert scale == 1.5
+        torch.testing.assert_close(output, x * scale)
+        output.sum().backward()
+        torch.testing.assert_close(x.grad, torch.full_like(x, scale))
+        assert torch.isfinite(adapter.linear_in.weight.grad).all()
+        assert torch.isfinite(adapter.linear_out.weight.grad).all()
 
     def test_grouped_expert_linear_adapter_fp8_without_te_uses_fallback(self):
         """An unsupported FP8 layout should not silently run the public BF16 grouped backend."""
@@ -2253,6 +2258,7 @@ class TestGroupedExpertLinearAdapter:
             in_features=16,
             out_features=16,
             dim=8,
+            alpha=12,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
@@ -2272,6 +2278,7 @@ class TestGroupedExpertLinearAdapter:
         expected_chunks = []
         for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
             hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            hidden = hidden * (adapter.alpha / adapter.dim)
             expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
         expected = torch.cat(expected_chunks)
         expected.float().sum().backward()
@@ -2298,6 +2305,7 @@ class TestGroupedExpertLinearAdapter:
             in_features=16,
             out_features=16,
             dim=16,
+            alpha=24,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
@@ -2316,6 +2324,7 @@ class TestGroupedExpertLinearAdapter:
         expected_chunks = []
         for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
             hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            hidden = hidden * (adapter.alpha / adapter.dim)
             expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
         expected = torch.cat(expected_chunks)
         expected.float().sum().backward()
@@ -2872,12 +2881,16 @@ class TestSharedOuterGroupedExpertAdapter:
     def test_scales_bottleneck_before_output_projection(self, is_fc1):
         """Scaling must land on the rank-sized bottleneck for both fc1 and fc2 wiring."""
         recorded = {}
-        adapter = self._stub_adapter(is_fc1=is_fc1, alpha=4, dim=2, recorded=recorded)
-        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        adapter = self._stub_adapter(is_fc1=is_fc1, alpha=3, dim=2, recorded=recorded)
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0]], requires_grad=True)
 
         output = SharedOuterGroupedExpertAdapter.forward(adapter, x, m_splits=[1, 1])
 
         # The output projection receives the scaled bottleneck, so applying the
         # scale never allocates a second full-width tensor.
-        torch.testing.assert_close(recorded["linear_out_input"], x * 2.0)
-        torch.testing.assert_close(output, x * 2.0)
+        scale = adapter.alpha / adapter.dim
+        assert scale == 1.5
+        torch.testing.assert_close(recorded["linear_out_input"], x * scale)
+        torch.testing.assert_close(output, x * scale)
+        output.sum().backward()
+        torch.testing.assert_close(x.grad, torch.full_like(x, scale))
