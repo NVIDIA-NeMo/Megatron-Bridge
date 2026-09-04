@@ -167,7 +167,7 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     assert [task.global_param_name for task in tasks] == [first_name, last_name]
     sparse_tasks = [tasks[0], None, tasks[1]]
 
-    from modelopt.torch.export import quant_utils
+    from modelopt.torch.export import quantized_weight_export
 
     fake_spec = object()
     monkeypatch.setattr(
@@ -191,7 +191,11 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     )
     monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 1)
     monkeypatch.setattr(modelopt_utils.model_bridge_utils, "_get_pg_collection_from_model", lambda _model: None)
-    monkeypatch.setattr(quant_utils, "build_hf_quantization_config", lambda _specs: {})
+    monkeypatch.setattr(
+        quantized_weight_export,
+        "build_hf_quantization_config",
+        lambda _specs: {},
+    )
 
     export_plan = modelopt_utils.build_modelopt_export_plan(
         sparse_tasks,
