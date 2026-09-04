@@ -76,6 +76,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3-super-120b-a12b", "peft", "GB200"): (8192, 16, 16),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "H100"): (4096, 1280, 64),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB200"): (4096, 512, 64),
+    ("nemotron-3-ultra-550b-a55b", "pretrain", "GB200"): (8192, 256, 256),
     ("nemotron-3-ultra-550b-a55b", "pretrain_performance", "GB200"): (8192, 256, 256),
     ("nemotron-3-ultra-550b-a55b", "pretrain_performance", "GB300"): (8192, 256, 256),
     ("nemotron-3-super-120b-a12b", "pretrain_performance", "GB300"): (8192, 512, 64),
