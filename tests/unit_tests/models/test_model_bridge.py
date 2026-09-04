@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import weakref
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -24,7 +26,7 @@ from megatron.bridge.models.conversion import model_bridge as model_bridge_modul
 from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
+from megatron.bridge.models.conversion.param_mapping import AutoMapping, DirectMapping, GatedMLPMapping
 
 
 class DummyBridge(MegatronModelBridge):
@@ -165,19 +167,38 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     assert [task.global_param_name for task in tasks] == [first_name, last_name]
     sparse_tasks = [tasks[0], None, tasks[1]]
 
-    monkeypatch.setattr(modelopt_utils, "get_modelopt_quant_exporter", lambda _mode: ("unused", lambda *_args: ()))
+    from modelopt.torch.export import quant_utils
+
+    fake_spec = object()
+    monkeypatch.setattr(
+        modelopt_utils,
+        "_capture_source_spec",
+        lambda task: modelopt_utils._SourceState(
+            fake_spec if task.global_param_name == first_name else None,
+            tuple(task.param_weight.shape),
+            "replicated",
+        ),
+    )
+    monkeypatch.setattr(
+        modelopt_utils,
+        "_sync_source_specs",
+        lambda local_specs, _group: local_specs,
+    )
+    monkeypatch.setattr(
+        modelopt_utils,
+        "_transform_source_spec",
+        lambda task, source: {task.mapping.hf_param: source.state},
+    )
     monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 1)
     monkeypatch.setattr(modelopt_utils.model_bridge_utils, "_get_pg_collection_from_model", lambda _model: None)
+    monkeypatch.setattr(quant_utils, "build_hf_quantization_config", lambda _specs: {})
 
-    export_tasks = modelopt_utils.build_modelopt_export_plan(
+    export_plan = modelopt_utils.build_modelopt_export_plan(
         sparse_tasks,
         model=[model],
-        bridge=bridge,
-        quant_mode="nvfp4",
-        ignore_patterns=[],
     )
 
-    assert [task.global_param_name for task in export_tasks] == [first_name, last_name]
+    assert [task.global_param_name for task in export_plan.conversion_tasks] == [first_name, last_name]
 
 
 def test_hf_weight_tuple_iter_finalized_preserves_two_field_abi():
@@ -465,6 +486,151 @@ def test_stream_weights_megatron_to_hf_transforms_before_final_cpu_placement(mon
     ]
     assert ("cpu", "source") not in events
     assert transform_index < min(output_cpu_indices)
+
+
+def test_stream_weight_groups_materializes_one_complete_task(monkeypatch):
+    bridge = DummyBridge()
+    events = []
+    converted_refs = []
+
+    class DummyMapping:
+        def __init__(self, index):
+            self.index = index
+
+        def megatron_to_hf(self, weight, module):
+            events.append(("map", self.index))
+            converted = weight.clone()
+            converted_refs.append(weakref.ref(converted))
+            return {f"hf.weight_{self.index}": converted}
+
+    def make_export_hook(index, output_count):
+        def export(name, tensor):
+            events.append(("export_start", index))
+            for output_index in range(output_count):
+                yield f"{name}.{output_index}", tensor + output_index
+            events.append(("export_done", index))
+
+        return export
+
+    tasks = []
+    for index, output_count in enumerate((2, 0, 1)):
+        task = WeightConversionTask(
+            param_name=f"decoder.weight_{index}",
+            global_param_name=f"decoder.weight_{index}",
+            mapping=DummyMapping(index),
+            pp_rank=0,
+            vp_stage=0,
+            megatron_module=None,
+            param_weight=torch.ones(1),
+        )
+        tasks.append(_with_export_hook(task, make_export_hook(index, output_count)))
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    groups = iter(
+        bridge.stream_weight_groups_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=False,
+            show_progress=False,
+            conversion_tasks=tasks,
+            merge_adapter_weights=False,
+        )
+    )
+
+    first = next(groups)
+    assert [weight.param_name for weight in first] == ["hf.weight_0.0", "hf.weight_0.1"]
+    assert events == [("map", 0), ("export_start", 0), ("export_done", 0)]
+    assert converted_refs[0]() is None
+    tuple(first)
+    assert events == [("map", 0), ("export_start", 0), ("export_done", 0)]
+
+    assert next(groups) == ()
+    assert events[-3:] == [("map", 1), ("export_start", 1), ("export_done", 1)]
+    assert converted_refs[1]() is None
+    assert [weight.param_name for weight in next(groups)] == ["hf.weight_2.0"]
+    with pytest.raises(StopIteration):
+        next(groups)
+
+
+def _distributed_weight_group_stream_worker(rank, world_size, init_file):
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{init_file}",
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(seconds=10),
+    )
+    try:
+        model = SimpleNamespace(
+            config=SimpleNamespace(
+                num_moe_experts=0,
+                pipeline_model_parallel_size=world_size,
+            )
+        )
+        model_bridge_module.unwrap_model = lambda *_args, **_kwargs: [model]
+        model_bridge_module.parallel_state.get_expert_model_parallel_world_size = lambda: 1
+        DummyBridge._with_progress_tracking = lambda self, tasks, *_args, **_kwargs: tasks
+        DummyBridge._share_embeddings_and_output_weights = lambda self, *_args, **_kwargs: False
+
+        tasks = []
+        for owner_rank, output_count in enumerate((2, 0)):
+            mapping = DirectMapping(
+                f"decoder.weight_{owner_rank}",
+                f"hf.weight_{owner_rank}",
+            )
+            mapping.pp_group = torch.distributed.group.WORLD
+            source = torch.tensor([owner_rank + 1.0]) if rank == owner_rank else None
+
+            def export(name, tensor, count=output_count):
+                for output_index in range(count):
+                    yield f"{name}.{output_index}", tensor + output_index
+
+            task = WeightConversionTask(
+                param_name=f"decoder.weight_{owner_rank}",
+                global_param_name=f"decoder.weight_{owner_rank}",
+                mapping=mapping,
+                pp_rank=owner_rank,
+                megatron_module=torch.nn.Module() if rank == owner_rank else None,
+                param_weight=source,
+            )
+            tasks.append(_with_export_hook(task, export))
+
+        groups = list(
+            DummyBridge().stream_weight_groups_megatron_to_hf(
+                [model],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=tasks,
+                merge_adapter_weights=False,
+            )
+        )
+
+        assert [[weight.param_name for weight in group] for group in groups] == [
+            ["hf.weight_0.0", "hf.weight_0.1"],
+            [],
+        ]
+        torch.testing.assert_close(groups[0][0].weight.cpu(), torch.tensor([1.0]))
+        torch.testing.assert_close(groups[0][1].weight.cpu(), torch.tensor([2.0]))
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.timeout(60)
+def test_weight_groups_preserve_pp_placeholder_epochs(tmp_path, monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "")
+    torch.multiprocessing.spawn(
+        _distributed_weight_group_stream_worker,
+        args=(2, str(tmp_path / "weight-group-stream")),
+        nprocs=2,
+        join=True,
+    )
 
 
 def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accumulation(monkeypatch):

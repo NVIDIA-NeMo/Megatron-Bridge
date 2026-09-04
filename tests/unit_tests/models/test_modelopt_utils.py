@@ -24,7 +24,7 @@ quant_utils = pytest.importorskip("modelopt.torch.export.quant_utils")
 
 from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -588,12 +588,47 @@ def test_auto_bridge_can_reuse_a_prepared_plan():
 
 
 def test_auto_bridge_rejects_unmerged_adapters():
+    bridge = object.__new__(AutoBridge)
     with pytest.raises(NotImplementedError, match="unmerged adapter"):
         list(
-            AutoBridge.export_hf_weights_modelopt(
-                SimpleNamespace(),
+            bridge.export_hf_weights_modelopt(
                 torch.nn.Linear(1, 1),
                 export_plan=SimpleNamespace(),
                 merge_adapter_weights=False,
+            )
+        )
+
+
+def test_grouped_modelopt_export_rejects_custom_auto_bridge_export():
+    class CustomAutoBridge(AutoBridge):
+        def export_hf_weights(self, *args, **kwargs):
+            yield from ()
+
+    bridge = object.__new__(CustomAutoBridge)
+    with pytest.raises(NotImplementedError, match="AutoBridge subclasses"):
+        list(
+            bridge.export_hf_weight_groups_modelopt(
+                torch.nn.Linear(1, 1),
+                export_plan=SimpleNamespace(),
+            )
+        )
+
+
+def test_grouped_modelopt_export_rejects_custom_model_bridge_export(monkeypatch):
+    class CustomModelBridge(MegatronModelBridge):
+        def stream_weights_megatron_to_hf(self, *args, **kwargs):
+            yield from ()
+
+    monkeypatch.setattr(
+        AutoBridge,
+        "_model_bridge",
+        property(lambda _self: CustomModelBridge()),
+    )
+    bridge = object.__new__(AutoBridge)
+    with pytest.raises(NotImplementedError, match="model bridges"):
+        list(
+            bridge.export_hf_weight_groups_modelopt(
+                torch.nn.Linear(1, 1),
+                export_plan=SimpleNamespace(),
             )
         )

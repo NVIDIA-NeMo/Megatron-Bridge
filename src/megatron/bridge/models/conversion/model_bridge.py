@@ -1553,7 +1553,7 @@ class MegatronModelBridge(
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
     @torch.no_grad()
-    def stream_weights_megatron_to_hf(
+    def _stream_weight_events_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         hf_pretrained: HFPreTrained,
@@ -1562,8 +1562,8 @@ class MegatronModelBridge(
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
-    ) -> Iterable[HFWeightTuple]:
-        """Export Megatron weights to HuggingFace format.
+    ) -> Iterable[HFWeightTuple | None]:
+        """Export weights and emit ``None`` after each conversion task.
 
         This method orchestrates the conversion of weights from Megatron's distributed
         format back to HuggingFace format. It handles gathering from tensor parallel
@@ -1591,7 +1591,8 @@ class MegatronModelBridge(
                 Defaults to True.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format.
+            HuggingFace weight tuples followed by one ``None`` boundary marker
+            after every conversion task.
 
         Example:
             .. code-block:: python
@@ -1651,6 +1652,8 @@ class MegatronModelBridge(
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
+            merged_result = None
+            tensor = None
             if isinstance(task.param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
                     uneven_dtensor_to_full_tensor,
@@ -1694,6 +1697,10 @@ class MegatronModelBridge(
                             export_hook=task.export_hook,
                             cpu=cpu,
                         )
+                # Generator locals otherwise keep the previous task's tensors alive
+                # while the next task's conversion RHS allocates its outputs.
+                del megatron_weights, converted_weights_dict, merged_result, tensor
+                yield None
                 continue
 
             # --- Standard export path ---
@@ -1767,6 +1774,64 @@ class MegatronModelBridge(
                         export_hook=task.export_hook,
                         cpu=cpu,
                     )
+            # Generator locals otherwise keep the previous task's tensors alive
+            # while the next task's conversion RHS allocates its outputs.
+            del megatron_weights, converted_weights_dict, merged_result, tensor
+            yield None
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: Optional[torch.dtype] = None,
+    ) -> Iterable[HFWeightTuple]:
+        """Export Megatron weights as the existing flat HuggingFace stream."""
+        for event in self._stream_weight_events_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        ):
+            if event is not None:
+                yield event
+
+    @torch.no_grad()
+    def stream_weight_groups_megatron_to_hf(
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: Optional[torch.dtype] = None,
+    ) -> Iterable[tuple[HFWeightTuple, ...]]:
+        """Export one materialized output tuple per conversion task."""
+        outputs = []
+        for event in self._stream_weight_events_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+        ):
+            if event is None:
+                yield tuple(outputs)
+                outputs.clear()
+            else:
+                outputs.append(event)
+        if outputs:
+            raise RuntimeError("Internal error: unterminated weight conversion task")
 
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.

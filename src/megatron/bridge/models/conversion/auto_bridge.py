@@ -799,6 +799,44 @@ class AutoBridge(Generic[MegatronModelT]):
             model=model,
         )
 
+    def export_hf_weight_groups_modelopt(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        cpu: bool = False,
+        show_progress: bool = True,
+        export_plan: Optional["ModelOptExportPlan"] = None,
+        merge_adapter_weights: bool = True,
+    ) -> Iterable[tuple["HFWeightTuple", ...]]:
+        """Export one materialized ModelOpt output group per conversion task."""
+        if not merge_adapter_weights:
+            raise NotImplementedError("ModelOpt export does not support unmerged adapter weights")
+        if type(self).export_hf_weights is not AutoBridge.export_hf_weights:
+            raise NotImplementedError(
+                "Grouped ModelOpt export does not support AutoBridge subclasses "
+                "with custom HuggingFace export behavior"
+            )
+        bridge = self._model_bridge
+        if type(bridge).stream_weights_megatron_to_hf is not MegatronModelBridge.stream_weights_megatron_to_hf:
+            raise NotImplementedError(
+                "Grouped ModelOpt export does not support model bridges with custom HuggingFace export behavior"
+            )
+        if not isinstance(model, list):
+            model = [model]
+        if export_plan is None:
+            export_plan = self.build_hf_modelopt_export_plan(model)
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            prepare_modelopt_export_tasks,
+        )
+
+        yield from bridge.stream_weight_groups_megatron_to_hf(
+            model,
+            self.hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=prepare_modelopt_export_tasks(export_plan),
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
     def export_hf_weights_modelopt(
         self,
         model: MegatronModelT | list[MegatronModelT],
@@ -818,14 +856,13 @@ class AutoBridge(Generic[MegatronModelT]):
             prepare_modelopt_export_tasks,
         )
 
-        hf_weights = self.export_hf_weights(
+        yield from self.export_hf_weights(
             model,
             cpu=cpu,
             show_progress=show_progress,
             conversion_tasks=prepare_modelopt_export_tasks(export_plan),
             merge_adapter_weights=merge_adapter_weights,
         )
-        yield from hf_weights
 
     def export_hf_weights_quant(
         self,
