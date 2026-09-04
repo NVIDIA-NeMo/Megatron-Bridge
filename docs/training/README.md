@@ -43,6 +43,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[Mixed Precision](mixed-precision.md)** | Mixed precision training for memory efficiency | Reducing memory usage |
 | **[Communication Overlap](communication-overlap.md)** | Overlapping communication with computation | Optimizing distributed training |
 | **[Hierarchical Context Parallel](hierarchical-context-parallel.md)** | Hierarchical `a2a+p2p` context parallel guidance | Advanced long-sequence scaling |
+| **[Dynamic Context Parallel](dynamic-context-parallel.md)** | Per-sequence runtime CP sizing for variable-length THD batches | Long-context SFT and RL integration |
 | **[Attention Optimizations](attention-optimizations.md)** | Optimizing attention mechanisms | Improving training speed |
 | **[Activation Recomputation](activation-recomputation.md)** | Gradient checkpointing strategies | Reducing memory footprint |
 | **[CPU Offloading](cpu-offloading.md)** | Offloading to CPU for memory management | Working with limited GPU memory |

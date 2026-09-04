@@ -14,7 +14,7 @@
 
 import logging
 from functools import partial, wraps
-from typing import Iterable
+from typing import Any, Iterable
 
 import modelopt.torch.distill as mtd
 import torch
@@ -51,12 +51,17 @@ logger = logging.getLogger(__name__)
 
 
 _CURRENT_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
-_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv", "pad_between_seqs")
-_CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PACKED_SEQ_HOST_KEYS, "total_tokens")
+_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv", "pad_between_seqs", "local_cp_size")
+_CURRENT_PACKED_SEQ_PARAM_KEYS = (
+    *_CURRENT_PACKED_SEQ_DEVICE_KEYS,
+    *_CURRENT_PACKED_SEQ_HOST_KEYS,
+    "total_tokens",
+    "cp_group",
+)
 _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
-_PackedMetadataValue = torch.Tensor | int | None
+_PackedMetadataValue = Any
 _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED = "_mbridge_expert_bias_padding_mask_compatible"
 _MCORE_SCHEDULE_PADDING_MASK_PATCHED = "_mbridge_schedule_padding_mask_compatible"
 
@@ -331,6 +336,9 @@ def _partition_packed_batch_for_cp(
         "max_seqlen_q",
         "max_seqlen_kv",
         "pad_between_seqs",
+        "local_cp_size",
+        "cp_group",
+        "total_tokens",
         "token_count",
         # THD/packed attention is driven by cu_seqlens (PackedSeqParams), so the dense
         # attention_mask is unused here. It is also not sequence-partitionable: it is
@@ -467,10 +475,36 @@ def get_batch(
         include_full_batch_fields=include_full_batch_fields,
     )
 
-    cp_size = pg_collection.cp.size()
     has_packed = _has_packed_sequence_metadata(batch)
-    if has_packed and cp_size > 1:
-        batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
+    static_cp_size = pg_collection.cp.size()
+    dynamic_cp = getattr(model_cfg, "dynamic_context_parallel", False)
+    if has_packed:
+        if dynamic_cp:
+            local_cp_size_value = batch.get("local_cp_size")
+            if local_cp_size_value is None:
+                raise ValueError("Dynamic CP packed batches must provide local_cp_size.")
+            if isinstance(local_cp_size_value, torch.Tensor):
+                if local_cp_size_value.numel() != 1:
+                    raise ValueError("Dynamic CP local_cp_size must contain exactly one value.")
+                local_cp_size = int(local_cp_size_value.item())
+            else:
+                local_cp_size = int(local_cp_size_value)
+            runtime_cp_group = (
+                parallel_state.get_dynamic_data_context_parallel_groups(group_size=local_cp_size)
+                if local_cp_size > 1
+                else None
+            )
+            if local_cp_size > 1:
+                if runtime_cp_group is None or runtime_cp_group.size() != local_cp_size:
+                    raise RuntimeError(
+                        f"Dynamic CP requested a runtime group of size {local_cp_size}, "
+                        "but MCore did not return a matching group."
+                    )
+                batch = _partition_packed_batch_for_cp(batch, runtime_cp_group)
+            batch["local_cp_size"] = local_cp_size
+            batch["cp_group"] = runtime_cp_group
+        elif static_cp_size > 1:
+            batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
     else:
         # slice batch along sequence dimension for context parallelism
         batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)

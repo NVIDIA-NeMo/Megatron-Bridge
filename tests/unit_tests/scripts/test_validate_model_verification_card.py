@@ -405,3 +405,27 @@ def test_megatron_fsdp_feature_is_scoped_to_fsdp_item():
 
     assert fsdp_errors == []
     assert pretrain_errors == ["/items/pretrain/GB200/enabled_features/megatron_fsdp: allowed only on pretrain_fsdp"]
+
+
+def test_dynamic_context_parallel_feature_requires_boolean():
+    module = _load_validator()
+    valid_errors = []
+    invalid_errors = []
+
+    module._validate_enabled_features(
+        {"dynamic_context_parallel": True},
+        item_name="sft_long_context",
+        item_path=("items", "sft_long_context", "H100"),
+        errors=valid_errors,
+    )
+    module._validate_enabled_features(
+        {"dynamic_context_parallel": "true"},
+        item_name="sft_long_context",
+        item_path=("items", "sft_long_context", "H100"),
+        errors=invalid_errors,
+    )
+
+    assert valid_errors == []
+    assert invalid_errors == [
+        "/items/sft_long_context/H100/enabled_features/dynamic_context_parallel: expected a boolean"
+    ]

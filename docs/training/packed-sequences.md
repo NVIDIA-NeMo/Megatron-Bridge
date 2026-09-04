@@ -194,6 +194,7 @@ problems:
 For long-sequence training guidance, see:
 
 - `docs/performance-guide.md`
+- `docs/training/dynamic-context-parallel.md`
 - `docs/training/hierarchical-context-parallel.md`
 
 ## Practical Caveats
@@ -222,6 +223,7 @@ The most stable caveats to remember are:
 
 - [docs/training/multi-token-prediction.md](multi-token-prediction.md)
 - [docs/performance-guide.md](../performance-guide.md)
+- [docs/training/dynamic-context-parallel.md](dynamic-context-parallel.md)
 - [docs/training/hierarchical-context-parallel.md](hierarchical-context-parallel.md)
 - [tutorials/data/energon/README.md](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md)
 - [skills/nemo-mbridge-perf-sequence-packing/SKILL.md](../skills/nemo-mbridge-perf-sequence-packing/SKILL.md)

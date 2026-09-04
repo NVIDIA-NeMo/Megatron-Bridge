@@ -221,6 +221,25 @@ class TestGetPackedSeqParams:
         assert isinstance(result.max_seqlen_kv, int)
         assert result.qkv_format == "thd"
 
+    def test_current_mcore_metadata_forwards_dynamic_cp_runtime_group(self):
+        """Dynamic CP execution metadata must reach MCore PackedSeqParams."""
+        runtime_cp_group = object()
+        batch = {
+            "cu_seqlens_q": torch.IntTensor([0, 128]),
+            "cu_seqlens_kv": torch.IntTensor([0, 128]),
+            "cu_seqlens_q_padded": torch.IntTensor([0, 128]),
+            "cu_seqlens_kv_padded": torch.IntTensor([0, 128]),
+            "max_seqlen_q": 128,
+            "max_seqlen_kv": 128,
+            "local_cp_size": torch.tensor(4),
+            "cp_group": runtime_cp_group,
+        }
+
+        result = get_packed_seq_params(batch)
+
+        assert result.local_cp_size == 4
+        assert result.cp_group is runtime_cp_group
+
     def test_current_mcore_metadata_rejects_non_scalar_max_seqlen(self):
         """Test that malformed max-sequence metadata fails before reaching MCore."""
         batch = {

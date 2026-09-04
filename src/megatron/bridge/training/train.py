@@ -488,6 +488,9 @@ def train(
         global_state._flops_cross_seqlen_sum = 0
         global_state._flops_cross_seqlen_product_sum = 0
         global_state._flops_requires_global_reduce = False
+        global_state._flops_global_seqlen_sum = None
+        global_state._flops_global_seqlen_sq_sum = None
+        global_state._scheduled_num_microbatches = get_num_microbatches()
 
         (
             loss_dict,
@@ -882,7 +885,9 @@ def train_step(
     optim_config = cfg.optimizer
 
     rerun_state_machine = get_rerun_state_machine()
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
+    dynamic_cp_batch = None
+    rerun_data_iterator = data_iterator
+    while rerun_state_machine.should_run_forward_backward(rerun_data_iterator):
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -898,17 +903,38 @@ def train_step(
         # Handle finetuning vs pretraining data consumption
         seq_length = getattr(model_config, "seq_length", cfg.model.seq_length)  # Default for pretraining
         forward_backward_data_iterator = data_iterator  # Default for pretraining
+        scheduled_num_microbatches = get_num_microbatches()
 
         if cfg.dataset.dataloader_type == "batch":
-            # Finetuning path to support variable-length sequences
-            from megatron.bridge.data.batch_utils import prepare_finetuning_batch
+            if getattr(model_config, "dynamic_context_parallel", False):
+                from megatron.bridge.data.dynamic_context_parallel import prepare_dynamic_cp_batch
 
-            forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
-                data_iterator=data_iterator,
-                num_microbatches=get_num_microbatches(),
-                default_seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
-                seq_key="tokens",
-            )
+                if dynamic_cp_batch is None:
+                    if isinstance(data_iterator, list):
+                        raise ValueError("Bridge Dynamic CP does not yet support virtual pipeline iterators.")
+                    dynamic_cp_batch = prepare_dynamic_cp_batch(
+                        data_iterator=data_iterator,
+                        num_microbatches=get_num_microbatches(),
+                        model_config=model_config,
+                        pg_collection=pg_collection,
+                    )
+                    rerun_data_iterator = dynamic_cp_batch.data_iterator
+                    global_state._flops_global_seqlen_sum = dynamic_cp_batch.padded_token_sum
+                    global_state._flops_global_seqlen_sq_sum = dynamic_cp_batch.logical_seqlen_squared_sum
+                forward_backward_data_iterator = dynamic_cp_batch.data_iterator
+                scheduled_num_microbatches = dynamic_cp_batch.num_microbatches
+            else:
+                # Finetuning path to support variable-length sequences
+                from megatron.bridge.data.batch_utils import prepare_finetuning_batch
+
+                forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
+                    data_iterator=data_iterator,
+                    num_microbatches=get_num_microbatches(),
+                    default_seq_length=getattr(model_config, "seq_length", cfg.model.seq_length),
+                    seq_key="tokens",
+                )
+
+        global_state._scheduled_num_microbatches = scheduled_num_microbatches
 
         # Forward-backward pass.
         # Convert to list of iterators for virtual pipeline parallelism
@@ -936,7 +962,7 @@ def train_step(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
             model=model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=scheduled_num_microbatches,
             seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,

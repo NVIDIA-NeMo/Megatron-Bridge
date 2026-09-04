@@ -211,15 +211,30 @@ def evaluate(
             # Handle finetuning vs pretraining data consumption
             seq_length = default_seq_length  # Default for pretraining
             eval_data_iterator = data_iterator  # Default for pretraining
+            scheduled_eval_num_microbatches = eval_num_microbatches
 
             if state.cfg.dataset.dataloader_type == "batch":
-                # Finetuning path: prepare batch and extract dynamic seq_length
-                eval_data_iterator, seq_length = prepare_finetuning_batch(
-                    data_iterator=data_iterator,
-                    num_microbatches=eval_num_microbatches,
-                    default_seq_length=default_seq_length,
-                    seq_key="tokens",
-                )
+                if getattr(model_config, "dynamic_context_parallel", False):
+                    from megatron.bridge.data.dynamic_context_parallel import prepare_dynamic_cp_batch
+
+                    if isinstance(data_iterator, list):
+                        raise ValueError("Bridge Dynamic CP does not yet support virtual pipeline iterators.")
+                    dynamic_cp_batch = prepare_dynamic_cp_batch(
+                        data_iterator=data_iterator,
+                        num_microbatches=eval_num_microbatches,
+                        model_config=model_config,
+                        pg_collection=pg_collection,
+                    )
+                    eval_data_iterator = dynamic_cp_batch.data_iterator
+                    scheduled_eval_num_microbatches = dynamic_cp_batch.num_microbatches
+                else:
+                    # Finetuning path: prepare batch and extract dynamic seq_length
+                    eval_data_iterator, seq_length = prepare_finetuning_batch(
+                        data_iterator=data_iterator,
+                        num_microbatches=eval_num_microbatches,
+                        default_seq_length=default_seq_length,
+                        seq_key="tokens",
+                    )
 
             if len(model) > 1:
                 # Convert to list of iterators for virtual pipeline parallelism
@@ -252,7 +267,7 @@ def evaluate(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
                 model=model,
-                num_microbatches=eval_num_microbatches,
+                num_microbatches=scheduled_eval_num_microbatches,
                 seq_length=seq_length,
                 micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
@@ -333,6 +348,8 @@ def evaluate(
         if non_loss_data_func is not None:
             collected_non_loss_data = non_loss_data_func(model)
         elif process_non_loss_data_func is not None and is_last_rank():
+            if getattr(model_config, "dynamic_context_parallel", False):
+                raise ValueError("Dynamic CP does not support rank-local non-loss evaluation collection.")
             # Handle finetuning vs pretraining for non-loss data collection
             non_loss_data_iterator = data_iterator
             non_loss_seq_length = default_seq_length

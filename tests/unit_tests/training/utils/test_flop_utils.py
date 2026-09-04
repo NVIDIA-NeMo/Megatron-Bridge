@@ -3098,6 +3098,27 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
         assert (seqlen_sum, seqlen_sq_sum, vision) == (512, 4096, 0)
 
+    def test_dynamic_cp_uses_framework_global_override_without_rescaling(self, monkeypatch):
+        state = _State()
+        state._flops_seqlen_sum = 7
+        state._flops_seqlen_sq_sum = 49
+        state._flops_global_seqlen_sum = 131_072
+        state._flops_global_seqlen_sq_sum = 8_589_934_592
+        all_reduce = MagicMock()
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+
+        stats = resolve_global_flops_runtime_stats(
+            state,
+            data_parallel_size=8,
+            dp_group=object(),
+        )
+
+        all_reduce.assert_not_called()
+        assert stats == GlobalFlopsRuntimeStats(
+            seqlen_sum=131_072,
+            seqlen_squared_sum=8_589_934_592,
+        )
+
     def test_vpp_size_does_not_rescale_before_extrapolation(self):
         # VPP accumulators already represent the executed training step; dividing
         # by vp_size undercounts reported FLOPS for virtual-pipeline jobs.

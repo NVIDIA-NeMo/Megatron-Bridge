@@ -208,6 +208,93 @@ class TestTrainStepAttentionLogitMonitoring:
         assert result[-1] == 12.5
 
 
+class TestTrainStepDynamicContextParallel:
+    """Unit tests for framework-owned Dynamic CP batch preparation."""
+
+    @patch("megatron.bridge.training.train.get_num_microbatches", return_value=2)
+    @patch("megatron.bridge.training.train.get_model_config")
+    @patch("megatron.bridge.training.train.get_rerun_state_machine")
+    def test_dynamic_cp_uses_scheduled_microbatches_without_changing_logical_gbs(
+        self,
+        mock_get_rerun_state_machine,
+        mock_get_model_config,
+        _mock_get_num_microbatches,
+    ):
+        """DCP changes execution scheduling, not optimizer sample accounting."""
+        mock_get_model_config.return_value = SimpleNamespace(
+            seq_length=131_072,
+            dynamic_context_parallel=True,
+        )
+        rerun_state_machine = Mock()
+        rerun_state_machine.should_run_forward_backward.side_effect = [True, False]
+        rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+        mock_get_rerun_state_machine.return_value = rerun_state_machine
+
+        global_state = SimpleNamespace(
+            cfg=SimpleNamespace(
+                data_parallel_size=4,
+                model=SimpleNamespace(
+                    seq_length=131_072,
+                    qk_clip=False,
+                    log_max_attention_logit=False,
+                ),
+                dataset=SimpleNamespace(dataloader_type="batch"),
+                dist=SimpleNamespace(use_decentralized_pg=True),
+                ddp=SimpleNamespace(overlap_param_gather=False),
+                optimizer=SimpleNamespace(
+                    barrier_with_L1_time=False,
+                    log_num_zeros_in_grad=False,
+                    reuse_grad_buf_for_mxfp8_param_ag=False,
+                ),
+                train=SimpleNamespace(
+                    check_optimizer_step_success=False,
+                    empty_unused_memory_level=0,
+                    micro_batch_size=1,
+                    skip_sync_grad_norm_across_mp=True,
+                ),
+            ),
+            timers=Mock(),
+        )
+        model = [Mock()]
+        optimizer = Mock()
+        optimizer.step.return_value = (True, 1.0, 0)
+        scheduler = Mock()
+        forward_backward_func = Mock(return_value=[])
+        scheduled_iterator = object()
+        dynamic_batch = SimpleNamespace(
+            data_iterator=scheduled_iterator,
+            num_microbatches=3,
+            padded_token_sum=250_000,
+            logical_seqlen_squared_sum=9_000_000_000,
+        )
+
+        with patch(
+            "megatron.bridge.data.dynamic_context_parallel.prepare_dynamic_cp_batch",
+            return_value=dynamic_batch,
+        ) as prepare_dynamic_cp_batch:
+            train_step(
+                forward_step_func=Mock(),
+                data_iterator=object(),
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                global_state=global_state,
+                pg_collection=SimpleNamespace(mp=Mock()),
+                forward_backward_func=forward_backward_func,
+                p2p_communicator=SimpleNamespace(is_pp_last_stage=False),
+            )
+
+        prepare_dynamic_cp_batch.assert_called_once()
+        assert forward_backward_func.call_args.kwargs["data_iterator"] is scheduled_iterator
+        assert forward_backward_func.call_args.kwargs["num_microbatches"] == 3
+        assert global_state._scheduled_num_microbatches == 3
+        assert global_state._flops_global_seqlen_sum == 250_000
+        assert global_state._flops_global_seqlen_sq_sum == 9_000_000_000
+        # Optimizer scheduling still advances by the framework-selected logical
+        # batch: 2 packed samples/rank * 1 MBS * 4 DP ranks.
+        scheduler.step.assert_called_once_with(increment=8)
+
+
 class TestCudaGraphCleanup:
     """Unit tests for CUDA graph state cleanup."""
 

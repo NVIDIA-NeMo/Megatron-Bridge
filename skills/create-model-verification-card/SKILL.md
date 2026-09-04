@@ -798,6 +798,7 @@ verification.
 | `cuda_graph.implementation` | `local` or `transformer_engine` |
 | `cuda_graph.scopes` | `full_iteration`, `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, or `mamba` |
 | `context_parallel_size` | integer greater than one |
+| `dynamic_context_parallel` | boolean |
 | `moe_dispatcher` | `deepep` or `hybridep` |
 | `megatron_fsdp` | `optim_grads_params` (only on `pretrain_fsdp`) |
 

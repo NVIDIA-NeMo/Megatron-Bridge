@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from functools import partial
 from unittest.mock import MagicMock, Mock, patch
 
 import modelopt.torch.distill as mtd
 import pytest
 import torch
+from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
 
@@ -94,6 +96,7 @@ def _make_cfg(
     pipeline_model_parallel_size=1,
     virtual_pipeline_model_parallel_size=None,
     mtp_num_layers=0,
+    dynamic_context_parallel=False,
 ):
     cfg = type("Cfg", (), {})()
     cfg.dataset = type(
@@ -113,6 +116,7 @@ def _make_cfg(
             "pipeline_model_parallel_size": pipeline_model_parallel_size,
             "virtual_pipeline_model_parallel_size": virtual_pipeline_model_parallel_size,
             "mtp_num_layers": mtp_num_layers,
+            "dynamic_context_parallel": dynamic_context_parallel,
         },
     )()
     return cfg
@@ -236,6 +240,58 @@ class TestGetBatch:
         assert torch.equal(out["loss_mask"], torch.ones(1, 4))
         assert torch.equal(out["padding_mask"], torch.tensor([[False, False, False, True]]))
         assert out["pad_between_seqs"] is True
+
+    def test_dynamic_cp_uses_runtime_group_and_forwards_runtime_metadata(self, monkeypatch):
+        """DCP must partition and execute with the scheduler-selected group."""
+        runtime_cp_group = _MockProcessGroup(rank=0, size=2)
+        monkeypatch.setattr(
+            parallel_state,
+            "get_dynamic_data_context_parallel_groups",
+            lambda group_size: runtime_cp_group if group_size == 2 else None,
+        )
+        seen_groups = []
+
+        def fake_get_indices(cu_seqlens, *, total_tokens, cp_group, device):
+            seen_groups.append(cp_group)
+            return torch.arange(total_tokens // 2, dtype=torch.long, device=device)
+
+        monkeypatch.setattr(
+            sys.modules[get_batch.__module__],
+            "get_thd_cp_partition_indices",
+            fake_get_indices,
+        )
+        batch = {
+            "tokens": _as_nocuda(torch.arange(8).unsqueeze(0)),
+            "labels": _as_nocuda(torch.arange(100, 108).unsqueeze(0)),
+            "loss_mask": _as_nocuda(torch.ones(1, 8)),
+            "position_ids": _as_nocuda(torch.arange(8).unsqueeze(0)),
+            "padding_mask": _as_nocuda(torch.zeros(1, 8, dtype=torch.bool)),
+            "attention_mask": None,
+            "cu_seqlens_q": _as_nocuda(torch.tensor([0, 8], dtype=torch.int32)),
+            "cu_seqlens_kv": _as_nocuda(torch.tensor([0, 8], dtype=torch.int32)),
+            "cu_seqlens_q_padded": _as_nocuda(torch.tensor([0, 8], dtype=torch.int32)),
+            "cu_seqlens_kv_padded": _as_nocuda(torch.tensor([0, 8], dtype=torch.int32)),
+            "max_seqlen_q": 8,
+            "max_seqlen_kv": 8,
+            "pad_between_seqs": False,
+            "local_cp_size": 2,
+            "total_tokens": 8,
+        }
+
+        tokens, _, _, _, _, packed_metadata = get_batch(
+            _Iterator(batch),
+            _make_cfg(
+                enable_offline_packing=True,
+                offline_packing_specs=object(),
+                dynamic_context_parallel=True,
+            ),
+            pg_collection=_MockPGCollection(cp_size=16),
+        )
+
+        assert tokens.shape == (1, 4)
+        assert seen_groups and all(group is runtime_cp_group for group in seen_groups)
+        assert packed_metadata["local_cp_size"] == 2
+        assert packed_metadata["cp_group"] is runtime_cp_group
 
     def test_partition_packed_batch_trims_negative_sentinel_fallback(self, monkeypatch):
         """Packed CP slicing can trim CPU cu_seqlens without a precomputed argmin."""

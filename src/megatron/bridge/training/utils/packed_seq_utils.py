@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import megatron.core
 import torch
@@ -24,7 +25,7 @@ from megatron.core.utils import get_batch_on_this_cp_rank
 from packaging.version import Version as PkgVersion
 
 
-PackedMetadataValue = torch.Tensor | int | None
+PackedMetadataValue = Any
 _MIN_MCORE_THD_CP_VERSION = PkgVersion("0.18.0")
 
 
@@ -280,6 +281,15 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
         cu_seqlens_kv = _squeeze_metadata(batch.get("cu_seqlens_kv"))
         max_seqlen_q = _as_python_int(batch.get("max_seqlen_q"), field_name="max_seqlen_q")
         max_seqlen_kv = _as_python_int(batch.get("max_seqlen_kv"), field_name="max_seqlen_kv")
+        local_cp_size = _as_python_int(batch.get("local_cp_size"), field_name="local_cp_size")
+        runtime_cp_kwargs = {}
+        if local_cp_size is not None:
+            if not hasattr(PackedSeqParams, "local_cp_size") or not hasattr(PackedSeqParams, "cp_group"):
+                raise RuntimeError("The pinned Megatron-Core does not support Dynamic CP PackedSeqParams.")
+            runtime_cp_kwargs = {
+                "local_cp_size": local_cp_size,
+                "cp_group": batch.get("cp_group"),
+            }
         return PackedSeqParams(
             cu_seqlens_q=cu_seqlens_q,
             cu_seqlens_kv=cu_seqlens_kv if cu_seqlens_kv is not None else cu_seqlens_q,
@@ -289,6 +299,7 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen_kv if max_seqlen_kv is not None else max_seqlen_q,
             total_tokens=batch.get("total_tokens"),
             qkv_format="thd",
+            **runtime_cp_kwargs,
             **(
                 {"pad_between_seqs": _as_python_bool(batch.get("pad_between_seqs"), field_name="pad_between_seqs")}
                 if hasattr(PackedSeqParams, "pad_between_seqs")

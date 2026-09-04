@@ -190,6 +190,20 @@ def resolve_global_flops_runtime_stats(
     local_cross_seqlen_product_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_product_sum", 0))
     _ = vp_size
 
+    # Dynamic CP redistributes one logical batch across the full DPxCP pool, so
+    # rank-local forward accumulators cannot be reduced over the static pure-DP
+    # group without either omission or CP replication. The framework-owned DCP
+    # materializer records the exact global values before rerouting instead.
+    global_seqlen_sum = getattr(state, "_flops_global_seqlen_sum", None)
+    global_seqlen_sq_sum = getattr(state, "_flops_global_seqlen_sq_sum", None)
+    if global_seqlen_sum is not None or global_seqlen_sq_sum is not None:
+        if global_seqlen_sum is None or global_seqlen_sq_sum is None:
+            raise ValueError("Dynamic CP global FLOPS sequence overrides must be set together.")
+        return GlobalFlopsRuntimeStats(
+            seqlen_sum=int(global_seqlen_sum),
+            seqlen_squared_sum=int(global_seqlen_sq_sum),
+        )
+
     use_all_reduce = (
         bool(getattr(state, "_flops_requires_global_reduce", False))
         and dp_group is not None

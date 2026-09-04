@@ -113,7 +113,14 @@ REQUIRED_METRIC_NAMES = frozenset(
 OPTIONAL_METRIC_NAMES = frozenset({"peak_allocated_memory_gib", "peak_reserved_memory_gib"})
 METRIC_NAMES = REQUIRED_METRIC_NAMES | OPTIONAL_METRIC_NAMES
 FEATURE_KEYS = frozenset(
-    {"sequence_packing", "cuda_graph", "context_parallel_size", "moe_dispatcher", "megatron_fsdp"}
+    {
+        "sequence_packing",
+        "cuda_graph",
+        "context_parallel_size",
+        "dynamic_context_parallel",
+        "moe_dispatcher",
+        "megatron_fsdp",
+    }
 )
 PACKING_VALUES = frozenset({"offline", "in_batch"})
 CUDA_GRAPH_IMPLEMENTATIONS = frozenset({"local", "transformer_engine"})
@@ -651,6 +658,10 @@ def _validate_enabled_features(
     cp_size = features.get("context_parallel_size")
     if cp_size is not None and (not isinstance(cp_size, int) or isinstance(cp_size, bool) or cp_size <= 1):
         errors.append(f"{_pointer(*path, 'context_parallel_size')}: expected an integer greater than one")
+
+    dynamic_cp = features.get("dynamic_context_parallel")
+    if dynamic_cp is not None and not isinstance(dynamic_cp, bool):
+        errors.append(f"{_pointer(*path, 'dynamic_context_parallel')}: expected a boolean")
 
     dispatcher = features.get("moe_dispatcher")
     if dispatcher is not None and (not isinstance(dispatcher, str) or dispatcher not in MOE_DISPATCHERS):
