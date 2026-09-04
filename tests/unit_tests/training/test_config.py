@@ -3921,6 +3921,31 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "cli_overrides",
+        [
+            ["ddp.grad_reduce_in_fp32=False"],
+            ["ddp={grad_reduce_in_fp32:false}"],
+        ],
+    )
+    def test_runtime_config_update_preserves_explicit_cli_precision_override(self, cli_overrides):
+        """Explicit CLI fields should take precedence over the mixed precision recipe."""
+        from megatron.bridge.training.config import runtime_config_update
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        full_cfg.mixed_precision = "bf16_mixed"
+
+        try:
+            process_config_with_overrides(full_cfg, cli_overrides=cli_overrides)
+            runtime_config_update(full_cfg)
+
+            assert full_cfg.ddp.grad_reduce_in_fp32 is False
+            assert full_cfg.model.bf16 is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_runtime_config_update_with_comm_overlap(self):
         """Test runtime_config_update with communication overlap configuration."""
         from megatron.bridge.training.comm_overlap import CommOverlapConfig
