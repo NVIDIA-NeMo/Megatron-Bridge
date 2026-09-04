@@ -1,0 +1,496 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_5_vl_122b_a10b
+summary: >
+  Performance scope: pretrain_performance.H100 is verified against the tuned
+  canonical 128-GPU BF16 recipe for this variant. That recipe trains on mock
+  data and freezes the language and vision towers, so its metrics measure
+  throughput and numerical health for a vision-projection-only workload and
+  must not be read as full-model or data-driven pretraining results. All four
+  conversion directions and deterministic Megatron
+  inference are verified on a single 8-GPU H100 node. manual_forward_pass
+  has been exercised on that same node and reproduces the expected next token
+  for both a text-only and an image-conditioned prompt, but only the
+  text-only prompt clears the 0.99 correlation gate, at cosine similarity
+  0.998666; the image-conditioned prompt measures 0.868094, so the item
+  remains unverified and the divergence is scoped to the vision path. PEFT is
+  verified on the same single node, SFT is verified on 48 H100 GPUs with the
+  canonical 48-GPU recipe, and pretrain is verified on 128 H100 GPUs with the
+  canonical 128-GPU recipe run with its freeze flags overridden so all three
+  towers train. checkpoint_resume is verified against that same pretrain run by
+  continuing from its iteration-50 checkpoint: step 51 reproduces the reference
+  exactly and step 100 lands within 0.248 percent, far tighter than the roughly
+  1.4 percent drift between two independent launches of this
+  order-sensitive BF16 mixture-of-experts recipe.
+  sft_export_inference is unverified because only its export
+  half can run on this hardware; the bf16 export exceeds single-device memory
+  and the reload has no sharded path. sft_long_context has no Qwen3.5-VL
+  122B-A10B recipe yet, so it remains unverified rather than claiming coverage
+  from another model size.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - manual_forward_pass
+  training:
+    H100:
+      verified: [pretrain, sft, peft, checkpoint_resume]
+      unverified: [sft_export_inference, sft_long_context]
+  performance:
+    H100: verified
+model:
+  hf_id: Qwen/Qwen3.5-122B-A10B
+  hf_revision: dc4d348443bc740c68e2d77492492c11606384d5  # pragma: allowlist secret
+  architecture: Qwen3_5MoeForConditionalGeneration
+  min_transformers_version: "5.2.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08.rc3
+  bridge_commit: f9db6c6f44bd396d183bc269c2a4ed26a18fb83c  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --nodes 1
+      --device cpu
+      --hf-model Qwen/Qwen3.5-122B-A10B
+      --hf-revision dc4d348443bc740c68e2d77492492c11606384d5
+      --megatron-path work/model-verification/qwen35-vl-122b-a10b/megatron-cpu
+      --torch-dtype bfloat16
+    last_verified: 2026-08-24
+    expected_result: >
+      Conversion completes and writes a distributed checkpoint that reloads
+      with 940 tensors, every tensor bfloat16, no empty tensors, and a
+      parameter total of 125,086,497,008 that matches the Hugging Face
+      safetensors index exactly. The checkpoint is 13,824 bytes smaller than
+      the index total_size because 72 linear-attention tensors (36 A_log and
+      36 norm.weight, 6912 elements total) are stored float32 upstream and are
+      downcast by the requested bfloat16 conversion dtype; no tensor is
+      dropped.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --nodes 1
+      --device gpu --gpus-per-node 8
+      --hf-model Qwen/Qwen3.5-122B-A10B
+      --hf-revision dc4d348443bc740c68e2d77492492c11606384d5
+      --megatron-path work/model-verification/qwen35-vl-122b-a10b/megatron-gpu
+      --tp 4 --pp 1 --ep 8 --etp 1
+      --torch-dtype bfloat16
+    last_verified: 2026-08-24
+    expected_result: >
+      Conversion completes and writes a distributed checkpoint whose key,
+      shape, and dtype signature is identical to the CPU import: 940 tensors,
+      every tensor bfloat16, no empty tensors, and 125,086,497,008 parameters
+      matching the Hugging Face safetensors index. TP4/PP1/EP8/ETP1 is the
+      smallest single-node layout that fits; expert weight construction peaks
+      near 67 GiB per 80 GiB GPU, and TP1/PP1/EP8 exhausts device memory
+      during model construction before any weight is loaded.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --nodes 1
+      --device cpu
+      --hf-model Qwen/Qwen3.5-122B-A10B
+      --megatron-path work/model-verification/qwen35-vl-122b-a10b/megatron-cpu/iter_0000000
+      --hf-path work/model-verification/qwen35-vl-122b-a10b/hf-export-cpu
+    last_verified: 2026-08-24
+    expected_result: >
+      Export completes and writes a Hugging Face checkpoint that reloads with
+      1,949 tensors whose key set, per-tensor shapes, and parameter total of
+      125,086,497,008 match the pinned Hugging Face safetensors index exactly,
+      with zero missing keys, zero extra keys, and zero shape mismatches, plus a
+      regenerated config.json and generation_config.json. The key, shape, and
+      parameter signature is identical to the GPU export. All 1,949 exported
+      tensors are bfloat16 whereas the upstream index stores 1,877 bfloat16 and
+      72 float32 tensors; those 72 linear-attention tensors were downcast by the
+      bfloat16 import dtype, so no tensor is dropped and no shape changes.
+      Comparing values against the pinned reference, all 1,877 same-dtype
+      tensors are bitwise equal and the 72 downcast tensors differ only by
+      bfloat16 rounding, with a maximum absolute difference of 0.00390625 and a
+      maximum relative difference of 0.00374707.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --nodes 1
+      --device gpu --gpus-per-node 8
+      --hf-model Qwen/Qwen3.5-122B-A10B
+      --megatron-path work/model-verification/qwen35-vl-122b-a10b/megatron-gpu/iter_0000000
+      --hf-path work/model-verification/qwen35-vl-122b-a10b/hf-export-gpu
+      --tp 4 --pp 1 --ep 8 --etp 1
+    last_verified: 2026-08-24
+    expected_result: >
+      Export completes and writes a Hugging Face checkpoint that reloads with
+      1,949 tensors whose key set, per-tensor shapes, and parameter total of
+      125,086,497,008 match the pinned Hugging Face safetensors index exactly,
+      with zero missing keys, zero extra keys, and zero shape mismatches, plus a
+      regenerated config.json and generation_config.json. All 1,949 exported
+      tensors are bfloat16 whereas the upstream index stores 1,877 bfloat16 and
+      72 float32 tensors; those 72 linear-attention tensors were downcast by the
+      bfloat16 import dtype, so no tensor is dropped and no shape changes.
+      Comparing values against the pinned reference, all 1,877 same-dtype
+      tensors are bitwise equal and the 72 downcast tensors differ only by
+      bfloat16 rounding, with a maximum absolute difference of 0.00390625 and a
+      maximum relative difference of 0.00374707.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified. It requires a model-comparison run
+      pinned to the card's immutable revision that records a matching next
+      token, cosine similarity of at least 0.99, and the maximum and mean
+      absolute logit differences as report-only diagnostics. Pinned bfloat16
+      comparisons on a single 8-GPU H100 node separate the language path from
+      the vision path. A text-only prompt at TP1/PP1/EP8/ETP1 reproduces the
+      matching next token, 11751, and measures cosine similarity of 0.998666,
+      which clears the gate. The same topology with an image-conditioned
+      prompt reproduces the matching next token, 760, but measures cosine
+      similarity of only 0.868094. Because the two runs share weights,
+      topology and revision, and differ only in the presence of image tokens,
+      the residual divergence is in the vision tower, the vision-language
+      projection, or the multimodal rotary position assignment across image
+      spans, not in the language backbone. Earlier comparisons at
+      TP4/PP1/EP8/ETP1 are not evidence either way: the comparison helper pads
+      the prompt up to a multiple of the tensor-parallel width, so the
+      compared final position was a padding token whose logits carry no
+      signal. Weight conversion is not the cause: the Megatron-to-HF export of
+      this checkpoint reloads bitwise equal on all 1,877 same-dtype tensors,
+      and re-running the Hugging Face reference on those exported weights
+      rather than the hub weights still returns cosine similarity of 0.998999
+      against the hub reference, so the 72 bfloat16-downcast tensors account
+      for almost none of the deficit. These runs also depart from the
+      supported command form: the helper loads the Hugging Face reference on
+      one rank, which a 125,086,497,008-parameter bfloat16 model cannot
+      satisfy on a single device, so the reference logits came from a separate
+      memory-bounded forward sharded across the node. Verification requires an
+      image-conditioned run that clears the 0.99 gate through the maintained
+      model-comparison task.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task vlm-generation
+      --hf_model_path Qwen/Qwen3.5-122B-A10B
+      --hf-revision dc4d348443bc740c68e2d77492492c11606384d5
+      --megatron_model_path work/model-verification/qwen35-vl-122b-a10b/megatron-gpu/iter_0000000
+      --image_path docs/images/tp1.png
+      --prompt "Describe this image."
+      --max_new_tokens 64
+      --tp 4 --pp 1 --ep 8 --etp 1
+    last_verified: 2026-08-24
+    expected_result: >
+      Deterministic greedy generation runs to the explicit --max_new_tokens
+      bound and emits exactly 64 new tokens without an earlier end-of-sequence
+      token. For the prompt "Describe this image." applied to
+      docs/images/tp1.png, the literal completion is:
+      "The user wants a description of the provided image.\n**1. Overall
+      Structure:**\n-   It's a diagram titled \"Transformers\".\n-   There's a
+      subtitle in green: \"Pre-Layernorm\" Transformer Block.\n-   The main
+      content is a large rounded rectangle containing a flowchart of a neural".
+      The generated text is truncated mid-sentence by the token bound, correctly
+      identifies the transformer block diagram in the image, and confirms the
+      vision encoder, projector, and MoE decoder all execute on the imported
+      Megatron checkpoint. TP4/PP1/EP8/ETP1 is required because smaller tensor
+      parallel sizes exhaust device memory during expert construction.
+
+  pretrain:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 8a98400e0371a78d48f81e6e19fdf3d89207b2c5  # pragma: allowlist secret
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config
+        --max_steps 100 --warmup_iters 10
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/selfref
+        --save_interval 50
+        checkpoint.load=null
+        model.freeze_language_model=false
+        model.freeze_vision_model=false
+        model.freeze_vision_projection=false
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
+      metrics:
+        initial_loss: 13.043600
+        final_loss: 3.712553
+        last_10_steps_step_time_ms_avg: 2655.290
+        last_10_steps_model_tflops_per_gpu_avg: 24.570
+        last_10_steps_tokens_per_second_per_gpu_avg: 385.645
+      expected_result: >
+        The command completes all 100 optimizer steps on 128 H100 GPUs at
+        TP4/PP8/CP2/EP8/ETP1 with sequence parallelism, MBS2/GBS32, sequence
+        length 4096, natural expert routing over the all-to-all dispatcher with
+        global_aux_loss balancing at coefficient 0.001 and no capacity factor,
+        one multi-token-prediction layer, no activation recompute, and no CUDA
+        graphs. The three freeze overrides make the language tower, vision
+        tower, and vision projection all trainable, so every optimizer step
+        updates the full parameter set and each saved checkpoint carries full
+        optimizer and RNG state. Loss falls from 13.043600 to 3.712553, every
+        step reports finite losses with zero skipped and zero NaN iterations,
+        and checkpoints are written at steps 50 and 100. One scope limit bounds
+        this result: the recipe trains on the mock VLM dataset, so the losses
+        demonstrate a working full-model training step and numerical health,
+        not data-driven convergence, and they must not be compared against any
+        real-data cohort. This run must also not be compared against
+        pretrain_performance.H100 even though both use the same recipe, the
+        same hardware, and the same 100-step window. That item keeps the
+        canonical freeze flags and trains only the vision projection, which is
+        a different trainable parameter set and therefore a different
+        convergence contract.
+
+  sft:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 6a834c008f0179a25fe936e136672a9ecabe0a58  # pragma: allowlist secret
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 6 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config
+        --pretrained_checkpoint
+        work/model-verification/qwen35-vl-122b-a10b/megatron-gpu/iter_0000000
+        --max_steps 100 --warmup_iters 10
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/sft-checkpoint
+        --save_interval 100
+        checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
+      metrics:
+        initial_loss: 0.523469
+        final_loss: 0.040955
+        last_10_steps_step_time_ms_avg: 3358.000
+        last_10_steps_model_tflops_per_gpu_avg: 53.700
+        last_10_steps_tokens_per_second_per_gpu_avg: 813.200
+      expected_result: >
+        The command completes all 100 steps of the canonical 48-GPU recipe
+        qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config at TP2/PP6/EP8/ETP1 with
+        sequence parallelism, MBS1/GBS32, sequence length 4096, all three
+        language, vision, and vision-projection towers trainable, one
+        multi-token-prediction layer at loss scale 0.1, natural expert routing
+        over the all-to-all dispatcher, uniform full activation recompute of one
+        layer, and no CUDA graphs. Every optimizer step reports finite losses
+        with zero skipped and zero NaN iterations, training loss falls from
+        0.523469 to 0.040955, and the final full-model checkpoint is written at
+        step 100 as 48 distributed-checkpoint shards plus metadata. The recipe
+        reaches MBS1 deliberately: at MBS4 the fp32 logits alone are 7.58 GiB
+        per rank at vocabulary 248320 and TP2, which exhausted device memory at
+        the first optimizer step. Global batch size is unchanged at 32, so only
+        the gradient-accumulation layout differs. This is a support verification
+        of the SFT workflow, not a member of a shared convergence cohort: the
+        recipe uses the CORD-v2 dataset with a 2e-5 to 2e-6 cosine schedule, so
+        its losses must not be compared against cards whose SFT runs use a
+        different dataset, sequence length, or schedule.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      commands: null
+      last_verified: null
+      depends_on: sft
+      expected_result: >
+        This workflow remains unverified because only its export half
+        completes. Exporting the final SFT checkpoint succeeds and produces 40
+        safetensors shards totalling 234 GiB alongside config.json,
+        generation_config.json, and chat_template.jinja. The deterministic
+        reload half cannot run: the shared verifier places the entire model on
+        one torch device, and 234 GiB of bf16 weights exceed the 80 GiB
+        capacity of a single H100, so the reload aborts once roughly 78 GiB is
+        resident. Falling back to host memory does not help either, because the
+        Qwen3.5-VL modeling code calls the CUDA-only causal_conv1d kernel and
+        rejects CPU tensors. Verifying this item requires either an
+        accelerator whose memory holds the full bf16 export or a sharded
+        multi-device reload path in the shared verifier; that limitation
+        applies to every model whose export exceeds one device and is not
+        specific to this variant.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified because no long-context SFT recipe
+        exists for Qwen3.5-VL 122B-A10B. The Qwen3.5-VL 35B-A3B long-context
+        recipe covers a different checkpoint and must not be relabeled for this
+        variant. Verification requires a 122B-A10B recipe that exercises
+        sequence packing and context parallelism together.
+
+  peft:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 2cc4edf96be72247919c696c26495fe834f2917f  # pragma: allowlist secret
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config
+        --pretrained_checkpoint
+        work/model-verification/qwen35-vl-122b-a10b/megatron-gpu/iter_0000000
+        --max_steps 100 --warmup_iters 10
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/peft-adapter
+        --save_interval 100
+        checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
+      metrics:
+        initial_loss: 0.526277
+        final_loss: 0.023996
+        last_10_steps_step_time_ms_avg: 12105.100
+        last_10_steps_model_tflops_per_gpu_avg: 89.300
+        last_10_steps_tokens_per_second_per_gpu_avg: 1353.500
+      expected_result: >
+        The command completes all 100 CORD-v2 LoRA steps on 8 H100 GPUs at
+        TP2/PP1/CP1/EP8/ETP1 with MBS1/GBS32, sequence length 4096, LoRA rank
+        32 and alpha 32 with dropout 0, natural expert routing over the
+        all-to-all dispatcher, uniform full activation recompute of one layer,
+        and no CUDA graphs. Every optimizer step reports finite losses with
+        zero skipped and zero NaN iterations, training loss falls from 0.526277
+        to 0.023996, and the final adapter checkpoint is written at step 100 as
+        eight distributed-checkpoint shards plus metadata. This is a support
+        verification of the PEFT workflow, not a member of a shared convergence
+        cohort: the recipe uses sequence length 4096, global batch size 32, a
+        2e-4 to 3e-5 cosine schedule, an enabled multi-token-prediction layer,
+        and the CORD-v2 dataset, so its losses must not be compared against
+        cards whose PEFT runs use the 8192-token, batch-8, 1e-4-to-0 Tulu3
+        profile.
+
+  checkpoint_resume:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 8a98400e0371a78d48f81e6e19fdf3d89207b2c5  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config
+        --max_steps 100 --warmup_iters 10
+        --load_dir work/model-verification/qwen35-vl-122b-a10b/selfref
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/selfref-resumed
+        --save_interval 100
+        checkpoint.ckpt_step=50
+        model.freeze_language_model=false
+        model.freeze_vision_model=false
+        model.freeze_vision_projection=false
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
+      metrics:
+        initial_loss: 3.821736
+        final_loss: 3.703343
+        last_10_steps_step_time_ms_avg: 2459.260
+        last_10_steps_model_tflops_per_gpu_avg: 26.500
+        last_10_steps_tokens_per_second_per_gpu_avg: 416.385
+      depends_on: pretrain
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: true
+      expected_result: >
+        The continuation loads iteration 50 of the pretrain reference, trains
+        steps 51 through 100 into a distinct output root, and completes with no
+        skipped or NaN iterations before writing a 131-shard torch_dist
+        checkpoint at step 100. Both towers and the projection are trainable in
+        this configuration, so the reload restores optimizer and RNG state for
+        the full parameter set rather than for a small trainable subset. The
+        first sentinel is exact: step 51 reproduces the reference lm loss
+        3.821736 along with the identical gradient norm 44.270, auxiliary
+        routing loss 4.609055, multi-token-prediction loss 1.901619, and
+        consumed-sample count 1632, which is what demonstrates that model,
+        optimizer, scheduler, and data-iterator state were all restored rather
+        than reinitialized. The second sentinel is 3.703343 against the
+        reference 3.712553, a relative difference of 0.248 percent, well inside
+        the declared 1e-2 tolerance. The residual gap at step 100 is expected
+        and is not evidence of a defect: this bf16 mixture-of-experts recipe is
+        not bitwise reproducible because expert reductions are order-sensitive
+        and the continuation ran on a different node set. For calibration, two
+        identically configured launches of this same recipe from scratch drift
+        roughly 1.4 percent apart by step 50, so the 0.248 percent observed here
+        is an order of magnitude tighter and is only achievable from genuinely
+        restored state. Comparison is valid only against pretrain on this same
+        hardware key, because that reference is the very run whose iteration-50
+        checkpoint was consumed; comparing against any separately launched run
+        would measure recipe nondeterminism instead of resume correctness. The
+        timing figures are sanity observations from a mock dataset, and the
+        TFLOP/s figure is the same fixed analytic full-model estimate described
+        under pretrain, so it must not be compared against
+        pretrain_performance, which runs with the towers frozen.
+
+  pretrain_performance:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: cc228ede589c29ec876322579d67dc4599f92bf5  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config
+        --max_steps 100 --warmup_iters 10
+        --save_dir work/model-verification/qwen35-vl-122b-a10b/pretrain-checkpoint
+        --save_interval 50
+        checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.tensorboard_dir=null
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-08-25
+      metrics:
+        initial_loss: 13.043600
+        final_loss: 9.197602
+        last_10_steps_step_time_ms_avg: 1775.400
+        last_10_steps_model_tflops_per_gpu_avg: 36.700
+        last_10_steps_tokens_per_second_per_gpu_avg: 576.800
+      expected_result: >
+        The command completes all 100 steps of the canonical 128-GPU recipe
+        qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config at
+        TP4/PP8/CP2/EP8/ETP1 with sequence parallelism, MBS2/GBS32, sequence
+        length 4096, natural expert routing over the all-to-all dispatcher with
+        global_aux_loss balancing at coefficient 0.001 and no capacity factor,
+        one multi-token-prediction layer, no activation recompute, and no CUDA
+        graphs. Every optimizer step reports finite losses with zero skipped and
+        zero NaN iterations, loss falls from 13.043600 to 9.197602, and
+        checkpoints are written at steps 50 and 100. Two scope limits bound this
+        result. The recipe trains on the mock VLM dataset, so the losses measure
+        throughput and numerical health, not data-driven convergence, and they
+        must not be compared against any real-data cohort. The recipe also
+        freezes the language and vision towers and trains only the vision
+        projection. The reported TFLOP/s is a fixed analytic full-model
+        estimate that scales inversely with step time and does not subtract the
+        backward work skipped for the frozen towers, so it overstates the
+        useful arithmetic this run actually performs and is comparable only
+        against other runs of this same frozen configuration. For that reason
+        it must not be compared against pretrain.H100, which runs the same
+        recipe and hardware with all three towers trainable.
