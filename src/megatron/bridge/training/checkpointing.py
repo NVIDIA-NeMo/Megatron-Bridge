@@ -1288,7 +1288,7 @@ def save_checkpoint(
 
     # Collect cfg, model, RNG.
     sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
-    sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
+    sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
     if cfg.optimizer.use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
@@ -1428,7 +1428,7 @@ def save_checkpoint(
                 if ckpt_cfg.fully_parallel_save:
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        pg_collection.dp_cp,
+                        _checkpoint_dp_cp_group(pg_collection),
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # MegatronMIMO + torch_dist can hit known access-pattern validation failures
@@ -2420,7 +2420,7 @@ def _load_model_weights_from_checkpoint(
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
@@ -3039,7 +3039,7 @@ def _load_checkpoint_from_path(
 
         if sharded_sd_metadata is None:
             sharded_sd_metadata = {}
-        sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
+        sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
@@ -3688,7 +3688,7 @@ def _load_global_dist_base_checkpoint(
     )
     load_strategy = TorchDistLoadShardedStrategy()
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     validate_sharding_integrity = True
@@ -4019,6 +4019,30 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     metadata["singleton_local_shards"] = False
     metadata["chained_optim_avoid_prefix"] = True
     return metadata
+
+
+def _checkpoint_dp_cp_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
+    """Return the DP x CP group that sharded-checkpoint ``replica_id`` must be derived from.
+
+    ``pg_collection.dp_cp`` deliberately EXCLUDES the GTP weight-rematerialization axis -- it is
+    the *replicate* group, used for gradient all-reduce and optimizer-state sharding. Checkpoint
+    ``replica_id`` needs the opposite: the gtp_remat-INCLUSIVE ``dp_cp_gtp_remat`` group. A tensor
+    that is not GTP-sharded (a norm weight, a bias, an ``_extra_state`` blob) is held identically
+    by every gtp_remat peer, and with the excluded group those peers all report the same DP rank,
+    so each of them claims to be the main replica of the same shard. Distributed checkpointing then
+    rejects the save/load with::
+
+        CheckpointingException: Invalid sharding pattern validation. Errors: Invalid access
+          pattern for ShardedTensor(key='decoder.final_layernorm.weight', ...)
+
+    Megatron-LM's own training loop applies exactly this override before building the sharded
+    state dict (see ``megatron/training/training.py``); Megatron-Bridge has its own checkpoint
+    entrypoints and needs it too.
+
+    ``dp_cp_gtp_remat`` is absent on older Megatron-Core revisions and is the same group as
+    ``dp_cp`` whenever GTP is inactive, so the fallback is a no-op in both cases.
+    """
+    return getattr(pg_collection, "dp_cp_gtp_remat", None) or pg_collection.dp_cp
 
 
 def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
