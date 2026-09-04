@@ -866,6 +866,7 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        stack_3d_moe: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -881,6 +882,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 skip before resolving HuggingFace parameter mappings.
             expand_shared_outer: Replicate the shared factor across experts under per-expert
                 names (vLLM 2D ``pack_moe``) instead of a shared ``[1, ...]`` tensor (SGLang).
+                Default ``False``; no effect for non-shared-outer adapters.
+            stack_3d_moe: Emit shared-outer routed-expert LoRA as the two stacked 3D
+                tensors vLLM's 3D-MoE consumer (``FusedMoE3DWithLoRA``) looks up
+                (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
+                down_proj), instead of the per-expert 2D ``pack_moe`` layout.
                 Default ``False``; no effect for non-shared-outer adapters.
 
         Yields:
@@ -899,6 +905,7 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
+            stack_3d_moe=stack_3d_moe,
         )
 
     def save_hf_adapter(
