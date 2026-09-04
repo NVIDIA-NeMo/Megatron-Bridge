@@ -153,7 +153,7 @@ class TestQwen35DenseBridge:
         assert result.linear_value_head_dim == mock_qwen3_5_config.linear_value_head_dim
         assert result.linear_num_key_heads == mock_qwen3_5_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_5_config.linear_num_value_heads
-        assert result.experimental_attention_variant == "gated_delta_net"
+        assert result.experimental_attention_variant == "gdn"
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MLP configuration mapping."""
@@ -504,7 +504,7 @@ class TestQwen35MoEBridge:
         assert result.linear_value_head_dim == mock_qwen3_5_moe_config.linear_value_head_dim
         assert result.linear_num_key_heads == mock_qwen3_5_moe_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_5_moe_config.linear_num_value_heads
-        assert result.experimental_attention_variant == "gated_delta_net"
+        assert result.experimental_attention_variant == "gdn"
 
     def test_provider_bridge_moe_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test MoE-specific configuration mapping."""
@@ -518,6 +518,7 @@ class TestQwen35MoEBridge:
         assert result.moe_grouped_gemm is True
         assert result.moe_shared_expert_intermediate_size == mock_qwen3_5_moe_config.shared_expert_intermediate_size
         assert result.moe_shared_expert_gate is True
+        assert result.moe_router_dtype == "fp32"
 
     def test_provider_bridge_normalization(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test normalization configuration."""

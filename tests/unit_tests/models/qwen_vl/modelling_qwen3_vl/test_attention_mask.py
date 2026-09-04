@@ -25,14 +25,23 @@ class _FakeTEDotProductAttention:
     pass
 
 
-def test_converts_qwen_valid_mask_for_te(monkeypatch):
+@pytest.mark.parametrize("dtype", [torch.bool, torch.int32, torch.int64])
+def test_converts_qwen_valid_mask_for_te(monkeypatch, dtype):
     monkeypatch.setattr(attention_module, "TEDotProductAttention", _FakeTEDotProductAttention)
-    valid_mask = torch.tensor([[True, True, False], [False, True, True]])
+    valid_mask = torch.tensor([[1, 1, 0], [0, 1, 1]], dtype=dtype)
 
     actual = _qwen_attention_mask_for_core_attention(_FakeTEDotProductAttention(), valid_mask, packed_seq_params=None)
 
     expected = torch.tensor([[[[False, False, True]]], [[[True, False, False]]]])
+    assert actual.dtype == torch.bool
     torch.testing.assert_close(actual, expected)
+
+    attention_scores = torch.tensor(
+        [[[[1.0, 2.0, 3.0]]], [[[4.0, 5.0, 6.0]]]],
+    )
+    attention_probs = torch.softmax(attention_scores.masked_fill(actual, float("-inf")), dim=-1)
+    assert torch.isfinite(attention_probs).all()
+    assert torch.equal(attention_probs.masked_select(actual), torch.zeros(2))
 
 
 def test_converts_all_valid_qwen_mask_for_te_without_host_sync(monkeypatch):
@@ -40,7 +49,7 @@ def test_converts_all_valid_qwen_mask_for_te_without_host_sync(monkeypatch):
     monkeypatch.setattr(
         torch.Tensor, "item", lambda _tensor: pytest.fail("attention mask must not synchronize to host")
     )
-    valid_mask = torch.ones((2, 4), dtype=torch.bool)
+    valid_mask = torch.ones((2, 4), dtype=torch.long)
 
     actual = _qwen_attention_mask_for_core_attention(_FakeTEDotProductAttention(), valid_mask, packed_seq_params=None)
     monkeypatch.undo()
@@ -51,7 +60,7 @@ def test_converts_all_valid_qwen_mask_for_te_without_host_sync(monkeypatch):
 @pytest.mark.parametrize(
     ("mask", "packed_seq_params"),
     [
-        (torch.ones((2, 4), dtype=torch.long), None),
+        (torch.zeros((2, 4), dtype=torch.float32), None),
         (torch.ones((2, 1, 4, 4), dtype=torch.bool), None),
         (torch.ones((2, 4), dtype=torch.bool), object()),
     ],

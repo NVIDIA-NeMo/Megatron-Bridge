@@ -24,6 +24,7 @@ from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.data.packing.algorithms import first_fit_decreasing
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
+from megatron.bridge.diffusion.data.common.safe_decoder import SafeDiffusionSampleDecoder
 from megatron.bridge.diffusion.data.common.sequence_packing_utils import packing_length
 
 
@@ -51,6 +52,8 @@ def cook(sample: dict) -> dict:
 
 
 class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):  # noqa: D101
+    decoder = SafeDiffusionSampleDecoder()
+
     cookers = [
         Cooker(cook),
     ]

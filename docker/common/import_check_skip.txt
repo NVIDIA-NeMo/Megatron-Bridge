@@ -25,6 +25,8 @@ torch_tensorrt
 quack  # imports nvidia-cutlass-dsl MLIR libs, which dlopen libcuda at import
 peft # transitively imports optional CUDA-backed modules that dlopen libcuda
 transformer_engine # dlopens libcuda at import
+torch_memory_saver_hook_mode_preload_cu13  # dlopens libcuda at import
+torch_memory_saver_hook_mode_torch_cu13  # dlopens libcuda at import
 
 # Requires the libfuse system library (multi-storage-client FUSE backend; optional):
 mfusepy

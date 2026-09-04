@@ -65,6 +65,7 @@ class MegatronQuantizationBridge:
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
+        grouped_buffers: dict[str, dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(
             megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress
@@ -72,6 +73,16 @@ class MegatronQuantizationBridge:
             converted_weights_dict = task.mapping.megatron_to_hf_quant(
                 task.param_weight, task.megatron_module, quantization_checker, quant_fn, quant_block_size
             )
+            if getattr(task.mapping, "is_grouped_export", False):
+                converted_weights_dict = self._accumulate_grouped_export(
+                    task,
+                    converted_weights_dict,
+                    model_config,
+                    grouped_buffers,
+                    hf_state_dict,
+                )
+                if converted_weights_dict is None:
+                    continue
             converted_weights_dict = self.maybe_modify_converted_hf_weight(
                 task,
                 converted_weights_dict,

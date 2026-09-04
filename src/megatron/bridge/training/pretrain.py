@@ -19,6 +19,7 @@ import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
 
 from megatron.bridge.data.utils import get_dataset_provider
+from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import Callback, CallbackManager, normalize_callbacks
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
@@ -224,13 +225,15 @@ def _abort_async_checkpoint_worker(state: GlobalState) -> None:
     finally:
         state._async_calls_queue = None
 
-        from megatron.core.dist_checkpointing.strategies import filesystem_async
+        from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        from nvidia_resiliency_ext.checkpointing.async_ckpt import filesystem_async as nvrx_filesystem_async
 
-        if filesystem_async._results_queue is not None:
-            try:
-                filesystem_async._results_queue._manager.shutdown()
-            finally:
-                filesystem_async._results_queue = None
+        for filesystem_async in (mcore_filesystem_async, nvrx_filesystem_async):
+            if filesystem_async._results_queue is not None:
+                try:
+                    filesystem_async._results_queue._manager.shutdown()
+                finally:
+                    filesystem_async._results_queue = None
 
 
 def _safe_distributed_rank() -> str:
@@ -245,6 +248,11 @@ def _safe_distributed_rank() -> str:
 
 def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_group: bool) -> None:
     """Clean up framework-owned state after ordinary pretrain execution fails."""
+    try:
+        fault_tolerance.abort(state)
+    except Exception:
+        logger.exception("Failed to abort fault-tolerance monitoring after pretrain failure")
+
     try:
         _abort_async_checkpoint_worker(state)
     except Exception:

@@ -210,5 +210,5 @@ overlap. Prefer the narrow boundary that satisfies the memory target.
 
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [docs/training/moe-optimization.md](moe-optimization.md)
-- [skills/nemo-mbridge-perf-activation-recompute/SKILL.md](../../skills/nemo-mbridge-perf-activation-recompute/SKILL.md) — architecture-specific module selection, compatibility, and measurement guidance
-- [skills/nemo-mbridge-perf-memory-tuning/SKILL.md](../../skills/nemo-mbridge-perf-memory-tuning/SKILL.md) — expandable segments, parallelism resizing, and other memory reduction strategies
+- [skills/nemo-mbridge-perf-activation-recompute/SKILL.md](../skills/nemo-mbridge-perf-activation-recompute/SKILL.md) — architecture-specific module selection, compatibility, and measurement guidance
+- [skills/nemo-mbridge-perf-memory-tuning/SKILL.md](../skills/nemo-mbridge-perf-memory-tuning/SKILL.md) — expandable segments, parallelism resizing, and other memory reduction strategies

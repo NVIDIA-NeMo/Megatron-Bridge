@@ -4,9 +4,12 @@ from collections.abc import Callable, Iterator
 import numpy as np
 import pytest
 import torch
+from megatron.energon.epathlib import EPath
+from megatron.energon.source_info import SourceInfo
 
 from megatron.bridge.models.bagel.data.energon import BagelSample
 from megatron.bridge.models.bagel.data.packing import BagelPacker
+from megatron.bridge.utils.safe_pickle import energon_torch_load
 
 
 pytestmark = pytest.mark.unit
@@ -167,3 +170,37 @@ def test_packer_state_restores_buffer_and_rng() -> None:
     restored.load_state_dict(state)
 
     _assert_equal(next(restored), expected)
+
+
+def test_packer_checkpoint_serializes_buffer_without_energon_source_objects(tmp_path) -> None:
+    """Buffered samples round-trip without widening the restricted unpickler allowlist."""
+    packer = BagelPacker(
+        [_repeat(_t2i)],
+        [1],
+        [False],
+        {"bos_token_id": 1, "eos_token_id": 2, "start_of_image": 3, "end_of_image": 4},
+    )
+    sample = _t2i(7)
+    sample.__sources__ = (
+        SourceInfo(dataset_path=EPath("/dataset"), index=7, shard_name="t2i.tar", file_names=("7.image",)),
+    )
+    packer._buffer.append(sample)
+
+    state = packer.state_dict()
+    assert isinstance(state["buffer"][0], dict)
+    path = tmp_path / "dataloader-state.pt"
+    torch.save({"dataloader_state_dict": state}, path)
+    restored_state = energon_torch_load(str(path))["dataloader_state_dict"]
+
+    restored = BagelPacker(
+        [_repeat(_t2i)],
+        [1],
+        [False],
+        {"bos_token_id": 1, "eos_token_id": 2, "start_of_image": 3, "end_of_image": 4},
+    )
+    restored.load_state_dict(restored_state)
+
+    assert len(restored._buffer) == 1
+    assert restored._buffer[0].__sources__ is None
+    assert restored._buffer[0].__key__ == sample.__key__
+    torch.testing.assert_close(restored._buffer[0].image_tensor_list[0], sample.image_tensor_list[0])

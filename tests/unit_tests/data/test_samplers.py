@@ -1,11 +1,25 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
 import pytest
+import torch
+from torch.utils.data import Dataset
 
-from megatron.bridge.data.samplers import MegatronPretrainingSampler
+from megatron.bridge.data.samplers import (
+    MegatronPretrainingSampler,
+    RandomSeedDataset,
+    build_pretraining_data_loader,
+)
 
 
 pytestmark = pytest.mark.unit
+
+
+class _RandomValueDataset(Dataset):
+    def __len__(self) -> int:
+        return 8
+
+    def __getitem__(self, idx: int) -> tuple[int, int]:
+        return idx, torch.randint(0, 1_000_000, (1,)).item()
 
 
 def test_single_sampler_rejects_unsafe_partial_distributed_batch() -> None:
@@ -69,3 +83,28 @@ def test_single_sampler_drops_partial_distributed_batch() -> None:
     )
 
     assert list(sampler) == [[2, 3]]
+
+
+@pytest.mark.parametrize(("num_workers", "persistent_workers"), [(0, False), (1, False), (1, True)])
+def test_cyclic_sampler_resume_seeds_worker_dataset_for_current_epoch(
+    num_workers: int, persistent_workers: bool
+) -> None:
+    """A resumed cyclic loader must seed stochastic samples with its resumed epoch."""
+    base_seed = 100
+    dataset = RandomSeedDataset(_RandomValueDataset(), seed=base_seed)
+    dataloader = build_pretraining_data_loader(
+        dataset=dataset,
+        consumed_samples=len(dataset),
+        dataloader_type="cyclic",
+        micro_batch_size=1,
+        num_workers=num_workers,
+        data_sharding=False,
+        persistent_workers=persistent_workers,
+    )
+
+    sample_idx, actual_value = next(iter(dataloader))
+    sample_idx = sample_idx.item()
+    generator = torch.Generator().manual_seed(base_seed + 1 + sample_idx)
+    expected_value = torch.randint(0, 1_000_000, (1,), generator=generator).item()
+
+    assert actual_value.item() == expected_value

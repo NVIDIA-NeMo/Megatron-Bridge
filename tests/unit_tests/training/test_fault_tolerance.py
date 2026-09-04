@@ -16,6 +16,7 @@ import json
 from unittest.mock import MagicMock, call, mock_open, patch
 
 import pytest
+from nvidia_resiliency_ext.fault_tolerance import RankMonitorClientError
 
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.state import FaultToleranceState, GlobalState
@@ -453,6 +454,45 @@ class TestShutdown:
             mock_rank_monitor_client.shutdown_workload_monitoring.assert_called_once()
             assert mock_global_state.rank_monitor_client is None
 
+    def test_shutdown_closes_setup_section_for_completed_resume(self):
+        """Test a completed resume can calculate setup timeouts during shutdown."""
+        mock_global_state = MagicMock(spec=GlobalState)
+        mock_ft_state = MagicMock(spec=FaultToleranceState)
+        mock_ft_state.is_setup_section_open = True
+        mock_ft_state.is_calculating_timeouts = True
+        mock_ft_state.is_persistent_chkpt_loaded = True
+        mock_ft_state.seen_tr_iters_cnt = 0
+        mock_ft_state.seen_checkpoints_cnt = 0
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        mock_rank_monitor_client = MagicMock()
+        mock_rank_monitor_client.section_timeouts = {"setup": 600}
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        def close_section(section):
+            assert section == "setup"
+            mock_ft_state.is_setup_section_open = False
+
+        def calculate_timeouts(*, selected_sections, calc_out_of_section):
+            if mock_ft_state.is_setup_section_open:
+                raise RankMonitorClientError("Not enough data to compute timeouts.")
+            assert selected_sections == ["setup"]
+            assert calc_out_of_section is False
+
+        mock_rank_monitor_client.end_section.side_effect = close_section
+        mock_rank_monitor_client.calculate_and_set_section_timeouts.side_effect = calculate_timeouts
+
+        with (
+            patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=1),
+            patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
+        ):
+            fault_tolerance.shutdown(mock_global_state)
+
+        mock_rank_monitor_client.end_section.assert_called_once_with("setup")
+        mock_rank_monitor_client.shutdown_workload_monitoring.assert_called_once_with()
+        assert mock_ft_state.is_setup_section_open is False
+        assert mock_global_state.rank_monitor_client is None
+
     def test_shutdown_no_client(self):
         """Test shutdown when no rank monitor client."""
         mock_global_state = MagicMock(spec=GlobalState)
@@ -595,8 +635,9 @@ class TestPrivateFunctions:
             # Should not attempt to load
             mock_rank_monitor_client.load_state_dict.assert_not_called()
 
-    def test_update_timeouts(self):
+    def test_update_timeouts(self, tmp_path):
         """Test _update_timeouts function."""
+        state_path = tmp_path / "ft_state.json"
         mock_global_state = MagicMock(spec=GlobalState)
         mock_rank_monitor_client = MagicMock()
         mock_rank_monitor_client.state_dict.return_value = {"timeouts": "data"}
@@ -604,14 +645,12 @@ class TestPrivateFunctions:
         mock_global_state.rank_monitor_client = mock_rank_monitor_client
 
         mock_ft_state = MagicMock(spec=FaultToleranceState)
-        mock_ft_state.ft_state_path = "/tmp/ft_state.json"
+        mock_ft_state.ft_state_path = str(state_path)
         mock_global_state.fault_tolerance_state = mock_ft_state
 
         with (
             patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
             patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=0),
-            patch("builtins.open", mock_open()) as mock_file,
-            patch("json.dump") as mock_json_dump,
         ):
             fault_tolerance._update_timeouts(
                 selected_sections=["setup", "step"], calc_out_of_section=True, global_state=mock_global_state
@@ -620,7 +659,44 @@ class TestPrivateFunctions:
             mock_rank_monitor_client.calculate_and_set_section_timeouts.assert_called_once_with(
                 selected_sections=["setup", "step"], calc_out_of_section=True
             )
-            mock_json_dump.assert_called_once_with({"timeouts": "data"}, mock_file())
+            assert json.loads(state_path.read_text()) == {"timeouts": "data"}
+
+    def test_update_timeouts_preserves_previous_state_if_write_is_interrupted(self, tmp_path):
+        """A failed timeout-state write must not corrupt the state used by a restart."""
+        state_path = tmp_path / "ft_state.json"
+        previous_state = {"section_timeouts": {"setup": 600, "step": 180}}
+        state_path.write_text(json.dumps(previous_state))
+
+        mock_global_state = MagicMock(spec=GlobalState)
+        mock_rank_monitor_client = MagicMock()
+        mock_rank_monitor_client.state_dict.return_value = {"section_timeouts": {"setup": 300, "step": 90}}
+        mock_rank_monitor_client.section_timeouts = {"setup": 300, "step": 90}
+        mock_global_state.rank_monitor_client = mock_rank_monitor_client
+
+        mock_ft_state = MagicMock(spec=FaultToleranceState)
+        mock_ft_state.ft_state_path = str(state_path)
+        mock_global_state.fault_tolerance_state = mock_ft_state
+
+        def interrupt_dump(state, output_file):
+            output_file.write("{")
+            output_file.flush()
+            raise OSError("simulated interrupted write")
+
+        with (
+            patch("megatron.bridge.training.fault_tolerance.print_rank_0"),
+            patch("megatron.bridge.training.fault_tolerance.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.fault_tolerance.json.dump", side_effect=interrupt_dump),
+            pytest.raises(OSError, match="simulated interrupted write"),
+        ):
+            fault_tolerance._update_timeouts(
+                selected_sections=["setup", "step"], calc_out_of_section=True, global_state=mock_global_state
+            )
+
+        restart_client = MagicMock()
+        mock_global_state.rank_monitor_client = restart_client
+        fault_tolerance._load_state_if_exists(mock_global_state)
+
+        restart_client.load_state_dict.assert_called_once_with(previous_state)
 
 
 class TestMaybeUpdateTimeouts:

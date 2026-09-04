@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import Callable
 
@@ -31,9 +32,12 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 
 
 _recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_omni")
+_h100_recipe_package = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100")
 _h100_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni")
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+_PUBLIC_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: allowlist secret
+_CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 _TEST_HF_ID = "unit-test/nemotron-omni"
 
 _RECIPE_FUNCS = [
@@ -102,7 +106,7 @@ def _assert_common_config(cfg: ConfigContainer):
     assert cfg.mixed_precision == "bf16_mixed"
 
     assert _FakeAutoBridge.hf_path == _TEST_HF_ID
-    assert _FakeAutoBridge.kwargs == {"trust_remote_code": True}
+    assert _FakeAutoBridge.kwargs == {"revision": _PUBLIC_HF_REVISION, "trust_remote_code": True}
     assert _FakeAutoBridge.load_weights is False
 
     assert cfg.model.seq_length == 4096
@@ -126,10 +130,23 @@ def _assert_common_config(cfg: ConfigContainer):
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
 
 
 def test_default_hf_path_is_public_model_id():
     assert _recipe_module._DEFAULT_HF_PATH == _PUBLIC_HF_ID
+    assert _h100_recipe_module._DEFAULT_HF_REVISION == _PUBLIC_HF_REVISION
+
+
+def test_8gpu_recipes_are_exported_from_h100_package():
+    assert (
+        _h100_recipe_package.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config
+        is _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config
+    )
+    assert (
+        _h100_recipe_package.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config
+        is _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config
+    )
 
 
 @pytest.mark.parametrize("recipe_func", _RECIPE_FUNCS)
@@ -146,8 +163,10 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
+    assert cfg.dataset.hf_processor_kwargs == {"revision": _PUBLIC_HF_REVISION}
     assert cfg.dataset.trust_remote_code is True
     assert cfg.dataset.source.dataset_name == "cord_v2"
+    assert cfg.dataset.source.load_kwargs == {"revision": _CORD_V2_REVISION}
     assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_expanded_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.dataloader_type == "cyclic"
@@ -155,6 +174,144 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert cfg.model.has_sound is False
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
+
+
+@pytest.mark.parametrize(
+    "recipe_func",
+    [
+        _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config,
+        _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config,
+    ],
+)
+def test_cord_v2_8gpu_recipes_use_natural_routing_hybridep(
+    recipe_func: Callable,
+    fake_processor,
+):
+    cfg = _build_config(recipe_func, fake_processor)
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 16
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_params_dtype == torch.float16
+    assert cfg.optimizer.store_param_remainders is False
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
+
+
+def test_cord_v2_8gpu_sft_recipe_uses_validated_execution_tuning(fake_processor):
+    cfg = _build_config(
+        _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert cfg.train.global_batch_size == 64
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.model.attention_backend == "fused"
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.use_fused_weighted_squared_relu is True
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe", "layernorm"]
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
+
+
+@pytest.mark.parametrize(
+    "recipe_func",
+    [
+        _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config,
+        _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config,
+        _h100_recipe_module.nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config,
+    ],
+)
+def test_cord_v2_8gpu_recipes_use_lower_precision_optimizer_state(
+    recipe_func: Callable,
+    fake_processor,
+):
+    cfg = _build_config(recipe_func, fake_processor)
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_params_dtype == torch.float16
+    assert cfg.optimizer.store_param_remainders is False
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+
+
+@pytest.mark.parametrize(
+    ("portable_recipe", "optimized_recipe"),
+    [
+        (
+            _h100_recipe_module.nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config,
+            _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config,
+        ),
+        (
+            _h100_recipe_module.nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config,
+            _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config,
+        ),
+    ],
+)
+def test_cord_v2_8gpu_recipes_preserve_training_semantics(portable_recipe, optimized_recipe, fake_processor):
+    portable_cfg = _build_config(portable_recipe, fake_processor)
+    optimized_cfg = _build_config(optimized_recipe, fake_processor)
+
+    assert optimized_cfg.dataset == portable_cfg.dataset
+    if optimized_recipe is _h100_recipe_module.nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config:
+        assert optimized_cfg.train.micro_batch_size == 4
+        assert (
+            replace(
+                optimized_cfg.train,
+                micro_batch_size=portable_cfg.train.micro_batch_size,
+            )
+            == portable_cfg.train
+        )
+    else:
+        assert optimized_cfg.train == portable_cfg.train
+    assert optimized_cfg.scheduler == portable_cfg.scheduler
+    assert optimized_cfg.peft == portable_cfg.peft
+    assert optimized_cfg.optimizer.lr == portable_cfg.optimizer.lr
+    assert optimized_cfg.optimizer.min_lr == portable_cfg.optimizer.min_lr
+    assert optimized_cfg.optimizer.weight_decay == portable_cfg.optimizer.weight_decay
+    assert optimized_cfg.optimizer.adam_beta1 == portable_cfg.optimizer.adam_beta1
+    assert optimized_cfg.optimizer.adam_beta2 == portable_cfg.optimizer.adam_beta2
+    assert optimized_cfg.optimizer.adam_eps == portable_cfg.optimizer.adam_eps
+    assert optimized_cfg.mixed_precision.params_dtype == torch.bfloat16
+    assert optimized_cfg.model.freeze_language_model == portable_cfg.model.freeze_language_model
+    assert optimized_cfg.model.freeze_vision_model == portable_cfg.model.freeze_vision_model
+    assert optimized_cfg.model.freeze_vision_projection == portable_cfg.model.freeze_vision_projection
+    assert optimized_cfg.model.freeze_sound_encoder == portable_cfg.model.freeze_sound_encoder
+    assert optimized_cfg.model.freeze_sound_projection == portable_cfg.model.freeze_sound_projection
 
 
 def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
@@ -165,22 +322,34 @@ def test_cord_v2_long_context_sft_recipe_enables_packing_and_cp(fake_processor):
 
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.trust_remote_code is True
+    assert cfg.dataset.hf_processor_kwargs == {"revision": _PUBLIC_HF_REVISION}
+    assert cfg.dataset.source.load_kwargs == {"revision": _CORD_V2_REVISION}
     assert cfg.model.seq_length == 8192
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.calculate_per_token_loss is True
     assert cfg.train.global_batch_size == 64
     assert cfg.train.micro_batch_size == 2
-    assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.main_params_dtype == torch.float16
-    assert cfg.optimizer.store_param_remainders is True
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
-    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API" not in cfg.env_vars
+    assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    assert "USE_MNNVL" not in cfg.env_vars
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.enable_in_batch_packing is True
     assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 8
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is True
+
+
+def test_cord_v2_8gpu_peft_does_not_enable_checkpoint_cpu_staging(fake_processor):
+    cfg = _build_config(
+        _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu is False
 
 
 def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
@@ -188,6 +357,8 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
 
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.hf_processor_kwargs == {"revision": _PUBLIC_HF_REVISION}
+    assert cfg.dataset.source.load_kwargs == {"revision": _CORD_V2_REVISION}
     assert cfg.dataset.trust_remote_code is True
     assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.peft is not None

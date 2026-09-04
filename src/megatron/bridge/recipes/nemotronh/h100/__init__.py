@@ -39,6 +39,7 @@ __all__ = [
     "nemotron_3_super_sft_16gpu_h100_bf16_config",
     "nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config",
     "nemotron_3_ultra_pretrain_24gpu_h100_bf16_config",
+    "nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config",
     "nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config",
     "nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config",
     "nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config",

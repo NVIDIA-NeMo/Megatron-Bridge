@@ -2,6 +2,7 @@
 
 """Dataloaders."""
 
+import multiprocessing
 import random
 from typing import Any, Callable, Iterator, Optional
 
@@ -409,7 +410,7 @@ class RandomSeedDataset(Dataset):
     def __init__(self, dataset: Dataset, seed: int) -> None:
         """Initialize RandomSeedDataset."""
         self.base_seed = seed
-        self.curr_seed = seed
+        self.curr_seed = multiprocessing.Value("q", seed, lock=False)
         self.dataset = dataset
 
     def __len__(self) -> int:
@@ -418,11 +419,11 @@ class RandomSeedDataset(Dataset):
 
     def set_epoch(self, epoch: int) -> None:
         """Set the current epoch number to adjust the random seed."""
-        self.curr_seed = self.base_seed + epoch
+        self.curr_seed.value = self.base_seed + epoch
 
     def __getitem__(self, idx: int) -> Any:
         """Get an item from the dataset, setting the random seed first."""
-        seed = idx + self.curr_seed
+        seed = idx + self.curr_seed.value
         torch.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)

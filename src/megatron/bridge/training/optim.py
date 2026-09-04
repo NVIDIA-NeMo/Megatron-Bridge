@@ -139,6 +139,106 @@ def _get_te_fused_adam_class() -> type[torch.optim.Optimizer] | None:
     return cast(type[torch.optim.Optimizer], FusedAdam)
 
 
+def _cpu_staging_get_unscaled_state(
+    fallback: Callable[..., object],
+) -> Callable[..., torch.Tensor]:
+    """Wrap a TE state accessor without depending on its call signature."""
+
+    def _get_unscaled_state_on_cpu(*args: object, **kwargs: object) -> torch.Tensor:
+        state = fallback(*args, **kwargs)
+        if not isinstance(state, torch.Tensor):
+            raise TypeError(
+                "Transformer Engine FusedAdam.get_unscaled_state() must return a torch.Tensor "
+                f"for CPU checkpoint staging, but returned {type(state).__name__}."
+            )
+        return state.cpu()
+
+    return _get_unscaled_state_on_cpu
+
+
+@contextmanager
+def memory_efficient_precision_aware_optimizer_state_checkpointing(
+    optimizer: MegatronOptimizer | None,
+    *,
+    enabled: bool,
+) -> Iterator[int]:
+    """Stage expanded precision-aware Adam checkpoint tensors on CPU.
+
+    Transformer Engine's precision-aware FusedAdam exposes portable checkpoint
+    state by expanding compressed moments to FP32. Its default ``state_dict``
+    path retains those expansions on GPU until the complete state dictionary is
+    built for saving or load scaffolding, which can exceed device memory even
+    when training fits. This context preserves the same unscaled checkpoint
+    values and dtypes, but moves each tensor to CPU immediately so only one
+    expansion is live on GPU at a time.
+
+    Args:
+        optimizer: Optimizer participating in checkpointing.
+        enabled: Whether to stage compatible optimizer state on CPU.
+
+    Yields:
+        Number of compatible FusedAdam instances using CPU staging.
+    """
+    if not enabled or optimizer is None:
+        yield 0
+        return
+
+    fused_adam_class = _get_te_fused_adam_class()
+    if fused_adam_class is None:
+        yield 0
+        return
+
+    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
+    sub_optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
+    missing_method = object()
+    patched: list[tuple[torch.optim.Optimizer, object]] = []
+
+    try:
+        for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "is_stub_optimizer", False):
+                continue
+            if not getattr(getattr(distributed_optimizer, "config", None), "use_precision_aware_optimizer", False):
+                continue
+            if getattr(getattr(distributed_optimizer, "config", None), "optimizer_cpu_offload", False):
+                continue
+            if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
+                continue
+
+            inner = getattr(distributed_optimizer, "optimizer", None)
+            if not isinstance(inner, fused_adam_class):
+                continue
+            state_dtype_map = getattr(inner, "name_to_dtype_map", None)
+            if not isinstance(state_dtype_map, Mapping) or all(
+                dtype == torch.float32 for dtype in state_dtype_map.values()
+            ):
+                continue
+
+            original_get_unscaled_state = getattr(inner, "get_unscaled_state", None)
+            if not callable(original_get_unscaled_state):
+                raise RuntimeError(
+                    "CPU checkpoint staging requires Transformer Engine FusedAdam.get_unscaled_state() "
+                    "to be callable. The installed Transformer Engine checkpoint API is incompatible."
+                )
+
+            previous_instance_method = inner.__dict__.get("get_unscaled_state", missing_method)
+            setattr(inner, "get_unscaled_state", _cpu_staging_get_unscaled_state(original_get_unscaled_state))
+            patched.append((inner, previous_instance_method))
+
+        if patched:
+            G_LOGGER.info(
+                "Enabled CPU staging for %d precision-aware Transformer Engine FusedAdam checkpoint state(s).",
+                len(patched),
+            )
+
+        yield len(patched)
+    finally:
+        for inner, previous_instance_method in patched:
+            if previous_instance_method is missing_method:
+                delattr(inner, "get_unscaled_state")
+            else:
+                setattr(inner, "get_unscaled_state", previous_instance_method)
+
+
 @contextmanager
 def memory_efficient_fp32_optimizer_state_loading(
     optimizer: MegatronOptimizer | None,

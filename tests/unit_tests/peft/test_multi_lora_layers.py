@@ -45,6 +45,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from megatron.bridge.models.conversion.peft_bridge import MegatronPeftBridge
 from megatron.bridge.peft import multi_lora as multi_lora_mod
@@ -151,6 +152,125 @@ def adapter_deps_patch() -> ExitStack:
     return stack
 
 
+def test_grouped_mm_layout_requires_16_byte_alignment() -> None:
+    aligned = torch.empty(4, 8, dtype=torch.bfloat16)
+    misaligned = torch.empty(33, dtype=torch.bfloat16)[1:].view(4, 8)
+    unaligned_stride = torch.empty(4, 9, dtype=torch.bfloat16)
+
+    assert multi_lora_layers_module._has_grouped_mm_layout(aligned)
+    assert not multi_lora_layers_module._has_grouped_mm_layout(misaligned)
+    assert not multi_lora_layers_module._has_grouped_mm_layout(unaligned_stride)
+
+
+def test_grouped_mm_requires_aligned_backward_output_width() -> None:
+    x = MagicMock(is_cuda=True, dtype=torch.bfloat16)
+    x.device = torch.device("cuda", 0)
+    grouped_weights = MagicMock(is_cuda=True, dtype=torch.bfloat16)
+    x.element_size.return_value = 2
+
+    with (
+        patch.object(torch.cuda, "get_device_capability", return_value=(8, 0)),
+        patch.object(multi_lora_layers_module, "_has_grouped_mm_layout", return_value=True),
+    ):
+        grouped_weights.shape = (2, 8, 2)
+        assert not multi_lora_layers_module._can_use_grouped_mm(x, grouped_weights)
+
+        grouped_weights.shape = (2, 8, 8)
+        assert multi_lora_layers_module._can_use_grouped_mm(x, grouped_weights)
+
+
+def test_grouped_mm_requires_sm80_or_newer() -> None:
+    x = MagicMock(is_cuda=True, dtype=torch.bfloat16)
+    x.device = torch.device("cuda", 0)
+    grouped_weights = MagicMock(is_cuda=True, dtype=torch.bfloat16)
+
+    with (
+        patch.object(torch.cuda, "get_device_capability", return_value=(7, 5)),
+        patch.object(multi_lora_layers_module, "_has_grouped_mm_layout") as has_layout,
+    ):
+        assert not multi_lora_layers_module._can_use_grouped_mm(x, grouped_weights)
+
+    has_layout.assert_not_called()
+
+
+def test_dense_multi_lora_mm_preserves_eligible_grouped_mm_path() -> None:
+    x = torch.randn(4, 8)
+    weights = torch.randn(2, 8, 8)
+    token_counts = torch.tensor([2, 2], dtype=torch.int32)
+    offsets = token_counts.cumsum(dim=0)
+    expected = torch.cat([F.linear(x[:2], weights[0]), F.linear(x[2:], weights[1])])
+
+    with (
+        patch.object(multi_lora_layers_module, "_can_use_grouped_mm", return_value=True),
+        patch.object(torch, "_grouped_mm", return_value=expected) as grouped_mm,
+    ):
+        actual = multi_lora_layers_module._dense_multi_lora_mm(x, weights, token_splits=(2, 2), offsets=offsets)
+
+    grouped_mm.assert_called_once()
+    grouped_args = grouped_mm.call_args.args
+    assert grouped_args[0] is x
+    torch.testing.assert_close(grouped_args[1], weights.transpose(-2, -1))
+    assert grouped_args[2] is offsets
+    torch.testing.assert_close(actual, expected)
+
+
+def test_dense_multi_lora_mm_fallback_handles_empty_slots() -> None:
+    x = torch.empty(0, 8, requires_grad=True)
+    weights = torch.randn(2, 6, 8, requires_grad=True)
+    token_counts = torch.tensor([0, 0], dtype=torch.int32)
+    offsets = token_counts.cumsum(dim=0)
+
+    with patch.object(torch, "_grouped_mm", side_effect=AssertionError("grouped MM must not run")) as grouped_mm:
+        actual = multi_lora_layers_module._dense_multi_lora_mm(x, weights, token_splits=(0, 0), offsets=offsets)
+
+    grouped_mm.assert_not_called()
+    assert actual.shape == (0, 6)
+    actual.sum().backward()
+    assert x.grad is not None
+    assert weights.grad is not None
+
+
+def test_dense_multi_lora_mm_fallback_preserves_mixed_empty_slot_gradients() -> None:
+    x = torch.arange(1, 33, dtype=torch.float64).reshape(4, 8).requires_grad_()
+    weights = torch.arange(1, 145, dtype=torch.float64).reshape(3, 6, 8).requires_grad_()
+    token_counts = torch.tensor([2, 0, 2], dtype=torch.int32)
+    offsets = token_counts.cumsum(dim=0)
+    expected = torch.cat([F.linear(x[:2], weights[0]), F.linear(x[2:], weights[2])])
+
+    with patch.object(torch, "_grouped_mm", side_effect=AssertionError("grouped MM must not run")) as grouped_mm:
+        actual = multi_lora_layers_module._dense_multi_lora_mm(x, weights, token_splits=(2, 0, 2), offsets=offsets)
+
+    grouped_mm.assert_not_called()
+    torch.testing.assert_close(actual, expected)
+    actual.sum().backward()
+    assert x.grad is not None
+    assert weights.grad is not None
+    assert torch.count_nonzero(weights.grad[0]) > 0
+    assert torch.count_nonzero(weights.grad[1]) == 0
+    assert torch.count_nonzero(weights.grad[2]) > 0
+
+
+@pytest.mark.skipif(
+    not torch.cuda.is_available() or torch.cuda.get_device_capability() < (8, 0),
+    reason="requires an SM80+ CUDA device",
+)
+def test_dense_multi_lora_mm_cuda_mixed_empty_slot_backward() -> None:
+    x = torch.arange(1, 33, device="cuda", dtype=torch.bfloat16).reshape(4, 8).requires_grad_()
+    weights = torch.arange(1, 193, device="cuda", dtype=torch.bfloat16).reshape(3, 8, 8).requires_grad_()
+    token_counts = torch.tensor([2, 0, 2], device="cuda", dtype=torch.int32)
+
+    actual = multi_lora_layers_module._dense_multi_lora_mm(
+        x,
+        weights,
+        token_splits=(2, 0, 2),
+        offsets=token_counts.cumsum(dim=0),
+    )
+    actual.float().sum().backward()
+
+    assert weights.grad is not None
+    assert torch.count_nonzero(weights.grad[1]) == 0
+
+
 # ======================================================================
 # MultiLoRALinear: per-slot rank/alpha bookkeeping + rank masking
 # ======================================================================
@@ -170,6 +290,7 @@ class TestMultiLoRALinearSlots:
         assert layer.n_adapters == 3
         assert layer.max_rank == 8
         assert layer.tokens_per_adapter is None
+        assert layer.tokens_per_adapter_splits is None
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
 
@@ -195,6 +316,67 @@ class TestMultiLoRALinearSlots:
         layer.to(torch.float64)
         assert layer.alpha_values.dtype == torch.float64
         assert layer.rank_values.dtype == torch.float64
+
+    def test_forward_falls_back_when_grouped_mm_layout_is_ineligible(self) -> None:
+        """A TP-sharded BF16 local rank of two must avoid grouped MM."""
+        layer = _build_multi_lora_linear(in_features=8, out_features=6, n_adapters=2, dim=2)
+        layer.to(dtype=torch.bfloat16)
+        layer.init_adapter_slot(0, rank=2, alpha=2)
+        layer.init_adapter_slot(1, rank=2, alpha=2)
+        set_tokens_per_adapter_slot([layer], torch.tensor([2, 2], dtype=torch.int32))
+
+        with torch.no_grad():
+            layer.to_wrap.weight.zero_()
+            layer.to_wrap.bias.zero_()
+            for adapter in layer.adapters:
+                adapter.linear_in.weight.normal_()
+                adapter.linear_out.weight.normal_()
+
+        x = torch.randn(4, 8, dtype=torch.bfloat16, requires_grad=True)
+        expected = torch.cat(
+            [
+                layer.adapters[0].linear_out(layer.adapters[0].linear_in(x[:2])),
+                layer.adapters[1].linear_out(layer.adapters[1].linear_in(x[2:])),
+            ]
+        )
+
+        with (
+            patch.object(
+                torch,
+                "_grouped_mm",
+                side_effect=RuntimeError("strides should be multiple of 16 bytes"),
+            ) as grouped_mm,
+            patch.object(
+                multi_lora_layers_module, "gather_from_tensor_model_parallel_region", side_effect=lambda t: t
+            ),
+        ):
+            actual, _ = layer(x)
+
+        grouped_mm.assert_not_called()
+        torch.testing.assert_close(actual, expected)
+        actual.sum().backward()
+        assert x.grad is not None
+
+    def test_forward_reuses_host_splits_and_grouped_offsets(self) -> None:
+        layer = _build_multi_lora_linear(in_features=8, out_features=8, n_adapters=2, dim=8)
+        set_tokens_per_adapter_slot([layer], torch.tensor([2, 2], dtype=torch.int32))
+        calls = []
+
+        def fake_projection(x, stacked_weights, *, token_splits, offsets):
+            calls.append((token_splits, offsets))
+            return x.new_zeros((x.shape[0], stacked_weights.shape[1]))
+
+        with (
+            patch.object(multi_lora_layers_module, "_dense_multi_lora_mm", side_effect=fake_projection),
+            patch.object(
+                multi_lora_layers_module, "gather_from_tensor_model_parallel_region", side_effect=lambda t: t
+            ),
+        ):
+            layer(torch.randn(4, 8))
+
+        assert len(calls) == 2
+        assert calls[0][0] is calls[1][0] is layer.tokens_per_adapter_splits
+        assert calls[0][1] is calls[1][1]
 
     def test_init_adapter_slot_sets_rank_alpha_and_masks(self) -> None:
         layer = _build_multi_lora_linear(dim=8)
@@ -325,6 +507,8 @@ class TestMultiLoRAModelHelpers:
 
         for module in container.mods:
             assert module.tokens_per_adapter is tokens
+            assert module.tokens_per_adapter_splits == (3, 5)
+            assert module.tokens_per_adapter_total == 8
 
     def test_init_and_clear_adapter_slot_across_model(self) -> None:
         container = _MultiLoRAContainer(n_layers=2)
@@ -660,9 +844,7 @@ def test_load_adapter_unused_keys_raises():
 # an out-of-bounds grouped GEMM, not a shape error.
 # --------------------------------------------------------------------------- #
 def _narrow(counts, start, num_rows):
-    return multi_lora_layers_module._narrow_token_counts_to_window(
-        torch.tensor(counts, dtype=torch.int32), start, num_rows
-    ).tolist()
+    return list(multi_lora_layers_module._narrow_token_counts_to_window(tuple(counts), start, num_rows))
 
 
 def test_narrow_window_spanning_a_slot_boundary():
