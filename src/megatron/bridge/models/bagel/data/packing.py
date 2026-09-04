@@ -26,6 +26,55 @@ from megatron.bridge.models.bagel.data.energon import BagelSample
 logger = logging.getLogger(__name__)
 
 
+def _checkpoint_safe_value(value: object) -> object:
+    """Copy a BAGEL sample value into the restricted checkpoint type set."""
+    if value is None or type(value) in (bool, bytes, float, int, str) or isinstance(value, torch.Tensor):
+        return value
+    if isinstance(value, list):
+        return [_checkpoint_safe_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_checkpoint_safe_value(item) for item in value)
+    if isinstance(value, dict):
+        return {_checkpoint_safe_value(key): _checkpoint_safe_value(item) for key, item in value.items()}
+    raise TypeError(f"BAGEL buffered sample contains unsupported checkpoint value {type(value).__name__}")
+
+
+def _serialize_buffered_sample(sample: BagelSample) -> dict[str, object]:
+    """Serialize only fields the packer needs after restoring a buffered sample.
+
+    Energon source metadata can contain ``EPath`` objects whose pickle restore hook resolves a
+    storage client. Source metadata is diagnostic and is not consumed by :class:`BagelPacker`, so
+    it is intentionally omitted instead of widening the shared restricted-unpickler allowlist.
+    """
+    return {
+        "key": sample.__key__,
+        "restore_key": _checkpoint_safe_value(sample.__restore_key__),
+        "subflavors": _checkpoint_safe_value(sample.__subflavors__),
+        "image_tensor_list": _checkpoint_safe_value(sample.image_tensor_list),
+        "text_ids_list": _checkpoint_safe_value(sample.text_ids_list),
+        "num_tokens": sample.num_tokens,
+        "sequence_plan": _checkpoint_safe_value(sample.sequence_plan),
+        "metadata": _checkpoint_safe_value(sample.metadata),
+    }
+
+
+def _restore_buffered_sample(state: object) -> BagelSample:
+    """Reconstruct a trusted BAGEL sample after restricted checkpoint loading."""
+    if not isinstance(state, dict):
+        raise TypeError("BAGEL buffered sample state must be a dictionary")
+    return BagelSample(
+        __key__=state["key"],
+        __restore_key__=state["restore_key"],
+        __subflavors__=state["subflavors"],
+        __sources__=None,
+        image_tensor_list=state["image_tensor_list"],
+        text_ids_list=state["text_ids_list"],
+        num_tokens=state["num_tokens"],
+        sequence_plan=state["sequence_plan"],
+        metadata=state["metadata"],
+    )
+
+
 def _patchify(image: torch.Tensor, patch_size: int) -> torch.Tensor:
     """Patchify an image with BAGEL's channel-last patch ordering."""
     channels, height, width = image.shape
@@ -204,7 +253,7 @@ class BagelPacker:
         return {
             "status": {key: list(value) if isinstance(value, list) else value for key, value in self._status.items()},
             "source_ids": list(self._source_ids),
-            "buffer": list(self._buffer),
+            "buffer": [_serialize_buffered_sample(sample) for sample in self._buffer],
             "python_rng": random.getstate(),
             "numpy_rng": np.random.get_state(),
             "torch_rng": torch.get_rng_state(),
@@ -217,7 +266,10 @@ class BagelPacker:
             raise TypeError("BAGEL packer status must be a dictionary")
         self._status = {key: list(value) if isinstance(value, list) else value for key, value in status.items()}
         self._source_ids = list(state["source_ids"])
-        self._buffer = list(state["buffer"])
+        buffer = state["buffer"]
+        if not isinstance(buffer, list):
+            raise TypeError("BAGEL packer buffer must be a list")
+        self._buffer = [_restore_buffered_sample(sample_state) for sample_state in buffer]
         random.setstate(state["python_rng"])
         np.random.set_state(state["numpy_rng"])
         torch.set_rng_state(state["torch_rng"])

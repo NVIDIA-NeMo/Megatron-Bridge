@@ -739,7 +739,20 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["visual_pos_masks"] is None
         assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
 
-    def test_forward_preserves_legacy_qwen_step_packed_bshd_behavior(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("input_ids", "cu_seqlens"),
+        [
+            (torch.tensor([[11, 12, 21, 22]], dtype=torch.long), torch.tensor([0, 4], dtype=torch.int32)),
+            (torch.tensor([[11, 12], [21, 22]], dtype=torch.long), torch.tensor([0, 2, 4], dtype=torch.int32)),
+        ],
+        ids=("singleton", "multiple-samples"),
+    )
+    def test_forward_preserves_legacy_qwen_step_packed_bshd_behavior(
+        self,
+        monkeypatch,
+        input_ids,
+        cu_seqlens,
+    ):
         """Legacy Qwen step inputs are converted from BSHD to THD exactly once."""
         monkeypatch.setattr(
             "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
@@ -748,6 +761,18 @@ class TestQwen3VLModel:
         monkeypatch.setattr(
             "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
             lambda *_args, **_kwargs: None,
+        )
+
+        preprocess_calls = []
+
+        def fake_preprocess_packed_seqs(value, mask, **_kwargs):
+            preprocess_calls.append(value)
+            trailing_shape = value.shape[2:]
+            return value[mask].reshape(1, -1, *trailing_shape), object()
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.preprocess_packed_seqs",
+            fake_preprocess_packed_seqs,
         )
 
         class DummyLanguageModel:
@@ -774,19 +799,18 @@ class TestQwen3VLModel:
             vision_start_token_id=3,
             use_dist_train=False,
         )
-        input_ids = torch.tensor([[11, 12], [21, 22]], dtype=torch.long)
         labels = torch.tensor([[12, -100, 22, -100]], dtype=torch.long)
         loss_mask = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
         attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        cu_seqlens = torch.tensor([0, 2, 4], dtype=torch.int32)
+        max_seqlen = int(cu_seqlens.diff().max().item())
         packed_seq_params = PackedSeqParams(
             qkv_format="thd",
             cu_seqlens_q=cu_seqlens,
             cu_seqlens_kv=cu_seqlens,
             cu_seqlens_q_padded=cu_seqlens,
             cu_seqlens_kv_padded=cu_seqlens,
-            max_seqlen_q=2,
-            max_seqlen_kv=2,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
         )
 
         output = Qwen3VLModel.forward(
@@ -807,6 +831,7 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["loss_mask"] is loss_mask
         assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
         assert language_model.last_kwargs["padding_mask"] is None
+        assert len(preprocess_calls) == 2
 
     def test_forward_preserves_collate_packed_layout_for_sequence_parallel(self, monkeypatch):
         """Packed SP forwards the collator's THD tensors and metadata unchanged."""

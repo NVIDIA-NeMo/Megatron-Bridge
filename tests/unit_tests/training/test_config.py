@@ -16,6 +16,7 @@ import json
 import os
 import warnings
 from dataclasses import fields
+from types import SimpleNamespace
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +37,11 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.transformer_config import HeterogeneousTransformerConfig, TransformerConfig
+from megatron.bridge.models.transformer_config import (
+    _HYBRIDEP_PADDING_FIELDS,
+    HeterogeneousTransformerConfig,
+    TransformerConfig,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -915,9 +920,9 @@ class TestConfigContainerValidation:
         "profile_step_start, profile_step_end, expect_assertion_error, expected_error_match",
         [
             (10, 20, False, None),  # Valid: end > start
-            (10, 10, False, None),  # Valid: end == start (single step)
+            (10, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: empty range
             (0, 5, False, None),  # Valid: start at 0
-            (20, 10, True, "profile_step_end .* must be >= profile_step_start"),  # Invalid: end < start
+            (20, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: end < start
             (-1, 10, True, "profile_step_start must be >= 0"),  # Invalid: start < 0
             (10, -1, True, "profile_step_end must be >= 0"),  # Invalid: end < 0
             (-5, -1, True, "profile_step_start must be >= 0"),  # Invalid: both < 0
@@ -989,6 +994,97 @@ class TestConfigContainerValidation:
 
         try:
             container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("packing_mode", ["offline", "in_batch"])
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_thd_recipe_enables_hybridep_padding(self, _mock_device, packing_mode):
+        """Recipe-owned THD packing enables safe HybridEP uneven-input padding."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+        )
+        padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if hasattr(gpt_model_cfg, field))
+
+        if packing_mode == "offline":
+            train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+            dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+            dataset_cfg.enable_offline_packing = True
+            dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        else:
+            train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=32)
+            dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+            dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("configured_padding", [False, True])
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_bshd_recipe_preserves_hybridep_padding_setting(self, _mock_device, configured_padding):
+        """An unpacked BSHD recipe does not gain automatic padding or lose an explicit setting."""
+        padding_field = next(
+            field for field in _HYBRIDEP_PADDING_FIELDS if field in GPTModelProvider.__dataclass_fields__
+        )
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            **{padding_field: configured_padding},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is configured_padding
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_thd_recipe_ignores_stale_cuda_graph_scope_when_impl_none(self, _mock_device):
+        """A deprecated scope that validation clears must not suppress eager THD safety."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            cuda_graph_impl="none",
+            use_te_rng_tracker=True,
+        )
+        padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if hasattr(gpt_model_cfg, field))
+        gpt_model_cfg.cuda_graph_scope = ["full_iteration"]
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=create_test_training_config(micro_batch_size=1, global_batch_size=32),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is True
+            assert cuda_graph_module_names(gpt_model_cfg) == []
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -1075,8 +1171,9 @@ class TestConfigContainerValidation:
         """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1185,15 +1282,22 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_native_energon_packing_marks_builder_transformer_config(self, monkeypatch):
-        """Test native Energon packing marks the nested builder transformer config."""
+        """Native Energon THD packing marks the nested transformer and enables HybridEP padding."""
+        padding_field = next(
+            field for field in _HYBRIDEP_PADDING_FIELDS if field in TransformerConfig.__dataclass_fields__
+        )
         model_cfg = BridgeGPTModelConfig(
             transformer=TransformerConfig(
                 num_layers=2,
                 hidden_size=128,
                 num_attention_heads=4,
                 ffn_hidden_size=256,
+                num_moe_experts=8,
+                moe_token_dispatcher_type="flex",
+                moe_flex_dispatcher_backend="hybridep",
                 calculate_per_token_loss=True,
                 use_cpu_initialization=True,
+                **{padding_field: False},
             ),
             vocab_size=256,
             seq_length=512,
@@ -1208,10 +1312,16 @@ class TestConfigContainerValidation:
             dataset_config_override=dataset_cfg,
         )
         container.ddp.average_in_collective = False
+        monkeypatch.setattr(
+            torch.cuda,
+            "get_device_properties",
+            lambda _device: SimpleNamespace(major=9, name="NVIDIA H100"),
+        )
 
         try:
             container.validate()
             assert model_cfg.transformer._enable_in_batch_packing is True
+            assert getattr(model_cfg.transformer, padding_field) is True
             assert "_enable_in_batch_packing" not in model_cfg.__dict__
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1225,8 +1335,9 @@ class TestConfigContainerValidation:
             calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8,
@@ -1756,6 +1867,7 @@ class TestConfigContainerValidation:
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3053,6 +3165,54 @@ class TestRerunConfigValidation:
 
 class TestCheckpointConfig:
     """Tests for CheckpointConfig class."""
+
+    @pytest.mark.parametrize(
+        "config_overrides, error_message",
+        [
+            ({"save_interval": 10, "save_retain_interval": 0}, "save_retain_interval must be positive"),
+            (
+                {"save_interval": None, "save_retain_interval": 20},
+                "save_retain_interval requires a positive save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 15},
+                "save_retain_interval must be divisible by save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 20, "most_recent_k": 1},
+                "save_retain_interval and most_recent_k cannot be enabled together",
+            ),
+        ],
+    )
+    def test_save_retain_interval_validation(self, config_overrides, error_message):
+        """Retain intervals require one valid, unambiguous persistent retention policy."""
+        ckpt_cfg = create_test_checkpoint_config(**config_overrides)
+
+        with pytest.raises(ValueError, match=error_message):
+            ckpt_cfg.finalize()
+
+    def test_save_retain_interval_accepts_multiple_of_save_interval(self):
+        """A positive retain interval divisible by the save interval is valid."""
+        ckpt_cfg = create_test_checkpoint_config(save_interval=10, save_retain_interval=20)
+
+        ckpt_cfg.finalize()
+
+    def test_precision_aware_optimizer_cpu_staging_defaults_off(self):
+        ckpt_cfg = create_test_checkpoint_config()
+
+        assert ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu is False
+
+    def test_precision_aware_optimizer_cpu_staging_requires_torch_dist(self):
+        ckpt_cfg = create_test_checkpoint_config(
+            ckpt_format="torch",
+            stage_precision_aware_optimizer_state_on_cpu=True,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'",
+        ):
+            ckpt_cfg.finalize()
 
     @pytest.mark.parametrize(
         "load_main_params_from_ckpt, load_optim, expect_assertion_error",

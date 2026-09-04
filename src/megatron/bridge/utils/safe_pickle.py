@@ -57,14 +57,6 @@ _ENERGON_SAFE_STATE_GLOBALS = MappingProxyType(
             }
         ),
         "megatron.energon.flavors.webdataset.sample_loader": frozenset({"SliceState"}),
-        "megatron.energon.source_info": frozenset({"SourceInfo"}),
-        "megatron.bridge.models.bagel.data.energon": frozenset({"BagelSample"}),
-    }
-)
-_ENERGON_SAFE_VALUE_GLOBALS = MappingProxyType(
-    {
-        "megatron.energon.epathlib.epath": frozenset({"EPath"}),
-        "pathlib": frozenset({"PurePosixPath"}),
     }
 )
 _TRAVERSAL_IN_PROGRESS = object()
@@ -247,6 +239,32 @@ class _RestrictedUnpickler(pickle.Unpickler):
         )
 
 
+def _safe_torch_load_from_bytes(data: bytes) -> object:
+    """Reconstruct tensor storage bytes without enabling arbitrary pickle globals."""
+    import torch
+
+    return torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
+
+
+class _TorchTensorRestrictedUnpickler(_RestrictedUnpickler):
+    """Restricted unpickler for plain tensors and containers of tensors."""
+
+    _SAFE_MODULES = MappingProxyType(
+        {
+            **_RestrictedUnpickler._SAFE_MODULES,
+            "torch._utils": frozenset({"_rebuild_tensor", "_rebuild_tensor_v2"}),
+        }
+    )
+
+    def find_class(self, module: str, name: str) -> object:
+        if (module, name) in {
+            ("megatron.core.safe_globals", "safe_load_from_bytes"),
+            ("torch.storage", "_load_from_bytes"),
+        }:
+            return _safe_torch_load_from_bytes
+        return super().find_class(module, name)
+
+
 class _NumpyRestrictedUnpickler(pickle.Unpickler):
     """Unpickler that allows safe builtins and the narrow set of numpy types needed for object array reconstruction.
 
@@ -307,7 +325,6 @@ class _EnergonUnpickler(_NumpyRestrictedUnpickler):
             # raise an UnpicklingError that names the missing ``module.name``; file a bug
             # against Megatron Bridge so the allowlist can be extended.
             **_ENERGON_SAFE_STATE_GLOBALS,
-            **_ENERGON_SAFE_VALUE_GLOBALS,
         }
     )
 
@@ -435,6 +452,11 @@ def safe_pickle_load(fp) -> object:
 def safe_pickle_loads(data: bytes) -> object:
     """Deserialize pickle data using a restricted unpickler that only allows safe types."""
     return _RestrictedUnpickler(io.BytesIO(data)).load()
+
+
+def safe_torch_tensor_pickle_loads(data: bytes) -> object:
+    """Deserialize raw pickle data containing only safe containers and plain torch tensors."""
+    return _TorchTensorRestrictedUnpickler(io.BytesIO(data)).load()
 
 
 def safe_load_npy(data: bytes):

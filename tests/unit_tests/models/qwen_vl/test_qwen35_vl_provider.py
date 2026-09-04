@@ -54,7 +54,7 @@ class TestQwen35VLModelProvider:
         )
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_output_gate is True
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
 
     def test_gdn_defaults(self):
@@ -267,7 +267,7 @@ class TestQwen35VLMoEModelProvider:
             hidden_size=4096,
             num_attention_heads=32,
         )
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_output_gate is True

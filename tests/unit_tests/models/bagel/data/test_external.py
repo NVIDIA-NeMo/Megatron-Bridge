@@ -1,14 +1,9 @@
 import pytest
-import torch
 from megatron.core.rerun_state_machine import RerunDataIterator
-from megatron.energon.epathlib.epath import EPath
-from megatron.energon.source_info import SourceInfo
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.models.bagel.data.energon import BagelSample
 from megatron.bridge.models.bagel.data.external import BagelExternalLoader, BagelMegatronMIMODatasetProvider
-from megatron.bridge.utils.safe_pickle import energon_torch_load
 
 
 pytestmark = pytest.mark.unit
@@ -88,25 +83,3 @@ def test_bagel_external_loader_restores_reader_and_packer_state() -> None:
     restored.restore_state(state)
 
     assert next(restored) == expected
-
-
-def test_bagel_sample_is_allowed_in_energon_checkpoint(tmp_path) -> None:
-    source = SourceInfo(dataset_path=EPath("/dataset"), index=0, shard_name="t2i.tar", file_names=("0.image",))
-    sample = BagelSample(
-        __key__="t2i-0",
-        __restore_key__=(source,),
-        __subflavors__={},
-        image_tensor_list=[torch.ones(1)],
-        text_ids_list=[[1]],
-        num_tokens=1,
-        sequence_plan=[{"type": "text"}],
-        metadata={"dataset_group": "t2i_pretrain"},
-    )
-    path = tmp_path / "dataloader-state.pt"
-    torch.save({"dataloader_state_dict": sample}, path)
-
-    restored = energon_torch_load(str(path))["dataloader_state_dict"]
-
-    assert isinstance(restored, BagelSample)
-    assert torch.equal(restored.image_tensor_list[0], sample.image_tensor_list[0])
-    assert restored.metadata == sample.metadata
