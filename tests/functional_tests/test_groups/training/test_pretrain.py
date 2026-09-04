@@ -20,7 +20,12 @@ import pytest
 import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.tensor_parallel import gtp_api
+
+
+try:
+    from megatron.core.tensor_parallel import gtp_api
+except ImportError:
+    gtp_api = None
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -118,7 +123,7 @@ class TestPretrain:
     """
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.skipif(not gtp_api.HAVE_GTP, reason="GTP requires TransformerEngine >= 2.19")
+    @pytest.mark.skipif(gtp_api is None or not gtp_api.HAVE_GTP, reason="GTP requires MCore GTP support")
     def test_pretrain_with_generalized_tensor_parallelism(self):
         """Train three finite BF16 steps with dense weights sharded over a two-rank GTP axis."""
         initialize_distributed()

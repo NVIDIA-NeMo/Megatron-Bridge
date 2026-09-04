@@ -15,9 +15,17 @@
 import importlib
 
 import pytest
+import torch
 
+import megatron.bridge.recipes as recipes
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config,
+)
+from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
+    nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
+    nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_TOKENIZER_NAME,
@@ -84,6 +92,71 @@ def test_pretrain_uses_initial_parallelism_values() -> None:
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.seq_length == 8192
     assert cfg.dataset.blend is None
+
+
+@pytest.mark.unit
+def test_h100_large_scale_pretrain_preserves_functional_policy() -> None:
+    cfg = nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config()
+
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.fp8 is None
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "block"
+    assert cfg.model.recompute_num_layers == 108
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 1
+
+    assert cfg.dist.use_megatron_fsdp is True
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.float32
+    assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+
+
+@pytest.mark.unit
+def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
+    assert recipes.nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config is (
+        nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config
+    )
+
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config()
+
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.fp8 is None
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["fused_group_mlp"]
+    assert cfg.model.recompute_modules == ["core_attn", "layernorm"]
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+
+    assert cfg.dist.use_megatron_fsdp is False
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.checkpoint.ckpt_format == "torch_dist"
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
 
 
 @pytest.mark.unit

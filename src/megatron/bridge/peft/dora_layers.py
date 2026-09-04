@@ -40,6 +40,10 @@ class ParallelLinearDoRAAdapter(ParallelLinearAdapter):
             value (torch.Tensor): Initial values for the weight magnitude parameter.
         """
         self.weight_magnitude = nn.Parameter(value, requires_grad=True)
+        if self.replicate_adapter:
+            self.weight_magnitude.allreduce = True
+            self.weight_magnitude.tensor_model_parallel = False
+            self.weight_magnitude.sequence_parallel = self.config.sequence_parallel
 
     def get_weight_magnitude(self) -> torch.Tensor:
         """
@@ -68,8 +72,8 @@ class ParallelLinearDoRAAdapter(ParallelLinearAdapter):
         sharded_state_dict = super().sharded_state_dict(prefix, sharded_offsets, metadata)
 
         magnitude_key = f"{prefix}weight_magnitude"
-        if self.input_is_parallel:
-            # RPL output is gathered, so weight_magnitude is not sharded for TP
+        if self.replicate_adapter or self.input_is_parallel:
+            # Row-parallel and duplicated outputs are full-width, so magnitude is replicated.
             magnitude_sharded_tensor = make_sharded_tensor_for_checkpoint(
                 self.weight_magnitude, magnitude_key, prepend_offsets=sharded_offsets
             )
@@ -119,7 +123,10 @@ class DoRALinear(AdapterWrapper):
         Returns:
             torch.Tensor: The L2 norm of the combined weight matrix.
         """
-        if self.adapter.input_is_parallel:
+        if self.adapter.replicate_adapter:
+            linear_out_weight = self.adapter.linear_out.weight
+            linear_in_weight = self.adapter.linear_in.weight
+        elif self.adapter.input_is_parallel:
             linear_out_weight = gather_from_tensor_model_parallel_region(self.adapter.linear_out.weight.T).T
             linear_in_weight = self.adapter.linear_in.weight
         else:
