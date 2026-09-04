@@ -19,6 +19,12 @@ from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.mock_gpt_sft import (
+    MockGPTSFTDataset,
+    MockGPTSFTDatasetConfig,
+    generate_lognormal_sequence_lengths,
+    mock_gpt_sft_train_valid_test_datasets_provider,
+)
 from megatron.bridge.data.builders.mock_vlm_sft import (
     MockVLMSFTDatasetBuilder,
     MockVLMSFTDatasetConfig,
@@ -53,12 +59,16 @@ __all__ = [
     "NemotronOmniEnergonTaskEncoderConfig",
     "MockVLMSFTDatasetBuilder",
     "MockVLMSFTDatasetConfig",
+    "MockGPTSFTDataset",
+    "MockGPTSFTDatasetConfig",
     "PromptCompletionSFTPreprocessingConfig",
     "SFTPreprocessingConfig",
     "gpt_sft_train_valid_test_datasets_provider",
     "direct_hf_sft_train_valid_test_datasets_provider",
     "energon_train_valid_test_datasets_provider",
     "mock_vlm_sft_train_valid_test_datasets_provider",
+    "generate_lognormal_sequence_lengths",
+    "mock_gpt_sft_train_valid_test_datasets_provider",
     # Deprecated compatibility exports.
     "FinetuningDatasetBuilder",
     "FinetuningDatasetConfig",

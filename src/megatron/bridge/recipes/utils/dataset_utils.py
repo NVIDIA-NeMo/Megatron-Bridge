@@ -25,6 +25,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     HFEnergonTaskEncoderConfig,
+    MockGPTSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
 )
@@ -398,6 +399,26 @@ def _mock_dataset_config(config: ConfigContainer) -> MockGPTDatasetConfig:
     )
 
 
+def _lognormal_mock_sft_dataset_config(config: ConfigContainer) -> MockGPTSFTDatasetConfig:
+    """Build the public Dynamic CP lognormal positive-control preset."""
+    return MockGPTSFTDatasetConfig(
+        seq_length=_resolve_seq_length(config),
+        min_sequence_length=256,
+        max_sequence_length=None,
+        mean_sequence_length=None,
+        lognormal_sigma=1.1,
+        num_base_samples=1_000_000,
+        seed=0,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=16,
+        dataloader_type="cyclic",
+        num_workers=2,
+        persistent_workers=True,
+        do_validation=False,
+        do_test=False,
+    )
+
+
 def _megatron_indexed_dataset_config(config: ConfigContainer) -> GPTDatasetConfig:
     """Build the Megatron indexed pretraining dataset preset."""
     return GPTDatasetConfig(
@@ -576,6 +597,7 @@ def _hf_vlm_dataset_config(
 
 DATASET_PRESETS: dict[str, DatasetPreset] = {
     "mock": _mock_dataset_config,
+    "lognormal-mock": _lognormal_mock_sft_dataset_config,
     "megatron-indexed": _megatron_indexed_dataset_config,
     "energon": _energon_dataset_config,
     "squad": _squad_dataset_config,

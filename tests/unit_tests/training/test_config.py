@@ -29,6 +29,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     HFEnergonTaskEncoderConfig,
+    MockGPTSFTDatasetConfig,
     MockVLMSFTDatasetConfig,
     QwenVLEnergonTaskEncoderConfig,
 )
@@ -1224,6 +1225,35 @@ class TestConfigContainerValidation:
         dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
         dataset_cfg.dataloader_type = "batch"
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert dataset_cfg.defer_in_batch_packing_to_step is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_dynamic_cp_accepts_lognormal_mock_gpt_sft_contract(self, monkeypatch):
+        """The positive-control mock follows the same deferred GPT SFT contract."""
+        gpt_model_cfg = create_test_gpt_config(
+            dynamic_context_parallel=True,
+            max_seqlen_per_dp_cp_rank=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+        dataset_cfg = MockGPTSFTDatasetConfig(
+            seq_length=512,
+            min_sequence_length=256,
+            mean_sequence_length=384,
+            num_base_samples=32,
+            num_workers=0,
+            persistent_workers=False,
+        )
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,

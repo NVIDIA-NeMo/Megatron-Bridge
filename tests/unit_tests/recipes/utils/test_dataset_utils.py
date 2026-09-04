@@ -21,6 +21,7 @@ from megatron.bridge.data.builders import (
     EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFEnergonTaskEncoderConfig,
+    MockGPTSFTDatasetConfig,
     MockVLMSFTDatasetConfig,
     QwenVLEnergonTaskEncoderConfig,
 )
@@ -123,6 +124,7 @@ class TestDatasetPresets:
     def test_registry_contains_only_public_names_and_factories(self):
         assert set(DATASET_PRESETS) == {
             "mock",
+            "lognormal-mock",
             "megatron-indexed",
             "energon",
             "squad",
@@ -164,6 +166,19 @@ class TestDatasetPresets:
         assert "sequence_length" not in serialized
         dataset.finalize()
         assert dataset.sequence_length == 4096
+
+    def test_lognormal_mock_uses_public_dynamic_cp_distribution(self):
+        dataset = build_dataset_config(_make_config(model_seq_length=131_072), "lognormal-mock")
+
+        assert isinstance(dataset, MockGPTSFTDatasetConfig)
+        assert dataset.seq_length == 131_072
+        assert dataset.min_sequence_length == 256
+        assert dataset.resolved_max_sequence_length == 131_072
+        assert dataset.resolved_mean_sequence_length == 16_384
+        assert dataset.lognormal_sigma == 1.1
+        assert dataset.enable_in_batch_packing is True
+        assert dataset.in_batch_packing_pad_to_multiple_of == 16
+        assert dataset_train_mode(dataset) == "finetune"
 
     def test_energon_preset_uses_recipe_processor_and_batch_size(self):
         config = _make_vlm_config()
