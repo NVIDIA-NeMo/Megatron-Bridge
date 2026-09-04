@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration checks for experimental Blackwell NVFP4 full-iteration recipes."""
+"""Configuration checks for Qwen3 235B Blackwell NVFP4 full-iteration recipes."""
 
 import pytest
 
-from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_super_pretrain_64gpu_b200_nvfp4_full_iteration_config,
-    nemotron_3_super_pretrain_64gpu_b300_nvfp4_full_iteration_config,
-)
 from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config,
@@ -78,21 +74,9 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
             0,
             72,
         ),
-        (
-            nemotron_3_super_pretrain_64gpu_b200_nvfp4_full_iteration_config,
-            (2, 1, None, 64),
-            1,
-            8,
-        ),
-        (
-            nemotron_3_super_pretrain_64gpu_b300_nvfp4_full_iteration_config,
-            (1, 1, None, 8),
-            1,
-            8,
-        ),
     ],
 )
-def test_blackwell_nvfp4_full_iteration_stack(
+def test_qwen3_235b_blackwell_nvfp4_full_iteration_stack(
     recipe, expected_parallelism, expected_avoid_record_streams, expected_nvlink_domain_size
 ) -> None:
     cfg = recipe()
@@ -133,17 +117,3 @@ def test_blackwell_nvfp4_full_iteration_stack(
         cfg.model.expert_model_parallel_size,
     )
     assert actual_parallelism == expected_parallelism
-
-
-@pytest.mark.parametrize(
-    "recipe",
-    [
-        nemotron_3_super_pretrain_64gpu_b200_nvfp4_full_iteration_config,
-        nemotron_3_super_pretrain_64gpu_b300_nvfp4_full_iteration_config,
-    ],
-)
-def test_nemotron_3_super_full_iteration_keeps_mtp_in_bf16(recipe) -> None:
-    cfg = recipe()
-
-    assert cfg.model.keep_mtp_spec_in_bf16 is True
-    assert cfg.model.quant_recipe is not None

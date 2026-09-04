@@ -26,7 +26,6 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
 
@@ -65,7 +64,10 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
-    return nemotron_3_super_bf16_with_nvfp4_mixed()
+    cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
+    # Disabled until MCore PR 4358 lands.
+    cfg.fp4_param_gather = False
+    return cfg
 
 
 def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
@@ -87,36 +89,6 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.checkpoint.async_save = False
 
     _benchmark_common(cfg)
-
-
-def _enable_nemotron_3_super_full_iteration_nvfp4(cfg: ConfigContainer) -> None:
-    """Enable full-iteration CUDA graphs and FP4-aware MoE A2A overlap."""
-    cfg.model.cuda_graph_impl = "full_iteration"
-    cfg.model.cuda_graph_scope = []
-    cfg.rng.te_rng_tracker = True
-    cfg.model.use_te_rng_tracker = True
-
-    cfg.model.offload_modules = []
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.model.high_priority_a2a_comm_stream = False
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-    cfg.model.moe_hybridep_num_sms_preprocessing = 32
-
-    cfg.mixed_precision.fp8_dot_product_attention = False
-    cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=False,
-        overlap_moe_expert_parallel_comm=True,
-        delay_wgrad_compute=True,
-    )
 
 
 def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:

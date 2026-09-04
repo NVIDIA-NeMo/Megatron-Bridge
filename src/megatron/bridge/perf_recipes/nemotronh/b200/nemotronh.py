@@ -20,7 +20,6 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _benchmark_common,
-    _enable_nemotron_3_super_full_iteration_nvfp4,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     _with_global_batch_size,
@@ -208,30 +207,6 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
-        "NVTE_USE_FAST_MATH": 1,
-    }
-    return cfg
-
-
-def nemotron_3_super_pretrain_64gpu_b200_nvfp4_full_iteration_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× B200, NVFP4, full-iteration CG and A2A overlap."""
-    cfg = nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
-    _enable_nemotron_3_super_full_iteration_nvfp4(cfg)
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
-        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
