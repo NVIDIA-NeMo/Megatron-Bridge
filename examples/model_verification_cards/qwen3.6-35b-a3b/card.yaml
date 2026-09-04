@@ -3,12 +3,13 @@
 
 title: qwen3_6_35b_a3b
 summary: >
-  Performance scope: pretrain_performance.H100 uses the tuned 16-H100 library
-  recipe with the same pinned DataComp source as functional pretraining. The
-  corresponding real-data pretrain, SFT, and LoRA measurements are verified.
-  pretrain_performance.GB200 retains its tuned fixed-shape synthetic benchmark.
-  Functional timing and throughput remain sanity checks. This card verifies
-  conversion, inference, and training.
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  Full-model H100 DataComp pretraining reaches 135.610 model TFLOP/s/GPU,
+  approximately 136, with natural routing. Checkpoint resume is explicitly
+  unverified pending a full-model rerun. This card otherwise verifies conversion,
+  inference, SFT, long-context SFT, and PEFT.
 verification_index:
   model_level:
     verified:
@@ -20,13 +21,11 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, peft, sft_long_context, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, peft, sft_long_context]
+      unverified: [checkpoint_resume]
     GB200:
       verified: [sft, peft]
       unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
-  performance:
-    H100: verified
-    GB200: verified
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
   hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
@@ -172,59 +171,43 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 52601b0382f869c9ca14109acdcdef77cc4fa61a  # pragma: allowlist secret
-      enabled_features: {}
+      enabled_features:
+        moe_dispatcher: hybridep
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-        --recipe qwen35_vl_35b_a3b_pretrain_mock_config
-        --dataset energon --deterministic
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen35_vl_35b_a3b_pretrain_config
+        --dataset energon
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-        --max_steps 20 --warmup_iters 2
-        --save_dir
-        work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints
-        --save_interval 10
+        --max_steps 50 --warmup_iters 10
         dataset.path=work/data/datacomp/energon
         dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
-        dataset.do_validation=false
-        scheduler.lr_decay_iters=20
+        dataset.task_encoder.max_pixels=200704
+        dataset.do_validation=false dataset.pad_to_max_length=true
+        scheduler.lr_decay_iters=50
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044
-        model.recompute_granularity=full
-        model.recompute_method=uniform model.recompute_num_layers=1
-        checkpoint.load=null
+        model.bos_token_id=248044 checkpoint.load=null
         validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_large_grads=true
         logger.log_interval=1 logger.log_throughput=true
-        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/resolved-config.yaml
-      last_verified: 2026-07-28
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml
+      last_verified: 2026-08-05
       metrics:
-        initial_loss: 3.610127
-        final_loss: 2.261159
-        last_10_steps_step_time_ms_avg: 330730.470
-        last_10_steps_model_tflops_per_gpu_avg: 18.090
-        last_10_steps_tokens_per_second_per_gpu_avg: 792.621
+        initial_loss: 3.604611
+        final_loss: 3.458849
+        last_10_steps_step_time_ms_avg: 22271.220
+        last_10_steps_model_tflops_per_gpu_avg: 135.610
+        last_10_steps_tokens_per_second_per_gpu_avg: 5885.264
       expected_result: >
-        At the recorded bridge commit, this bounded projection-pretraining
-        support run used the official DataComp download pipeline at repository
-        commit 4a8df1992566, the DataComp-1B metadata at revision 086ebeee20d4,
-        and img2dataset 1.40.0.
-        The Energon dataset contains 519,827 training and 5,173 validation
-        image-caption samples; each training record maps an image plus
-        "Describe this image." to its caption. The deterministic 20-step
-        reference consumed 10,240 training samples without wrapping. It
-        warm-started the imported Qwen3.6 checkpoint, froze the language and
-        vision towers, and trained the vision projection at
-        TP1/PP1/CP1/EP8/ETP1, DP8, MBS1/GBS512, and 64-way gradient
-        accumulation with one-layer full-uniform recompute. Loss was finite
-        from 3.610127 to 2.261159 with zero skipped or NaN iterations; steps
-        11-20 averaged 330,730.470 ms and 18.090 TFLOP/s/GPU. Complete
-        72,366,371,530-byte eight-shard model/optimizer/RNG checkpoints and
-        eight nonempty Energon rank states were saved at both steps 10 and 20,
-        and the process exited successfully in 1h54m51s. This verifies the
-        DataComp workflow and bounded Qwen VLM pretraining support, not
-        canonical DataComp/CLIP convergence.
+        The 16-H100 command completed all 50 full-model DataComp Energon steps
+        at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the
+        immutable imported checkpoint for natural routing. Loss remained finite
+        from 3.604611 to 3.458849 with zero skipped or NaN iterations. The
+        519,827/5,173 train/validation split was prepared with the official
+        DataComp downloader at commit 4a8df1992566, DataComp-1B metadata
+        revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest
+        6e273a96a756. This verifies bounded full-model training, not canonical
+        DataComp/CLIP convergence or checkpoint resume.
 
   sft:
     H100:
@@ -478,128 +461,25 @@ items:
 
   checkpoint_resume:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 52601b0382f869c9ca14109acdcdef77cc4fa61a  # pragma: allowlist secret
       depends_on: pretrain
-      command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-        --recipe qwen35_vl_35b_a3b_pretrain_mock_config
-        --dataset energon --deterministic
-        --load_dir
-        work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints
-        --max_steps 20 --warmup_iters 2
-        --save_dir
-        work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-resume/checkpoints
-        --save_interval 10
-        dataset.path=work/data/datacomp/energon
-        dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B
-        dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
-        dataset.do_validation=false
-        scheduler.lr_decay_iters=20
-        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044
-        model.recompute_granularity=full
-        model.recompute_method=uniform model.recompute_num_layers=1
-        checkpoint.ckpt_step=10
-        validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_large_grads=true
-        logger.log_interval=1 logger.log_throughput=true
-        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-resume/resolved-config.yaml
-      last_verified: 2026-07-28
+      command: null
+      last_verified: null
       metrics:
-        initial_loss: 2.324095
-        final_loss: 2.262711
-        last_10_steps_step_time_ms_avg: 339600.710
-        last_10_steps_model_tflops_per_gpu_avg: 17.650
-        last_10_steps_tokens_per_second_per_gpu_avg: 771.918
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: null
       expected_result: >
-        A fresh process loaded the exact reference step-10 checkpoint without
-        a fallback warm start, restored model, optimizer, scheduler, RNG, and
-        all eight Energon data-order states, entered the loop at iteration 10,
-        and completed steps 11-20 in a distinct output root with zero skipped
-        or NaN iterations. Step-11 loss 2.324095 matches the uninterrupted
-        reference exactly. Step-20 loss 2.262711 differs from reference
-        2.261159 by 0.001552, or 0.068637%, within the declared one-percent
-        gate; every intermediate resumed step was also within 0.1% of its
-        reference. The resumed process exited successfully in 59m52s and
-        saved a complete 72,366,371,502-byte eight-shard model/optimizer/RNG
-        checkpoint plus eight nonempty Energon rank states at step 20, with
-        the tracker selecting iteration 20.
-
-  pretrain_performance:
-    H100:
-      status: verified
-      precision: bf16
-      command: >
-        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config
-        --dataset energon
-        --pretrained_checkpoint
-        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-        --max_steps 50 --warmup_iters 10
-        dataset.path=work/data/datacomp/energon
-        dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B
-        dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
-        dataset.task_encoder.max_pixels=200704
-        dataset.do_validation=false dataset.pad_to_max_length=true
-        scheduler.lr_decay_iters=50
-        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
-        model.bos_token_id=248044 checkpoint.load=null checkpoint.save=null
-        validation.eval_iters=0 validation.eval_interval=0
-        logger.log_interval=1 logger.log_throughput=true
-        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml
-      last_verified: 2026-08-05
-      metrics:
-        initial_loss: 3.604611
-        final_loss: 3.458849
-        last_10_steps_step_time_ms_avg: 22271.220
-        last_10_steps_model_tflops_per_gpu_avg: 135.610
-        last_10_steps_tokens_per_second_per_gpu_avg: 5885.264
-      expected_result: >
-        The exact 16-H100 command completed all 50 DataComp Energon steps at
-        TP1/PP2/CP1/EP8/ETP1, a 16/24 language-layer pipeline split, and
-        MBS1/GBS512. The persisted config confirmed the 248,320-token model
-        vocabulary, natural expert routing, HybridEP, selective core-attention,
-        GDN output-norm, and MoE-activation recompute, scoped Transformer Engine
-        CUDA graphs for language attention/router/preprocessing, a graph-free
-        variable-shape vision encoder, and Transformer Engine fused cross
-        entropy. Loss remained finite from 3.604611 to 3.458849 with zero
-        skipped or NaN iterations. Steps 41-50 averaged 22,271.220 ms and
-        135.610 model TFLOP/s/GPU, and the process exited successfully without
-        checkpoint output. The separate fixed-shape forced-balance tuning screen
-        remains the source of the 185.150-TFLOP/s/GPU leader policy; it is not
-        substituted for this real-data measurement.
-
-    GB200:
-      status: verified
-      precision: fp8_mx
-      command: >
-        ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config
-        --max_steps 50
-        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-performance/resolved-config.yaml
-      last_verified: 2026-07-30
-      metrics:
-        initial_loss: 12.81499
-        final_loss: 3.166235
-        last_10_steps_step_time_ms_avg: 26880.420
-        last_10_steps_model_tflops_per_gpu_avg: 210.360
-        last_10_steps_tokens_per_second_per_gpu_avg: 9142.714
-      expected_result: >
-        On 8x GB200, the exact architecture-shared Qwen3.5/Qwen3.6-VL
-        fixed-shape mock-data recipe completed 50 steps at
-        TP1/PP1/CP1/EP8/ETP1, dense DP8 and expert DP1, MBS3/GBS480, and 20
-        microbatches per optimizer step. The persisted post-setup config
-        confirmed forced expert balance, HybridEP, MXFP8, cuDNN LayerNorm, and
-        Transformer Engine CUDA graphs for the MoE router and preprocessing
-        scopes. Loss was finite from 12.81499 to 3.166235 with zero skipped or
-        NaN iterations. Steps 41-50 averaged 26,880.420 ms and 210.360 model
-        TFLOP/s/GPU, and the process exited successfully. This synthetic result
-        is a throughput measurement, not a convergence claim.
+        Unverified. The completed full-model pretrain run intentionally did not
+        save checkpoints. Publish a resume command only after a new reference
+        run saves a middle checkpoint and a fresh continuation restores its
+        model, optimizer, scheduler, RNG, and Energon data-order state.
