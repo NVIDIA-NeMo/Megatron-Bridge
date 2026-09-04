@@ -410,14 +410,38 @@ class TestMegatronFSDP:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MFSDP v2 is unavailable in this MCore revision")
-    def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
-        """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
+    @pytest.mark.parametrize(
+        "optimizer_overrides,ddp_overrides",
+        [
+            pytest.param({}, {}, id="defaults"),
+            pytest.param({"use_precision_aware_optimizer": True}, {}, id="precision_aware_optimizer"),
+            pytest.param(
+                {"optimizer_cuda_graph": True},
+                # Capturable TE FusedAdam needs the main-gradient and main-weight dtypes to match.
+                {"megatron_fsdp_main_grads_dtype": torch.float32},
+                id="optimizer_cuda_graph",
+            ),
+            pytest.param(
+                {},
+                {"num_distributed_optimizer_instances": 2, "outer_dp_sharding_strategy": "optim"},
+                id="hsdp",
+            ),
+        ],
+    )
+    def test_fsdp_v2_dense_hybrid_pretrain_smoke(self, optimizer_overrides, ddp_overrides):
+        """Train a dense two-layer HybridModel with the experimental MFSDP V2 path.
+
+        The parameters cover the settings MFSDP V2 accepts on top of the defaults, which
+        already train with clip_grad=1.0.
+        """
         initialize_distributed()
         torch.distributed.barrier()
 
         cfg = create_fsdp_config_container(
             seq_length=128,
             train_iters=10,
+            optimizer=optimizer_overrides,
+            ddp=ddp_overrides,
         )
         cfg.model = create_dense_hybrid_smoke_model_config()
         cfg.ddp.megatron_fsdp_version = 2
