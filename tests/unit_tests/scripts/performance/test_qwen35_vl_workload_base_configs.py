@@ -28,6 +28,10 @@ from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config,
 )
+from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+)
 from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config,
     qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config,
@@ -217,3 +221,43 @@ def test_qwen35_vl_35b_gb200_measured_performance_defaults(
     assert cuda_graph_module_names(config.model) == expected_graph_modules
     assert config.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert config.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+
+
+def test_qwen35_vl_35b_gb300_fp8mx_enables_cutedsl_grouped_mlp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GB300 MXFP8 recipe should route the MoE experts through the CuTe DSL grouped MLP.
+
+    Transformer Engine only matches the fused grouped MLP when the op fuser, the
+    32-wide GLU interleaving and the NVTE_CUTEDSL_FUSED_GROUPED_MLP gate are all
+    set. If any one is missing TE does not raise -- it silently falls back to the
+    cuBLASLt grouped GEMM -- so assert all three together.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+
+    assert config.model.use_transformer_engine_op_fuser is True
+    assert config.model.moe_mlp_glu_interleave_size == 32
+    assert config.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+    # The fused kernel is MXFP8-only; the recipe must still select that recipe.
+    assert config.mixed_precision.fp8 == "e4m3"
+    assert config.mixed_precision.fp8_recipe == "mxfp8"
+
+    # SwiGLU is a precondition of ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8, and the
+    # fused kernel additionally requires FC1/FC2 dims divisible by 64 with
+    # fc1_out == 2 * fc2_in.
+    assert config.model.gated_linear_unit is True
+    assert config.model.hidden_size % 64 == 0
+    assert config.model.moe_ffn_hidden_size % 64 == 0
+
+
+def test_qwen35_vl_35b_gb300_bf16_does_not_enable_cutedsl_grouped_mlp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CuTe DSL grouped MLP is MXFP8-only, so the BF16 recipe must not enable it."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config()
+
+    assert config.model.use_transformer_engine_op_fuser is False
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in config.env_vars
