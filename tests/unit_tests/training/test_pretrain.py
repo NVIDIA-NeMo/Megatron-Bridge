@@ -15,7 +15,7 @@
 """Unit tests for pretrain module process group cleanup."""
 
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -75,6 +75,48 @@ class TestDestroyProcessGroupIfNeeded:
         mock_dist.distributed_c10d._abort_process_group.assert_called_once_with()
         mock_dist.barrier.assert_not_called()
         mock_dist.destroy_process_group.assert_not_called()
+
+
+class TestPretrainInProcessRestartRetry:
+    """_pretrain forwards the in-process-restart-retry flag to train()."""
+
+    @pytest.mark.parametrize(
+        "wrapper_iteration, expected_retry",
+        [
+            (None, False),  # no in-process restart
+            (0, False),  # first attempt (fresh launch or ordinary resume)
+            (3, True),  # recovery re-entry
+        ],
+    )
+    def test_forwards_is_inprocess_restart_retry(self, wrapper_iteration, expected_retry):
+        state = Mock()
+        state.cfg.validation.skip_train = False
+        state.cfg.train.train_iters = 10
+        state.train_state.do_train = True
+        state.train_state.do_valid = False
+        state.train_state.do_test = False
+
+        if wrapper_iteration is None:
+            wrapper = None
+        else:
+            wrapper = Mock()
+            wrapper.iteration = wrapper_iteration
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup") as mock_setup,
+            patch("megatron.bridge.training.pretrain.train") as mock_train,
+            patch("megatron.bridge.training.pretrain.barrier_and_log"),
+            patch("megatron.bridge.training.pretrain._finish_train"),
+        ):
+            mock_dist.is_initialized.return_value = True
+            mock_setup.return_value.state = state
+
+            _pretrain(state, forward_step_func=Mock(), inprocess_call_wrapper=wrapper, store=Mock())
+
+        mock_train.assert_called_once()
+        assert mock_train.call_args.kwargs["is_inprocess_restart_retry"] is expected_retry
 
 
 class TestPretrainProcessGroupOwnership:
