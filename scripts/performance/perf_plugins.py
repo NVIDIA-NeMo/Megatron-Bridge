@@ -34,9 +34,9 @@ from typing import Callable, List, Optional, Union
 import nemo_run as run
 from nemo_run import Plugin, Script, SlurmExecutor
 try:
-    from nemo_run.core.execution.xcalibur import XCaliburExecutor
+    from nemo_run.core.execution.nvcre import NvcreExecutor
 except ImportError:
-    XCaliburExecutor = None  # type: ignore[assignment,misc]
+    NvcreExecutor = None  # type: ignore[assignment,misc]
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -189,8 +189,8 @@ class NsysPlugin(Plugin):
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
             launcher.nsys_filename = "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"
-        elif XCaliburExecutor is not None and isinstance(executor, XCaliburExecutor):
-            # XCalibur pods use PET_* env vars for distributed rank info.
+        elif NvcreExecutor is not None and isinstance(executor, NvcreExecutor):
+            # Nvcre pods use PET_* env vars for distributed rank info.
             launcher.nsys_filename = "profile_node${PET_NODE_RANK}_rank%p"
 
         if self.nsys_gpu_metrics:

@@ -106,7 +106,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
             "--enable_vboost",
             "--lock_gpu_freq",
             "--peak_mem_clk",
-        ) or flag.startswith("--kubeflow_") or flag.startswith("--xcalibur_")
+        ) or flag.startswith("--kubeflow_") or flag.startswith("--nvcre_")
 
     filtered_args = []
     skip_next = False
@@ -547,19 +547,19 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
-    xcalibur_namespace: Optional[str] = None,
-    xcalibur_image_pull_secret: Optional[str] = None,
-    xcalibur_workdir_pvc: Optional[str] = None,
-    xcalibur_workdir_pvc_path: str = "/nemo_run",
-    xcalibur_workdir_local_path: Optional[str] = None,
-    xcalibur_node_selector_json: Optional[str] = None,
-    xcalibur_volumes_json: Optional[str] = None,
-    xcalibur_volume_mounts_json: Optional[str] = None,
-    xcalibur_timeout_per_job: str = "24h",
-    xcalibur_test_scale: Optional[str] = None,
-    xcalibur_kubeconfig: Optional[str] = None,
-    xcalibur_kube_context: Optional[str] = None,
-    xcalibur_gang_scheduler_name: Optional[str] = None,
+    nvcre_namespace: Optional[str] = None,
+    nvcre_image_pull_secret: Optional[str] = None,
+    nvcre_workdir_pvc: Optional[str] = None,
+    nvcre_workdir_pvc_path: str = "/nemo_run",
+    nvcre_workdir_local_path: Optional[str] = None,
+    nvcre_node_selector_json: Optional[str] = None,
+    nvcre_volumes_json: Optional[str] = None,
+    nvcre_volume_mounts_json: Optional[str] = None,
+    nvcre_timeout_per_job: str = "24h",
+    nvcre_test_scale: Optional[str] = None,
+    nvcre_kubeconfig: Optional[str] = None,
+    nvcre_kube_context: Optional[str] = None,
+    nvcre_gang_scheduler_name: Optional[str] = None,
     deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
@@ -608,8 +608,8 @@ def main(
     if export_nsys_sqlite and not enable_nsys:
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
-    # XCalibur uses run_script.py directly; all other executors use bootstrap.py.
-    script_name = "run_script.py" if xcalibur_namespace else ENTRYPOINT_BOOTSTRAP
+    # Nvcre uses run_script.py directly; all other executors use bootstrap.py.
+    script_name = "run_script.py" if nvcre_namespace else ENTRYPOINT_BOOTSTRAP
     # Keep the historical W&B-name behavior for CI. The lightweight fallback
     # deliberately avoids resolving a recipe: effective parallelism, batches,
     # and process environment are finalized by bootstrap.py in the container.
@@ -633,7 +633,7 @@ def main(
         # runs. Creating the dir from the launcher would either fail (PVC
         # not present) or create a useless dir on the launcher's local FS.
         # Let the trainer container create its own dirs on first write.
-        if kubeflow_namespace is None and xcalibur_namespace is None:
+        if kubeflow_namespace is None and nvcre_namespace is None:
             save_dir_path.mkdir(parents=True, exist_ok=True)
             save_dir_mount = f"{save_dir_path}:{save_dir_path}"
             if save_dir_mount not in custom_mounts:
@@ -652,7 +652,7 @@ def main(
     # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
-    if kubeflow_namespace or xcalibur_namespace:
+    if kubeflow_namespace or nvcre_namespace:
         in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
         in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
@@ -709,37 +709,37 @@ def main(
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
-    elif xcalibur_namespace is not None:
+    elif nvcre_namespace is not None:
         try:
-            from utils.executors import xcalibur_executor
+            from utils.executors import nvcre_executor
         except ImportError:
-            from .utils.executors import xcalibur_executor
-        executor = xcalibur_executor(
-            namespace=xcalibur_namespace,
+            from .utils.executors import nvcre_executor
+        executor = nvcre_executor(
+            namespace=nvcre_namespace,
             image=container_image,
             num_nodes=-(num_gpus // -gpus_per_node),
             gpus_per_node=gpus_per_node,
-            image_pull_secret=xcalibur_image_pull_secret,
-            workdir_pvc=xcalibur_workdir_pvc,
-            workdir_pvc_path=xcalibur_workdir_pvc_path,
-            workdir_local_path=xcalibur_workdir_local_path,
-            node_selector=json.loads(xcalibur_node_selector_json) if xcalibur_node_selector_json else None,
-            volumes=json.loads(xcalibur_volumes_json) if xcalibur_volumes_json else None,
-            volume_mounts=json.loads(xcalibur_volume_mounts_json) if xcalibur_volume_mounts_json else None,
-            timeout_per_job=xcalibur_timeout_per_job,
-            test_scale=xcalibur_test_scale,
-            kubeconfig=xcalibur_kubeconfig,
-            kube_context=xcalibur_kube_context,
-            gang_scheduler_name=xcalibur_gang_scheduler_name,
+            image_pull_secret=nvcre_image_pull_secret,
+            workdir_pvc=nvcre_workdir_pvc,
+            workdir_pvc_path=nvcre_workdir_pvc_path,
+            workdir_local_path=nvcre_workdir_local_path,
+            node_selector=json.loads(nvcre_node_selector_json) if nvcre_node_selector_json else None,
+            volumes=json.loads(nvcre_volumes_json) if nvcre_volumes_json else None,
+            volume_mounts=json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else None,
+            timeout_per_job=nvcre_timeout_per_job,
+            test_scale=nvcre_test_scale,
+            kubeconfig=nvcre_kubeconfig,
+            kube_context=nvcre_kube_context,
+            gang_scheduler_name=nvcre_gang_scheduler_name,
         )
-        xcal_env = custom_env_vars.copy()
+        nvcre_env = custom_env_vars.copy()
         if hf_token:
             # Always allow the pod to reach HF to download gated model files
             # (tokenizer configs, etc.) — the pod has no access to the host
             # HF cache so offline mode must not be forced here even when
             # --offline was passed for the launcher-side setup.
-            xcal_env.update({"HF_TOKEN": hf_token, "HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
-        executor.env_vars = xcal_env
+            nvcre_env.update({"HF_TOKEN": hf_token, "HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
+        executor.env_vars = nvcre_env
     else:
         executor = slurm_executor(
             gpu=gpu,
@@ -861,8 +861,8 @@ def main(
                 return
 
             if detach:
-                # For detached runs (e.g. XCalibur), skip status polling — the
-                # caller (llmb-run) polls for completion via xcalctl.
+                # For detached runs (e.g. Nvcre), skip status polling — the
+                # caller (llmb-run) polls for completion via nvcrectl.
                 is_finished_experiment = True
                 is_testing_passed = True
                 break
@@ -1066,8 +1066,8 @@ if __name__ == "__main__":
         gpu=args.gpu,
         hf_token=args.hf_token or os.environ.get('HF_TOKEN'),
         offline=args.offline,
-        # Force detach for XCalibur — llmb-run polls for completion via xcalctl
-        detach=True if args.xcalibur_namespace else args.detach,
+        # Force detach for Nvcre — llmb-run polls for completion via nvcrectl
+        detach=True if args.nvcre_namespace else args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
@@ -1144,19 +1144,19 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
-        xcalibur_namespace=args.xcalibur_namespace,
-        xcalibur_image_pull_secret=args.xcalibur_image_pull_secret,
-        xcalibur_workdir_pvc=args.xcalibur_workdir_pvc,
-        xcalibur_workdir_pvc_path=args.xcalibur_workdir_pvc_path,
-        xcalibur_workdir_local_path=args.xcalibur_workdir_local_path,
-        xcalibur_node_selector_json=args.xcalibur_node_selector_json,
-        xcalibur_volumes_json=args.xcalibur_volumes_json,
-        xcalibur_volume_mounts_json=args.xcalibur_volume_mounts_json,
-        xcalibur_timeout_per_job=args.xcalibur_timeout_per_job,
-        xcalibur_test_scale=args.xcalibur_test_scale,
-        xcalibur_kubeconfig=args.xcalibur_kubeconfig,
-        xcalibur_kube_context=args.xcalibur_kube_context,
-        xcalibur_gang_scheduler_name=args.xcalibur_gang_scheduler_name,
+        nvcre_namespace=args.nvcre_namespace,
+        nvcre_image_pull_secret=args.nvcre_image_pull_secret,
+        nvcre_workdir_pvc=args.nvcre_workdir_pvc,
+        nvcre_workdir_pvc_path=args.nvcre_workdir_pvc_path,
+        nvcre_workdir_local_path=args.nvcre_workdir_local_path,
+        nvcre_node_selector_json=args.nvcre_node_selector_json,
+        nvcre_volumes_json=args.nvcre_volumes_json,
+        nvcre_volume_mounts_json=args.nvcre_volume_mounts_json,
+        nvcre_timeout_per_job=args.nvcre_timeout_per_job,
+        nvcre_test_scale=args.nvcre_test_scale,
+        nvcre_kubeconfig=args.nvcre_kubeconfig,
+        nvcre_kube_context=args.nvcre_kube_context,
+        nvcre_gang_scheduler_name=args.nvcre_gang_scheduler_name,
         deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
