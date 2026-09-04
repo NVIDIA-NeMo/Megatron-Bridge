@@ -25,6 +25,11 @@ from megatron.bridge.training.flex_dispatcher_backend import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_cuda_available(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+
+
 class TestApplyDeepEP:
     """Test the apply_flex_dispatcher_backend function for DeepEP."""
 
@@ -90,6 +95,16 @@ class TestApplyDeepEP:
         assert config.moe_flex_dispatcher_backend == "deepep"
         assert config.moe_shared_expert_overlap is False
 
+    @patch("torch.cuda.get_device_properties", side_effect=RuntimeError("CUDA initialization failed"))
+    def test_apply_flex_dispatcher_backend_preserves_cuda_probe_errors(self, mock_get_device_properties):
+        config = MagicMock(spec=TransformerConfig)
+        config.num_moe_experts = 8
+
+        with pytest.raises(RuntimeError, match="CUDA initialization failed"):
+            apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="deepep")
+
+        mock_get_device_properties.assert_called_once_with(0)
+
     @patch("megatron.bridge.training.flex_dispatcher_backend.logger")
     def test_apply_flex_dispatcher_backend_warns_for_non_moe_model_none_experts(self, mock_logger):
         """Test that apply_flex_dispatcher_backend logs warning and returns early when num_moe_experts is None."""
@@ -102,7 +117,7 @@ class TestApplyDeepEP:
 
         # Verify warning was logged
         mock_logger.warning.assert_called_once()
-        assert "DeepEP and HybridEP are only applicable to MoE models" in mock_logger.warning.call_args[0][0]
+        assert "Flex dispatcher backends are only applicable to MoE models" in mock_logger.warning.call_args[0][0]
 
         # Verify configs were NOT set
         assert config.moe_token_dispatcher_type != "flex"
@@ -120,7 +135,7 @@ class TestApplyDeepEP:
 
         # Verify warning was logged
         mock_logger.warning.assert_called_once()
-        assert "DeepEP and HybridEP are only applicable to MoE models" in mock_logger.warning.call_args[0][0]
+        assert "Flex dispatcher backends are only applicable to MoE models" in mock_logger.warning.call_args[0][0]
 
         # Verify configs were NOT set
         assert config.moe_token_dispatcher_type != "flex"
@@ -190,11 +205,33 @@ class TestApplyDeepEP:
 class TestFlexDispatcherFallback:
     """Test unsupported flex backends stay disabled after config finalization."""
 
+    @patch("torch.cuda.get_device_properties")
+    def test_none_backend_override_falls_back_to_alltoall(self, mock_get_device_properties):
+        """Test that clearing a configured flex backend restores the standard dispatcher."""
+        mock_properties = MagicMock()
+        mock_properties.major = 9
+        mock_properties.name = "NVIDIA H100"
+        mock_get_device_properties.return_value = mock_properties
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="deepep")
+        config.moe_flex_dispatcher_backend = None
+        validate_flex_dispatcher_backend(config)
+
+        assert config.moe_token_dispatcher_type == "alltoall"
+        assert config.moe_flex_dispatcher_backend is None
+
     @pytest.mark.parametrize(
         ("backend", "major", "device_name"),
         [
             pytest.param("deepep", 10, "NVIDIA GB200", id="deepep-gb200"),
             pytest.param("hybridep", 11, "NVIDIA X200", id="hybridep-unsupported"),
+            pytest.param("ncclep", 8, "NVIDIA A100", id="ncclep-ampere"),
         ],
     )
     @patch("torch.cuda.get_device_properties")
@@ -406,3 +443,88 @@ class TestValidateHybridEP:
 
         # Verify get_device_properties was called
         mock_get_device_properties.assert_called_once_with(0)
+
+
+class TestNCCLEP:
+    """Test NCCL EP application and GPU validation."""
+
+    @pytest.mark.parametrize("major", [9, 10])
+    @patch("torch.cuda.get_device_properties")
+    def test_apply_and_validate_supported_gpu(self, mock_get_device_properties, major):
+        mock_properties = MagicMock()
+        mock_properties.major = major
+        mock_properties.name = "NVIDIA H100" if major == 9 else "NVIDIA GB200"
+        mock_get_device_properties.return_value = mock_properties
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=1.5,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="ncclep")
+        validate_flex_dispatcher_backend(config)
+
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_flex_dispatcher_backend == "ncclep"
+        assert config.moe_shared_expert_overlap is False
+
+    @patch("torch.cuda.get_device_properties")
+    def test_apply_allows_eager_mode_without_capacity_factor(self, mock_get_device_properties):
+        mock_properties = MagicMock()
+        mock_properties.major = 10
+        mock_properties.name = "NVIDIA GB200"
+        mock_get_device_properties.return_value = mock_properties
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=None,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="ncclep")
+
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_flex_dispatcher_backend == "ncclep"
+        assert config.moe_shared_expert_overlap is False
+
+    @patch("torch.cuda.get_device_properties")
+    def test_validate_unsupported_gpu_raises_error(self, mock_get_device_properties):
+        mock_properties = MagicMock()
+        mock_properties.major = 8
+        mock_properties.name = "NVIDIA A100"
+        mock_get_device_properties.return_value = mock_properties
+        config = SimpleNamespace(
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="ncclep",
+        )
+
+        with pytest.raises(ValueError, match="NCCL EP is supported for Hopper and Blackwell GPUs"):
+            validate_flex_dispatcher_backend(config)
+
+        # Verify get_device_properties was called
+        mock_get_device_properties.assert_called_once_with(0)
+
+    def test_apply_without_cuda_builds_flex_config(self, monkeypatch: pytest.MonkeyPatch):
+        """NCCL EP config construction must not probe CUDA devices on GPU-less hosts."""
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+
+        def fail_hardware_probe(*args, **kwargs):
+            del args, kwargs
+            pytest.fail("apply_flex_dispatcher_backend probed CUDA device properties without CUDA")
+
+        monkeypatch.setattr("torch.cuda.get_device_properties", fail_hardware_probe)
+        config = SimpleNamespace(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend=None,
+            moe_shared_expert_overlap=True,
+        )
+
+        apply_flex_dispatcher_backend(config, moe_flex_dispatcher_backend="ncclep")
+
+        assert config.moe_token_dispatcher_type == "flex"
+        assert config.moe_flex_dispatcher_backend == "ncclep"
+        assert config.moe_shared_expert_overlap is False

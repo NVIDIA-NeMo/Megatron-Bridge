@@ -66,11 +66,20 @@ env:
   container-registry-gb200: us-east4-docker.pkg.dev/nv-projdgxchipp-20260113193621/megatron-bridge
 
 jobs:
+  ephemeral-runner-routing:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_ephemeral_runner_routing.yml@d0878a142525ff79366ca96fbc0b306cd8d64670 # v1.9.0
+    with:
+      lane: ${{ vars.NEMO_CI_EPHEMERAL_LANE }}
+      legacy_label: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      run_id: ${{ github.run_id }}
+      run_attempt: ${{ github.run_attempt }}
+
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
+    needs: [ephemeral-runner-routing]
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@d0878a142525ff79366ca96fbc0b306cd8d64670 # v1.9.0
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
-      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ needs.ephemeral-runner-routing.outputs.runner_label }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
       default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
@@ -103,11 +112,17 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+          PR_HEAD_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha }}
+          PR_MERGE_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
         run: |
           if [[ "$IS_PR" == "true" ]]; then
-            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+            SHA=${PR_MERGE_SHA:-$PR_HEAD_SHA}
           else
             SHA=${GITHUB_SHA}
+          fi
+          if [[ -z "$SHA" ]]; then
+            echo "Unable to resolve a non-empty workflow revision" >&2
+            exit 1
           fi
           echo "merge_sha=${SHA}" | tee -a "$GITHUB_OUTPUT"
 

@@ -17,6 +17,7 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from transformers import GlmMoeDsaConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -80,7 +81,7 @@ def test_hf_config_ignores_upstream_num_experts_default() -> None:
 
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
-    assert hf_config.num_experts == 256
+    assert getattr(hf_config, "num_experts", None) in (None, 256)
     assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
 
 
@@ -282,3 +283,34 @@ def test_mapping_registry_omits_mtp_mappings_without_nextn_layers(
     )
 
     assert all(not mapping.megatron_param.startswith("mtp.") for mapping in bridge.mapping_registry())
+
+
+def test_fp8_checkpoint_weight_is_dequantized_with_its_block_scale() -> None:
+    """GLM-5 import applies the checkpoint's FP8 inverse scale before BF16 conversion."""
+    weight_name = "model.layers.0.self_attn.q_a_proj.weight"
+    weight = torch.tensor([[1.0, -2.0], [4.0, -8.0]], dtype=torch.float8_e4m3fn)
+    scale_inv = torch.tensor([[0.25]], dtype=torch.float32)
+
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(
+        weight_name,
+        {weight_name: weight, weight_name + "_scale_inv": scale_inv},
+    )
+
+    assert converted.dtype == torch.bfloat16
+    torch.testing.assert_close(converted, weight.to(torch.bfloat16) * scale_inv.to(torch.bfloat16))
+
+
+def test_compound_fp8_checkpoint_weights_use_their_own_scales() -> None:
+    """Compound mappings dequantize each source tensor with its matching scale."""
+    names = {"gate": "gate.weight", "up": "up.weight"}
+    state_dict = {
+        "gate.weight": torch.tensor([[2.0]], dtype=torch.float8_e4m3fn),
+        "gate.weight_scale_inv": torch.tensor([[0.5]], dtype=torch.float32),
+        "up.weight": torch.tensor([[4.0]], dtype=torch.float8_e4m3fn),
+        "up.weight_scale_inv": torch.tensor([[0.25]], dtype=torch.float32),
+    }
+
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(names, state_dict)
+
+    torch.testing.assert_close(converted["gate"], torch.tensor([[1.0]], dtype=torch.bfloat16))
+    torch.testing.assert_close(converted["up"], torch.tensor([[1.0]], dtype=torch.bfloat16))

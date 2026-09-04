@@ -142,18 +142,21 @@ class TokenizedPromptCompletion:
 _CONVERSATION_KEYS = ("messages", "conversation", "conversations")
 _CANONICAL_PROMPT_KEY = "prompt"
 _CANONICAL_COMPLETION_KEY = "completion"
+_PLURAL_MEDIA_KEYS = (
+    "images",
+    "image_paths",
+    "videos",
+    "video_paths",
+    "audio_paths",
+)
 _MEDIA_KEYS = (
     "image",
-    "images",
     "image_path",
-    "image_paths",
     "video",
-    "videos",
     "video_path",
-    "video_paths",
     "audio",
     "audio_path",
-    "audio_paths",
+    *_PLURAL_MEDIA_KEYS,
 )
 
 
@@ -275,7 +278,10 @@ def is_text_only_prompt_completion_example(
     preprocessing: PromptCompletionSFTPreprocessingConfig,
 ) -> bool:
     """Return whether a row is a text-only prompt-completion example."""
-    if any(example.get(key) is not None for key in _MEDIA_KEYS):
+    for key in _MEDIA_KEYS:
+        value = example.get(key)
+        if value is None or (key in _PLURAL_MEDIA_KEYS and isinstance(value, list) and not value):
+            continue
         return False
     try:
         normalize_sft_example(example, preprocessing)
@@ -469,6 +475,8 @@ def tokenize_prompt_completion_example(
         loss_mask = torch.ones(input_ids.numel(), dtype=torch.bool)
     if skipped_tokens is not None and skipped_tokens.numel() > 0:
         loss_mask &= ~torch.isin(input_ids, skipped_tokens.to(device=input_ids.device, dtype=torch.long))
+    if preprocessing.loss_mode == "completion" and completion_value and not loss_mask[1:].any():
+        raise ValueError("Prompt-completion preprocessing must retain a supervised token for a non-empty completion.")
     return TokenizedPromptCompletion(
         input_ids=input_ids,
         loss_mask=loss_mask,

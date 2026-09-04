@@ -1007,7 +1007,8 @@ class TestGlobalState:
         mock_signal_handler = MagicMock()
         state._signal_handler = mock_signal_handler
         state._straggler_timer = MagicMock()
-        state._nvrx_straggler_manager = MagicMock()
+        mock_nvrx_straggler_manager = MagicMock()
+        state._nvrx_straggler_manager = mock_nvrx_straggler_manager
         state._nvrx_straggler_created = True
 
         # Call reset_for_restart
@@ -1025,6 +1026,7 @@ class TestGlobalState:
         mock_signal_handler.release.assert_called_once()
         assert state._signal_handler is None
         assert state._straggler_timer is None
+        mock_nvrx_straggler_manager.shutdown.assert_called_once()
         assert state._nvrx_straggler_manager is None
         assert state._nvrx_straggler_created is False
 

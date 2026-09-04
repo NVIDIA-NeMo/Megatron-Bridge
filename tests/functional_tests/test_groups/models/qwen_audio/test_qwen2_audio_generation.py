@@ -37,6 +37,32 @@ from transformers import AutoTokenizer, Qwen2AudioConfig, Qwen2AudioForCondition
 from tests.functional_tests.fixture_utils import resolve_test_data_file
 
 
+# Saving a toy through the current `transformers` writes the language model one level
+# deeper than the released checkpoint does: `language_model.model.model.embed_tokens.weight`
+# against `language_model.model.embed_tokens.weight` in `Qwen/Qwen2-Audio-7B-Instruct`. The
+# bridge maps the released names, so without this the toy has no key for any language-model
+# weight and the run would compare weights that were never loaded. The audio tower, the
+# projector and the head already match.
+_DUPLICATED_LANGUAGE_MODEL_PREFIX = "language_model.model.model."
+_RELEASED_LANGUAGE_MODEL_PREFIX = "language_model.model."
+
+
+def _rewrite_to_released_layout(model_dir: Path) -> None:
+    """Rename the saved tensors to the layout `Qwen/Qwen2-Audio-7B-Instruct` ships."""
+    from safetensors.torch import load_file, save_file
+
+    weights_path = model_dir / "model.safetensors"
+    if not weights_path.exists():
+        raise FileNotFoundError(f"expected a single-shard toy checkpoint at {weights_path}")
+
+    renamed = {}
+    for name, tensor in load_file(weights_path).items():
+        if name.startswith(_DUPLICATED_LANGUAGE_MODEL_PREFIX):
+            name = _RELEASED_LANGUAGE_MODEL_PREFIX + name[len(_DUPLICATED_LANGUAGE_MODEL_PREFIX) :]
+        renamed[name] = tensor
+    save_file(renamed, weights_path, metadata={"format": "pt"})
+
+
 HF_QWEN2_AUDIO_TOY_MODEL_CONFIG = {
     "architectures": ["Qwen2AudioForConditionalGeneration"],
     "audio_token_index": 151646,
@@ -133,6 +159,7 @@ class TestQwen2AudioGeneration:
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
+        _rewrite_to_released_layout(model_dir)
 
         # Also save config.json explicitly
         config_path = model_dir / "config.json"

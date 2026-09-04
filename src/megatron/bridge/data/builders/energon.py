@@ -102,6 +102,7 @@ class NemotronOmniEnergonTaskEncoderConfig:
 
     ``visual_keys`` is retained for configuration compatibility, but Omni owns
     its visual input contract and supports only ``("pixel_values",)``.
+    ``hf_processor_revision`` optionally pins the processor artifact load.
     ``temporal_video_resize_mode="processor"`` is the default and applies the
     public aspect-preserving video grid with exact per-tubelet token counts.
     ``"fixed_512"`` preserves the previous square policy for compatibility.
@@ -111,6 +112,7 @@ class NemotronOmniEnergonTaskEncoderConfig:
     """
 
     hf_processor_path: str
+    hf_processor_revision: str | None = None
     max_audio_duration: float
     num_mel_bins: int
     visual_keys: tuple[str, ...]
@@ -126,6 +128,10 @@ class NemotronOmniEnergonTaskEncoderConfig:
     def validate(self) -> None:
         """Validate Nemotron Omni task-encoder settings."""
         _validate_hf_path(self.hf_processor_path, field_name="hf_processor_path")
+        if self.hf_processor_revision is not None and (
+            not isinstance(self.hf_processor_revision, str) or not self.hf_processor_revision.strip()
+        ):
+            raise ValueError("hf_processor_revision must be a non-empty string when set.")
         if self.max_audio_duration <= 0:
             raise ValueError("max_audio_duration must be greater than 0.")
         for field_name in ("num_mel_bins", "temporal_patch_size", "video_nframes", "patch_dim"):
@@ -135,7 +141,11 @@ class NemotronOmniEnergonTaskEncoderConfig:
             raise ValueError("video_fps must be greater than 0.")
         if self.temporal_video_resize_mode not in ("fixed_512", "processor"):
             raise ValueError("temporal_video_resize_mode must be either 'fixed_512' or 'processor'.")
-        if self.collapse_image_tokens and self.temporal_video_resize_mode == "processor":
+        if (
+            self.use_temporal_video_embedder
+            and self.collapse_image_tokens
+            and self.temporal_video_resize_mode == "processor"
+        ):
             raise ValueError(
                 "temporal_video_resize_mode='processor' requires the canonical expanded-sequence contract."
             )
@@ -305,6 +315,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
 
     processor = AutoProcessor.from_pretrained(
         task_config.hf_processor_path,
+        revision=task_config.hf_processor_revision,
         trust_remote_code=trust_remote_code,
     )
     return NemotronOmniTaskEncoder(
