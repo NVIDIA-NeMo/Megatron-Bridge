@@ -28,9 +28,9 @@ from megatron.bridge.training.state import TrainState
 
 @pytest.mark.unit
 @mock.patch("torch.distributed.broadcast")
-@mock.patch("torch.distributed.get_world_size", return_value=1)
-@mock.patch("torch.distributed.get_rank", return_value=0)
-def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _mock_world_size, _mock_broadcast):
+@mock.patch("megatron.bridge.data.loaders.get_pg_size", return_value=1)
+@mock.patch("megatron.bridge.data.loaders.get_pg_rank", return_value=0)
+def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _mock_size, _mock_broadcast):
     class OrdinaryDataset:
         def __init__(self, size):
             self.samples = [
@@ -107,11 +107,11 @@ def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _moc
 
 @pytest.mark.unit
 @mock.patch("torch.distributed.broadcast")
-@mock.patch("torch.distributed.get_world_size", return_value=1)
-@mock.patch("torch.distributed.get_rank", return_value=0)
+@mock.patch("megatron.bridge.data.loaders.get_pg_size", return_value=1)
+@mock.patch("megatron.bridge.data.loaders.get_pg_rank", return_value=0)
 @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
 def test_cyclic_loader_allows_dataset_smaller_than_global_batch(
-    mock_build_datasets, _mock_rank, _mock_world_size, _mock_broadcast
+    mock_build_datasets, _mock_rank, _mock_size, _mock_broadcast
 ):
     class IndexDataset:
         def __len__(self):

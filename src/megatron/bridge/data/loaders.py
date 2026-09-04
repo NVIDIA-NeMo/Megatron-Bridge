@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable, Iterator, Optional, Union
 import torch
 from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
+from megatron.core.utils import get_pg_rank, get_pg_size
 from torch.utils.data import DataLoader
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
@@ -275,8 +276,8 @@ def build_train_valid_test_data_loaders(
     drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
 
     # Resolve train DP ownership before validating the minimum dataset size.
-    dp_rank = torch.distributed.get_rank(group=dp_group)
-    dp_size = torch.distributed.get_world_size(group=dp_group)
+    dp_rank = get_pg_rank(dp_group)
+    dp_size = get_pg_size(dp_group)
 
     if (
         train_ds is not None
@@ -318,8 +319,8 @@ def build_train_valid_test_data_loaders(
     # Resolve eval DP ownership independently from the training process group.
     if eval_dp_group is None:
         eval_dp_group = dp_group
-    eval_dp_rank = torch.distributed.get_rank(group=eval_dp_group)
-    eval_dp_size = torch.distributed.get_world_size(group=eval_dp_group)
+    eval_dp_rank = get_pg_rank(eval_dp_group)
+    eval_dp_size = get_pg_size(eval_dp_group)
     # Text SFT configs call this field ``seed`` while Megatron GPT configs call
     # it ``random_seed``. Fall back to the unoffset config RNG seed so batch
     # sampling never depends on the pipeline-rank-specific torch global seed.
