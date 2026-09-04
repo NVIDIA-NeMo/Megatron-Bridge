@@ -28,7 +28,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
       <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
       <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
-      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark">Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
       <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
       <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
       <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
@@ -120,20 +120,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
-    </button>
-    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-6-35b-a3b-pretrain-performance-h100" aria-controls="qwen3-6-35b-a3b-pretrain-performance-h100" aria-pressed="false">
-      <span class="verification-combination-heading">
-        <strong>Benchmark · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </span>
-      <span class="verification-combination-meta">BF16</span>
-    </button>
-    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="fp8_mx" data-hardware="GB200" data-status="verified" data-entry="qwen3-6-35b-a3b-pretrain-performance-gb200" aria-controls="qwen3-6-35b-a3b-pretrain-performance-gb200" aria-pressed="false">
-      <span class="verification-combination-heading">
-        <strong>Benchmark · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </span>
-      <span class="verification-combination-meta">FP8 MX</span>
     </button>
   </div>
   <div class="verification-model-details">
@@ -249,30 +235,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-28</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-05</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.610127</dd>
+            <dd>3.604611</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.261159</dd>
+            <dd>3.458849</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>330,730.470 ms</dd>
+            <dd>22,271.220 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>18.090 TFLOP/s/GPU</dd>
+            <dd>135.610 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>792.621 tokens/s/GPU</dd>
+            <dd>5,885.264 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -283,12 +269,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_mock_config --dataset energon --deterministic --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints --save_interval 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.do_validation=false scheduler.lr_decay_iters=20 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/resolved-config.yaml</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>At the recorded bridge commit, this bounded projection-pretraining support run used the official DataComp download pipeline at repository commit 4a8df1992566, the DataComp-1B metadata at revision 086ebeee20d4, and img2dataset 1.40.0. The Energon dataset contains 519,827 training and 5,173 validation image-caption samples; each training record maps an image plus &quot;Describe this image.&quot; to its caption. The deterministic 20-step reference consumed 10,240 training samples without wrapping. It warm-started the imported Qwen3.6 checkpoint, froze the language and vision towers, and trained the vision projection at TP1/PP1/CP1/EP8/ETP1, DP8, MBS1/GBS512, and 64-way gradient accumulation with one-layer full-uniform recompute. Loss was finite from 3.610127 to 2.261159 with zero skipped or NaN iterations; steps 11-20 averaged 330,730.470 ms and 18.090 TFLOP/s/GPU. Complete 72,366,371,530-byte eight-shard model/optimizer/RNG checkpoints and eight nonempty Energon rank states were saved at both steps 10 and 20, and the process exited successfully in 1h54m51s. This verifies the DataComp workflow and bounded Qwen VLM pretraining support, not canonical DataComp/CLIP convergence.
+        <p>The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.
 </p>
       </section>
     </article>
@@ -544,108 +530,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>On the same 8x GB200 topology and MedPix schedule as the controlled SFT item, LoRA completed exactly 100 finite steps with zero skipped or NaN iterations. The persisted configs differ only in the evidence-output path, the intended PEFT LR/min-LR, and the LoRA block; model, data, topology, batch, schedule, and safety settings match. Step-1 loss 2.214827 differs from SFT&#x27;s 2.212866 by only 0.001961, or 0.088618%, ruling out an initial-forward configuration mismatch. The later loss difference reflects LoRA&#x27;s trainable parameter set and learning rate. Steps 91-100 averaged 5,511.530 ms and 68.410 model TFLOP/s/GPU.
-</p>
-      </section>
-    </article>
-    <article id="qwen3-6-35b-a3b-pretrain-performance-h100" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-pretrain-performance-h100" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>Benchmark · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
-        <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-05</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>3.604611</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>3.458849</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>22,271.220 ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>135.610 TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>5,885.264 tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml</code></pre>
-        </div>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>The exact 16-H100 command completed all 50 DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1, a 16/24 language-layer pipeline split, and MBS1/GBS512. The persisted config confirmed the 248,320-token model vocabulary, natural expert routing, HybridEP, selective core-attention, GDN output-norm, and MoE-activation recompute, scoped Transformer Engine CUDA graphs for language attention/router/preprocessing, a graph-free variable-shape vision encoder, and Transformer Engine fused cross entropy. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. Steps 41-50 averaged 22,271.220 ms and 135.610 model TFLOP/s/GPU, and the process exited successfully without checkpoint output. The separate fixed-shape forced-balance tuning screen remains the source of the 185.150-TFLOP/s/GPU leader policy; it is not substituted for this real-data measurement.
-</p>
-      </section>
-    </article>
-    <article id="qwen3-6-35b-a3b-pretrain-performance-gb200" class="verification-model-detail" data-entry-detail="qwen3-6-35b-a3b-pretrain-performance-gb200" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>Benchmark · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>GB200</dd></div>
-        <div><dt>Precision</dt><dd>FP8 MX</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>12.81499</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>3.166235</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>26,880.420 ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>210.360 TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>9,142.714 tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config --max_steps 50 logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-performance/resolved-config.yaml</code></pre>
-        </div>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>On 8x GB200, the exact architecture-shared Qwen3.5/Qwen3.6-VL fixed-shape mock-data recipe completed 50 steps at TP1/PP1/CP1/EP8/ETP1, dense DP8 and expert DP1, MBS3/GBS480, and 20 microbatches per optimizer step. The persisted post-setup config confirmed forced expert balance, HybridEP, MXFP8, cuDNN LayerNorm, and Transformer Engine CUDA graphs for the MoE router and preprocessing scopes. Loss was finite from 12.81499 to 3.166235 with zero skipped or NaN iterations. Steps 41-50 averaged 26,880.420 ms and 210.360 model TFLOP/s/GPU, and the process exited successfully. This synthetic result is a throughput measurement, not a convergence claim.
 </p>
       </section>
     </article>
