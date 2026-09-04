@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+
 import pytest
 from megatron.core.rerun_state_machine import RerunDataIterator
 

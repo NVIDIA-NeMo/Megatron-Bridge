@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+
 import random
 from collections.abc import Callable, Iterator
 
