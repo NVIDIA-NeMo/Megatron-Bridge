@@ -424,6 +424,22 @@ class RandomSeedDataset(Dataset):
     def __getitem__(self, idx: int) -> Any:
         """Get an item from the dataset, setting the random seed first."""
         seed = idx + self.curr_seed.value
+        if torch.utils.data.get_worker_info() is None:
+            python_rng_state = random.getstate()
+            numpy_rng_state = np.random.get_state()
+            cuda_devices = [torch.cuda.current_device()] if torch.cuda.is_available() else []
+            with torch.random.fork_rng(devices=cuda_devices):
+                try:
+                    torch.random.default_generator.manual_seed(seed)
+                    if cuda_devices:
+                        torch.cuda.manual_seed(seed)
+                    random.seed(seed)
+                    np.random.seed(seed)
+                    return self.dataset[idx]
+                finally:
+                    random.setstate(python_rng_state)
+                    np.random.set_state(numpy_rng_state)
+
         torch.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
