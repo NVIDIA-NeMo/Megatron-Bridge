@@ -162,16 +162,17 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.14.0+f031cf87"
+version = "2.18.0+27486e03"
 requires-dist = [
-    "einops",
-    "importlib-metadata",
-    "nvdlfw-inspect",
-    "onnx",
-    "onnxscript",
+    "pydantic<2.14",
+    "importlib-metadata>=1.0",
     "packaging",
-    "pydantic",
-    "torch",
+    "torch>=2.1",
+    "einops",
+    "onnxscript",
+    "onnx",
+    "nvdlfw-inspect",
+    "nvidia-cudnn-frontend>=1.25.0",
 ]
 
 [[tool.uv.dependency-metadata]]
@@ -183,7 +184,7 @@ requires-dist = ["torch", "packaging", "ninja"]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "f031cf87bd054c7558b887df7bed93975456667f" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
 
 [project.optional-dependencies]
 recipes = [
