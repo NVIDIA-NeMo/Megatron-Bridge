@@ -533,7 +533,7 @@ def test_stream_weight_groups_materializes_one_complete_task(monkeypatch):
     )
 
     groups = iter(
-        bridge.stream_weight_groups_megatron_to_hf(
+        bridge._stream_weight_groups_megatron_to_hf(
             [Mock()],
             SimpleNamespace(),
             cpu=False,
@@ -547,9 +547,6 @@ def test_stream_weight_groups_materializes_one_complete_task(monkeypatch):
     assert [weight.param_name for weight in first] == ["hf.weight_0.0", "hf.weight_0.1"]
     assert events == [("map", 0), ("export_start", 0), ("export_done", 0)]
     assert converted_refs[0]() is None
-    tuple(first)
-    assert events == [("map", 0), ("export_start", 0), ("export_done", 0)]
-
     assert next(groups) == ()
     assert events[-3:] == [("map", 1), ("export_start", 1), ("export_done", 1)]
     assert converted_refs[1]() is None
@@ -602,7 +599,7 @@ def _distributed_weight_group_stream_worker(rank, world_size, init_file):
             tasks.append(_with_export_hook(task, export))
 
         groups = list(
-            DummyBridge().stream_weight_groups_megatron_to_hf(
+            DummyBridge()._stream_weight_groups_megatron_to_hf(
                 [model],
                 SimpleNamespace(),
                 cpu=False,

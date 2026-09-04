@@ -828,7 +828,7 @@ class AutoBridge(Generic[MegatronModelT]):
             prepare_modelopt_export_tasks,
         )
 
-        yield from bridge.stream_weight_groups_megatron_to_hf(
+        yield from bridge._stream_weight_groups_megatron_to_hf(
             model,
             self.hf_pretrained,
             cpu=cpu,

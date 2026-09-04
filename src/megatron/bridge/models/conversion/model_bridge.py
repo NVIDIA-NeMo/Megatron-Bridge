@@ -1804,7 +1804,7 @@ class MegatronModelBridge(
                 yield event
 
     @torch.no_grad()
-    def stream_weight_groups_megatron_to_hf(
+    def _stream_weight_groups_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         hf_pretrained: HFPreTrained,
