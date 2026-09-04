@@ -108,9 +108,21 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, MXFP8."""
+    """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, MXFP8 with the CuTe DSL grouped MLP."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    # Route the MoE experts through Transformer Engine's CuTe DSL fused grouped
+    # MLP (ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8), which fuses FC1 + SwiGLU +
+    # FC2 for the MXFP8 recipe on SM100+.
+    #
+    # All three settings below are required together. Enabling the op fuser
+    # without the 32-wide GLU interleaving does NOT fail: Transformer Engine
+    # silently declines to match the joint fusion and falls back to the cuBLASLt
+    # grouped GEMM, so the recipe would look enabled while running unfused.
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -129,6 +141,10 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        # Gate for the CuTe DSL fused grouped MLP. Transformer Engine checks this
+        # env var when it registers the joint fusion, so it must be set for
+        # use_transformer_engine_op_fuser above to take effect.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
