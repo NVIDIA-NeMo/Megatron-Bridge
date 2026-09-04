@@ -506,12 +506,11 @@ class MegatronPretrainingRandomSampler:
             random_idx = torch.randperm(bucket_size, generator=g).tolist()
             idx_range = [start_idx + x for x in random_idx[bucket_offset:]]
         else:
-            full_bucket_size = (self.total_samples // self.micro_batch_size) * self.micro_batch_size
             full_bucket_offset = current_epoch_samples
             g = torch.Generator()
             g.manual_seed(self.epoch)
-            idx_range_total = torch.randperm(full_bucket_size, generator=g).tolist()
-            idx_range_active = idx_range_total[full_bucket_offset:]
+            idx_range_total = torch.randperm(self.total_samples, generator=g).tolist()
+            idx_range_active = idx_range_total[full_bucket_offset:active_total_samples]
             idx_range = idx_range_active[self.data_parallel_rank :: self.data_parallel_size]
 
         batch = []
