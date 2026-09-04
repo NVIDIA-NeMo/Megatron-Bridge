@@ -807,7 +807,31 @@ class AutoBridge(Generic[MegatronModelT]):
         export_plan: Optional["ModelOptExportPlan"] = None,
         merge_adapter_weights: bool = True,
     ) -> Iterable[tuple["HFWeightTuple", ...]]:
-        """Export one materialized ModelOpt output group per conversion task."""
+        """Export one materialized ModelOpt output group per conversion task.
+
+        Args:
+            model: Megatron model instance or virtual-pipeline model list.
+            cpu: Move each exported tensor to CPU before yielding it.
+            show_progress: Display conversion progress.
+            export_plan: Reusable plan built by :meth:`build_hf_modelopt_export_plan`.
+            merge_adapter_weights: Must remain ``True``. Unmerged adapter export is
+                not supported by this API.
+
+        Yields:
+            One tuple per conversion task. Empty tuples preserve tasks that emit no
+            tensors on a given topology.
+
+        Note:
+            This is a distributed collective stream. Every rank must consume groups
+            in identical order, including empty groups and the terminal
+            ``StopIteration``. A group is collective-complete before it is yielded;
+            callers must synchronize rank-local consumers before requesting the next
+            group.
+
+        Raises:
+            NotImplementedError: If unmerged adapters or custom Hugging Face export
+                overrides are requested.
+        """
         if not merge_adapter_weights:
             raise NotImplementedError("ModelOpt export does not support unmerged adapter weights")
         if type(self).export_hf_weights is not AutoBridge.export_hf_weights:
