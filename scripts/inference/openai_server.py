@@ -94,7 +94,7 @@ async def _serve(args: argparse.Namespace, model: object, tokenizer: object) -> 
         model=model,
         max_sequence_length=args.max_seq_length,
         max_batch_size=args.max_batch_size,
-        num_prompts=None,  # server: let the engine auto-size max_requests when unset
+        num_prompts=None,  # server capacity comes from token and recurrent-state budgets
         tp=args.tp,
         block_size_tokens=args.block_size_tokens,
         kv_cache_buffer_size_gb=args.kv_cache_buffer_size_gb,

@@ -141,7 +141,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
     )
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
-    experimental_attention_variant: str = "gated_delta_net"
+    experimental_attention_variant: str = "gdn"
     linear_attention_freq: int | list[int] = 4
 
     # --- Gated DeltaNet (GDN) parameters ---
@@ -371,7 +371,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     )
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
-    experimental_attention_variant: str = "gated_delta_net"
+    experimental_attention_variant: str = "gdn"
     linear_attention_freq: int | list[int] = 4  # 1 standard attention per 4 layers
 
     # --- Gated DeltaNet (GDN) parameters ---
