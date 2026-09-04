@@ -1446,8 +1446,10 @@ def _assistant_mask_from_conversation_turns(
         if role in rendered_turn_end_roles:
             content_end = after_end = turn_limit
             if turn_index + 1 < len(conversation):
+                # Only this turn's payload renders between ``content_start`` and the next role
+                # header, so a marker quoted in any other turn cannot shift that boundary.
                 boundary_tokens_in_payload = _conversation_contains_boundary_tokens(
-                    example_or_conversation, tokenizer, boundary_config
+                    example_or_conversation, tokenizer, boundary_config, turns=[turn]
                 )
                 if boundary_tokens_in_payload is not False:
                     return None
@@ -1567,8 +1569,14 @@ def _conversation_contains_boundary_tokens(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
     tokenizer: Any,
     boundary_config: AssistantMaskBoundaryConfig,
+    *,
+    turns: Sequence[Mapping[str, Any]] | None = None,
 ) -> bool | None:
-    """Return whether rendered conversation payloads contain structural token sequences."""
+    """Return whether rendered conversation payloads contain structural token sequences.
+
+    ``turns`` restricts the scan to those turns instead of the whole conversation. Template
+    kwargs are always scanned.
+    """
     token_sequences = [
         *(_token_map_from_boundary_config(boundary_config.role_start_tokens).values()),
         *(_token_map_from_boundary_config(boundary_config.role_end_tokens).values()),
@@ -1579,10 +1587,8 @@ def _conversation_contains_boundary_tokens(
             if (token_ids := _as_token_id_list(raw_token_ids))
         ),
     ]
-    payloads: list[Any] = [
-        {key: value for key, value in turn.items() if key != "role"}
-        for turn in _conversation_from_example(example_or_conversation)
-    ]
+    scanned_turns = _conversation_from_example(example_or_conversation) if turns is None else turns
+    payloads: list[Any] = [{key: value for key, value in turn.items() if key != "role"} for turn in scanned_turns]
     payloads.append(chat_template_kwargs_from_example(example_or_conversation))
     return _value_contains_token_sequence(payloads, tokenizer, token_sequences)
 
