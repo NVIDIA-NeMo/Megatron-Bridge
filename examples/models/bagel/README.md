@@ -5,10 +5,21 @@ Megatron MIMO. The integration covers the T2I, Editing, and VLM objectives,
 native BAGEL checkpoint initialization, Megatron FSDP training, and loader
 checkpoint restore.
 
-## Requirements
+## Runtime Requirements
 
-- A Megatron-LM revision containing
-  [NVIDIA/Megatron-LM#3635](https://github.com/NVIDIA/Megatron-LM/pull/3635).
+BAGEL training, conversion, and inference require a compatible Megatron-LM
+`dev` revision; the Megatron-LM revision pinned for the Megatron Bridge `main`
+branch is not a supported BAGEL runtime. Switch the submodule to the tested dev
+revision before syncing the environment:
+
+```bash
+./scripts/switch_mcore.sh dev
+uv sync --extra bagel
+```
+
+The repository `.dev.commit` pins a revision containing
+[NVIDIA/Megatron-LM#3635](https://github.com/NVIDIA/Megatron-LM/pull/3635).
+
 - The NeMo container documented by the verification card, which provides the
   compatible Torch, TorchVision, and FlashAttention runtime.
 - The `ByteDance-Seed/BAGEL-7B-MoT` model assets, including
@@ -16,10 +27,9 @@ checkpoint restore.
 - BAGEL data converted and prepared as described in the
   [BAGEL data tutorial](../../../tutorials/data/bagel/README.md).
 
-Install the optional Python dependencies and clone the official runtime source:
+Clone the official runtime source:
 
 ```bash
-uv sync --extra bagel
 git clone https://github.com/ByteDance-Seed/Bagel.git work/dependencies/Bagel
 git -C work/dependencies/Bagel checkout a2fa77dd8caeefc41e6607ae0ec17408d3f4ee9f
 ```
