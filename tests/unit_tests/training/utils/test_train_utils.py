@@ -29,6 +29,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
     _get_num_moe_layers,
+    _track_moe_metrics_supports_num_moe_layers,
     calc_params_l2_norm,
     create_value_head_hook,
     freeze_moe_router,
@@ -112,6 +113,14 @@ def make_default_model_config():
         moe_z_loss_scale=None,
         is_hybrid_model=False,
     )
+
+
+@pytest.mark.parametrize("parameters, expected", [({"num_moe_layers": None}, True), ({}, False)])
+def test_track_moe_metrics_supports_num_moe_layers(parameters, expected):
+    """Detect the MCore signature difference without calling the helper."""
+    with mock.patch("inspect.signature") as mock_signature:
+        mock_signature.return_value.parameters = parameters
+        assert _track_moe_metrics_supports_num_moe_layers() is expected
 
 
 @pytest.mark.parametrize(
