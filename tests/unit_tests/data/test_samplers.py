@@ -5,6 +5,7 @@ import torch
 from torch.utils.data import Dataset
 
 from megatron.bridge.data.samplers import (
+    MegatronPretrainingRandomSampler,
     MegatronPretrainingSampler,
     RandomSeedDataset,
     build_pretraining_data_loader,
@@ -108,3 +109,30 @@ def test_cyclic_sampler_resume_seeds_worker_dataset_for_current_epoch(
     expected_value = torch.randint(0, 1_000_000, (1,), generator=generator).item()
 
     assert actual_value.item() == expected_value
+
+
+def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() -> None:
+    """Every DP rank must cross a truncated cyclic epoch on the same step."""
+
+    def make_sampler(rank: int, consumed_samples: int = 0) -> MegatronPretrainingRandomSampler:
+        return MegatronPretrainingRandomSampler(
+            list(range(10)),
+            total_samples=10,
+            consumed_samples=consumed_samples,
+            micro_batch_size=2,
+            data_parallel_rank=rank,
+            data_parallel_size=3,
+            data_sharding=False,
+        )
+
+    def cyclic_batches(sampler: MegatronPretrainingRandomSampler):
+        while True:
+            yield from sampler
+
+    uninterrupted = [cyclic_batches(make_sampler(rank)) for rank in range(3)]
+    _ = [next(rank_batches) for rank_batches in uninterrupted]
+    second_step = [next(rank_batches) for rank_batches in uninterrupted]
+    resumed_step = [next(iter(make_sampler(rank, consumed_samples=6))) for rank in range(3)]
+
+    assert len({index for batch in second_step for index in batch}) == 6
+    assert second_step == resumed_step
