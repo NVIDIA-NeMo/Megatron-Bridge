@@ -85,10 +85,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-ultra-550b-a55b-pretrain-gb200" aria-controls="nemotron-3-ultra-550b-a55b-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-ultra-550b-a55b-pretrain-gb200" aria-controls="nemotron-3-ultra-550b-a55b-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -299,56 +299,76 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 32 --gpus-per-node 8 --recipe nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config --mode pretrain --dataset megatron-indexed --max_steps 10 --wait &#x27;dataset.blend=[[&quot;work/data/rp2/head_01_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-h100 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 scheduler.lr_decay_iters=100 checkpoint.load=null checkpoint.save=null checkpoint.async_save=false validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-h100-resolved.yaml logger.tensorboard_dir=null</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>H100 functional pretraining remains unverified until a currently exported public recipe completes a bounded run with all applicable numerical and artifact checks.
+        <p>In the card&#x27;s current base container, the public BF16 library recipe must complete all 10 bounded RedPajama2 head_01 optimizer steps at TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. Megatron-FSDP, natural expert routing, standard all-to-all dispatch, FP32 gradient communication, numerical checks, full-layer block recompute, and the library optimizer and constant-LR schedule must remain active. Every keyed step must have finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations.
 </p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-03</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>12.25656</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>8.224941</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>10,125.530 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>291.790 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>809.044 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>178.170 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>181.380 GiB</dd>
           </div>
         </dl>
       </section>
       <section class="verification-command-section">
         <h5>Exact command</h5>
-        <p>No runnable command is recorded for this status.</p>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 64 --gpus-per-node 4 --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config --mode pretrain --dataset megatron-indexed --max_steps 20 --wait &#x27;dataset.blend=[[&quot;work/data/rp2/head_01_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200-ep16 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model tokenizer.use_tokenizer_vocab_size=false model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.pretrained_checkpoint=work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron checkpoint.finetune=true checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.dist_ckpt_strictness=log_all checkpoint.save=null checkpoint.async_save=false validation.eval_global_batch_size=256 validation.eval_micro_batch_size=1 validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-ep16-resolved.yaml logger.tensorboard_dir=null logger.wandb_project=nemotron-ultra-verification logger.wandb_exp_name=gb200-bf16-ep16-20step logger.wandb_save_dir=work/model-verification/nemotron-3-ultra-550b-a55b/wandb</code></pre>
+        </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>GB200 functional pretraining remains unverified until a currently exported public recipe completes a bounded run with all applicable numerical and artifact checks.
+        <p>In the card&#x27;s current base container, the public checkpoint-initialized BF16 library recipe completed all 20 bounded RedPajama2 head_01 optimizer steps at TP4/PP4/CP1/EP16/ETP1, GBS/MBS 256/1, and sequence length 8192. Natural expert routing, non-FSDP distributed optimizer, HybridEP, targeted expert-activation offload, selective attention/layernorm recompute, numerical checks, and the library optimizer and constant-LR schedule remained active. Every keyed step had finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations, and durable Weights &amp; Biases telemetry was produced.
 </p>
       </section>
     </article>
