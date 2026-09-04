@@ -14,16 +14,16 @@
 
 """Offline materialization of packed GPT SFT artifacts."""
 
+import gc
 import json
 import logging
-import resource
+import os
+import tempfile
 from collections.abc import Callable
-from multiprocessing import Pool
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
@@ -32,6 +32,10 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
+
+# Number of items to process per chunk. Smaller values reduce peak memory
+# at the cost of more I/O overhead.
+_MATERIALIZE_CHUNK_SIZE = 5000
 
 _shared_dataset = None
 
@@ -46,33 +50,77 @@ def _init_shared_dataset_worker(dataset):
 
 
 def _materialize_dataset_items(dataset, num_workers):
-    if num_workers <= 1:
-        return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
+    """Materialize all items from a dataset into a single np.array.
 
-    # File-backed tensor sharing avoids one descriptor per returned tensor; the pool still needs descriptors.
-    previous_sharing_strategy = torch.multiprocessing.get_sharing_strategy()
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    Processes items in fixed-size chunks to avoid holding the entire dataset
+    in a Python list before converting to np.array. Each chunk is written to
+    a temporary file and released from memory immediately.
 
-    previous_nofile_limit = None
-    try:
-        soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-        if soft_limit != hard_limit:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (hard_limit, hard_limit))
-            previous_nofile_limit = (soft_limit, hard_limit)
-    except (ValueError, OSError) as error:
-        logger.warning("Unable to raise the file-descriptor limit for tokenizer workers: %s", error)
+    For parallel processing (num_workers > 1), uses fork-based
+    multiprocessing to avoid torch.multiprocessing's shared memory reduction,
+    which leaks across chunks and causes OOM on large datasets.
+    """
+    total = len(dataset)
+    tmpdir = tempfile.mkdtemp(prefix="mb_materialize_")
+    chunk_files = []
 
     try:
-        with Pool(num_workers, initializer=_init_shared_dataset_worker, initargs=(dataset,)) as pool:
-            items = tqdm(pool.imap(_get_shared_dataset_item, range(len(dataset))), total=len(dataset))
-            return np.array(list(items))
+        if num_workers and num_workers > 1:
+            # Use fork context: child processes inherit dataset via
+            # copy-on-write, avoiding torch.multiprocessing's shared
+            # memory reduction (which leaks and causes OOM).
+            import multiprocessing as mp
+
+            ctx = mp.get_context("fork")
+
+            for start in tqdm(range(0, total, _MATERIALIZE_CHUNK_SIZE), desc="Chunked materialize"):
+                end = min(start + _MATERIALIZE_CHUNK_SIZE, total)
+                indices = list(range(start, end))
+
+                # Create a fresh Pool per chunk so worker processes are
+                # terminated (and their memory freed) after each chunk.
+                with ctx.Pool(
+                    num_workers,
+                    initializer=_init_shared_dataset_worker,
+                    initargs=(dataset,),
+                ) as pool:
+                    items = pool.map(_get_shared_dataset_item, indices)
+
+                chunk = np.array(items)
+                chunk_file = os.path.join(tmpdir, f"chunk_{start:07d}.npy")
+                np.save(chunk_file, chunk, allow_pickle=True)
+                chunk_files.append(chunk_file)
+
+                del chunk, items
+                gc.collect()
+        else:
+            for start in tqdm(range(0, total, _MATERIALIZE_CHUNK_SIZE), desc="Chunked materialize"):
+                end = min(start + _MATERIALIZE_CHUNK_SIZE, total)
+                chunk = np.array([dataset[i] for i in range(start, end)])
+                chunk_file = os.path.join(tmpdir, f"chunk_{start:07d}.npy")
+                np.save(chunk_file, chunk, allow_pickle=True)
+                chunk_files.append(chunk_file)
+                del chunk
+
+        # Load all chunk files and concatenate into a single array.
+        # Note: allow_pickle=True because items are dicts with
+        # variable-length arrays (object dtype), so memmap is not possible.
+        if not chunk_files:
+            # Empty dataset: preserve the pre-chunking behavior of
+            # returning an empty array instead of raising from concatenate.
+            return np.array([])
+        arrays = [np.load(f, allow_pickle=True) for f in chunk_files]
+        return np.concatenate(arrays, axis=0)
     finally:
-        if previous_nofile_limit is not None:
+        for f in chunk_files:
             try:
-                resource.setrlimit(resource.RLIMIT_NOFILE, previous_nofile_limit)
-            except (ValueError, OSError) as error:
-                logger.warning("Unable to restore the file-descriptor limit after tokenization: %s", error)
-        torch.multiprocessing.set_sharing_strategy(previous_sharing_strategy)
+                os.remove(f)
+            except OSError:
+                pass
+        try:
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
 
 
 def _pre_pad_data_point(data: dict, max_seq_length: int, max_stored_length_to_pad: int, pad_id: int) -> None:
