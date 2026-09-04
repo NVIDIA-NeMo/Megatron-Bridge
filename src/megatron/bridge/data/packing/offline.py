@@ -105,6 +105,10 @@ def _materialize_dataset_items(dataset, num_workers):
         # Load all chunk files and concatenate into a single array.
         # Note: allow_pickle=True because items are dicts with
         # variable-length arrays (object dtype), so memmap is not possible.
+        if not chunk_files:
+            # Empty dataset: preserve the pre-chunking behavior of
+            # returning an empty array instead of raising from concatenate.
+            return np.array([])
         arrays = [np.load(f, allow_pickle=True) for f in chunk_files]
         return np.concatenate(arrays, axis=0)
     finally:

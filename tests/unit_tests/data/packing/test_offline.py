@@ -276,6 +276,20 @@ def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(mon
     assert _materialize_dataset_items(TinyDataset(), 0).tolist() == [10, 11, 12]
 
 
+def test_materialize_dataset_items_empty_dataset():
+    """An empty dataset must return an empty array, not raise from concatenate."""
+
+    class TinyDataset:
+        def __len__(self):
+            return 0
+
+        def __getitem__(self, index):
+            raise AssertionError("no items should be fetched from an empty dataset")
+
+    result = _materialize_dataset_items(TinyDataset(), -1)
+    assert result.shape == (0,)
+
+
 def test_materialize_dataset_items_parallel_returns_correct_items():
     """The parallel (fork) path should return all items correctly."""
 
