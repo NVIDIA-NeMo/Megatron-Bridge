@@ -2334,6 +2334,23 @@ class TestAutoBridge:
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
                 # Should use the latest iteration (iter_0000020)
+                assert mock_load_megatron_model.call_args.args[0].endswith("iter_0000020")
+
+    def test_load_megatron_model_root_uses_published_tracker(self, tmp_path):
+        """A checkpoint root must not select an unpublished newer iteration directory."""
+        durable_checkpoint = tmp_path / "iter_0000010"
+        durable_checkpoint.mkdir()
+        (durable_checkpoint / "run_config.yaml").touch()
+        (tmp_path / "iter_0000020").mkdir()
+        (tmp_path / "latest_checkpointed_iteration.txt").write_text("10")
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.trust_remote_code = False
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model", return_value=[]) as load_model:
+            bridge.load_megatron_model(tmp_path)
+
+        assert load_model.call_args.args[0] == str(durable_checkpoint)
 
     def test_load_megatron_model_with_mp_overrides(self):
         """Test load_megatron_model with model-parallel overrides argument."""

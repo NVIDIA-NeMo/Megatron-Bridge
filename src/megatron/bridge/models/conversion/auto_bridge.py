@@ -1406,7 +1406,9 @@ class AutoBridge(Generic[MegatronModelT]):
             - The model architecture must match the bridge configuration
         """
         try:
+            from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
             from megatron.bridge.training.model_load_save import load_megatron_model
+            from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
@@ -1416,6 +1418,10 @@ class AutoBridge(Generic[MegatronModelT]):
             register_allowed_target_prefix("transformers_modules.")
 
         checkpoint_path = Path(path)
+
+        iteration, release = _resolve_checkpoint_iteration(str(checkpoint_path), None)
+        if iteration >= 0 or release:
+            checkpoint_path = Path(get_checkpoint_name(str(checkpoint_path), iteration, release))
 
         # Check for iter_* folders
         iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
