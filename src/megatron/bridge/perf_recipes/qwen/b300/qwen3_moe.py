@@ -221,6 +221,7 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    cfg.model.cross_entropy_fusion_impl = "native"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -329,6 +330,7 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    cfg.model.cross_entropy_fusion_impl = "native"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
