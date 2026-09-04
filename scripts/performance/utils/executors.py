@@ -363,7 +363,7 @@ def kubeflow_executor(
     return executor
 
 
-def xcalibur_executor(
+def nvcre_executor(
     namespace: str,
     image: str,
     num_nodes: int,
@@ -381,8 +381,8 @@ def xcalibur_executor(
     kube_context: Optional[str] = None,
     gang_scheduler_name: Optional[str] = None,
 ):
-    from nemo_run.core.execution.xcalibur import XCaliburExecutor
-    return XCaliburExecutor(
+    from nemo_run.core.execution.nvcre import NvcreExecutor
+    return NvcreExecutor(
         namespace=namespace,
         container_image=image,
         num_nodes=num_nodes,
