@@ -2387,6 +2387,29 @@ class TestAutoBridge:
                         assert call_args.args[0] == "checkpoint_path"  # path argument
                         assert "skip_temp_dist_context" in call_args.kwargs
 
+    def test_load_megatron_model_honors_cpu_initialization(self):
+        """Test explicit CPU initialization reaches the checkpoint loader."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = Mock(spec=PreTrainedCausalLM)
+        bridge.trust_remote_code = False
+
+        with (
+            patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model,
+            patch("torch.distributed.is_initialized", return_value=False),
+            patch.object(Path, "iterdir", return_value=[]),
+        ):
+            mock_model = Mock()
+            mock_load_megatron_model.return_value = mock_model
+
+            result = bridge.load_megatron_model(
+                "checkpoint_path",
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+            )
+
+        assert result == [mock_model]
+        assert mock_load_megatron_model.call_args.kwargs["use_cpu_init"] is True
+
     def test_load_megatron_model_registers_prefix_when_trust_remote_code(self):
         """Test that load_megatron_model registers transformers_modules prefix when trust_remote_code=True."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
