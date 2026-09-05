@@ -46,7 +46,7 @@ class DummyHybridStack(DummyTransformerBlock):
 
 
 class DummyModel(torch.nn.Module):
-    def __init__(self, block_cls=DummyTransformerBlock) -> None:
+    def __init__(self, block_cls=DummyTransformerBlock, multi_adapter: bool = False) -> None:
         super().__init__()
         self.config = SimpleNamespace(recompute_method="uniform")
         self.block = block_cls()
@@ -55,11 +55,13 @@ class DummyModel(torch.nn.Module):
         self.base = torch.nn.Linear(1, 1, bias=False)
         self.base.weight.requires_grad = False
 
-        # Trainable adapter parameter whose name contains ".adapter."
-        # Use a ModuleDict with key "adapter" so that the full parameter
-        # name includes the expected substring (".adapter.") used by
-        # maybe_enable_recompute_inputs_grad.
-        self.adapter = torch.nn.ModuleDict({"adapter": DummyAdapter()})
+        # Put the adapter container below another module so its parameter names
+        # include the same ".adapter."/".adapters." segments as real wrappers.
+        self.projection = torch.nn.Module()
+        if multi_adapter:
+            self.projection.adapters = torch.nn.ModuleList([DummyAdapter()])
+        else:
+            self.projection.adapter = DummyAdapter()
 
     def modules(self):
         for module in super().modules():
@@ -122,3 +124,15 @@ def test_recompute_patch_registry_tracks_model_lifetime(monkeypatch):
     second_model.block(torch.zeros(2, 2))
 
     assert second_model.block.last_input_requires_grad is True
+
+
+def test_maybe_enable_recompute_inputs_grad_recognizes_multi_adapter_parameters(monkeypatch):
+    _patch_recompute_blocks(monkeypatch)
+    recompute_mod.PEFT_RECOMPUTE_PATCHED.clear()
+
+    model = DummyModel(multi_adapter=True)
+    patched_registry = maybe_enable_recompute_inputs_grad(model, set())
+
+    assert len(patched_registry) == 1
+    model.block(torch.zeros(2, 2))
+    assert model.block.last_input_requires_grad is True
