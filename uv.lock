@@ -24,7 +24,7 @@ overrides = [
     { name = "tokenizers", specifier = ">=0.22.0,<0.23" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=27486e03cfc1fa41f6932dcecdc47c71c47eac3e" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=eb63fb639341576fde6b6653d4b8a03e63d238e1" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -35,7 +35,7 @@ version = "1.0.0+b7643bd"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
-version = "2.18.0+27486e03"
+version = "2.18.0+eb63fb63"
 requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.25.0", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
 provides-extras = ["core-cu13", "pytorch"]
 
@@ -2351,7 +2351,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'training'" },
     { name = "torch", specifier = ">=2.6.0" },
     { name = "tqdm", marker = "extra == 'dev'" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=27486e03cfc1fa41f6932dcecdc47c71c47eac3e" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=eb63fb639341576fde6b6653d4b8a03e63d238e1" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "transformers", marker = "extra == 'training'" },
     { name = "wandb", marker = "extra == 'mlm'" },
@@ -4865,8 +4865,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.18.0+27486e03"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=27486e03cfc1fa41f6932dcecdc47c71c47eac3e#27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
+version = "2.18.0+eb63fb63"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=eb63fb639341576fde6b6653d4b8a03e63d238e1#eb63fb639341576fde6b6653d4b8a03e63d238e1" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
