@@ -342,6 +342,61 @@ class TestFp8ParamExport:
         assert tasks[1].param_weight.shape == (96, 2)
         assert torch.all(tasks[1].param_weight == 1)
 
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize("shape", [(96, 64), (128, 128)], ids=["padded", "compact"])
+    def test_real_te_mxfp8_export_dequantization_parity(self, monkeypatch, shape):
+        pytest.importorskip("transformer_engine.pytorch")
+        from transformer_engine.pytorch.fp8 import FP8GlobalStateManager
+        from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
+        from transformer_engine_torch import DType
+
+        supported, reason = FP8GlobalStateManager.is_mxfp8_available()
+        if not supported:
+            pytest.skip(reason)
+
+        generator = torch.Generator(device="cuda").manual_seed(1234)
+        source = torch.randn(shape, device="cuda", dtype=torch.float32, generator=generator)
+        quantizer = MXFP8Quantizer(DType.kFloat8E4M3, rowwise=True, columnwise=False)
+        quantizer.optimize_for_gemm = False
+        quantized = quantizer(source)
+
+        bridge = DummyBridge()
+        gname = _QKV_GLOBAL
+        MappingT = _make_qkv_mapping_type(gname)
+        model = SimpleNamespace(
+            config=SimpleNamespace(share_embeddings_and_output_weights=False, fp8_recipe="mxfp8"),
+            named_parameters=lambda: [(gname, quantized)],
+        )
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            gname,
+            registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+            detect_fp8=bridge._detect_fp8_params,
+        )
+        monkeypatch.setattr(f"{_MODEL_MB}.get_module_and_param_from_name", lambda *_a, **_k: (model, quantized))
+        monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda _g: 1)
+
+        def gather(output, value, group=None):
+            output[0] = value
+
+        monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", gather)
+        tasks = bridge.build_export_fp8_tasks(SimpleNamespace(state=SimpleNamespace(source={})), [model])
+        assert len(tasks) == 2
+        exported = {}
+        for task in tasks:
+            exported.update(task.mapping.megatron_to_hf(task.param_weight, task.megatron_module))
+
+        weight_name = "model.layers.0.self_attn.q_proj.weight"
+        weight, scale = exported[weight_name], exported[f"{weight_name}_scale_inv"]
+        assert weight.dtype == torch.float8_e4m3fn
+        assert scale.dtype == torch.uint8
+        assert weight.shape == shape
+        assert scale.shape == (shape[0], shape[1] // 32)
+        # E8M0 stores a biased exponent for each block of 32 weight values.
+        dequantized = weight.float() * torch.exp2(scale.float() - 127).repeat_interleave(32, dim=-1)
+        torch.testing.assert_close(dequantized, quantized.dequantize(dtype=torch.float32), rtol=0, atol=0)
+
     @pytest.mark.parametrize(
         "layout_overrides, error_match",
         [
