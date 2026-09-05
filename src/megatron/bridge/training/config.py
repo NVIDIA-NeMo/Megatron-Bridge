@@ -127,6 +127,15 @@ class OptimizerConfig(MCoreOptimizerConfig):
     for field modifications after construction but before computed fields are calculated.
     """
 
+    use_layer_wise_param_layout: bool = True
+    """Use the precomputed shard-aligned layout for the LayerWise optimizer.
+
+    Set to ``False`` to opt out to the legacy LayerWise layout, where all parameters
+    share one LayerWise buffer and parameter synchronization uses whole-parameter
+    ping-pong ownership with ``allgather_params``. This setting has no effect unless
+    ``use_layer_wise_distributed_optimizer`` is enabled.
+    """
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
