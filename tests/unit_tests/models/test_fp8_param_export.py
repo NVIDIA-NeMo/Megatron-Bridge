@@ -17,6 +17,7 @@
 import logging
 import sys
 import types
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
 
@@ -272,6 +273,7 @@ class TestFp8ParamExport:
 
         rowwise = torch.ones(scale_shape, dtype=torch.float32)
         metadata = {
+            "fp8_dtype": SimpleNamespace(name="kFloat8E4M3"),
             "rowwise_data": torch.zeros((2, 256), dtype=torch.uint8),
             "rowwise_scale_inv": rowwise,
             "quantizer": quantizer,
@@ -310,6 +312,7 @@ class TestFp8ParamExport:
 
         rowwise_scale_inv = torch.ones((128, 4), dtype=torch.uint8)
         metadata = {
+            "fp8_dtype": SimpleNamespace(name="kFloat8E4M3"),
             "rowwise_data": torch.zeros((96, 64), dtype=torch.uint8),
             "rowwise_scale_inv": rowwise_scale_inv,
             "with_gemm_swizzled_scales": False,
@@ -340,24 +343,29 @@ class TestFp8ParamExport:
         assert torch.all(tasks[1].param_weight == 1)
 
     @pytest.mark.parametrize(
-        "scale_shape, swizzled, error_match",
+        "layout_overrides, error_match",
         [
-            pytest.param((128, 4), True, "compact, non-swizzled scales", id="swizzled"),
-            pytest.param((95, 2), False, "smaller than the compact scale shape", id="undersized"),
+            pytest.param({"with_gemm_swizzled_scales": True}, "compact, non-swizzled scales", id="swizzled"),
+            pytest.param({"scale_shape": (95, 2)}, "smaller than the compact scale shape", id="undersized"),
+            pytest.param({"fp8_dtype": "kFloat8E5M2"}, "requires fp8_dtype=kFloat8E4M3", id="e5m2"),
+            pytest.param({"data_dtype": torch.float32}, "requires uint8 data", id="data-dtype"),
+            pytest.param({"scale_dtype": torch.float32}, "requires torch.uint8 scales", id="scale-dtype"),
         ],
     )
-    def test_detect_fp8_params_propagates_remote_mxfp8_error(self, monkeypatch, scale_shape, swizzled, error_match):
+    def test_detect_fp8_params_propagates_remote_mxfp8_error(self, monkeypatch, layout_overrides, error_match):
         bridge = DummyBridge()
         model = SimpleNamespace(named_parameters=lambda: [])
         remote_layout = FP8ExportLayout(
             format_name="mxfp8",
+            fp8_dtype="kFloat8E4M3",
             block_shape=(1, 32),
             data_dtype=torch.uint8,
             scale_dtype=torch.uint8,
-            scale_shape=scale_shape,
+            scale_shape=(128, 4),
             compact_scale_shape=(96, 2),
-            with_gemm_swizzled_scales=swizzled,
+            with_gemm_swizzled_scales=False,
         )
+        remote_layout = replace(remote_layout, **layout_overrides)
         monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda *_a, **_k: [])
         monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda _g: 2)
 
@@ -383,7 +391,12 @@ class TestFp8ParamExport:
         )
 
         holder = BlockwiseMetadataTensor()
-        holder.get_metadata = lambda: {"rowwise_scale_inv": torch.ones(1), "is_2D_scaled": False}
+        holder.get_metadata = lambda: {
+            "fp8_dtype": SimpleNamespace(name="kFloat8E4M3"),
+            "rowwise_data": torch.zeros((32, 32), dtype=torch.uint8),
+            "rowwise_scale_inv": torch.ones(1),
+            "is_2D_scaled": False,
+        }
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
@@ -427,14 +440,28 @@ class TestFp8ParamExport:
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
         assert bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv") == {}
 
-    def test_detect_fp8_params_from_mxfp8_metadata(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "metadata_overrides, error_match",
+        [
+            ({}, None),
+            ({"fp8_dtype": SimpleNamespace(name="kFloat8E5M2")}, "requires fp8_dtype=kFloat8E4M3"),
+            ({"fp8_dtype": None}, "requires fp8_dtype=kFloat8E4M3"),
+            ({"rowwise_data": torch.zeros((96, 64))}, "requires uint8 data"),
+            ({"rowwise_data": None}, "requires uint8 data"),
+            ({"rowwise_scale_inv": torch.ones((128, 4))}, "requires torch.uint8 scales"),
+            ({"rowwise_scale_inv": object()}, "requires torch.uint8 scales"),
+        ],
+    )
+    def test_detect_fp8_params_from_mxfp8_metadata(self, monkeypatch, metadata_overrides, error_match):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
         metadata = {
+            "fp8_dtype": SimpleNamespace(name="kFloat8E4M3"),
             "rowwise_data": torch.zeros((96, 64), dtype=torch.uint8),
             "rowwise_scale_inv": torch.ones((128, 4), dtype=torch.uint8),
             "with_gemm_swizzled_scales": False,
         }
+        metadata.update(metadata_overrides)
         holder = SimpleNamespace(get_metadata=lambda: metadata, shape=(96, 64), ndim=2)
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False, fp8_recipe="mxfp8"),
@@ -448,14 +475,24 @@ class TestFp8ParamExport:
         monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda *_a, **_k: [])
         monkeypatch.setattr(f"{_MODEL_MB}.get_pg_size", lambda _g: 1)
 
+        gathered = []
+
         def _ag1(out, obj, group=None):
+            gathered.append(True)
             out[0] = obj
 
         monkeypatch.setattr(f"{_MODEL_MB}.torch.distributed.all_gather_object", _ag1)
 
+        if error_match is not None:
+            with pytest.raises(ValueError, match=error_match):
+                bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv")
+            assert gathered == [True]
+            return
+
         layouts = bridge._detect_fp8_params([model], model.config, [gname], None, "_rowwise_scale_inv")
         assert isinstance(layouts[gname], FP8ExportLayout)
         assert layouts[gname].format_name == "mxfp8"
+        assert layouts[gname].fp8_dtype == "kFloat8E4M3"
         assert layouts[gname].block_shape == (1, 32)
         assert layouts[gname].data_dtype == torch.uint8
         assert layouts[gname].scale_dtype == torch.uint8

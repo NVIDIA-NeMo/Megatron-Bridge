@@ -29,6 +29,7 @@ class FP8ExportLayout:
     """Topology-neutral FP8 parameter layout used during checkpoint export."""
 
     format_name: str
+    fp8_dtype: str | None
     block_shape: tuple[int | None, int | None]
     data_dtype: torch.dtype | None
     scale_dtype: torch.dtype | None
@@ -38,6 +39,15 @@ class FP8ExportLayout:
 
     def validate(self) -> None:
         """Validate format-specific export invariants."""
+        if self.fp8_dtype != "kFloat8E4M3":
+            raise ValueError(f"FP8 parameter export requires fp8_dtype=kFloat8E4M3, got {self.fp8_dtype!r}")
+        if self.data_dtype != torch.uint8:
+            raise ValueError(f"FP8 parameter export requires uint8 data, got {self.data_dtype}")
+        expected_scale_dtype = torch.uint8 if self.format_name == "mxfp8" else torch.float32
+        if self.scale_dtype != expected_scale_dtype:
+            raise ValueError(
+                f"{self.format_name} parameter export requires {expected_scale_dtype} scales, got {self.scale_dtype}"
+            )
         if self.format_name != "mxfp8":
             return
         if self.with_gemm_swizzled_scales:
@@ -89,14 +99,17 @@ def detect_fp8_export_layout(
     if scale_tensor is None:
         return None
 
-    is_mxfp8 = fp8_recipe == "mxfp8" and rowwise_data is not None and "with_gemm_swizzled_scales" in metadata
+    # Python and pybind TE dtype enums expose the same names; no TE import is needed.
+    fp8_dtype = getattr(metadata.get("fp8_dtype"), "name", None)
+    is_mxfp8 = fp8_recipe == "mxfp8" and "with_gemm_swizzled_scales" in metadata
     if is_mxfp8:
         return FP8ExportLayout(
             format_name="mxfp8",
+            fp8_dtype=fp8_dtype,
             block_shape=(1, 32),
             data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
             scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
-            scale_shape=tuple(scale_tensor.shape),
+            scale_shape=tuple(scale_tensor.shape) if isinstance(scale_tensor, torch.Tensor) else (),
             compact_scale_shape=(
                 math.prod(local_weights.shape[:-1]),
                 math.ceil(local_weights.shape[-1] / 32),
@@ -106,6 +119,7 @@ def detect_fp8_export_layout(
     if "is_2D_scaled" in metadata:
         has_valid_row_ratio = (
             metadata.get("is_2D_scaled")
+            and isinstance(scale_tensor, torch.Tensor)
             and local_weights.ndim > 0
             and scale_tensor.ndim > 0
             and scale_tensor.shape[0] > 0
@@ -115,10 +129,11 @@ def detect_fp8_export_layout(
         block_len = getattr(metadata.get("quantizer"), "block_len", None)
         return FP8ExportLayout(
             format_name="blockwise",
+            fp8_dtype=fp8_dtype,
             block_shape=(row_block_size, block_len if isinstance(block_len, int) else None),
             data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
             scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
-            scale_shape=tuple(scale_tensor.shape),
+            scale_shape=tuple(scale_tensor.shape) if isinstance(scale_tensor, torch.Tensor) else (),
             compact_scale_shape=None,
             with_gemm_swizzled_scales=False,
         )
