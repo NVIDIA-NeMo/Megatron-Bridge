@@ -466,6 +466,7 @@ def load_megatron_model(
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
     model_cfg, mlm_args = load_model_config(checkpoint_path)
+    saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
@@ -490,8 +491,15 @@ def load_megatron_model(
     # Apply model-parallel overrides if provided
     if mp_overrides:
         for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and value is not None:
+            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
                 setattr(model_cfg, key, value)
+
+        if (
+            "pipeline_model_parallel_size" in mp_overrides
+            and model_cfg.pipeline_model_parallel_size != saved_pipeline_model_parallel_size
+            and "pipeline_model_parallel_layout" not in mp_overrides
+        ):
+            model_cfg.pipeline_model_parallel_layout = None
 
     # A saved flexible layout describes PP/VPP stage ownership. It must not be
     # reinterpreted as virtual pipeline chunks after collapsing to one rank.
