@@ -94,6 +94,7 @@ launcher. Hardware-qualified library recipes are defined under
 | H100, 32 GPUs | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_config` | BF16 Adam |
 | H100, 32 GPUs | `deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config` | MXFP8 Adam |
 | H100, 32 GPUs | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config` | BF16 Muon |
+| B200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config` | MXFP8 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config` | BF16 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config` | MXFP8 Adam |
 | GB200, 64 GPUs | `deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config` | BF16 Muon |
@@ -117,6 +118,11 @@ the recipe defaults and override only the dataset, run length, logging, pretrain
 checkpoint, and output paths. The latest 100-step real-data candidate and its
 checkpoint evidence are recorded in the verification card.
 
+The B200 recipes require node-major rank assignment with eight ranks per
+physical NVL8 system. Their HybridEP runtime and topology-correct NIC mapping
+must be supplied by the site launcher; Megatron Bridge does not install or
+configure that external runtime.
+
 Compatibility aliases such as `deepseek_v4_flash_pretrain_mxfp8_config` remain
 exported, but new launches should use the hardware-qualified names above.
 Canonical benchmark recipes under `src/megatron/bridge/perf_recipes/` are
@@ -132,11 +138,27 @@ DeepSeek-V4-Flash provides BF16 Adam full-parameter SFT recipes:
 | `deepseek_v4_flash_no_mtp_sft_config` | Unpacked SBHD | Off | Hopper or Blackwell |
 | `deepseek_v4_flash_sft_openmath_thinking_packed_config` | Offline-packed THD | On | Portable base |
 | `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD | On | 32-GPU GB200 |
+| `deepseek_v4_flash_sft_160gpu_b200_bf16_128k_config` | Offline-packed 128K THD | Off | 160-GPU B200 NVL8 |
 
 The recipes select fused mHC only when the runtime supports the Blackwell
 kernel; Hopper uses the unfused fallback. The GB200 packed recipe additionally
 enables HybridEP, uneven-dispatch padding, DSA fusion, grouped GEMM, selective
 recompute, and attention activation offload.
+
+The 160-GPU B200 recipe owns the validated `TP1/PP5/CP16/EP16` topology,
+`MBS1/GBS128`, `8/9/9/9/8` pipeline split, natural HybridEP routing,
+attention-only TE CUDA graphs, and fused-group-MLP activation offload. It does
+not enable forced routing, token dropping, expert capacity limits, paged stash,
+or low-precision training. Supply a BF16 pretrained checkpoint and the packed
+training dataset from the launcher.
+
+```bash
+./scripts/training/train.sh --nodes 20 --gpus-per-node 8 \
+  --recipe deepseek_v4_flash_sft_160gpu_b200_bf16_128k_config \
+  --mode sft --step-func dsv4_step \
+  --pretrained_checkpoint work/models/deepseek-v4-flash \
+  --max_steps 50
+```
 
 Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
 
