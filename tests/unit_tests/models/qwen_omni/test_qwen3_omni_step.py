@@ -48,6 +48,13 @@ def _as_nocuda(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.as_subclass(_NoCudaTensor)
 
 
+def _patch_get_pg_size(monkeypatch):
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_pg_size",
+        lambda group=None: 1 if group is None else group.size(),
+    )
+
+
 def _make_batch():
     tokens = torch.tensor([[1, 2, 3, 4]])
     return {
@@ -220,6 +227,7 @@ def test_forward_step_passes_omni_multimodal_args(monkeypatch):
                 "feature_attention_mask": torch.tensor([[1, 1, 1, 1, 0, 0]]),
                 "audio_feature_lengths": torch.tensor([4]),
             },
+            None,
         ),
     )
 
@@ -243,6 +251,8 @@ def test_forward_step_passes_omni_multimodal_args(monkeypatch):
     ],
 )
 def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, local_labels, local_loss_mask):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size=1, rank=0):
             self._size = size
@@ -331,6 +341,7 @@ def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, loca
                 "input_features": input_features,
                 "feature_attention_mask": torch.tensor([[1, 1, 1, 1, 0, 0]]),
             },
+            None,
         ),
     )
 
@@ -371,6 +382,8 @@ def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, loca
 
 
 def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size=1, rank=0):
             self._size = size
@@ -397,13 +410,24 @@ def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatc
         def __call__(self, **kwargs):  # noqa: ARG002
             raise AssertionError("model forward should not run when returning a schedule plan")
 
-        def build_schedule_plan(self, input_ids, position_ids, attention_mask, labels=None, loss_mask=None):
+        def build_schedule_plan(
+            self,
+            input_ids,
+            position_ids,
+            attention_mask,
+            labels=None,
+            loss_mask=None,
+            packed_seq_params=None,
+            padding_mask=None,
+        ):
             self.schedule_args = {
                 "input_ids": input_ids,
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
                 "labels": labels,
                 "loss_mask": loss_mask,
+                "packed_seq_params": packed_seq_params,
+                "padding_mask": padding_mask,
             }
             return torch.tensor(1.0)
 
@@ -461,6 +485,7 @@ def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatc
             torch.ones(1, 7, dtype=torch.bool),
             torch.arange(7).unsqueeze(0),
             {},
+            None,
         ),
     )
 
@@ -491,9 +516,13 @@ def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatc
     assert model.schedule_args["attention_mask"].shape == (1, 4)
     assert torch.equal(model.schedule_args["labels"], local_labels)
     assert torch.equal(model.schedule_args["loss_mask"], local_loss_mask)
+    assert model.schedule_args["packed_seq_params"] is None
+    assert model.schedule_args["padding_mask"] is None
 
 
-def test_pad_batch_sequences_for_context_parallel_pads_to_zigzag_multiple():
+def test_pad_batch_sequences_for_context_parallel_pads_to_zigzag_multiple(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -535,7 +564,9 @@ def test_pad_batch_sequences_for_context_parallel_pads_to_zigzag_multiple():
     assert loss_mask[0, -1].item() == 0
 
 
-def test_pad_batch_sequences_for_context_parallel_can_force_seq_length():
+def test_pad_batch_sequences_for_context_parallel_can_force_seq_length(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -576,7 +607,9 @@ def test_pad_batch_sequences_for_context_parallel_can_force_seq_length():
     assert position_ids.shape == (1, 12)
 
 
-def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length():
+def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -608,7 +641,53 @@ def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length(
         )
 
 
-def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
+def test_get_batch_preserves_collator_owned_packed_metadata():
+    batch = _make_batch()
+    batch.update(
+        {
+            "attention_mask": None,
+            "cu_seqlens_q": torch.tensor([0, 3, 7], dtype=torch.int32),
+            "cu_seqlens_kv": torch.tensor([0, 3, 7], dtype=torch.int32),
+            "cu_seqlens_q_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
+            "cu_seqlens_kv_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
+            "max_seqlen_q": torch.tensor(4, dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor(4, dtype=torch.int32),
+            "total_tokens": 8,
+            "padding_mask": torch.tensor([[False, False, False, True, False, False, False, True]]),
+        }
+    )
+    for key, value in list(batch.items()):
+        if isinstance(value, torch.Tensor):
+            batch[key] = _as_nocuda(value)
+
+    cfg = type(
+        "Cfg",
+        (),
+        {
+            "dataset": type("D", (), {"skip_getting_attention_mask_from_dataset": False})(),
+            "model": type("M", (), {"pipeline_model_parallel_size": 2, "seq_length": 16})(),
+        },
+    )()
+    pg_collection = type("PG", (), {"pp": object()})()
+
+    tokens, labels, loss_mask, attention_mask, position_ids, multimodal_inputs, packed_metadata = get_batch(
+        _Iterator(batch), cfg, pg_collection=pg_collection
+    )
+
+    assert tokens.shape == (1, 4)
+    assert labels.shape == (1, 4)
+    assert loss_mask.shape == (1, 4)
+    assert attention_mask is None
+    assert position_ids.shape == (1, 4)
+    assert "input_features" in multimodal_inputs
+    assert packed_metadata["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert packed_metadata["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+    assert packed_metadata["max_seqlen_q"].item() == 4
+    assert packed_metadata["total_tokens"] == 8
+    assert packed_metadata["padding_mask"].tolist() == [[False, False, False, True, False, False, False, True]]
+
+
+def test_forward_step_passes_packed_sequence_params_to_model(monkeypatch):
     class _MockProcessGroup:
         def rank(self):
             return 0
@@ -618,15 +697,18 @@ def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
 
     class _MockPGCollection:
         def __init__(self):
+            self.tp = _MockProcessGroup()
             self.pp = _MockProcessGroup()
             self.cp = _MockProcessGroup()
 
     class _Model:
         def __init__(self):
             self.config = type("Cfg", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
+            self.kwargs = None
 
-        def __call__(self, **kwargs):  # noqa: ARG002
-            raise AssertionError("model forward should not run when packed sequence is enabled")
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return torch.tensor(0.0)
 
     class _Timer:
         def __call__(self, *args, **kwargs):  # noqa: ARG002
@@ -676,17 +758,162 @@ def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
     monkeypatch.setattr(
         "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_batch",
         lambda data_iterator, cfg, use_mtp, pg_collection: (
-            torch.tensor([[1, 2, 3, 4]]),
-            torch.tensor([[2, 3, 4, -100]]),
-            torch.ones(1, 4),
-            torch.ones(1, 4, dtype=torch.bool),
-            torch.arange(4).unsqueeze(0),
+            torch.tensor([[1, 2, 3, 0, 4, 5, 0, 0]]),
+            torch.tensor([[2, 3, -100, -100, 5, -100, -100, -100]]),
+            torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
+            None,
+            torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]]),
             {},
+            {
+                "cu_seqlens_q": torch.tensor([0, 3, 5], dtype=torch.int32),
+                "cu_seqlens_kv": torch.tensor([0, 3, 5], dtype=torch.int32),
+                "cu_seqlens_q_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
+                "cu_seqlens_kv_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
+                "max_seqlen_q": torch.tensor(4, dtype=torch.int32),
+                "max_seqlen_kv": torch.tensor(4, dtype=torch.int32),
+                "total_tokens": 8,
+                "padding_mask": torch.tensor([[False, False, False, True, False, False, True, True]]),
+            },
         ),
     )
 
-    with pytest.raises(NotImplementedError, match="packed sequence support"):
-        forward_step(state, iter([{}]), _Model())
+    model = _Model()
+    output, loss_fn = forward_step(state, iter([{}]), model)
+
+    assert isinstance(output, torch.Tensor)
+    assert callable(loss_fn)
+    assert model.kwargs is not None
+    assert model.kwargs["packed_seq_params"] is not None
+    assert model.kwargs["position_ids"] is None
+    assert model.kwargs["attention_mask"] is None
+    assert model.kwargs["labels"].shape == (1, 8)
+    assert model.kwargs["loss_mask"].shape == (1, 8)
+    assert model.kwargs["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+    torch.testing.assert_close(model.kwargs["packed_seq_params"].cu_seqlens_q, torch.IntTensor([0, 3, 5]))
+    torch.testing.assert_close(model.kwargs["packed_seq_params"].cu_seqlens_q_padded, torch.IntTensor([0, 4, 8]))
+
+
+def test_forward_step_supports_packed_sequence_with_context_parallel(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
+    class _MockProcessGroup:
+        def __init__(self, size=1, rank=0):
+            self._size = size
+            self._rank = rank
+
+        def rank(self):
+            return self._rank
+
+        def size(self):
+            return self._size
+
+    class _MockPGCollection:
+        def __init__(self):
+            self.tp = _MockProcessGroup()
+            self.pp = _MockProcessGroup()
+            self.cp = _MockProcessGroup(size=2, rank=0)
+            self.ep = _MockProcessGroup()
+
+    class _Model:
+        def __init__(self):
+            self.config = type("Cfg", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
+            self.kwargs = None
+
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return torch.tensor(0.0)
+
+    class _Timer:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def start(self):
+            return self
+
+        def stop(self):
+            return self
+
+    class _Strag:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):  # noqa: ARG002
+            return False
+
+    state = type("State", (), {})()
+    state.cfg = type(
+        "Cfg",
+        (),
+        {
+            "dataset": type(
+                "D",
+                (),
+                {"skip_getting_attention_mask_from_dataset": False, "enable_in_batch_packing": True},
+            )(),
+            "model": type("M", (), {"pipeline_model_parallel_size": 1, "seq_length": 8})(),
+            "rerun_state_machine": type("R", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False})(),
+        },
+    )()
+    state.timers = _Timer()
+    state.straggler_timer = _Strag()
+
+    tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 0, 0]])
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_pg_collection",
+        lambda model: _MockPGCollection(),
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_model_config",
+        lambda model: model.config,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_batch",
+        lambda data_iterator, cfg, use_mtp, pg_collection: (
+            tokens,
+            torch.tensor([[2, 3, -100, -100, 5, -100, -100, -100]]),
+            torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
+            None,
+            torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]]),
+            {},
+            {
+                "cu_seqlens_q": torch.tensor([0, 3, 5], dtype=torch.int32),
+                "cu_seqlens_kv": torch.tensor([0, 3, 5], dtype=torch.int32),
+                "cu_seqlens_q_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
+                "cu_seqlens_kv_padded": torch.tensor([0, 4, 8], dtype=torch.int32),
+                "max_seqlen_q": torch.tensor(4, dtype=torch.int32),
+                "max_seqlen_kv": torch.tensor(4, dtype=torch.int32),
+                "total_tokens": 8,
+                "padding_mask": torch.tensor([[False, False, False, True, False, False, True, True]]),
+            },
+        ),
+    )
+
+    def _mock_get_batch_on_this_cp_rank(batch, is_hybrid_cp, cp_group):  # noqa: ARG001
+        raise AssertionError("packed batches are CP-indexed inside the Qwen3-Omni model")
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_batch_on_this_cp_rank",
+        _mock_get_batch_on_this_cp_rank,
+    )
+
+    model = _Model()
+    output, loss_fn = forward_step(state, iter([{}]), model)
+
+    assert isinstance(output, torch.Tensor)
+    assert callable(loss_fn)
+    assert model.kwargs is not None
+    assert model.kwargs["packed_seq_params"] is not None
+    assert model.kwargs["input_ids"].shape == (1, 8)
+    assert model.kwargs["input_ids"].tolist() == tokens.tolist()
+    assert model.kwargs["position_ids"] is None
+    assert model.kwargs["attention_mask"] is None
+    assert model.kwargs["padding_mask"].shape == (1, 8)
+    torch.testing.assert_close(model.kwargs["packed_seq_params"].cu_seqlens_q, torch.IntTensor([0, 3, 5]))
+    torch.testing.assert_close(model.kwargs["packed_seq_params"].cu_seqlens_q_padded, torch.IntTensor([0, 4, 8]))
 
 
 def test_get_batch_pads_2d_attention_mask_for_pipeline_parallel():
@@ -705,7 +932,7 @@ def test_get_batch_pads_2d_attention_mask_for_pipeline_parallel():
     )()
     pg_collection = type("PG", (), {"pp": object()})()
 
-    tokens, labels, loss_mask, attention_mask, position_ids, multimodal_inputs = get_batch(
+    tokens, labels, loss_mask, attention_mask, position_ids, multimodal_inputs, packed_metadata = get_batch(
         _Iterator(batch), cfg, pg_collection=pg_collection
     )
 
@@ -715,3 +942,4 @@ def test_get_batch_pads_2d_attention_mask_for_pipeline_parallel():
     assert attention_mask.shape == (1, 8)
     assert position_ids.shape == (1, 8)
     assert multimodal_inputs["pixel_values"].shape == (2, 3, 4, 4)
+    assert packed_metadata is None
