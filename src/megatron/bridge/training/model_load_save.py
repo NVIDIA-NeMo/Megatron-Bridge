@@ -666,6 +666,7 @@ def save_megatron_model(
         )
         from tqdm import tqdm
 
+        from megatron.bridge.training import checkpointing
         from megatron.bridge.training.checkpointing import (
             _build_sharded_state_dict_metadata,
             generate_state_dict,
@@ -692,6 +693,12 @@ def save_megatron_model(
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),
             rerun_state=None,
         )
+
+        # ModelOpt state is not part of the model sharded state dict and must be
+        # saved while the converted model is still intact.
+        if ckpt_format != "fsdp_dtensor":
+            checkpoint_name = checkpointing.get_checkpoint_name(str(path), 0, release=False)
+            checkpointing.save_sharded_modelopt_state(model, checkpoint_name, (ckpt_format, 1))
 
         # Build a map from storage data_ptr to model parameter
         # This allows us to clear model params as we process factories

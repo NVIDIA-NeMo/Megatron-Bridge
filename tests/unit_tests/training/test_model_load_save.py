@@ -892,12 +892,64 @@ class TestSaveMegatronModel:
                 "megatron.bridge.training.checkpointing.generate_state_dict",
                 return_value={},
             ) as mock_generate_state_dict,
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
             patch("megatron.bridge.training.model_load_save.save_checkpoint"),
         ):
             save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=True)
 
         mock_get_rng_state.assert_not_called()
         assert mock_generate_state_dict.call_args.kwargs["rng_state"] is None
+
+    def test_low_memory_save_preserves_modelopt_state(self, tmp_path):
+        """Low-memory saves must persist ModelOpt state before destroying the model."""
+
+        module = torch.nn.Module()
+        module.register_parameter("weight", torch.nn.Parameter(torch.ones(1)))
+        models = [module]
+
+        provider = GPTModelProvider(num_layers=1, hidden_size=8, num_attention_heads=1)
+        pg_collection = Mock()
+        pg_collection.dp_cp = Mock()
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        rerun_state_machine = Mock()
+        rerun_state_machine.state_dict.return_value = {}
+
+        def assert_live_model(model, *_args, **_kwargs):
+            assert model == [module]
+            assert module.weight.numel() == 1
+
+        with (
+            patch("megatron.bridge.training.model_load_save.get_model_config", return_value=provider),
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=None),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine", return_value=rerun_state_machine),
+            patch("megatron.bridge.training.utils.pg_utils.get_pg_collection", return_value=pg_collection),
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=None),
+            patch(
+                "megatron.bridge.training.checkpointing.save_sharded_modelopt_state",
+                side_effect=assert_live_model,
+            ) as mock_save_modelopt_state,
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.FullyParallelSaveStrategyWrapper", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.ensure_directory_exists"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=1),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("megatron.bridge.training.checkpointing.print_rank_0"),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=1),
+            patch("torch.distributed.barrier"),
+        ):
+            save_megatron_model(models, tmp_path, low_memory_save=True)
+
+        mock_save_modelopt_state.assert_called_once()
+        assert models == []
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
