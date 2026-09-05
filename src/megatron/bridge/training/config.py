@@ -541,6 +541,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
+    save_rng_state_per_dp_rank: bool = False
+    """Save distinct RNG states for data-parallel ranks whose runtime RNG streams can diverge."""
+
     custom_manager_class: str | None = None
     """Fully qualified class name for a custom CheckpointManager implementation.
 

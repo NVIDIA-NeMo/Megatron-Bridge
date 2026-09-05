@@ -37,6 +37,7 @@ from megatron.bridge.training.checkpointing import (
     CheckpointType,
     DefaultCheckpointManager,
     _build_auto_bridge_for_save,
+    _checkpoint_has_per_dp_rng_states,
     _clear_auto_bridge_cache,
     _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
@@ -52,6 +53,7 @@ from megatron.bridge.training.checkpointing import (
     _record_dataloader_state_dir,
     _save_hf_adapter_weights,
     _save_hf_weights,
+    _select_rng_state,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
     create_checkpoint_manager,
@@ -390,6 +392,66 @@ class TestRNGState:
         assert rng_state["random_rng_state"] == "random_state"
         assert rng_state["np_rng_state"] == "np_state"
         assert rng_state["rng_tracker_states"] == "tracker_states"
+
+    def test_get_rng_state_gathers_requested_dp_streams(self):
+        """Checkpoint every DP RNG stream when the caller requests per-rank state."""
+        pg_collection = Mock()
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.dp_cp.rank.return_value = 0
+        pg_collection.dp_cp.size.return_value = 2
+        pg_collection.ep.size.return_value = 1
+        tracker = Mock()
+        tracker.get_states.return_value = {"model-parallel-rng": torch.tensor([1], dtype=torch.uint8)}
+
+        def gather(states, local_state, group):
+            assert group is pg_collection.dp_cp
+            states[:] = [local_state, {"rank": 1}]
+
+        with (
+            patch("random.getstate", return_value="random_state"),
+            patch("numpy.random.get_state", return_value="numpy_state"),
+            patch("torch.get_rng_state", return_value=torch.tensor([1], dtype=torch.uint8)),
+            patch("torch.cuda.get_rng_state", return_value=torch.tensor([2], dtype=torch.uint8)),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.all_gather_object", side_effect=gather) as all_gather,
+            patch(
+                "megatron.bridge.training.checkpointing.tensor_parallel.get_cuda_rng_tracker",
+                return_value=tracker,
+            ),
+        ):
+            result = get_rng_state(
+                data_parallel_random_init=True,
+                ckpt_format="torch_dist",
+                pg_collection=pg_collection,
+            )
+
+        all_gather.assert_called_once()
+        assert len(result.data) == 2
+        assert result.data[1] == {"rank": 1}
+
+    @pytest.mark.parametrize(
+        ("run_config", "expected"),
+        [
+            ({}, False),
+            ({"rng": {"data_parallel_random_init": True}}, True),
+            ({"checkpoint": {"save_rng_state_per_dp_rank": True}}, True),
+        ],
+    )
+    def test_checkpoint_has_per_dp_rng_states(self, run_config, expected):
+        """Recognize new and legacy per-DP RNG checkpoint metadata."""
+        assert _checkpoint_has_per_dp_rng_states(run_config) is expected
+
+    def test_select_rng_state_uses_saved_layout(self):
+        """Select rank zero or the current DP/CP rank according to checkpoint metadata."""
+        pg_collection = Mock()
+        pg_collection.dp_cp.rank.return_value = 2
+        states = [{"rank": 0}, {"rank": 1}, {"rank": 2}]
+
+        assert _select_rng_state(states, False, pg_collection) == {"rank": 0}
+        assert _select_rng_state(states, True, pg_collection) == {"rank": 2}
 
     @patch("megatron.bridge.training.checkpointing.get_pg_size")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
@@ -1791,6 +1853,7 @@ def load_checkpoint_fixtures():
     mock_cfg.checkpoint.finetune = False
     mock_cfg.checkpoint.load_optim = True
     mock_cfg.checkpoint.load_rng = True
+    mock_cfg.checkpoint.save_rng_state_per_dp_rank = False
 
     # Create nested mock attributes that might be accessed during loading
     mock_cfg.model = Mock()
@@ -1952,6 +2015,44 @@ class TestLoadCheckpoint:
         mock_read_run_config.assert_called_once_with("/checkpoints/iter_0000003/run_config.yaml")
         mock_get_rng_state.assert_not_called()
         assert mock_generate.call_args.kwargs["rng_state"] is None
+
+    def test_fsdp_without_run_config_uses_active_rng_layout(self, load_checkpoint_fixtures):
+        """Legacy FSDP checkpoints retain the active run's per-rank RNG restore behavior."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+        cfg.checkpoint.load_optim = False
+        cfg.checkpoint.save_rng_state_per_dp_rank = True
+        cfg.peft = None
+
+        pg_collection = Mock()
+        reader = Mock()
+        reader.read_metadata.return_value.state_dict_metadata = {}
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=False),
+            patch("megatron.bridge.training.checkpointing._get_filesystem_reader", return_value=reader),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value="fresh") as mock_get_rng_state,
+            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                side_effect=[
+                    ({}, "/checkpoints/iter_0000003", False, CheckpointType.FSDP_DTENSOR),
+                    (None, "", False, None),
+                ],
+            ),
+        ):
+            result = _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                load_checkpoint_fixtures["mock_optimizer"],
+                load_checkpoint_fixtures["mock_scheduler"],
+                pg_collection=pg_collection,
+            )
+
+        assert result == (0, 0)
+        mock_get_rng_state.assert_called_once_with(True, "fsdp_dtensor", pg_collection=pg_collection)
 
     def test_fsdp_omitted_optimizer_does_not_materialize_load_state(self, load_checkpoint_fixtures):
         """An FSDP checkpoint saved without optimizer state must leave the optimizer fresh."""
@@ -3475,6 +3576,7 @@ class TestMegatronLMCompatibility:
         mock_args.no_save_optim = False  # Will become save_optim = True
         mock_args.no_save_rng = True  # Will become save_rng = False
         mock_args.ckpt_fully_parallel_save = True
+        mock_args.data_parallel_random_init = True
 
         state_dict = {"args": mock_args}
 
@@ -3492,6 +3594,7 @@ class TestMegatronLMCompatibility:
                 "save_rng": False,  # Inverted from no_save_rng=True
                 "fully_parallel_save": True,
             },
+            "rng": {"data_parallel_random_init": True},
         }
 
         assert result == expected
@@ -3524,6 +3627,7 @@ class TestMegatronLMCompatibility:
                 "save_rng": True,  # default (no_save_rng=False)
                 "fully_parallel_save": False,  # default
             },
+            "rng": {"data_parallel_random_init": False},
         }
 
         assert result == expected

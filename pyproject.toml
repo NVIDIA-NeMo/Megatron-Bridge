@@ -187,6 +187,10 @@ flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
 
 [project.optional-dependencies]
+bagel = [
+    "opencv-python-headless>=4.7.0.72",
+    "safetensors>=0.4.5",
+]
 recipes = [
     "nemo-run",
 ]

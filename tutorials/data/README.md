@@ -12,6 +12,7 @@ Choose the tutorial that matches how your examples should reach the training loo
 | Large sharded multimodal training | Recommended for WebDataset/Energon data | [Multimodal Energon](energon/README.md) | `EnergonDatasetConfig` → `EnergonDatasetBuilder` |
 | Nemotron Image Training v3 | Pinned small-subset download converted to Qwen3-VL ChatML WebDataset shards | [Nemotron Image v3 with Energon](energon/nemotron-image-v3.md) | Nemotron JSONL + media tar → `ChatMLWebdataset` → `EnergonDatasetBuilder` |
 | DataComp image-caption training | Pinned metadata slice downloaded with the official tool and converted to generic ChatML shards | [DataComp with Energon](datacomp/README.md) | DataComp WebDataset → `ChatMLWebdataset` → `EnergonDatasetBuilder` |
+| BAGEL multimodal pretraining | Official BAGEL example Parquet/JSONL data converted without media re-encoding | [BAGEL with Energon](bagel/README.md) | BAGEL source data → deterministic WebDataset → BAGEL Energon provider |
 
 ## Which SFT path should I use?
 
