@@ -140,22 +140,21 @@ Use `AutoBridge.export_hf_weights_modelopt()` when you need to stream ModelOpt d
 already-loaded Megatron model instead of writing a full checkpoint through the export script. This is useful for
 integrations that consume Hugging Face weight names directly, such as inference-engine refit paths.
 
-The API currently only supports `quant_mode="nvfp4"`. Quantized parameters are yielded as the original Hugging Face
-`*.weight` name plus the ModelOpt NVFP4 scale tensors:
-
-- `*.weight`
-- `*.weight_scale`
-- `*.weight_scale_2`
-
-Unquantized parameters are yielded under their regular Hugging Face names. Quantizer-internal tensors are skipped.
+Build one export plan after ModelOpt calibration and pass its `quantization_config` unchanged to the consumer. The
+plan retains only stable topology and format metadata, so it can be reused for every weight stream. Mutable quantizer
+state is captured as each weight is streamed. ModelOpt owns the emitted tensor names and formats; unquantized
+parameters retain their regular Hugging Face names.
 
 ```python
 from safetensors.torch import save_file
 
+plan = bridge.build_hf_modelopt_export_plan(model)
+quantization_config = plan.quantization_config
+
 state_dict = {}
 for name, weight in bridge.export_hf_weights_modelopt(
     model,
-    quant_mode="nvfp4",
+    export_plan=plan,
     cpu=True,
     show_progress=False,
 ):
@@ -170,16 +169,20 @@ full `state_dict`.
 ```python
 for name, weight in bridge.export_hf_weights_modelopt(
     model,
-    quant_mode="nvfp4",
-    ignore_patterns=["lm_head", "*self_attn.o_proj*"],
+    export_plan=plan,
     show_progress=False,
 ):
     refit_engine.replace_weight(name, weight)
 ```
 
-`ignore_patterns` are matched against Hugging Face parameter names. The matcher handles the optional `model.` prefix
-and ModelOpt scale suffixes, so a pattern can target the logical parameter name without separately listing
-`*.weight_scale` and `*.weight_scale_2`.
+Plan construction and export-stream iteration perform WORLD and model-parallel collectives. Every distributed rank
+must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
+termination. The current streaming API supports canonical per-expert Hugging Face MoE layouts; canonical grouped-
+expert Hugging Face tensors are rejected until ModelOpt provides a state-stacking operation.
+
+Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
+or QAT. Dimension-permuting mappings are also rejected by the streaming API. This API requires a ModelOpt release
+that provides the functional quantized-weight export interface.
 
 ### Supported Models For PTQ
 

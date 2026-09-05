@@ -134,6 +134,8 @@ override-dependencies = [
     "mlflow>=3.15.1",                                       # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
+    # TODO: Before merging the functional export integration, pin the first
+    # ModelOpt release containing NVIDIA/Model-Optimizer#2251.
     "nvidia-modelopt==0.46.0rc1",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
