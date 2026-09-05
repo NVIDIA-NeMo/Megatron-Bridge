@@ -77,6 +77,24 @@ class TestPartitionPackedBatchContiguous:
         result = self._run(monkeypatch, batch, cp_size=2)
         assert result is batch
 
+    def test_slices_tensor_metadata_and_preserves_scalar_metadata(self, monkeypatch):
+        """Token-aligned masks are sliced while scalar batch metadata is preserved."""
+        tokens = torch.arange(8, dtype=torch.long).unsqueeze(0)
+        padding_mask = torch.tensor([[False, False, False, False, True, True, True, True]])
+        batch = _make_batch(
+            tokens=tokens,
+            cu_seqlens=torch.tensor([[0, 4, 8]], dtype=torch.int32),
+            padding_mask=padding_mask,
+            pad_between_seqs=True,
+            is_padding_sample=False,
+        )
+
+        result = self._run(monkeypatch, batch, cp_rank=1, cp_size=2)
+
+        assert result["padding_mask"].tolist() == [[True, True, True, True]]
+        assert result["pad_between_seqs"] is True
+        assert result["is_padding_sample"] is False
+
 
 class TestPackedMetadataForForward:
     """Tests for _packed_metadata_for_forward."""
@@ -90,9 +108,11 @@ class TestPackedMetadataForForward:
     def test_legacy_path_extracts_cu_seqlens_and_cp_partition_mode(self):
         from megatron.bridge.models.deepseek.deepseek_v4_step import _packed_metadata_for_forward
 
+        padding_mask = torch.tensor([[False, False, False, True]])
         batch = {
             "cu_seqlens": torch.tensor([[0, 4, 8]], dtype=torch.int32),
             "max_seqlen": torch.tensor([[8]]),
+            "padding_mask": padding_mask,
             "cp_partition_mode": "contiguous",
             "total_tokens": 8,
         }
@@ -100,16 +120,22 @@ class TestPackedMetadataForForward:
         assert meta is not None
         assert meta["cp_partition_mode"] == "contiguous"
         assert "cu_seqlens" in meta
+        assert meta["padding_mask"] is padding_mask
 
     def test_current_path_with_cu_seqlens_q(self):
         from megatron.bridge.models.deepseek.deepseek_v4_step import _packed_metadata_for_forward
 
+        padding_mask = torch.tensor([[False, False, False, True]])
         batch = {
             "cu_seqlens_q": torch.tensor([[0, 4]], dtype=torch.int32),
             "max_seqlen_q": torch.tensor([[4]]),
+            "pad_between_seqs": True,
+            "padding_mask": padding_mask,
             "cp_partition_mode": "contiguous",
         }
         meta = _packed_metadata_for_forward(batch)
         assert meta is not None
         assert meta.get("cp_partition_mode") == "contiguous"
         assert "cu_seqlens_q" in meta
+        assert meta["pad_between_seqs"] is True
+        assert meta["padding_mask"] is padding_mask
