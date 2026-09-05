@@ -25,7 +25,7 @@ DSv4 SFT/pretrain with CP > 1.
 """
 
 import logging
-from typing import Iterable
+from typing import Any, Iterable
 
 import torch
 from megatron.core import parallel_state
@@ -63,6 +63,8 @@ _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens_kv_padded",
     "max_seqlen_q",
     "max_seqlen_kv",
+    "pad_between_seqs",
+    "padding_mask",
     "total_tokens",
     "cp_partition_mode",
 )
@@ -72,6 +74,7 @@ _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens_argmin",
     "max_seqlen",
     "cu_seqlens_unpadded_argmin",
+    "padding_mask",
     "total_tokens",
     "cp_partition_mode",
 )
@@ -100,6 +103,7 @@ _SEQLEN_KEYS = frozenset(
         "cu_seqlens_kv_padded",
         "max_seqlen_q",
         "max_seqlen_kv",
+        "pad_between_seqs",
         "token_count",
         "attention_mask",
     }
@@ -107,9 +111,9 @@ _SEQLEN_KEYS = frozenset(
 
 
 def _partition_packed_batch_contiguous(
-    batch: dict[str, torch.Tensor],
+    batch: dict[str, Any],
     cp_size: int,
-) -> dict[str, torch.Tensor]:
+) -> dict[str, Any]:
     """Slice a consecutive [start, end) token window for this CP rank.
 
     Only data tensors (tokens, labels, loss_mask, position_ids, etc.) are sliced.
@@ -123,7 +127,10 @@ def _partition_packed_batch_contiguous(
     """
     cp_rank = parallel_state.get_context_parallel_rank()
 
-    _data_val = next((v for k, v in batch.items() if v is not None and k not in _SEQLEN_KEYS), None)
+    _data_val = next(
+        (v for k, v in batch.items() if isinstance(v, torch.Tensor) and k not in _SEQLEN_KEYS),
+        None,
+    )
     if _data_val is None:
         return batch  # middle PP stage with no data tensors — nothing to slice
 
@@ -139,7 +146,7 @@ def _partition_packed_batch_contiguous(
     end = start + local_len
 
     for key, val in batch.items():
-        if val is None or key in _SEQLEN_KEYS:
+        if not isinstance(val, torch.Tensor) or key in _SEQLEN_KEYS:
             continue
         batch[key] = val[:, start:end].contiguous()
 
