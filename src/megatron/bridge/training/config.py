@@ -1188,8 +1188,6 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
         if self.optimizer.loss_scale is not None:
             raise ValueError("MFSDP V2 does not support loss scaling.")
-        if self.optimizer.use_precision_aware_optimizer:
-            raise ValueError("MFSDP V2 does not support precision-aware optimizer.")
         if self.optimizer.optimizer_cpu_offload:
             raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
         if self.optimizer.use_layer_wise_distributed_optimizer:
