@@ -525,7 +525,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         return tensor
 
-    def broadcast_obj_from_pp_rank(self, obj: Optional[Any], cache_key: Optional[str] = None) -> Any:
+    def broadcast_obj_from_pp_rank(
+        self, obj: Optional[Any], cache_key: Optional[str] = None, allow_missing: bool = False
+    ) -> Any:
         """Broadcast any Python object from the PP rank that owns it.
 
         This method is useful for broadcasting configuration objects or
@@ -536,12 +538,16 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             obj (Optional[Any]): Object to broadcast (None on non-owning ranks).
             cache_key (Optional[str]): Optional cache key. If not provided,
                 no caching will be performed.
+            allow_missing (bool): Return None instead of raising when no PP rank
+                owns the object. Must be passed by every rank of the PP group.
 
         Returns:
-            Any: Broadcasted object on all ranks.
+            Any: Broadcasted object on all ranks, or None if no rank owns it and
+            ``allow_missing`` is set.
 
         Raises:
-            ValueError: If object does not exist on any rank.
+            ValueError: If object does not exist on any rank and ``allow_missing``
+                is not set.
         """
         if self.pp_size == 1:
             return obj
@@ -569,6 +575,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 break
 
         if src_rank is None:
+            if allow_missing:
+                return None
             raise ValueError("Object must exist on at least one PP rank")
 
         # ------------------------------------------------------------------
@@ -1680,11 +1688,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
                 # Broadcast to other ranks
                 self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
             else:
-                # Receive from owning rank
-                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
-                if self._detected_type is None:
-                    # PP group likely has 1 member - skipping.
-                    return {}
+                # Receive from owning rank, or None when no PP rank owns the module
+                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type", allow_missing=True)
 
             # If no PP rank detected a type (e.g. Megatron parameter without an
             # HF counterpart, such as MoE modules on dense layers created by
