@@ -791,40 +791,68 @@ class TestGetModel:
         # Expert bias dtype should still be float32 (unchanged)
         assert expert_module.expert_bias.dtype == torch.float32
 
+    @pytest.mark.parametrize(
+        ("initial_value", "override", "expected_value"),
+        [
+            pytest.param(True, {}, True, id="omitted-preserves-true"),
+            pytest.param(True, {"use_cpu_initialization": None}, True, id="none-preserves-true"),
+            pytest.param(True, {"use_cpu_initialization": False}, False, id="false-disables"),
+            pytest.param(False, {"use_cpu_initialization": True}, True, id="true-enables"),
+        ],
+    )
     @patch("megatron.bridge.models.model_provider._create_model")
-    @patch("megatron.bridge.models.model_provider._print_num_params")
-    @patch("megatron.bridge.models.model_provider.correct_amax_history_if_needed")
-    @patch("megatron.bridge.models.model_provider._ddp_wrap")
-    @patch("megatron.bridge.models.model_provider.get_model_config")
-    def test_get_model_cpu_initialization(
+    def test_provide_distributed_model_cpu_initialization_override(
         self,
-        mock_get_model_config,
-        mock_ddp_wrap,
-        mock_fix_float8,
-        mock_print_params,
         mock_create_model,
+        initial_value,
+        override,
+        expected_value,
     ):
-        """Test get_model with CPU initialization."""
-        # Setup mocks
-        config = create_test_config()
-        config.use_cpu_initialization = True  # Already set to True
-        config.init_model_with_meta_device = False
-        config.fp16 = False
-        config.bf16 = False
+        """Test tri-state CPU initialization overrides at model construction."""
 
-        mock_get_model_config.return_value = config
-        model = MockMegatronModule(config)
-        model.cuda = Mock()  # Mock cuda method
-        mock_create_model.return_value = [model]
-        mock_fix_float8.return_value = [model]
-        mock_ddp_wrap.return_value = [model]
+        class ModelConstructionObserved(Exception):
+            pass
 
-        model_provider = MockModelProvider(model)
-        ddp_config = DistributedDataParallelConfig()
+        def record_cpu_initialization(model_provider, *_args, **_kwargs):
+            assert model_provider.use_cpu_initialization is expected_value
+            raise ModelConstructionObserved
 
-        get_model(model_provider, ddp_config, use_cpu_initialization=True, pg_collection=_PG())
+        mock_create_model.side_effect = record_cpu_initialization
 
-        assert config.use_cpu_initialization
+        model_provider = MockModelProvider()
+        model_provider.use_cpu_initialization = initial_value
+        with (
+            patch("megatron.bridge.models.model_provider.torch.distributed.is_initialized", return_value=True),
+            pytest.raises(ModelConstructionObserved),
+        ):
+            model_provider.provide_distributed_model(
+                wrap_with_ddp=False,
+                pg_collection=_PG(),
+                **override,
+            )
+
+    @patch("megatron.bridge.models.model_provider._create_model")
+    def test_get_model_default_preserves_cpu_initialization(self, mock_create_model):
+        """Test the direct construction entry point's omitted override."""
+
+        class ModelConstructionObserved(Exception):
+            pass
+
+        def record_cpu_initialization(model_provider, *_args, **_kwargs):
+            assert model_provider.use_cpu_initialization is True
+            raise ModelConstructionObserved
+
+        mock_create_model.side_effect = record_cpu_initialization
+        model_provider = MockModelProvider()
+        model_provider.use_cpu_initialization = True
+
+        with pytest.raises(ModelConstructionObserved):
+            get_model(
+                model_provider,
+                DistributedDataParallelConfig(),
+                wrap_with_ddp=False,
+                pg_collection=_PG(),
+            )
 
     @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")

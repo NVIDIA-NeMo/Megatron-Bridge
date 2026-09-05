@@ -59,7 +59,7 @@ def _apply_qwen35_common_config(provider: GPTModelProvider, text_config) -> None
     # --- Qwen3-Next hybrid architecture settings ---
     provider.layernorm_zero_centered_gamma = True
     provider.attention_output_gate = True
-    provider.experimental_attention_variant = "gated_delta_net"
+    provider.experimental_attention_variant = "gdn"
     # full_attention_interval defines how often standard attention appears:
     # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
     provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
