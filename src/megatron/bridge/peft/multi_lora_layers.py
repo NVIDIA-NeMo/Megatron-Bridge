@@ -171,6 +171,8 @@ class MultiLoRALinear(AdapterWrapper):
         self.base_linear_is_parallel = attrs.base_linear_is_parallel
         self.replicate_adapter = attrs.replicate_adapter
         self.use_a2a = a2a_experimental
+        self._adapter_in_features = attrs.in_features
+        self._adapter_out_features = attrs.out_features
         # Row-parallel adapters gather their output to full width; column-parallel
         # adapters keep an output shard; replicated adapters already produce full width.
         self._gather_output = not self.replicate_adapter and (
@@ -315,8 +317,18 @@ class MultiLoRALinear(AdapterWrapper):
         from megatron.bridge.peft.utils import ParallelLinearAdapter
 
         adapter = self.adapters[idx]
-        col_fn = ParallelLinearAdapter._get_init_fn(None, self._column_init_method)
-        row_fn = ParallelLinearAdapter._get_init_fn(None, self._row_init_method)
+        col_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._column_init_method,
+            fan_in=self._adapter_in_features,
+            fan_out=self.max_rank,
+        )
+        row_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._row_init_method,
+            fan_in=self.max_rank,
+            fan_out=self._adapter_out_features,
+        )
         rng_context = (
             get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name())
             if self.replicate_adapter
