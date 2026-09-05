@@ -105,7 +105,7 @@ def _patch_happy_path_dependencies(monkeypatch):
 
     monkeypatch.setattr(
         "megatron.bridge.data.megatron_mimo.loaders.get_megatron_mimo_sampling_info",
-        lambda megatron_mimo_cfg, grids: (1, 4, True),
+        lambda megatron_mimo_cfg, grids, **kwargs: (1, 4, True),
     )
     monkeypatch.setattr(
         "megatron.bridge.data.megatron_mimo.loaders.print_rank_0",
@@ -273,7 +273,7 @@ def _make_real_loader_cfg(monkeypatch, *, micro_batch_size: int, sampler_dp_rank
     _patch_megatron_mimo_provider_class(monkeypatch)
     monkeypatch.setattr(
         "megatron.bridge.data.megatron_mimo.loaders.get_megatron_mimo_sampling_info",
-        lambda megatron_mimo_cfg, grids: (sampler_dp_rank, sampler_dp_size, True),
+        lambda megatron_mimo_cfg, grids, **kwargs: (sampler_dp_rank, sampler_dp_size, True),
     )
     monkeypatch.setattr(
         "megatron.bridge.data.megatron_mimo.loaders.print_rank_0",
@@ -412,7 +412,7 @@ def test_build_megatron_mimo_data_loaders_skips_non_data_ranks(monkeypatch):
     provider = FakeProvider()
     monkeypatch.setattr(
         "megatron.bridge.data.megatron_mimo.loaders.get_megatron_mimo_sampling_info",
-        lambda megatron_mimo_cfg, grids: (0, 1, False),
+        lambda megatron_mimo_cfg, grids, **kwargs: (0, 1, False),
     )
 
     monkeypatch.setattr(
@@ -431,3 +431,53 @@ def test_build_megatron_mimo_data_loaders_skips_non_data_ranks(monkeypatch):
 
     assert (train_loader, valid_loader, test_loader) == (None, None, None)
     assert provider.built is False
+
+
+def test_scalable_dp_loader_shards_on_canonical_grid_end_to_end(monkeypatch):
+    """With megatron_mimo_scalable_dp the loader must shard on the canonical grid
+    (LCM of module DP sizes, not this module's dp or the max), under the real
+    cyclic sampler."""
+    from megatron.bridge.data.megatron_mimo.canonical_sampler import (
+        CanonicalGroupBatchSampler,
+        build_canonical_group_batch_sampler,
+    )
+
+    micro_batch_size = 12
+    train_size = 48
+    # This rank: module-local dp rank 1 of 3; modules have dps {2, 3} -> grid = lcm = 6.
+    cfg = _make_real_loader_cfg(monkeypatch, micro_batch_size=micro_batch_size, sampler_dp_rank=1, sampler_dp_size=3)
+    cfg.model.megatron_mimo_parallelism_config = SimpleNamespace(
+        module_parallelisms={
+            "vision": SimpleNamespace(data_parallel_size=2),
+            "llm": SimpleNamespace(data_parallel_size=3),
+        }
+    )
+    cfg.dataset = SimpleNamespace(megatron_mimo_scalable_dp=True)
+    provider = IndexDatasetProvider(train_size=train_size)
+    provider.dataloader_type = "cyclic"
+    provider.data_sharding = True
+    train_state = SimpleNamespace(consumed_train_samples=0)
+
+    train_loader, _, _ = build_megatron_mimo_data_loaders(
+        cfg,
+        train_state=train_state,
+        megatron_mimo_provider=provider,
+        train_samples=train_size,
+        valid_samples=0,
+        test_samples=0,
+    )
+
+    assert isinstance(train_loader.batch_sampler, CanonicalGroupBatchSampler)
+    first_batch = next(iter(train_loader))
+    # Rank 1 of 3 covers canonical groups [2, 3] of grid 6 -> mbs // dp = 4 samples.
+    assert len(first_batch) == micro_batch_size // 3
+    reference = build_canonical_group_batch_sampler(
+        dataloader_type="cyclic",
+        dataset=FakeDataset(train_size),
+        consumed_samples=0,
+        micro_batch_size=micro_batch_size,
+        grid_size=6,
+        groups=[2, 3],
+        data_sharding=True,
+    )
+    assert first_batch == next(iter(reference))
