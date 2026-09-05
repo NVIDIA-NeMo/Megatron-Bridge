@@ -488,6 +488,9 @@ class MegatronPretrainingRandomSampler:
         Handles randomization within an epoch and data sharding.
         """
         active_total_samples = self.total_samples - self.last_batch_size
+        repeat_small_dataset = active_total_samples == 0
+        if repeat_small_dataset:
+            active_total_samples = self.micro_batch_times_data_parallel_size
         self.epoch = self.consumed_samples // active_total_samples
         current_epoch_samples = self.consumed_samples % active_total_samples
         assert current_epoch_samples % self.micro_batch_times_data_parallel_size == 0
@@ -496,7 +499,14 @@ class MegatronPretrainingRandomSampler:
             self.dataset.set_epoch(self.epoch)
 
         # data sharding and random sampling
-        if self.data_sharding:
+        if repeat_small_dataset:
+            g = torch.Generator()
+            g.manual_seed(self.epoch)
+            random_idx = torch.randperm(self.total_samples, generator=g).tolist()
+            repeat_count = (active_total_samples + self.total_samples - 1) // self.total_samples
+            idx_range_total = (random_idx * repeat_count)[:active_total_samples]
+            idx_range = idx_range_total[self.data_parallel_rank :: self.data_parallel_size]
+        elif self.data_sharding:
             bucket_size = (self.total_samples // self.micro_batch_times_data_parallel_size) * self.micro_batch_size
             bucket_offset = current_epoch_samples // self.data_parallel_size
             start_idx = self.data_parallel_rank * bucket_size

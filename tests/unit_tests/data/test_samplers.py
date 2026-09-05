@@ -136,3 +136,33 @@ def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() ->
 
     assert len({index for batch in second_step for index in batch}) == 6
     assert second_step == resumed_step
+
+
+@pytest.mark.parametrize("data_sharding", [False, True])
+def test_cyclic_sampler_repeats_dataset_smaller_than_distributed_microbatch(data_sharding: bool) -> None:
+    """Cyclic loading must form a synchronized batch from a tiny finite split."""
+
+    def make_sampler(rank: int, consumed_samples: int = 0) -> MegatronPretrainingRandomSampler:
+        return MegatronPretrainingRandomSampler(
+            list(range(3)),
+            total_samples=3,
+            consumed_samples=consumed_samples,
+            micro_batch_size=2,
+            data_parallel_rank=rank,
+            data_parallel_size=2,
+            data_sharding=data_sharding,
+        )
+
+    def cyclic_batches(sampler: MegatronPretrainingRandomSampler):
+        while True:
+            yield from sampler
+
+    uninterrupted = [cyclic_batches(make_sampler(rank)) for rank in range(2)]
+    first_step = [next(rank_batches) for rank_batches in uninterrupted]
+    second_step = [next(rank_batches) for rank_batches in uninterrupted]
+    resumed_step = [next(iter(make_sampler(rank, consumed_samples=4))) for rank in range(2)]
+
+    first_step_indices = [index for batch in first_step for index in batch]
+    assert len(first_step_indices) == 4
+    assert set(first_step_indices) == {0, 1, 2}
+    assert second_step == resumed_step
