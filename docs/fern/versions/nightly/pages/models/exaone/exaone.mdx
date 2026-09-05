@@ -1,0 +1,391 @@
+# EXAONE
+
+Megatron Bridge supports Hugging Face conversion for EXAONE 4.0 dense language
+models, EXAONE 4.5 vision-language models, and K-EXAONE MoE language models.
+Checked-in H100 recipes cover EXAONE 4.0 1.2B, EXAONE 4.5 VL 33B,
+K-EXAONE-236B-A23B, and K-EXAONE 2.0 750B-A37B.
+
+Use the model-specific examples for commands and supported parallelism:
+
+- [EXAONE 4.0](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/exaone/exaone4)
+- [EXAONE 4.5 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/exaone/exaone45)
+- [K-EXAONE MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/exaone/exaone_moe)
+
+The EXAONE 4.0 and EXAONE 4.5 examples use the shared
+`scripts/conversion/convert.sh import` entry point. The K-EXAONE examples use
+their model-specific distributed round-trip workflows. K-EXAONE 2.0 also has a checked-in
+[model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/k-exaone-2/card.yaml)
+that records the current verification status of individual workflows.
+
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+
+## Verified configurations
+
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-k-exaone-2"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="k-exaone-2-hf-to-megatron-cpu" aria-controls="k-exaone-2-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="k-exaone-2-hf-to-megatron-gpu" aria-controls="k-exaone-2-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="k-exaone-2-megatron-to-hf-cpu" aria-controls="k-exaone-2-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="k-exaone-2-megatron-to-hf-gpu" aria-controls="k-exaone-2-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="k-exaone-2-pretrain-h100" aria-controls="k-exaone-2-pretrain-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="k-exaone-2-sft-h100" aria-controls="k-exaone-2-sft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="k-exaone-2-sft-long-context-h100" aria-controls="k-exaone-2-sft-long-context-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="k-exaone-2-peft-h100" aria-controls="k-exaone-2-peft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="k-exaone-2-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="k-exaone-2-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>No CPU Hugging Face-to-Megatron conversion result is claimed. Future verification must import the complete immutable-revision checkpoint, persist iter_0000000, reload it, and audit all mapped keys, shapes, dtypes, and values.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="k-exaone-2-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-24</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 6 --gpus-per-node 8 --hf-model LGAI-EXAONE/K-EXAONE-2.0-750B-A37B --hf-revision 4bb394fd12f57be7174be7c80c30cc05472bf9e1 --megatron-path work/model-verification/k-exaone-2/imported-megatron --torch-dtype bfloat16 --tp 1 --pp 3 --ep 16 --etp 1 --distributed-timeout-minutes 180 --low-memory-save</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The pinned 59,396-tensor BF16 checkpoint imported and persisted iter_0000000 on 48 H100 GPUs, and that artifact subsequently reloaded for a full distributed GPU re-export audit. The audit compared all 59,396 tensors and 1,498,715,010,176 payload bytes with zero missing, unexpected, duplicate, shape, dtype, or value mismatches.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="k-exaone-2-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>No CPU Megatron-to-Hugging-Face conversion result is claimed. Future verification depends on a complete CPU import and must export, strictly reload, and compare all lossless tensors against the pinned source revision.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="k-exaone-2-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 6 --gpus-per-node 8 --hf-model LGAI-EXAONE/K-EXAONE-2.0-750B-A37B --hf-revision 4bb394fd12f57be7174be7c80c30cc05472bf9e1 --megatron-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000 --hf-path work/model-verification/k-exaone-2/hf-export --torch-dtype bfloat16 --tp 1 --pp 3 --ep 16 --etp 1 --distributed-timeout-minutes 180 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>A complete distributed export produced 59,396 indexed keys in 17 safetensors shards. Every exported tensor matches the pinned source bitwise across 1,498,715,008,512 payload bytes, and the corrected config/tokenizer reload successfully. The run exposed and fixed preservation of one physical repeated MTP layer across four speculative steps. The config fix is committed; this item remains unverified until the clean-commit export and exact audit rerun complete.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-pretrain-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-pretrain-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The exported 512-GPU H100 recipe must complete a bounded public-data pretraining run at TP4/PP16/EP32 with natural routing, finite loss, no skipped or NaN iterations, all five required metrics, and reloadable middle and final checkpoints.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-sft-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-sft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The exported 512-GPU H100 full-SFT recipe must load the pinned checkpoint and complete a bounded immutable-dataset run at TP4/PP16/EP32 with finite loss, no skipped or NaN iterations, all four required metrics, and a reloadable final full-model checkpoint.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-sft-long-context-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-sft-long-context-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>No long-context SFT result is claimed. Future verification must first resolve a supported long-context topology, then verify sequence packing and context parallelism together with finite loss, no skipped or NaN iterations, and all five required metrics.
+</p>
+      </section>
+    </article>
+    <article id="k-exaone-2-peft-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-peft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The exported 128-GPU H100 PEFT recipe must load the pinned checkpoint, verify that LoRA targets the model-native attention projections, and complete a bounded immutable-dataset run at TP4/PP8/EP16 with finite loss, no skipped or NaN iterations, all five required metrics, and a reloadable adapter checkpoint.
+</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->

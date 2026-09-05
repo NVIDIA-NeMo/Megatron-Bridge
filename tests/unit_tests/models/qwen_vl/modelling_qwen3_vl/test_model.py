@@ -39,6 +39,7 @@ from transformers import Qwen3VLMoeConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
     Qwen3VLModel,
     _get_cp_local_vision_embed_indices,
+    _get_packed_seq_padding_mask,
     _is_packed_input_pre_sharded,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -57,6 +58,29 @@ def _make_packed_seq_params(cu_seqlens: list[int]) -> PackedSeqParams:
         max_seqlen_q=max_seqlen,
         max_seqlen_kv=max_seqlen,
     )
+
+
+def test_packed_seq_padding_mask_excludes_only_physical_gaps():
+    """Build MoE routing padding from THD boundaries, independent of the loss mask."""
+    logical = torch.tensor([0, 3, 5], dtype=torch.int32)
+    physical = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=logical,
+        cu_seqlens_kv=logical,
+        cu_seqlens_q_padded=physical,
+        cu_seqlens_kv_padded=physical,
+        total_tokens=8,
+    )
+
+    padding_mask = _get_packed_seq_padding_mask(
+        packed_seq_params,
+        total_tokens=8,
+        device=torch.device("cpu"),
+    )
+
+    assert padding_mask is not None
+    assert padding_mask.tolist() == [[False, False, False, True, False, False, True, True]]
 
 
 def test_is_packed_input_pre_sharded_uses_global_physical_length():
@@ -715,7 +739,20 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["visual_pos_masks"] is None
         assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
 
-    def test_forward_preserves_legacy_qwen_step_packed_bshd_behavior(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("input_ids", "cu_seqlens"),
+        [
+            (torch.tensor([[11, 12, 21, 22]], dtype=torch.long), torch.tensor([0, 4], dtype=torch.int32)),
+            (torch.tensor([[11, 12], [21, 22]], dtype=torch.long), torch.tensor([0, 2, 4], dtype=torch.int32)),
+        ],
+        ids=("singleton", "multiple-samples"),
+    )
+    def test_forward_preserves_legacy_qwen_step_packed_bshd_behavior(
+        self,
+        monkeypatch,
+        input_ids,
+        cu_seqlens,
+    ):
         """Legacy Qwen step inputs are converted from BSHD to THD exactly once."""
         monkeypatch.setattr(
             "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
@@ -724,6 +761,18 @@ class TestQwen3VLModel:
         monkeypatch.setattr(
             "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
             lambda *_args, **_kwargs: None,
+        )
+
+        preprocess_calls = []
+
+        def fake_preprocess_packed_seqs(value, mask, **_kwargs):
+            preprocess_calls.append(value)
+            trailing_shape = value.shape[2:]
+            return value[mask].reshape(1, -1, *trailing_shape), object()
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.preprocess_packed_seqs",
+            fake_preprocess_packed_seqs,
         )
 
         class DummyLanguageModel:
@@ -750,19 +799,18 @@ class TestQwen3VLModel:
             vision_start_token_id=3,
             use_dist_train=False,
         )
-        input_ids = torch.tensor([[11, 12], [21, 22]], dtype=torch.long)
         labels = torch.tensor([[12, -100, 22, -100]], dtype=torch.long)
         loss_mask = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
         attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        cu_seqlens = torch.tensor([0, 2, 4], dtype=torch.int32)
+        max_seqlen = int(cu_seqlens.diff().max().item())
         packed_seq_params = PackedSeqParams(
             qkv_format="thd",
             cu_seqlens_q=cu_seqlens,
             cu_seqlens_kv=cu_seqlens,
             cu_seqlens_q_padded=cu_seqlens,
             cu_seqlens_kv_padded=cu_seqlens,
-            max_seqlen_q=2,
-            max_seqlen_kv=2,
+            max_seqlen_q=max_seqlen,
+            max_seqlen_kv=max_seqlen,
         )
 
         output = Qwen3VLModel.forward(
@@ -782,6 +830,8 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["labels"] is labels
         assert language_model.last_kwargs["loss_mask"] is loss_mask
         assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["padding_mask"] is None
+        assert len(preprocess_calls) == 2
 
     def test_forward_preserves_collate_packed_layout_for_sequence_parallel(self, monkeypatch):
         """Packed SP forwards the collator's THD tensors and metadata unchanged."""
@@ -849,6 +899,9 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs["labels"] is labels
         assert language_model.last_kwargs["loss_mask"] is loss_mask
         assert language_model.last_kwargs["packed_seq_params"] is packed_seq_params
+        assert language_model.last_kwargs["padding_mask"].tolist() == [
+            [False, False, False, True, False, False, False, True]
+        ]
 
     def test_forward_preserves_pre_sharded_packed_cp_layout_and_selects_vision_embeds(self, monkeypatch):
         """Pre-sharded CP inputs stay local and select matching vision and deepstack rows."""
@@ -1064,8 +1117,8 @@ class TestQwen3VLModel:
         assert out.dim() >= 2
 
     @pytest.mark.timeout(50)
-    def test_cuda_graph_helper_not_exposed_when_llm_cuda_graph_disabled(self, hf_config):
-        """CUDA graph helper fields stay on language_model when cuda_graph_impl is none."""
+    def test_cuda_graph_helper_aliases_do_not_register_root_modules_when_disabled(self, hf_config):
+        """CUDA graph helper aliases keep checkpoint keys under language_model when disabled."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
@@ -1087,8 +1140,10 @@ class TestQwen3VLModel:
             pg_collection=pg_collection,
         )
 
-        assert "decoder" not in model.__dict__
-        assert not hasattr(model, "rotary_pos_emb")
+        assert model.decoder is model.language_model.decoder
+        assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules
         assert getattr(model.language_model.config, "cuda_graph_impl", None) == "none"
 
     @pytest.mark.timeout(50)
@@ -1118,7 +1173,8 @@ class TestQwen3VLModel:
 
         assert getattr(language_transformer_config, "cuda_graph_impl", None) == "transformer_engine"
         assert model.language_model.config.variable_seq_lengths is False
-        assert hasattr(model, "decoder")
         assert model.decoder is model.language_model.decoder
         assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
         assert model.position_embedding_type == model.language_model.position_embedding_type
+        assert "decoder" not in model._modules
+        assert "rotary_pos_emb" not in model._modules

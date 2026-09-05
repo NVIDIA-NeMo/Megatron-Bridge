@@ -63,7 +63,10 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
 
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_permute_fusion_into_hybridep = False
     cfg.model.moe_grouped_gemm = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_router_force_load_balancing = False
@@ -130,6 +133,9 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
     }
     return cfg
 
@@ -167,7 +173,10 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
 
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_permute_fusion_into_hybridep = False
     cfg.model.moe_grouped_gemm = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_router_force_load_balancing = False
@@ -198,6 +207,9 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
     }
     return cfg
 

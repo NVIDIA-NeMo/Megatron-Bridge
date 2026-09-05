@@ -61,6 +61,56 @@ def test_openmath_thinking_adapter_separates_reasoning_and_answer():
     ]
 
 
+def test_coderforge_adapter_decodes_messages_tools_and_execution_image():
+    messages = [
+        {"role": "user", "content": "Fix the bug."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"type": "function", "function": {"name": "execute_bash", "arguments": "{}"}}],
+        },
+    ]
+    tools = [{"type": "function", "function": {"name": "execute_bash", "description": "Run a command"}}]
+
+    adapted = adapt_hf_dataset(
+        [
+            {
+                "trajectory_id": "example-run1",
+                "messages": json.dumps(messages),
+                "tools": json.dumps(tools),
+                "image": "example/eval-image",
+                "reward": 1.0,
+            }
+        ],
+        adapter_name="coderforge",
+    )
+
+    assert adapted == [
+        {
+            "messages": messages,
+            "tools": tools,
+            "trajectory_id": "example-run1",
+            "reward": 1.0,
+            "environment_image": "example/eval-image",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "error"),
+    [
+        ("messages", "not json", "must contain valid JSON"),
+        ("messages", json.dumps({"role": "user"}), "must decode to a list"),
+        ("tools", json.dumps(["not-a-tool"]), "must decode to a list"),
+    ],
+)
+def test_coderforge_adapter_rejects_invalid_json_lists(field_name, value, error):
+    row = {"messages": "[]", "tools": "[]", field_name: value}
+
+    with pytest.raises(ValueError, match=error):
+        adapt_hf_dataset([row], adapter_name="coderforge")
+
+
 @pytest.mark.parametrize(
     "ground_truth",
     [
@@ -104,6 +154,35 @@ def test_image_adapters_normalize_single_image_rows(adapter_name, row):
 
     assert adapted[0]["conversation"][0]["content"][0]["type"] == "image"
     assert adapted[0]["conversation"][1]["content"][0]["text"] == "A cat."
+
+
+def test_medpix_adapter_supports_fixed_image_dimensions():
+    adapted = adapt_hf_dataset(
+        [{"image_id": object(), "question": "What?", "answer": "A cat."}],
+        adapter_name="medpix",
+        adapter_kwargs={"resized_height": 448, "resized_width": 448},
+    )
+
+    image = adapted[0]["conversation"][0]["content"][0]
+    assert image["resized_height"] == 448
+    assert image["resized_width"] == 448
+
+
+@pytest.mark.parametrize(
+    "adapter_kwargs",
+    [
+        {"resized_height": 448},
+        {"resized_height": 448, "resized_width": 0},
+        {"resized_height": True, "resized_width": 448},
+    ],
+)
+def test_medpix_adapter_rejects_invalid_fixed_image_dimensions(adapter_kwargs):
+    with pytest.raises(ValueError, match="must both be positive integers"):
+        adapt_hf_dataset(
+            [{"image_id": object(), "question": "What?", "answer": "A cat."}],
+            adapter_name="medpix",
+            adapter_kwargs=adapter_kwargs,
+        )
 
 
 def test_raven_adapter_filters_malformed_rows():

@@ -80,6 +80,11 @@ def _resolve_output_shard_path(output_path: Path, filename: str) -> Path:
     return output_file_path
 
 
+def _contiguous_safetensors(tensors: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Return tensors in the contiguous layout required by safetensors."""
+    return {name: tensor if tensor.is_contiguous() else tensor.contiguous() for name, tensor in tensors.items()}
+
+
 class StateDict(Mapping[str, torch.Tensor]):
     """
     A state dict accessor that provides a unified interface for querying model
@@ -447,17 +452,23 @@ class SafeTensorsStateSource(StateSource):
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
 
     @staticmethod
-    def _ignore_source_key_prefixes(
+    def _filter_source_keys(
         key_to_filename_map: Mapping[str, str] | None,
         ignored_source_key_prefixes: Iterable[str] | None,
+        ignored_source_key_suffixes: Iterable[str] | None,
     ) -> Dict[str, str]:
         if not key_to_filename_map:
             return {}
-        if not ignored_source_key_prefixes:
+        if not ignored_source_key_prefixes and not ignored_source_key_suffixes:
             return dict(key_to_filename_map)
 
-        prefixes = tuple(ignored_source_key_prefixes)
-        return {key: filename for key, filename in key_to_filename_map.items() if not key.startswith(prefixes)}
+        prefixes = tuple(ignored_source_key_prefixes or ())
+        suffixes = tuple(ignored_source_key_suffixes or ())
+        return {
+            key: filename
+            for key, filename in key_to_filename_map.items()
+            if not key.startswith(prefixes) and not key.endswith(suffixes)
+        }
 
     @property
     def path(self) -> Path:
@@ -690,6 +701,7 @@ class SafeTensorsStateSource(StateSource):
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
+        ignored_source_key_suffixes: Iterable[str] | None = None,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -718,6 +730,8 @@ class SafeTensorsStateSource(StateSource):
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
             ignored_source_key_prefixes: Source tensor key prefixes to omit from the expected
                 source sharding map when saving.
+            ignored_source_key_suffixes: Source tensor key suffixes to omit from the expected
+                source sharding map when saving.
 
         """
         if distributed_save:
@@ -727,6 +741,7 @@ class SafeTensorsStateSource(StateSource):
                 strict,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
+                ignored_source_key_suffixes=ignored_source_key_suffixes,
             )
 
         # In a distributed environment, only rank 0 should write to disk.
@@ -746,13 +761,17 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
+        key_to_filename_map = self._filter_source_keys(
+            self.key_to_filename_map,
+            ignored_source_key_prefixes,
+            ignored_source_key_suffixes,
+        )
         all_expected_keys = set(key_to_filename_map.keys())
 
         if not key_to_filename_map:
             buffered_tensors = dict(generator)
             if buffered_tensors:
-                save_file(buffered_tensors, output_path / "model.safetensors")
+                save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
             return
 
         filename_to_keys_map = defaultdict(set)
@@ -797,7 +816,7 @@ class SafeTensorsStateSource(StateSource):
 
                 output_file_path = _resolve_output_shard_path(output_path, filename)
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                save_file(tensors_to_save, output_file_path)
+                save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
                 total_saved_tensor_bytes += sum(
                     tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
                 )
@@ -833,7 +852,7 @@ class SafeTensorsStateSource(StateSource):
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
                     output_file_path = _resolve_output_shard_path(output_path, filename)
                     output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_file(tensors_to_save, output_file_path)
+                    save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
                     total_saved_tensor_bytes += sum(
                         tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
                     )
@@ -926,6 +945,7 @@ class SafeTensorsStateSource(StateSource):
         strict: bool = True,
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
+        ignored_source_key_suffixes: Iterable[str] | None = None,
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -952,14 +972,18 @@ class SafeTensorsStateSource(StateSource):
         if is_distributed:
             torch.distributed.barrier()
 
-        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
+        key_to_filename_map = self._filter_source_keys(
+            self.key_to_filename_map,
+            ignored_source_key_prefixes,
+            ignored_source_key_suffixes,
+        )
 
         # Fallback: no sharding map, single-file save
         if not key_to_filename_map:
             if is_saver_rank and saver_index == 0:
                 buffered_tensors = dict(generator)
                 if buffered_tensors:
-                    save_file(buffered_tensors, output_path / "model.safetensors")
+                    save_file(_contiguous_safetensors(buffered_tensors), output_path / "model.safetensors")
             else:
                 for _ in generator:
                     pass
@@ -1001,7 +1025,7 @@ class SafeTensorsStateSource(StateSource):
             try:
                 output_file_path = _resolve_output_shard_path(output_path, fname)
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                save_file(tensors_to_save, output_file_path)
+                save_file(_contiguous_safetensors(tensors_to_save), output_file_path)
             except Exception as error:
                 local_export_error = f"Rank {rank} failed to write shard '{fname}': {type(error).__name__}: {error}"
                 if output_file_path is not None:

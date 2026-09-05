@@ -84,6 +84,7 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.num_layers_in_last_pipeline_stage = None
 
     # Set pipeline layout
+    cfg.model._pipeline_model_parallel_layout_builder = _get_kimi_k25_vl_pipeline_layout
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k25_vl_pipeline_layout(16, 1)
 
     # Tokenizer - uses NullTokenizer with model vocab_size
@@ -99,9 +100,10 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.hf_processor_path = "moonshotai/Kimi-K2.5"
 
     # MoE Token Dispatcher settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
-    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_permute_fusion_into_hybridep = False
 
     # Training config
     cfg.train.train_iters = 1_000_000
@@ -188,6 +190,9 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
     }
     return cfg
 

@@ -39,6 +39,7 @@ skills/nemo-rl-e2e-testing/SKILL
 skills/nemo-mbridge-perf-cpu-offloading/SKILL
 skills/nemo-mbridge-perf-moe-long-context/SKILL
 skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL
+skills/nemo-mbridge-perf-nsys-analysis/SKILL
 skills/nemo-mbridge-perf-moe-vlm-training/SKILL
 skills/nemo-mbridge-perf-memory-tuning/SKILL
 skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL
@@ -49,9 +50,18 @@ skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL
 skills/nemo-mbridge-perf-megatron-fsdp/SKILL
 skills/nemo-mbridge-perf-sequence-packing/SKILL
 skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL
+skills/nemo-mbridge-perf-vision-dp-over-cp/SKILL
 skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL
 skills/nemo-mbridge-perf-moe-comm-overlap/SKILL
 skills/nemo-mbridge-perf-activation-recompute/SKILL
+```
+
+```{toctree}
+:hidden:
+
+skills/nemo-mbridge-recipe-recommender/references/recipe-index
+skills/nemo-mbridge-perf-nsys-analysis/references/pitfalls
+skills/nemo-mbridge-perf-nsys-analysis/references/sql-recipes
 ```
 
 ```{toctree}

@@ -41,13 +41,32 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
-        help="GPUs per node; required for the GPU backend.",
+        help="GPUs per node; required for the GPU backend and optional as a CPU-backend runtime resource.",
+    )
+    execution.add_argument(
+        "--cpu-processes-per-node",
+        type=int,
+        default=1,
+        help=(
+            "CPU conversion processes per node (default: 1). Values above 1 enable distributed CPU export "
+            "and require model parallelism compatible with nodes*cpu-processes-per-node."
+        ),
+    )
+    execution.add_argument(
+        "--cpus-per-task",
+        type=int,
+        help="Slurm CPU cores per conversion process.",
     )
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit (default: 04:00:00).")
     execution.add_argument("--gres", help="Optional Slurm GRES value for GPU jobs.")
+    execution.add_argument(
+        "--exclusive",
+        action="store_true",
+        help="Request exclusive Slurm nodes; by default conversion jobs may share nodes.",
+    )
     execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
@@ -99,7 +118,7 @@ def _add_parallelism_arguments(
     include_distributed_timeout: bool,
 ) -> None:
     """Add distributed model-parallel arguments."""
-    parallelism = parser.add_argument_group("Distributed GPU parallelism")
+    parallelism = parser.add_argument_group("Distributed parallelism")
     parallelism.add_argument(
         "-tp",
         "--tp",
@@ -236,6 +255,7 @@ Examples:
   ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
       --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
       --ep 8
+
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -269,7 +289,10 @@ Examples:
         "--distributed-save",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Let GPU ranks save assigned Hugging Face shards independently (default: enabled for GPU).",
+        help=(
+            "Let distributed ranks save assigned Hugging Face shards independently "
+            "(default: enabled for GPU and distributed CPU export)."
+        ),
     )
     export_parser.add_argument(
         "--save-every-n-ranks",
@@ -289,6 +312,7 @@ Examples:
         allow_abbrev=False,
     )
     _add_roundtrip_arguments(roundtrip_parser, include_execution=include_execution)
+
     return parser
 
 
@@ -362,7 +386,10 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
             worker_args.append("--no-progress")
         if args.not_strict:
             worker_args.append("--not-strict")
-        distributed_save = args.distributed_save if args.distributed_save is not None else args.device == "gpu"
+        distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
+        distributed_save = (
+            args.distributed_save if args.distributed_save is not None else (args.device == "gpu" or distributed_cpu)
+        )
         worker_args.append("--distributed-save" if distributed_save else "--no-distributed-save")
         worker_args.extend(["--save-every-n-ranks", str(args.save_every_n_ranks)])
         if args.export_weight_dtype is not None:

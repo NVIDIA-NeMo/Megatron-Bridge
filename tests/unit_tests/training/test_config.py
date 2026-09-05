@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
+import warnings
 from dataclasses import fields
+from types import SimpleNamespace
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
 
@@ -27,11 +30,19 @@ from megatron.bridge.data.builders import (
     HFDatasetSourceConfig,
     HFEnergonTaskEncoderConfig,
     MockVLMSFTDatasetConfig,
+    QwenVLEnergonTaskEncoderConfig,
 )
 from megatron.bridge.models.gpt.dca import DualChunkGPTModelProvider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
+from megatron.bridge.models.transformer_config import (
+    _HYBRIDEP_PADDING_FIELDS,
+    HeterogeneousTransformerConfig,
+    TransformerConfig,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -109,6 +120,19 @@ def create_test_dca_gpt_config(**kwargs: Any) -> DualChunkGPTModelProvider:
     }
     defaults.update(kwargs)
     return DualChunkGPTModelProvider(**defaults)
+
+
+def create_test_qwen3_vl_config(**kwargs: Any) -> Qwen3VLModelProvider:
+    """Create a minimal Qwen3-VL provider for configuration validation."""
+    defaults = {
+        "num_layers": 1,
+        "hidden_size": 128,
+        "num_attention_heads": 4,
+        "seq_length": 512,
+        "apply_rope_fusion": False,
+    }
+    defaults.update(kwargs)
+    return Qwen3VLModelProvider(**defaults)
 
 
 def create_test_deepseek_config(**kwargs: Any) -> MLAModelProvider:
@@ -199,6 +223,17 @@ def create_test_energon_dataset_config(sequence_length: int, micro_batch_size: i
         seq_length=sequence_length,
         micro_batch_size=micro_batch_size,
         task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+    )
+
+
+def create_test_qwen_native_energon_dataset_config(sequence_length: int) -> EnergonDatasetConfig:
+    """Create an Energon config using Qwen-VL native online packing."""
+    return EnergonDatasetConfig(
+        path="/tmp/energon",
+        seq_length=sequence_length,
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        task_encoder=QwenVLEnergonTaskEncoderConfig(hf_processor_path="Qwen/model"),
     )
 
 
@@ -664,6 +699,40 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "use_gloo_process_groups, expect_assertion_error",
+        [(False, True), (True, False)],
+    )
+    def test_memory_efficient_fully_reshardable_checkpoint_requires_gloo(
+        self, monkeypatch, use_gloo_process_groups, expect_assertion_error
+    ):
+        """Require Gloo only when memory-efficient fully reshardable checkpoints are enabled."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=use_gloo_process_groups)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
+        chkpt_cfg = create_test_checkpoint_config(
+            dist_ckpt_optim_fully_reshardable=True,
+            distrib_optim_fully_reshardable_mem_efficient=True,
+        )
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            checkpoint_config=chkpt_cfg,
+            ddp_config=ddp_cfg,
+        )
+        try:
+            if expect_assertion_error:
+                with pytest.raises(AssertionError, match="requires dist.use_gloo_process_groups=True"):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_scheduler_lr_decay_iters_default(self, monkeypatch):
         """Test `lr_decay_iters` defaults to `train_iters` and `lr_decay_steps` calculation."""
         gpt_model_cfg = create_test_gpt_config()
@@ -902,9 +971,9 @@ class TestConfigContainerValidation:
         "profile_step_start, profile_step_end, expect_assertion_error, expected_error_match",
         [
             (10, 20, False, None),  # Valid: end > start
-            (10, 10, False, None),  # Valid: end == start (single step)
+            (10, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: empty range
             (0, 5, False, None),  # Valid: start at 0
-            (20, 10, True, "profile_step_end .* must be >= profile_step_start"),  # Invalid: end < start
+            (20, 10, True, "profile_step_end .* must be > profile_step_start"),  # Invalid: end < start
             (-1, 10, True, "profile_step_start must be >= 0"),  # Invalid: start < 0
             (10, -1, True, "profile_step_end must be >= 0"),  # Invalid: end < 0
             (-5, -1, True, "profile_step_start must be >= 0"),  # Invalid: both < 0
@@ -1014,6 +1083,97 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("packing_mode", ["offline", "in_batch"])
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_thd_recipe_enables_hybridep_padding(self, _mock_device, packing_mode):
+        """Recipe-owned THD packing enables safe HybridEP uneven-input padding."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+        )
+        padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if hasattr(gpt_model_cfg, field))
+
+        if packing_mode == "offline":
+            train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+            dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+            dataset_cfg.enable_offline_packing = True
+            dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        else:
+            train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=32)
+            dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+            dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("configured_padding", [False, True])
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_bshd_recipe_preserves_hybridep_padding_setting(self, _mock_device, configured_padding):
+        """An unpacked BSHD recipe does not gain automatic padding or lose an explicit setting."""
+        padding_field = next(
+            field for field in _HYBRIDEP_PADDING_FIELDS if field in GPTModelProvider.__dataclass_fields__
+        )
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            **{padding_field: configured_padding},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is configured_padding
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_thd_recipe_ignores_stale_cuda_graph_scope_when_impl_none(self, _mock_device):
+        """A deprecated scope that validation clears must not suppress eager THD safety."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            cuda_graph_impl="none",
+            use_te_rng_tracker=True,
+        )
+        padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if hasattr(gpt_model_cfg, field))
+        gpt_model_cfg.cuda_graph_scope = ["full_iteration"]
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=create_test_training_config(micro_batch_size=1, global_batch_size=32),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is True
+            assert cuda_graph_module_names(gpt_model_cfg) == []
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_packed_sequence_micro_batch_size_validation_error_for_dataset_provider(self, monkeypatch):
         """Test packed sequence validation for DatasetProvider configs."""
         from dataclasses import dataclass
@@ -1097,8 +1257,9 @@ class TestConfigContainerValidation:
         """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1139,6 +1300,118 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_in_batch_packing_enables_variable_pp_shapes_for_builder_model(self, monkeypatch):
+        """Test builder-backed GPT configs use dynamic PP shapes for packed batches."""
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                pipeline_model_parallel_size=2,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer.variable_seq_lengths is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_in_batch_packing_enables_variable_pp_shapes_for_heterogeneous_model(self):
+        """Test heterogeneous GPT configs use dynamic PP shapes for packed batches."""
+        block = {
+            "attention": {"no_op": False, "replace_with_linear": False, "num_query_groups": 4},
+            "mlp": {"no_op": False, "replace_with_linear": False, "ffn_hidden_size": 256},
+        }
+        model_cfg = BridgeGPTModelConfig(
+            transformer=HeterogeneousTransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                pipeline_model_parallel_size=2,
+                use_cpu_initialization=True,
+                heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block, block]}),
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer.variable_seq_lengths is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_marks_builder_transformer_config(self, monkeypatch):
+        """Native Energon THD packing marks the nested transformer and enables HybridEP padding."""
+        padding_field = next(
+            field for field in _HYBRIDEP_PADDING_FIELDS if field in TransformerConfig.__dataclass_fields__
+        )
+        model_cfg = BridgeGPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                num_moe_experts=8,
+                moe_token_dispatcher_type="flex",
+                moe_flex_dispatcher_backend="hybridep",
+                calculate_per_token_loss=True,
+                use_cpu_initialization=True,
+                **{padding_field: False},
+            ),
+            vocab_size=256,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        monkeypatch.setattr(
+            torch.cuda,
+            "get_device_properties",
+            lambda _device: SimpleNamespace(major=9, name="NVIDIA H100"),
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer._enable_in_batch_packing is True
+            assert getattr(model_cfg.transformer, padding_field) is True
+            assert "_enable_in_batch_packing" not in model_cfg.__dict__
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_enable_in_batch_packing_sets_collate_padding_multiple(self, monkeypatch):
         """Test in-batch packing forwards CP/SP divisibility requirements to collate-time packers."""
         gpt_model_cfg = create_test_gpt_config(
@@ -1148,8 +1421,9 @@ class TestConfigContainerValidation:
             calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=8,
@@ -1220,7 +1494,7 @@ class TestConfigContainerValidation:
 
     def test_energon_packing_and_non_packed_padding_include_cp_sp_requirements(self, monkeypatch):
         """Test Energon receives the same CP/SP-safe collate multiples as direct HF."""
-        model_cfg = create_test_gpt_config(
+        model_cfg = create_test_qwen3_vl_config(
             context_parallel_size=2,
             tensor_model_parallel_size=4,
             sequence_parallel=True,
@@ -1264,6 +1538,225 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_sets_variable_sequences_and_cp_sp_alignment(self, monkeypatch):
+        """Native Energon packing uses MBS1 while deriving the same THD alignment."""
+        model_cfg = create_test_qwen3_vl_config(
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 8
+            assert model_cfg._enable_in_batch_packing is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_requires_per_token_loss(self, monkeypatch):
+        """Variable source samples per pack require token-normalized loss."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=False)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="requires model.calculate_per_token_loss=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_requires_non_averaged_collective(self, monkeypatch):
+        """MCore per-token loss requires sum-reduced DDP gradients."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = True
+
+        try:
+            with pytest.raises(ValueError, match="requires ddp.average_in_collective=False"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("field_name", "value", "world_size", "message"),
+        [
+            ("mtp_num_layers", 1, 1, "does not support MTP"),
+            ("cuda_graph_impl", "local", 1, "does not support CUDA graphs"),
+            ("vision_cuda_graph_impl", "transformer_engine", 1, "does not support CUDA graphs"),
+            ("pipeline_model_parallel_size", 2, 2, "does not yet support pipeline parallelism"),
+        ],
+    )
+    def test_native_energon_packing_rejects_unsupported_execution_modes(
+        self, monkeypatch, field_name, value, world_size, message
+    ):
+        """Native online packs fail fast for fixed-width or unvalidated execution modes."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        if not hasattr(model_cfg, field_name):
+            raise ValueError(f"Test model config has no field {field_name!r}.")
+        setattr(model_cfg, field_name, value)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=world_size,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match=message):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_allows_expert_parallelism(self):
+        """Allow native packing configuration with expert parallelism."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="alltoall",
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("dispatcher", ["allgather", "flex"])
+    def test_native_energon_packing_allows_other_ep_dispatchers_with_fixed_width(self, dispatcher):
+        """Allow dispatcher selection while deriving fixed-width native EP packs."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type=dispatcher,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_max_length is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_disables_moe_ep_overlap(self):
+        """Fall back to non-overlapped EP instead of rejecting native packing."""
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="alltoall",
+            overlap_moe_expert_parallel_comm=True,
+            delay_wgrad_compute=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.warns(UserWarning, match="Disabling MoE expert-parallel communication overlap"):
+                container.validate()
+            assert model_cfg.overlap_moe_expert_parallel_comm is False
+            assert model_cfg.delay_wgrad_compute is False
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_rejects_qwen_dist_train(self, monkeypatch):
+        """Native online packing has not been validated with split vision/language worlds."""
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        model_cfg.dist_train.use_dist_train = True
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match="does not support Qwen3-VL DistTrain"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_does_not_require_model_capability_flag(self, monkeypatch):
+        """Native packing is selected and constrained by the dataset path, not a model allowlist."""
+        model_cfg = create_test_gpt_config(calculate_per_token_loss=True)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert model_cfg._enable_in_batch_packing is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -1460,6 +1953,7 @@ class TestConfigContainerValidation:
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg.enable_in_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1473,6 +1967,124 @@ class TestConfigContainerValidation:
                 ValueError,
                 match="enable_offline_packing and enable_in_batch_packing are mutually exclusive",
             ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_pad_cu_seqlens_requires_fixed_token_width(self, monkeypatch):
+        """Test static packed boundaries also require a fixed packed-token width."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(
+            packed_sequence_size=512,
+            pad_cu_seqlens=True,
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="pad_cu_seqlens=True requires dataset pad_to_max_length=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("graph_modules", [[], ["attn"], ["attn", "mlp"]])
+    def test_packed_attention_cuda_graph_requires_padded_cu_seqlens(self, graph_modules, monkeypatch):
+        """Test whole-layer and attention-scoped graphs require static packed boundaries."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(model_cfg, graph_modules)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Packed attention CUDA graphs require.*pad_cu_seqlens=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_mlp_only_cuda_graph_does_not_require_padded_cu_seqlens(self, monkeypatch):
+        """Test an MLP-only graph does not capture packed attention metadata."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(model_cfg, ["mlp"])
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_mlp_only_cuda_graph_still_requires_fixed_token_width(self, monkeypatch):
+        """Test every CUDA graph over offline-packed tokens requires a static token shape."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(
+            cuda_graph_impl="transformer_engine",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(model_cfg, ["mlp"])
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Offline packing with CUDA graphs requires.*pad_to_max_length=True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_full_iteration_cuda_graph_requires_padded_cu_seqlens_for_offline_packing(self, monkeypatch):
+        """Test full-iteration graphs require static packed attention metadata."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
+        set_full_iteration_cuda_graph(model_cfg)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.dataset_kwargs = {"pad_to_max_length": True}
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Packed attention CUDA graphs require.*pad_cu_seqlens=True"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -2641,6 +3253,54 @@ class TestCheckpointConfig:
     """Tests for CheckpointConfig class."""
 
     @pytest.mark.parametrize(
+        "config_overrides, error_message",
+        [
+            ({"save_interval": 10, "save_retain_interval": 0}, "save_retain_interval must be positive"),
+            (
+                {"save_interval": None, "save_retain_interval": 20},
+                "save_retain_interval requires a positive save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 15},
+                "save_retain_interval must be divisible by save_interval",
+            ),
+            (
+                {"save_interval": 10, "save_retain_interval": 20, "most_recent_k": 1},
+                "save_retain_interval and most_recent_k cannot be enabled together",
+            ),
+        ],
+    )
+    def test_save_retain_interval_validation(self, config_overrides, error_message):
+        """Retain intervals require one valid, unambiguous persistent retention policy."""
+        ckpt_cfg = create_test_checkpoint_config(**config_overrides)
+
+        with pytest.raises(ValueError, match=error_message):
+            ckpt_cfg.finalize()
+
+    def test_save_retain_interval_accepts_multiple_of_save_interval(self):
+        """A positive retain interval divisible by the save interval is valid."""
+        ckpt_cfg = create_test_checkpoint_config(save_interval=10, save_retain_interval=20)
+
+        ckpt_cfg.finalize()
+
+    def test_precision_aware_optimizer_cpu_staging_defaults_off(self):
+        ckpt_cfg = create_test_checkpoint_config()
+
+        assert ckpt_cfg.stage_precision_aware_optimizer_state_on_cpu is False
+
+    def test_precision_aware_optimizer_cpu_staging_requires_torch_dist(self):
+        ckpt_cfg = create_test_checkpoint_config(
+            ckpt_format="torch",
+            stage_precision_aware_optimizer_state_on_cpu=True,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="stage_precision_aware_optimizer_state_on_cpu=True requires ckpt_format='torch_dist'",
+        ):
+            ckpt_cfg.finalize()
+
+    @pytest.mark.parametrize(
         "load_main_params_from_ckpt, load_optim, expect_assertion_error",
         [
             (True, False, False),  # Valid combination
@@ -3373,6 +4033,91 @@ class TestRuntimeConfigUpdate:
             assert full_cfg.data_parallel_size == 8  # world_size / model_parallel_size
             assert full_cfg.comm_overlap.data_parallel_size == 8  # Should be set by runtime_config_update
 
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("dispatcher", ["alltoall", "allgather"])
+    def test_runtime_config_update_disables_native_packing_moe_ep_overlap(self, dispatcher):
+        """Disable EP overlap after runtime communication settings reach the model."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        model_cfg = create_test_qwen3_vl_config(
+            bf16=True,
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type=dispatcher,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        optimizer_cfg = create_test_optimizer_config(bf16=True)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            optimizer_config=optimizer_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        container.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=False,
+            overlap_moe_expert_parallel_comm=True,
+        )
+
+        try:
+            with pytest.warns(UserWarning, match="Disabling MoE expert-parallel communication overlap") as records:
+                runtime_config_update(container)
+            assert len(records) == 1
+            assert model_cfg.overlap_moe_expert_parallel_comm is False
+            assert model_cfg.delay_wgrad_compute is False
+            assert container.comm_overlap.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.delay_wgrad_compute is False
+            assert container.comm_overlap.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.user_comm_overlap_cfg.delay_wgrad_compute is False
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_runtime_config_update_disables_native_packing_delay_wgrad_only(self):
+        """Disable delayed weight-gradient compute before communication-overlap setup."""
+        from megatron.bridge.training.config import runtime_config_update
+
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=8,
+            moe_token_dispatcher_type="allgather",
+            overlap_moe_expert_parallel_comm=False,
+            delay_wgrad_compute=False,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+        container.comm_overlap = CommOverlapConfig(
+            tp_comm_overlap=False,
+            overlap_moe_expert_parallel_comm=False,
+            delay_wgrad_compute=True,
+        )
+
+        try:
+            with pytest.warns(UserWarning, match="Disabling MoE expert-parallel communication overlap") as records:
+                runtime_config_update(container)
+            assert len(records) == 1
+            assert model_cfg.overlap_moe_expert_parallel_comm is False
+            assert model_cfg.delay_wgrad_compute is False
+            assert container.comm_overlap.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.delay_wgrad_compute is False
+            assert container.comm_overlap.user_comm_overlap_cfg.overlap_moe_expert_parallel_comm is False
+            assert container.comm_overlap.user_comm_overlap_cfg.delay_wgrad_compute is False
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

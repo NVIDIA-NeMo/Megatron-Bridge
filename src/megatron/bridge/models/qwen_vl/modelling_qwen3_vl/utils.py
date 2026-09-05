@@ -767,14 +767,24 @@ def preprocess_packed_seqs(
             start_idx = cu_seqlens_padded_cpu[i] // cp_size
             # split to 2 chunks
             d = input_ids[i, attention_mask[i]]
-            input_ids_rmpad[start_idx : start_idx + half_seqlen] = d[
-                half_seqlen * cp_rank : half_seqlen * (cp_rank + 1)
-            ]
+            # Chunk indices are computed in the *padded* coordinate space
+            # (seqlen_padded_i), while d holds only the *valid* tokens. When a row's
+            # valid length is shorter than the alignment padding, the first-chunk
+            # slice can start past the end of d and yield an empty tensor, which
+            # raises on assignment:
+            #   RuntimeError: The expanded size of the tensor (2) must match the
+            #   existing size (0) at non-singleton dimension 0
+            # Clamp it the same way the remaining chunk below already is.
+            first_start = half_seqlen * cp_rank
+            first_end = min(half_seqlen * (cp_rank + 1), d.shape[0])
+            first_len = max(first_end - first_start, 0)
+            if first_len > 0:
+                input_ids_rmpad[start_idx : start_idx + first_len] = d[first_start:first_end]
 
             remain_start = seqlen_padded_i - half_seqlen * (cp_rank + 1)
             remain_end = seqlen_padded_i - half_seqlen * cp_rank
             remain_end = min(remain_end, d.shape[0])
-            remain_len = remain_end - remain_start
+            remain_len = max(remain_end - remain_start, 0)
             if remain_len > 0:
                 input_ids_rmpad[start_idx + half_seqlen : start_idx + half_seqlen + remain_len] = d[
                     remain_start:remain_end

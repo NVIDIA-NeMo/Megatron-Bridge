@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
@@ -44,7 +45,13 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import WorkloadBaseConfig, get_workload_base_config
+from utils.utils import (
+    WorkloadBaseConfig,
+    _validated_data_parallel_size,
+    _weak_scaled_global_batch_size,
+    get_workload_base_config,
+    topology_from_config,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -238,6 +245,13 @@ def _apply_flat_cli_environment_compatibility(
     cp_size = getattr(model, "context_parallel_size", 1) or 1
     ep_size = getattr(model, "expert_model_parallel_size", 1) or 1
     gpu = args.gpu.lower()
+    effective_dispatcher_backend = getattr(model, "moe_flex_dispatcher_backend", base_dispatcher_backend)
+
+    # Only NCCL EP drops these. DeepEP and the alltoall dispatcher keep whatever the recipe set,
+    # so switching to NCCL EP never changes the environment of an unrelated benchmark.
+    if effective_dispatcher_backend == "ncclep":
+        for name in sorted(HYBRID_EP_ENV_NAMES):
+            _remove_recipe_env(recipe, name, protected)
 
     connection_override = any(
         value is not None
@@ -249,14 +263,14 @@ def _apply_flat_cli_environment_compatibility(
     )
     if connection_override:
         moe_a2a_overlap = args.moe_a2a_overlap if args.moe_a2a_overlap is not None else base_moe_a2a_overlap
-        max_connections = 32 if base_dispatcher_backend in {"deepep", "hybridep"} else 8
+        max_connections = 32 if effective_dispatcher_backend in {"deepep", "hybridep", "ncclep"} else 8
         if gpu in {"b200", "b300", "gb200", "gb300", "vr200"}:
             max_connections = 32
         elif (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
             max_connections = 1
         _set_recipe_env(recipe, "CUDA_DEVICE_MAX_CONNECTIONS", max_connections, protected)
 
-    if args.expert_model_parallel_size is not None and base_dispatcher_backend == "hybridep":
+    if args.expert_model_parallel_size is not None and effective_dispatcher_backend == "hybridep":
         if ep_size <= 0:
             raise ValueError("HybridEP expert parallel size must be positive.")
         if gpu in {"h100", "b200", "b300"}:
@@ -665,26 +679,30 @@ def set_post_overrides(
     cp = recipe.model.context_parallel_size
     vp = recipe.model.virtual_pipeline_model_parallel_size or 1
 
-    dp = int(num_gpus / (tp * pp * cp))
+    base_dp = _validated_data_parallel_size(
+        num_gpus=workload_base_config.num_gpus,
+        topology=topology_from_config(workload_base_config),
+    )
+    dp = _validated_data_parallel_size(
+        num_gpus=num_gpus,
+        topology=topology_from_config(recipe.model),
+    )
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    # NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
-    if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
-        # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
-        if recipe.optimizer.optimizer != "dist_muon":
-            recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-            if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-                recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
-    default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
         # Only auto-rescale if the recipe's current GBS still equals the
         # workload default — i.e., no one (Hydra or earlier step) has already
         # expressed an intent. Otherwise Hydra-set GBS gets silently stomped.
-        if recipe.train.global_batch_size == workload_base_config.global_batch_size and num_gpus != default_num_gpus:
-            new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
+        if recipe.train.global_batch_size == workload_base_config.global_batch_size and dp != base_dp:
+            new_gbs = _weak_scaled_global_batch_size(
+                base_gbs=workload_base_config.global_batch_size,
+                base_data_parallel=base_dp,
+                data_parallel=dp,
+            )
             recipe.train.global_batch_size = new_gbs
             logger.info(
-                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} based on {num_gpus} GPUs."
+                f"Scaled global batch size from {workload_base_config.global_batch_size} to {new_gbs} "
+                f"based on DP {base_dp} -> {dp}."
             )
 
     return recipe

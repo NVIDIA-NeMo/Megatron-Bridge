@@ -31,6 +31,21 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_COMMON_SCRIPTS_ROOT = Path(__file__).resolve().parents[2] / "common"
+if str(_COMMON_SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_COMMON_SCRIPTS_ROOT))
+
+from benchmark_parallelism import (  # noqa: E402
+    data_parallel_size as _validated_data_parallel_size,
+)
+from benchmark_parallelism import (
+    topology_from_config,
+)
+from benchmark_parallelism import (
+    weak_scaled_global_batch_size as _weak_scaled_global_batch_size,
+)
+
+
 # Default timeout for interactive config variant selection (in seconds)
 CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -40,6 +55,7 @@ _PERF_RECIPE_DEF_PATTERN = re.compile(r"^def ([a-zA-Z0-9_]+_config)\(", re.MULTI
 _PRECISION_NAME_MAP = {
     "bf16": "bf16",
     "fp8_cs": "fp8cs",
+    "fp8_ds": "fp8ds",
     "fp8_mx": "fp8mx",
     "fp8_sc": "fp8sc",
     "nvfp4": "nvfp4",
@@ -70,6 +86,30 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
     ("qwen3_30b_a3b", "pretrain", "h100", "bf16", None): 16,
     ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", None): 16,
 }
+
+
+class PerfRecipeNotFoundError(ValueError):
+    """Raised when an exact flat performance recipe name is unavailable."""
+
+
+def _data_parallel_size(
+    *,
+    num_gpus: int,
+    tensor_parallel: int,
+    pipeline_parallel: int,
+    context_parallel: int,
+    expert_parallel: int = 1,
+    expert_tensor_parallel: int | None = None,
+) -> int:
+    """Return DP after validating the requested dense and expert grids."""
+    topology = WorkloadBaseConfig(
+        tensor_model_parallel_size=tensor_parallel,
+        pipeline_model_parallel_size=pipeline_parallel,
+        context_parallel_size=context_parallel,
+        expert_model_parallel_size=expert_parallel,
+        expert_tensor_parallel_size=expert_tensor_parallel,
+    )
+    return _validated_data_parallel_size(num_gpus=num_gpus, topology=topology_from_config(topology))
 
 
 def configure_slurm_gpu_tuning(
@@ -170,6 +210,8 @@ class WorkloadBaseConfig:
     virtual_pipeline_model_parallel_size: int | None = None
     expert_model_parallel_size: int = 1
     expert_tensor_parallel_size: int | None = None
+    gtp_weight_remat_size: int = 1
+    expert_gtp_weight_remat_size: int = 1
 
     global_batch_size: int = 1
     micro_batch_size: int = 1
@@ -253,14 +295,21 @@ def apply_target_topology_environment(
     model-specific environment stays explicit in the recipe. Explicit
     ``env_vars`` overrides remain final.
     """
+    from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
+
     topology_names = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
         "NVLINK_DOMAIN_SIZE",
         "USE_MNNVL",
     }
     protected = protected_env_names or set()
-    if getattr(config.model, "moe_flex_dispatcher_backend", None) != "hybridep":
-        for name in topology_names - protected:
+    dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
+    if dispatcher_backend != "hybridep":
+        # NCCL EP also drops the HybridEP tuning this function never derives, so an NCCL EP launch
+        # carries no stale HybridEP settings at all. DeepEP and alltoall keep whatever the recipe
+        # set, exactly as before.
+        stale_names = HYBRID_EP_ENV_NAMES if dispatcher_backend == "ncclep" else topology_names
+        for name in stale_names - protected:
             config.env_vars.pop(name, None)
         return
 
@@ -346,9 +395,9 @@ def apply_argparse_overrides(config: Any, args: Any) -> Any:
 
     dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
-    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+    if dispatcher_backend in {"deepep", "hybridep", "ncclep"} and num_moe_experts not in {None, 0}:
         config.model.moe_flex_dispatcher_backend = dispatcher_backend
-    elif dispatcher_backend in {"deepep", "hybridep"}:
+    elif dispatcher_backend in {"deepep", "hybridep", "ncclep"}:
         logger.warning("Ignoring flex dispatcher override for a model without MoE experts.")
     elif dispatcher_backend is None:
         config.model.moe_flex_dispatcher_backend = None
@@ -372,7 +421,7 @@ def finalize_config_overrides(config: Any) -> Any:
 
     dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
-    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+    if dispatcher_backend in {"deepep", "hybridep", "ncclep"} and num_moe_experts not in {None, 0}:
         config.model.moe_token_dispatcher_type = "flex"
         config.model.moe_shared_expert_overlap = False
     elif dispatcher_backend is None and getattr(config.model, "moe_token_dispatcher_type", None) == "flex":
@@ -499,7 +548,7 @@ def get_perf_recipe_by_name(
     recipe_fn = find_perf_recipe(name)
     if recipe_fn is None:
         searched_modules = ", ".join(perf_recipe_family_modules()) or "none"
-        raise ValueError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
+        raise PerfRecipeNotFoundError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
     return recipe_fn()
 
 
@@ -603,6 +652,12 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
         virtual_pipeline_model_parallel_size=model.virtual_pipeline_model_parallel_size,
         expert_model_parallel_size=getattr(model, "expert_model_parallel_size", 1),
         expert_tensor_parallel_size=getattr(model, "expert_tensor_parallel_size", None),
+        gtp_weight_remat_size=getattr(model, "gtp_weight_remat_size", getattr(model, "gtp_remat_size", 1)),
+        expert_gtp_weight_remat_size=getattr(
+            model,
+            "expert_gtp_weight_remat_size",
+            getattr(model, "expert_gtp_remat_size", 1),
+        ),
         global_batch_size=train.global_batch_size,
         micro_batch_size=train.micro_batch_size,
         env_vars=dict(getattr(config, "env_vars", {})),
@@ -701,10 +756,32 @@ def get_exp_name_config(
     )
     mbs_size = args.micro_batch_size if args.micro_batch_size is not None else base_config.micro_batch_size
 
+    requested_topology = WorkloadBaseConfig(
+        tensor_model_parallel_size=tp_size,
+        pipeline_model_parallel_size=pp_size,
+        context_parallel_size=cp_size,
+        expert_model_parallel_size=ep_size,
+        expert_tensor_parallel_size=etp_size,
+        gtp_weight_remat_size=base_config.gtp_weight_remat_size,
+        expert_gtp_weight_remat_size=base_config.expert_gtp_weight_remat_size,
+    )
+    base_dp = _validated_data_parallel_size(
+        num_gpus=base_config.num_gpus,
+        topology=topology_from_config(base_config),
+    )
+    requested_dp = _validated_data_parallel_size(
+        num_gpus=num_gpus,
+        topology=topology_from_config(requested_topology),
+    )
+
     if args.global_batch_size is not None:
         gbs_size = args.global_batch_size
-    elif num_gpus != base_config.num_gpus:
-        gbs_size = int(base_config.gbs_scaling_factor * num_gpus)
+    elif requested_dp != base_dp:
+        gbs_size = _weak_scaled_global_batch_size(
+            base_gbs=base_config.global_batch_size,
+            base_data_parallel=base_dp,
+            data_parallel=requested_dp,
+        )
     else:
         gbs_size = base_config.global_batch_size
 

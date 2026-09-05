@@ -31,7 +31,24 @@ docker build \
 |---|---|
 | `BASE_IMAGE` | Base container |
 | `MCORE_TRIGGERED_TESTING` | When `true`, skips the uv lockfile check to allow testing against a different Megatron-LM version than the one pinned in the lockfile |
+| `INSTALL_DIFFUSION_DEPS` | When `true`, runs `scripts/install_diffusion_deps.sh` to add WAN codecs to a CI image; defaults to `false` so CVE-carrying codecs stay out of shipped Framework images |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments forwarded to `uv cache prune` after install |
+
+Use the diffusion dependency opt-in only for CI images that run the diffusion test suite:
+
+```bash
+docker build \
+  -f docker/Dockerfile.ci \
+  --target megatron_bridge \
+  --build-arg INSTALL_DIFFUSION_DEPS=true \
+  -t megatron-bridge-diffusion-tests:latest \
+  .
+```
+
+The packages installed by `scripts/install_diffusion_deps.sh` are intentionally excluded from the
+normal dependency solve in `pyproject.toml`. The installer consumes `scripts/diffusion-deps.lock`,
+which pins package versions and accepted artifact hashes; its header records the regeneration
+command. Do not enable this argument for the NeMo Framework image stack or other release images.
 
 ---
 
@@ -115,6 +132,7 @@ docker build \
 | `FW_BASE_FINAL` | Output stage. `trtllm_install` (with TRT-LLM) or `fw_toolkit_builder` (without) |
 | `UV_VERSION` | uv version to install |
 | `VLLM_VERSION` | vLLM git tag to build |
+| `VLLM_WHEEL_SRC` | Stage supplying the vLLM wheel. `vllm_wheel_build` (default) builds it from source; `vllm_wheel_none` skips both the build and the install |
 | `TRT_LLM_COMMIT` | TensorRT-LLM git commit or tag |
 | `TRT_LLM_VERSION` | TensorRT-LLM version string embedded as an image environment variable |
 | `TRT_VER` | TensorRT version for the TRT-LLM install scripts |
@@ -142,6 +160,7 @@ docker build \
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
 | `REINSTALL_NVSHMEM` | Set to `True` to reinstall nvshmem (`nvidia-nvshmem-cu13`) over the base image version; only applied when `INSTALL_DEEPEP=True` |
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
+| `INSTALL_DIFFUSION_DEPS` | Install the test-only WAN diffusion dependencies; defaults to `false` for Framework/release images |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments for `uv cache prune` |
 
 ### `Dockerfile.fw_final`

@@ -481,7 +481,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.gated_linear_unit = True
         provider.moe_grouped_gemm = True
         provider.moe_router_pre_softmax = False  # V4 uses post-topk normalisation
-        provider.moe_token_dispatcher_type = "alltoall"
+        provider.moe_token_dispatcher_type = "flex"
+        provider.moe_flex_dispatcher_backend = "hybridep"
+        provider.moe_flex_dispatcher_num_sms = 16
+        provider.moe_permute_fusion_into_hybridep = False
         provider.moe_router_load_balancing_type = "noaux_tc"
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = hf_config.scoring_func  # "sqrtsoftplus"
@@ -941,11 +944,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     ) -> Dict[str, torch.Tensor]:
         """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
 
+        Legacy indexer scorer names are restored before selecting the export dtype.
         When ``task.weight_dtype`` is set, skip requantization and return the weights
         unchanged — the generic export path casts the dtype.
         """
-        if task.weight_dtype is not None:
-            return converted_weights_dict
         native_scorer_key = next(
             (
                 key
@@ -959,6 +961,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             if legacy_key in hf_state_dict:
                 converted_weights_dict = dict(converted_weights_dict)
                 converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
+        if task.weight_dtype is not None:
+            return converted_weights_dict
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,

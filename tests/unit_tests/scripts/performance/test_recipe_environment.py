@@ -110,6 +110,41 @@ def test_target_topology_removes_disabled_hybridep_values():
     assert not config.env_vars
 
 
+@pytest.mark.parametrize("dispatcher_backend", [None, "deepep"])
+def test_target_topology_keeps_chunk_tuning_outside_ncclep(dispatcher_backend):
+    """Only the derived topology is target-dependent, so other tuning survives every backend."""
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend=dispatcher_backend, expert_model_parallel_size=8),
+    )
+
+    utils.apply_target_topology_environment(config, gpu="h100")
+
+    assert config.env_vars == {"NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128}
+
+
+def test_target_topology_removes_every_hybridep_value_for_ncclep():
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+            "MODEL_SPECIFIC": 1,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep", expert_model_parallel_size=8),
+    )
+
+    utils.apply_target_topology_environment(config, gpu="h100")
+
+    assert config.env_vars == {"MODEL_SPECIFIC": 1}
+
+
 def test_target_topology_rejects_nonpositive_ep_size():
     config = SimpleNamespace(
         env_vars={},
@@ -265,6 +300,185 @@ def test_flat_environment_preparation_defaults_missing_recipe_environment(model_
     assert result.env_vars == {}
     assert "No environment variables are set explicitly" in caplog.text
     assert "Performance might be degraded" in caplog.text
+
+
+def test_missing_exact_gpu_recipe_uses_canonical_family_recipe(monkeypatch):
+    """Weak scaling falls back to the canonical recipe for the same workload."""
+    canonical_name = "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config"
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotronh_56b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="fp8_cs",
+        config_variant=None,
+        global_batch_size=None,
+    )
+    canonical_recipe = SimpleNamespace(train=SimpleNamespace(global_batch_size=192))
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 8-GPU recipe")
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(utils, "flat_perf_recipe_names", lambda: (canonical_name,))
+    monkeypatch.setattr(
+        utils,
+        "find_perf_recipe",
+        lambda name: (lambda: canonical_recipe) if name == canonical_name else None,
+    )
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda recipe, _overrides, _args: recipe)
+
+    def apply_weak_scaling(recipe, **kwargs):
+        assert kwargs["num_gpus"] == 8
+        recipe.train.global_batch_size = 24
+        return recipe
+
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_post_overrides = apply_weak_scaling
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+
+    result = run_script._prepare_perf_recipe(args, [])
+
+    assert result is canonical_recipe
+    assert result.train.global_batch_size == 24
+
+
+def test_exact_gpu_recipe_takes_precedence_over_canonical_fallback(monkeypatch):
+    """A tuned exact-count recipe must not be replaced by weak scaling."""
+    exact_recipe = object()
+    args = SimpleNamespace(
+        model_family_name="test",
+        model_recipe_name="test_model",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="bf16",
+        config_variant=None,
+        global_batch_size=None,
+    )
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", lambda **_kwargs: exact_recipe)
+    monkeypatch.setattr(
+        run_script,
+        "get_perf_optimized_recipe",
+        lambda **_kwargs: pytest.fail("canonical fallback must not run for an exact recipe"),
+    )
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda recipe, _overrides, _args: recipe)
+
+    result = run_script._prepare_perf_recipe(args, [])
+
+    assert result is exact_recipe
+
+
+def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
+    args = SimpleNamespace(
+        model_family_name="test",
+        model_recipe_name="test_model",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="bf16",
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    def construction_error(**_kwargs):
+        raise RuntimeError("recipe builder failed")
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", construction_error)
+    monkeypatch.setattr(
+        run_script,
+        "get_perf_optimized_recipe",
+        lambda **_kwargs: pytest.fail("construction failures must not invoke canonical fallback"),
+    )
+
+    with pytest.raises(RuntimeError, match="recipe builder failed"):
+        run_script._prepare_perf_recipe(args, [])
+
+
+def test_missing_perf_recipe_family_reports_requested_workload(monkeypatch):
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotronh_56b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="b300",
+        compute_dtype="fp8_cs",
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 8-GPU recipe")
+
+    def missing_family(**_kwargs):
+        raise ValueError("No flat perf recipe found for nemotronh_56b/pretrain/b300/fp8_cs/default")
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(run_script, "get_perf_optimized_recipe", missing_family)
+
+    with pytest.raises(
+        ValueError,
+        match=r"nemotronh_56b/pretrain/b300/fp8_cs/default",
+    ):
+        run_script._prepare_perf_recipe(args, [])
+
+
+def test_weak_scaling_validates_world_size_and_integer_gbs():
+    assert (
+        utils._data_parallel_size(
+            num_gpus=8,
+            tensor_parallel=2,
+            pipeline_parallel=1,
+            context_parallel=1,
+        )
+        == 4
+    )
+    assert utils._weak_scaled_global_batch_size(base_gbs=192, base_data_parallel=32, data_parallel=4) == 24
+
+    with pytest.raises(ValueError, match=r"7 GPUs.*TP \* PP \* CP.*2 \* 1 \* 1"):
+        utils._data_parallel_size(
+            num_gpus=7,
+            tensor_parallel=2,
+            pipeline_parallel=1,
+            context_parallel=1,
+        )
+    with pytest.raises(ValueError, match=r"does not produce an integer global batch size"):
+        utils._weak_scaled_global_batch_size(base_gbs=190, base_data_parallel=32, data_parallel=4)
+
+
+def test_exp_name_rejects_fractional_data_parallel_weak_scaling(monkeypatch):
+    base_config = utils.WorkloadBaseConfig(
+        num_gpus=64,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=1,
+        context_parallel_size=1,
+        expert_model_parallel_size=1,
+        expert_tensor_parallel_size=None,
+        global_batch_size=190,
+    )
+    monkeypatch.setattr(utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
+    args = SimpleNamespace(
+        num_gpus=8,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        virtual_pipeline_model_parallel_size=-1,
+        expert_model_parallel_size=None,
+        expert_tensor_parallel_size=None,
+        micro_batch_size=None,
+        global_batch_size=None,
+    )
+
+    with pytest.raises(ValueError, match="does not produce an integer global batch size"):
+        utils.get_exp_name_config(
+            args,
+            model_family_name="nemotronh",
+            model_recipe_name="nemotronh_56b",
+            gpu="b300",
+            compute_dtype="fp8_cs",
+            task="pretrain",
+        )
 
 
 def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
@@ -494,6 +708,93 @@ def test_flat_default_args_leave_inline_recipe_environment_unchanged():
     assert recipe.env_vars == original_env
 
 
+def test_flat_ncclep_override_removes_hybridep_environment():
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+            "MODEL_SPECIFIC": 1,
+        },
+        model=SimpleNamespace(
+            moe_flex_dispatcher_backend="ncclep",
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == {"MODEL_SPECIFIC": 1}
+
+
+@pytest.mark.parametrize("dispatcher_backend", [None, "deepep"])
+def test_flat_non_ncclep_backends_keep_hybridep_environment(dispatcher_backend):
+    """Switching to NCCL EP must not change the environment of any other benchmark."""
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    original_env = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "MODEL_SPECIFIC": 1,
+    }
+    recipe = SimpleNamespace(
+        env_vars=dict(original_env),
+        model=SimpleNamespace(
+            moe_flex_dispatcher_backend=dispatcher_backend,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=dispatcher_backend,
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == original_env
+
+
 def test_vr200_argparse_overrides_keep_sm100_cuda_connection_count():
     from utils.overrides import _apply_flat_cli_environment_compatibility
 
@@ -704,6 +1005,68 @@ def test_runner_applies_env_relevant_argparse_overrides():
     assert effective_recipe.model.moe_token_dispatcher_type == "flex"
     assert effective_recipe.model.moe_flex_dispatcher_backend == "hybridep"
     assert effective_recipe.model.moe_shared_expert_overlap is False
+
+
+def test_runner_accepts_ncclep_dispatcher_override():
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=1.5,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend="ncclep",
+    )
+
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
+
+    assert effective_recipe.model.moe_token_dispatcher_type == "flex"
+    assert effective_recipe.model.moe_flex_dispatcher_backend == "ncclep"
+    assert effective_recipe.model.moe_shared_expert_overlap is False
+
+
+def test_runner_accepts_ncclep_without_capacity_factor():
+    """An unset capacity factor selects NCCL EP eager mode and must not be rejected."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=None,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend="ncclep",
+    )
+
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
+
+    assert effective_recipe.model.moe_token_dispatcher_type == "flex"
+    assert effective_recipe.model.moe_flex_dispatcher_backend == "ncclep"
+    assert effective_recipe.model.moe_expert_rank_capacity_factor is None
+
+
+def test_performance_parser_accepts_ncclep_dispatcher():
+    from argument_parser import parse_cli_args
+
+    parser = parse_cli_args()
+    action = next(action for action in parser._actions if action.dest == "moe_flex_dispatcher_backend")
+
+    assert "ncclep" in action.choices
 
 
 def test_runner_applies_determinism_before_environment_export():

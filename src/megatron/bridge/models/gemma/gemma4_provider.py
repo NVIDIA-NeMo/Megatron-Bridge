@@ -36,14 +36,15 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4OutputLayer,
     Gemma4RotaryEmbedding,
     _attach_ple_modules,
-    _gemma4_block_spec,
     _install_ple_forward,
     _install_tied_kv,
+    gemma4_block_spec,
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 
 
 def _validate_gemma4_moe_orchestration(provider: GPTModelProvider) -> None:
@@ -199,6 +200,20 @@ class Gemma4DenseProvider(GPTModelProvider):
         if vp_stage is not None or getattr(self, "pipeline_model_parallel_size", 1) != 1:
             raise NotImplementedError("Gemma4DenseProvider currently supports PP=1 only.")
 
+        if getattr(self, "context_parallel_size", 1) != 1:
+            # get_gemma4_layer_spec() builds the dense layer from LocalSpecProvider,
+            # whose core_attention() is the non-TE DotProductAttention. That module
+            # asserts context_parallel_size == 1, so CP fails deep inside layer
+            # construction with "Context parallelism is only supported by
+            # TEDotProductAttention! when instantiating Gemma4DenseSelfAttention".
+            # Surface it here instead, next to the PP guard, so the message names the
+            # provider and the knob to change.
+            raise NotImplementedError(
+                "Gemma4DenseProvider currently supports CP=1 only: its layer spec uses "
+                "the local DotProductAttention, which does not implement context "
+                "parallelism."
+            )
+
         return self.build(
             pre_process=True if pre_process is None else pre_process,
             post_process=True if post_process is None else post_process,
@@ -234,6 +249,7 @@ class Gemma4DenseProvider(GPTModelProvider):
                 transformer_layer_spec=get_gemma4_layer_spec(config),
                 vocab_size=padded_vocab,
                 max_sequence_length=self.seq_length,
+                **logit_dtype_kwarg(GPTModel, self.logit_dtype),
                 position_embedding_type=self.position_embedding_type,
                 rotary_percent=self.rotary_percent,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
@@ -285,7 +301,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     kv_channels: int = 256
     num_query_groups: int = 8
     window_size: int = 1024
-    interleaved_attn_pattern: tuple = (5, 1)
+    interleaved_attn_pattern: tuple[int, int] | list[str] = (5, 1)
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
     attention_backend: AttnBackend = AttnBackend.auto
@@ -320,7 +336,7 @@ class Gemma4ModelProvider(GPTModelProvider):
 
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
-        default_factory=lambda: partial(_gemma4_block_spec, use_transformer_engine=HAVE_TE)
+        default_factory=lambda: partial(gemma4_block_spec, use_transformer_engine=HAVE_TE)
     )
     scatter_embedding_sequence_parallel: bool = True
 

@@ -52,12 +52,14 @@ requested adapter scheme.
 ### Benchmark recipe
 
 The training launcher can run exact exported recipes from `src/megatron/bridge/perf_recipes`, including text
-pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The total allocation must match the GPU count
-encoded by the recipe name; the user selects the node shape, and the Slurm partition must provide the requested
-hardware:
+pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The GPU count encoded by the recipe name is its
+canonical tuned allocation. The user selects the node shape and may weak-scale to a different compatible world size;
+the Slurm partition must provide the requested hardware:
 
 `benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
 compatibility paths retain their legacy names.
+
+> **DeepSeek V4:** The 26.08 DeepSeek V4 benchmark recipes require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
 
 ```bash
 ./scripts/training/train.sh \
@@ -74,6 +76,11 @@ precision, dispatcher, CUDA-graph settings, and process environment. Trailing `K
 configuration. Benchmark recipes retain their selected dataset type, so `--dataset` is not supported on this path.
 Recipe environment defaults are installed before the launcher enters the training stack; values explicitly set by the
 shell or Slurm environment retain precedence.
+
+When the requested world size differs from the canonical count, the runner preserves the recipe's samples per GPU by
+scaling `train.global_batch_size` proportionally. The scaled batch size must be an integer, and the requested world size
+must be divisible by the resolved TP × PP × CP topology. Pass `--global_batch_size` or a trailing
+`train.global_batch_size=...` override to choose an explicit batch size instead of automatic weak scaling.
 
 The launcher does not infer offline mode, cluster-specific CPU/NUMA binding, Slurm segment sizing, or NCCL fabric
 settings from the recipe name. Supply those deployment settings explicitly through the target cluster's launcher
@@ -109,10 +116,12 @@ Benchmark recipes retain their recipe-owned dataset and reject `--dataset`.
 |---|---|---|---|
 | `mock` | Source selector | pretrain | In-memory generated GPT data |
 | `megatron-indexed` | Source selector | pretrain | Local Megatron `.bin/.idx` data; never falls back to mock |
+| `energon` | Source selector | pretrain/sft/lora/dora | Local Energon data selected by `dataset.path`; preserves a recipe-owned task encoder or uses its Hugging Face processor |
 | `local-jsonl` | Source selector | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
 | `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
 | `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
 | `tulu3` | Named preset | sft/lora/dora | Ai2 Tulu 3 SFT mixture (`allenai/tulu-3-sft-mixture`) |
+| `coderforge` | Named preset | sft/lora/dora | CoderForge Preview `SWE_Rebench` agent-trajectory split |
 | `openmathinstruct2` | Named preset | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
 | `openmathinstruct2-thinking` | Named preset | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
 | `gsm8k` | Named preset | sft/lora/dora | GSM8K preset |
@@ -138,6 +147,37 @@ the index cache.
 The launcher does not infer the source corpus from the files. For one preprocessing example, see
 [the DCLM tutorial](../../tutorials/data/dclm/README.md).
 
+### Energon data
+
+Use `energon` with a VLM recipe that already owns an
+`EnergonDatasetConfig` or exposes `dataset.hf_processor_path`. Select
+pretraining, SFT, LoRA, or DoRA independently with `--mode`; the selector
+preserves a recipe-owned model-specific task encoder and otherwise constructs
+the generic Hugging Face task encoder.
+
+For example, the existing Qwen 35B-A3B recipe can train on prepared DataComp
+shards with explicit dataset, processor, and batch settings:
+
+```bash
+--dataset energon \
+train.global_batch_size=512 \
+train.micro_batch_size=1 \
+dataset.micro_batch_size=1 \
+dataset.path=/data/datacomp-energon \
+dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B \
+dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
+```
+
+Set both micro-batch fields when overriding the recipe's micro-batch size; the
+runner does not silently synchronize them. ChatML data must use the
+repository's `ChatMLWebdataset` tar-member contract.
+The [DataComp tutorial](../../tutorials/data/datacomp/README.md) documents a
+complete image-caption preparation and training flow; the
+[multimodal Energon tutorial](../../tutorials/data/energon/README.md) documents
+the general tar-member contract. The
+[Nemotron Image Training v3 tutorial](../../tutorials/data/energon/nemotron-image-v3.md) shows a pinned small-subset
+download, conversion, and Qwen3-VL `train.sh` launch through this selector.
+
 ### OpenMathInstruct-2
 
 `openmathinstruct2` uses prompt/completion records. `openmathinstruct2-thinking` changes only the semantic output
@@ -150,14 +190,45 @@ format: chain-of-thought goes to the analysis channel and the answer goes to the
 under ODC-BY-1.0, but individual subsets can carry additional terms, including non-commercial restrictions. Review the
 Hugging Face dataset card and its linked subset licenses before use.
 
+### CoderForge Preview
+
+`coderforge` selects the `trajectories` configuration and `SWE_Rebench` split of
+`togethercomputer/CoderForge-Preview`. The preset decodes the dataset's JSON-string `messages` and `tools` fields and
+uses assistant-only chat loss. Its `image` field identifies the execution environment and is retained as metadata; it
+is not treated as visual input. Use a Hugging Face split slice such as
+`'dataset.hf_dataset.split="SWE_Rebench[:64]"'` for bounded smoke runs; Hydra requires the quoted value to preserve
+the brackets.
+
 ### Offline packing
 
 Offline packing is a text SFT option, not a dataset name. Set `dataset.enable_offline_packing=true` for `squad`, either
-OpenMathInstruct-2 format, `tulu3`, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
-sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder materializes packed
-data automatically, so a separate packing Slurm job is not required. The selected recipe/model must support packed THD
-sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on
-shared mounted storage.
+OpenMathInstruct-2 format, `tulu3`, `coderforge`, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the
+resolved CP/TP and sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder
+materializes packed data automatically, so a separate packing Slurm job is not required. The selected recipe/model must
+support packed THD sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the
+dataset cache on shared mounted storage.
+
+### In-batch packing for GPT SFT JSONL
+
+As an alternative to offline artifacts, `GPTSFTDatasetConfig` can pack each
+logical microbatch during collation. This supports both prompt-completion and
+chat JSONL preprocessing while retaining the local JSONL mmap path; only the
+selected rows are parsed and tokenized, so the full dataset is not loaded into
+host memory. For example:
+
+```bash
+--dataset local-jsonl \
+dataset.dataset_root=/data/sft \
+dataset.enable_in_batch_packing=true \
+dataset.dataloader_type=single \
+train.micro_batch_size=4
+```
+
+The logical micro-batch must be larger than one. Collation emits one physical
+THD row and derives per-sequence CP/SP alignment from the resolved topology.
+Use the `single` or `cyclic` dataloader; the global-batch `batch` dataloader is
+not supported. Do not combine `dataset.enable_in_batch_packing=true` with
+offline packing.
 
 ### VLM data
 
@@ -279,9 +350,10 @@ uv run python scripts/training/run_recipe.py \
     --dry-run logger.save_config_filepath=/tmp/config.yaml
 ```
 
-For a benchmark dry run, use the complete flat recipe name and omit `--dataset`. The rank-local dry run discovers the
-recipe and validates the final config against the total GPU count encoded in that name without
-requiring a live allocation; the submission dry run additionally validates `--nodes` and `--gpus-per-node`.
+For a benchmark dry run, use the complete flat recipe name and omit `--dataset`. Without a distributed world-size
+environment, the rank-local dry run validates the canonical allocation encoded in the recipe name. If `WORLD_SIZE` or
+`SLURM_NTASKS` is set, it validates and weak-scales against that requested size instead. The submission dry run validates
+the launcher arguments while leaving topology validation to the rank-local resolved config.
 
 ## Rank-local entry point
 

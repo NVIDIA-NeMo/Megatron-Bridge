@@ -56,10 +56,10 @@ def _by_megatron(registry):
     return {m.megatron_param: m for m in registry.mappings}
 
 
-def _dummy_task():
+def _dummy_task(*, weight_dtype=None):
     from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 
-    return WeightConversionTask(param_name="", global_param_name="", mapping=None)
+    return WeightConversionTask(param_name="", global_param_name="", mapping=None, weight_dtype=weight_dtype)
 
 
 def _deepseek_v4_hf_config():
@@ -151,13 +151,16 @@ class TestDeepSeekV4QuantizedExport:
 
         assert result is weight
 
-    def test_export_uses_legacy_flat_indexer_weight_name_when_source_requires_it(self):
+    @pytest.mark.parametrize("weight_dtype", [None, torch.bfloat16])
+    def test_export_uses_legacy_flat_indexer_weight_name_when_source_requires_it(self, weight_dtype):
         bridge = DeepSeekV4Bridge()
         scorer_name = "layers.1.attn.indexer.scorer.weights_proj.weight"
         flat_name = "layers.1.attn.indexer.weights_proj.weight"
         weight = torch.randn(4, 4, dtype=torch.bfloat16)
 
-        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {scorer_name: weight}, {flat_name: weight})
+        result = bridge.maybe_modify_converted_hf_weight(
+            _dummy_task(weight_dtype=weight_dtype), {scorer_name: weight}, {flat_name: weight}
+        )
 
         assert scorer_name not in result
         assert result[flat_name] is weight
@@ -425,6 +428,24 @@ class TestDeepSeekV4RotaryPercent:
 
         assert out.rotary_percent == 1.0
         assert out.csa_compress_rotary_base == 160000
+
+
+class TestDeepSeekV4MoEDispatcher:
+    """DeepSeek-V4 providers use the inference-validated HybridEP path."""
+
+    def test_provider_bridge_uses_hybridep(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.moe_token_dispatcher_type == "flex"
+        assert out.moe_flex_dispatcher_backend == "hybridep"
+        assert out.moe_flex_dispatcher_num_sms == 16
+        assert out.moe_permute_fusion_into_hybridep is False
 
 
 class TestDeepSeekV4HardwareDefaults:

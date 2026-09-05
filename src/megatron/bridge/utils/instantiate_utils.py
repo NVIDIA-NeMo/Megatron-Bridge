@@ -58,6 +58,8 @@ _TARGET_ALLOWLIST_MUTATORS: tuple[str, ...] = (
 )
 
 _ALLOWED_PRIVATE_TARGETS: set[str] = {
+    # Legacy Gemma 4 checkpoints serialized the block spec under its previous private name.
+    "megatron.bridge.models.gemma.modeling_gemma4._gemma4_block_spec",
     # PyTorch exposes torch.nn.functional.gelu as this C-extension symbol, and
     # the YAML function representer serializes it with its underlying module.
     "torch._C._nn.gelu",
@@ -101,6 +103,16 @@ _DISALLOWED_TARGETS: set[str] = {
         f"megatron.training.config.instantiate_utils.target_allowlist.{method}"
         for method in _TARGET_ALLOWLIST_MUTATORS
     },
+}
+
+# Resolve aliases before enforcing these entries. For example,
+# ``numpy.lib.npyio.load`` is the same callable as ``numpy.load`` and
+# ``torch.serialization.load`` is the same callable as ``torch.load``.
+_DISALLOWED_CANONICAL_TARGETS: set[str] = {
+    "numpy.load",
+    "torch.serialization.load",
+    "transformers.dynamic_module_utils.get_class_in_module",
+    "transformers.dynamic_module_utils.get_class_from_dynamic_module",
 }
 
 _DISALLOWED_CALLABLE_FIELD_NAMES: set[str] = {
@@ -180,7 +192,19 @@ def _resolve_target(
     """Resolve target string, type, or callable after Bridge validation."""
     if isinstance(target, str):
         _validate_target_prefix(target=target, full_key=full_key)
-    return _mcore_resolve_target(target, full_key, check_callable)
+    resolved_target = _mcore_resolve_target(target, full_key, check_callable)
+    if isinstance(target, str):
+        module = getattr(resolved_target, "__module__", None)
+        qualname = getattr(resolved_target, "__qualname__", None)
+        canonical_target = f"{module}.{qualname}" if isinstance(module, str) and isinstance(qualname, str) else None
+        if canonical_target in _DISALLOWED_CANONICAL_TARGETS:
+            raise InstantiationException(
+                f"Instantiation of '{target}' is not allowed because it resolves to the unsafe target "
+                f"'{canonical_target}'." + (f"\nfull_key: {full_key}" if full_key else "")
+            )
+        if canonical_target is not None:
+            _validate_target_prefix(target=canonical_target, full_key=full_key)
+    return resolved_target
 
 
 _mcore_instantiate_utils._resolve_target = _resolve_target

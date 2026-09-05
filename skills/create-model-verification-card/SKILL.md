@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce the required core inventory, convergence-versus-performance contracts, optional canonical performance item, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, performance, or weak-scaling results, or preparing a model-support PR. Enforce the required core inventory, convergence-versus-performance contracts, optional performance items, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -11,8 +11,15 @@ scan without interpreting logs or reconstructing the execution environment.
 
 ## Use the repository resources
 
+Treat verification scripts, validators, and launchers as shared infrastructure. Do not modify them merely to make
+one model card pass. Any such change requires a clear, documented, reusable reason: identify the existing behavior
+that is insufficient, the affected public workflows or models, why an existing maintained path cannot be used, and
+add focused backward-compatible tests. Record the justification in the PR description or commit. If the need is
+model-specific or the reason is not clear, leave the affected verification item unverified instead of adding a
+card-only workaround.
+
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
-- Verify exact-length deterministic HF output with
+- Verify deterministic HF output with
   [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
 - Use the inventory and field rules below as the format contract. Do not infer
   model-specific settings from another family or variant.
@@ -103,6 +110,37 @@ shape when there is only one FSDP run. A precision variant repeats its
 precision as a scalar so agents do not have to infer workload facts from a
 mapping key.
 
+Add `pretrain_weak_scaling` only when at least two completed runs use the same
+canonical performance recipe, precision, sequence length, maximum step count,
+and GPUs per node while global batch size grows in direct proportion to total
+GPU count. Omit it from models without measured scaling data. Put it last in
+`items`, key it by public hardware, and keep shared provenance on the hardware
+leaf. Each ordered point records only its GPU count, GBS, public command, and
+the standard five training metrics:
+
+```yaml
+pretrain_weak_scaling:
+  GB300:
+    status: verified
+    precision: fp8_mx
+    bridge_commit: 0123456789abcdef0123456789abcdef01234567
+    last_verified: 2026-08-15
+    points:
+      - num_gpus: 8
+        global_batch_size: 512
+        command: >
+          ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+          --recipe example_pretrain_config --mode pretrain --max_steps 50
+          --seq_length 4096 --global_batch_size 512
+        metrics: # standard five training metrics
+    expected_result: All points complete with finite metrics and no skipped or NaN iterations.
+```
+
+The weak-scaling item is the sole exception that may set global batch size in
+the public command. It must not override micro batch size. Record raw point
+metrics only; derive aggregate throughput and scaling efficiency when reading
+the card rather than storing comparison payloads.
+
 A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
 performance recipe exists for that hardware. Its item status states whether
 the card's benchmark run has been verified; an `unverified` leaf still records
@@ -111,8 +149,13 @@ start `summary` with this exact disclaimer before the functional-support
 summary:
 
 ```text
-Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results.
+Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
 ```
+
+This wording describes the evidence recorded by the card, not whether the
+model has ever been tuned elsewhere. The validator continues to accept the
+older untuned-model wording on existing cards for backward compatibility, but
+new and updated cards must use the wording above.
 
 Omit `pretrain_performance` entirely when no canonical recipe exists; do not
 add an `all` terminal placeholder. Routine timing and throughput metrics in
@@ -140,8 +183,9 @@ items:
 
 The hardware-scoped names are `pretrain`, `sft`, `sft_export_inference`,
 `sft_long_context`, `peft`, `checkpoint_resume`, and optional
-`pretrain_performance` and `pretrain_fsdp`. Use canonical public accelerator
-identifiers such as `H100`, `B200`, or `GB200`, never a private cluster name.
+`pretrain_performance`, `pretrain_fsdp`, and `pretrain_weak_scaling`. Use
+canonical public accelerator identifiers such as `H100`, `B200`, or `GB200`,
+never a private cluster name.
 The validator's public-hardware allowlist is authoritative and must be updated
 when a new accelerator target is introduced. The hardware key replaces the old
 `gpu_type` field. Each hardware leaf is independent and must carry its own
@@ -171,7 +215,8 @@ hardware-scoped items: `pretrain`, `sft`, `sft_export_inference`,
 `pretrain_performance` item separate under `performance`; omit `performance`
 when the card has no canonical performance recipe. Keep optional
 `pretrain_fsdp` leaves separate under `fsdp`; omit `fsdp` when the card has no
-FSDP recipe.
+FSDP recipe. Mirror optional `pretrain_weak_scaling` leaves under
+`weak_scaling`; omit that index when the card has no measured scaling item.
 
 Group item names under the same four status names used by the detailed items.
 For an explicitly indexed hardware target with no corresponding item leaf,
@@ -215,6 +260,13 @@ When an FSDP recipe exists, mirror only its concrete leaves:
 ```yaml
   fsdp:
     GB200: verified
+```
+
+When weak-scaling measurements exist, mirror only their concrete leaves:
+
+```yaml
+  weak_scaling:
+    GB300: verified
 ```
 
 For a multi-variant FSDP hardware container, this scalar mirrors the aggregate
@@ -266,7 +318,9 @@ model-verification workload:
   training item;
 - use `scripts/inference/infer.sh --nodes ... --gpus-per-node ... --task ...`
   for Megatron inference and manual model comparison; select
-  `text-generation`, `vlm-generation`, or `model-comparison` explicitly;
+  `text-generation`, `legacy-full-prefix-generation`, `vlm-generation`, or
+  `model-comparison` explicitly. The legacy full-prefix task is a slow,
+  non-optimized compatibility path and requires `--legacy-full-prefix`;
 - invoke public shell launchers directly from the card. Do not create Slurm
   jobs by calling their Python setup modules, and do not wrap the launchers in
   `uv run`, `python`, `srun`, or `sbatch`; the shell entry point owns its Python
@@ -278,6 +332,12 @@ model-verification workload:
 - use short, ignored repository-relative logical paths under `work/...`;
   prefer aliases such as `work/data/<dataset>` and `work/cache/<model>` over
   reproducing a physical storage hierarchy.
+
+CPU conversion should omit `--gpus-per-node` when it is genuinely CPU-only.
+If runtime construction demonstrably requires CUDA even though model weights
+remain on CPU, request exactly one shared runtime GPU and explain the exception
+in the item's result. Never request a full GPU node merely to satisfy a
+launcher or monitor.
 
 For example, a portable multi-node VLM verification starts with:
 
@@ -428,7 +488,7 @@ Freeze the following workload profiles:
 
 | Field | Pretrain | Full SFT | PEFT |
 | --- | --- | --- | --- |
-| Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
+| Start / trainable set | MoE: exact immutable imported Megatron checkpoint, full model; dense: random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
 | Sequence / GBS | `4096 / 1024` | `8192 / 8` | `8192 / 8` |
 | Reference MBS | `1` | `1` | `1` |
@@ -438,6 +498,25 @@ Freeze the following workload profiles:
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
 | RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
 | Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
+
+For MoE pretraining, keep pretrained-checkpoint selection out of the reusable
+recipe. The resolved recipe must leave `checkpoint.pretrained_checkpoint`
+unset; the model-verification-card command must pass exactly one
+`--pretrained_checkpoint` pointing to the card's immutable imported Megatron
+checkpoint. This is a weight-only warm start, not a full-state resume, so the
+uninterrupted reference command must still keep `checkpoint.load=null` and must
+not use `--load_dir`. Starting from trained router weights makes natural expert
+traffic, load imbalance, memory use, and reported TFLOP/s more representative
+than random router initialization.
+
+Apply the same launch-time checkpoint rule to any MoE
+`pretrain_performance` item that claims natural-routing throughput. A
+benchmark-only forced-balance recipe may omit the checkpoint because its router
+traffic is synthetic by construction; state that distinction explicitly.
+Never add a checkpoint path to a library or performance recipe merely to make a
+card pass. Historical verified random-initialization evidence may remain on its
+exact recorded command, but do not rewrite it as checkpoint-backed evidence;
+adopt this contract when that item is rerun.
 
 Derive `pad_seq_to_mult` for both SFT and PEFT from the resolved execution
 topology:
@@ -583,7 +662,10 @@ result. Private executor configuration stays outside the card.
 - **Conversion:** Test CPU and GPU import/export separately. Reload every
   output. Require exact keys, shapes, dtypes, and values when the conversion is
   expected to be lossless; otherwise state the numerical tolerance. Do not use
-  `--detach` or a dry-run flag in a verified conversion command.
+  `--detach` or a dry-run flag in a verified conversion command. Keep the card
+  workload itself to import or export; do not run logit comparison or a
+  roundtrip from a model's `conversion.sh`. Record numerical comparison as a
+  separate inference workload.
 - **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
   prompt with `scripts/inference/infer.sh --task model-comparison`, which routes
   to `examples/conversion/compare_hf_and_megatron/compare.py`. Record whether
@@ -604,11 +686,20 @@ result. Private executor configuration stays outside the card.
   helper does not append padding before selecting the compared next-token
   position.
 - **Megatron inference:** Launch through `scripts/inference/infer.sh` with the
-  explicit `text-generation` or `vlm-generation` task. Disable sampling, run
-  one deterministic greedy generation with an exact token count, and record
-  the literal completion including whitespace. A second replay may help
-  diagnose nondeterminism, but it is not required verification evidence.
+  explicit `text-generation`, `legacy-full-prefix-generation`, or
+  `vlm-generation` task. Use the slow, non-optimized legacy task only when
+  cached inference is unsupported, and pass `--legacy-full-prefix`. Disable
+  sampling and run one deterministic greedy generation with a maximum
+  new-token bound. Allow natural end-of-sequence stopping, and record the
+  actual generated-token count plus the literal completion including
+  whitespace. A second replay may help diagnose nondeterminism, but it is not
+  required verification evidence. Specify positive node and GPU counts and run
+  synchronously; do not use `--detach` or a dry-run flag in a verified command.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
+  For every MoE reference that measures natural-routing behavior, pass the
+  immutable imported checkpoint with `--pretrained_checkpoint` in the card
+  command while leaving the selected recipe's pretrained checkpoint unset.
+  Do not use `--load_dir` for this weight-only initialization.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
   suitable support-verification run when it crosses the peak learning rate and
@@ -620,12 +711,12 @@ result. Private executor configuration stays outside the card.
 - **SFT export and inference:** Depend on `sft`, export its final full-model
   checkpoint to HF, reload the exported model with Transformers, and run one
   deterministic greedy generation. Store this item as an ordered `commands`
-  list containing exactly two strings: the synchronous `convert.sh` Slurm
-  export first and the local `uv run` HF artifact verifier second. The second
-  command is an explicit exception because it validates the exported HF
-  artifact and does not create a scheduler job. Specify an exact new-token
-  count and record the literal completion, including whitespace, in
-  `expected_result`.
+  list containing exactly two strings: the synchronous Slurm export first and
+  the maintained `infer.sh --task hf-inference` launcher second. Direct
+  `uv run` invocation of the same helper remains valid when no Slurm executor
+  is available. Specify an explicit maximum new-token bound, allow natural
+  end-of-sequence stopping, and record the actual generated-token count plus
+  the literal completion, including whitespace, in `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
@@ -634,10 +725,16 @@ result. Private executor configuration stays outside the card.
   reference. For each declared loss sentinel, require this bound:
   `abs(resumed - reference) <= 1e-6 + 0.01 * abs(reference)`. Tighter
   model-specific tolerances are allowed. Do not repeat the pre-checkpoint
-  training segment.
+  training segment. When the uninterrupted reference intentionally warm-starts
+  from `--pretrained_checkpoint`, omit that fallback from the resume command;
+  the middle checkpoint already contains the initialized model state. Persist
+  each run's post-setup config to its own path so the resume does not overwrite
+  the reference evidence.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
-  run and state public hardware plus thresholds.
+  run and state public hardware plus thresholds. A natural-routing MoE
+  performance command must warm-start through the card's
+  `--pretrained_checkpoint`; a forced-balance benchmark may omit it.
 
 Before adding checkpoint overrides, inspect the selected recipe and its
 inherited checkpoint defaults. Keep only values that change the effective
@@ -663,7 +760,9 @@ preserves semantics, and require the resume loss sentinels to pass.
 Use the batch sizes defined by the selected recipe. A model verification card
 must not override global or micro batch size. If a recipe batch size is wrong,
 change and validate the recipe separately instead of hiding the change in the
-card command.
+card command. The only exception is `pretrain_weak_scaling`: explicitly set GBS
+at every point and scale it proportionally with total GPUs while leaving MBS
+and the rest of the recipe unchanged.
 
 ### 6. Record training metrics consistently
 
@@ -673,7 +772,23 @@ For every verified training item, record:
 - `final_loss`: loss at its final optimizer step;
 - `last_10_steps_step_time_ms_avg`: arithmetic mean over the final 10 executed
   optimizer steps;
-- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
+- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows;
+- `last_10_steps_tokens_per_second_per_gpu_avg`: token-slot throughput derived
+  from the same final-10-step average. Compute token slots per optimizer step as
+  `packed_sequence_size * global_batch_size` for packed training, or
+  `effective_seq_length * global_batch_size` otherwise, then divide by
+  `(last_10_steps_step_time_ms_avg / 1000) * total_gpus`.
+
+For `pretrain_weak_scaling`, record these five metrics independently under
+every point. The validator derives `total_gpus` from the command, checks the
+recorded GPU count and TPS/GPU, and requires constant token slots per GPU per
+step across the ordered points.
+
+Use recipe-owned batch size and the resolved sequence or pack length, and
+derive `total_gpus` from the public command's positive node and GPU counts.
+Count total token slots, not supervised or loss-bearing tokens. This metric is
+training-only; do not add it to inference results. When a training leaf is not
+verified, record this metric as `null` alongside its other training metrics.
 
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
@@ -747,7 +862,10 @@ an item verified merely to make validation pass.
   recipe has a completed standalone verification run. Use precision-keyed
   variants under one hardware container when multiple FSDP runs exist for the
   same hardware, and make the container status summarize every variant.
-- Start the summary with the exact untuned performance disclaimer unless at
+- Include `pretrain_weak_scaling` only after at least two proportional-GBS
+  points complete on the same public hardware, recipe, precision, sequence
+  length, step count, and GPUs-per-node layout; otherwise omit it.
+- Start the summary with the exact no-canonical-performance-result disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;
@@ -770,7 +888,7 @@ an item verified merely to make validation pass.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Put every training result under its canonical public hardware key and include
-  all four metrics for each verified training leaf; never record a private
+  all five metrics for each verified training leaf; never record a private
   cluster name or retain the old `gpu_type` field.
 - Keep `verification_index` synchronized with `items`, omit empty status
   buckets, list every item name explicitly, and never use the scalar `all` in
@@ -784,10 +902,16 @@ an item verified merely to make validation pass.
 - Keep performance leaves free of control payloads, computed deltas, speedups,
   and comparison prose. Mention two runs together only to warn that differing
   convergence contracts make them unsuitable for comparison.
-- Leave recipe global and micro batch sizes unchanged in card commands.
-- Save full SFT, export it to HF, and record an exact deterministic N-token HF
-  completion in a two-command ordered list.
+- Leave recipe global and micro batch sizes unchanged in ordinary card
+  commands. Only weak-scaling points may set proportional GBS; never override
+  MBS there.
+- Save full SFT, export it to HF, and record the deterministic HF completion
+  plus actual generated-token count under an explicit maximum bound in a
+  two-command ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
+- Keep MoE pretrain recipes checkpoint-agnostic, and put the immutable imported
+  weight-only `--pretrained_checkpoint` in every card command that measures
+  natural-routing pretrain or performance behavior.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.
 - Confirm the card, commit, and PR contain no private runtime information.

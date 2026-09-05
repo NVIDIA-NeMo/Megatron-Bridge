@@ -17,7 +17,6 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _enable_overlap_param_gather_with_optimizer_step,
     _llama_benchmark_common,
     _perf_precision,
     _with_global_batch_size,
@@ -135,7 +134,6 @@ def llama3_70b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -167,6 +165,7 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.pipeline_model_parallel_layout = "Et*2|(t*2|)*34,t*3|(t*2|)*3,tL"
     cfg.model.sequence_parallel = True
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
@@ -176,7 +175,6 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -315,7 +313,6 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -372,7 +369,6 @@ def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -428,7 +424,6 @@ def llama3_70b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

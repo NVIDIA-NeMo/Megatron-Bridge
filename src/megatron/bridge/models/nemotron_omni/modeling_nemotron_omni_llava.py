@@ -12,16 +12,83 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import warnings
+
+import torch
+from megatron.core.models.multimodal.llava_model import LLaVAModel
+
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 class NemotronOmniLlavaModel(NemotronVLModel):
-    """Legacy collapse/expand Omni wrapper around MCore ``LLaVAModel``.
+    """Deprecated collapse/expand Omni wrapper around MCore ``LLaVAModel``.
 
-    forward() is inherited from NemotronVLModel (which delegates to LLaVAModel),
-    so sound kwargs (sound_clips, sound_length) pass through automatically when
-    the selected LLaVAModel implementation supports them.
+    ``forward()`` normalizes legacy image metadata and then delegates to
+    ``NemotronVLModel``/``LLaVAModel``.
+
+    Use :class:`~megatron.bridge.models.nemotron_omni.modeling_nemotron_omni.NemotronOmniModel`
+    for the canonical processor-expanded sequence and collator-owned packing
+    contract.
     """
+
+    def __init__(
+        self,
+        config: NemotronVLModelProvider | None = None,
+        *,
+        llava_model: LLaVAModel | None = None,
+        pre_process: bool | None = True,
+        post_process: bool | None = True,
+        vp_stage: int | None = None,
+    ) -> None:
+        """Construct the deprecated LLaVA compatibility model.
+
+        Args:
+            config: Provider used to construct the wrapped model.
+            llava_model: Fully assembled MCore LLaVA model.
+            pre_process: Whether this pipeline stage owns input processing.
+            post_process: Whether this pipeline stage owns output processing.
+            vp_stage: Optional virtual pipeline stage.
+        """
+        warnings.warn(
+            "NemotronOmniLlavaModel is deprecated; use NemotronOmniModel with the canonical "
+            "processor-expanded sequence contract.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            config=config,
+            llava_model=llava_model,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+        )
+
+    def forward(self, *args, num_frames: torch.Tensor | int | None = None, **kwargs):  # type: ignore[override]
+        """Delegate to MCore after normalizing the image-only frame contract.
+
+        Args:
+            *args: Positional arguments forwarded to MCore ``LLaVAModel``.
+            num_frames: Per-image frame counts. The deprecated LLaVA path only
+                supports images, so every count must be one.
+            **kwargs: Keyword arguments forwarded to MCore ``LLaVAModel``.
+
+        Returns:
+            The wrapped MCore model output.
+
+        Raises:
+            NotImplementedError: If any input contains more than one frame.
+        """
+        if torch.is_tensor(num_frames):
+            if not torch.all(num_frames == 1).item():
+                raise NotImplementedError(
+                    "NemotronOmniLlavaModel only supports image inputs; every num_frames value must be 1."
+                )
+            num_frames = 1
+        elif num_frames not in (None, 1):
+            raise NotImplementedError("NemotronOmniLlavaModel only supports image inputs; num_frames must be 1.")
+
+        return super().forward(*args, num_frames=num_frames, **kwargs)
 
     def freeze(
         self,

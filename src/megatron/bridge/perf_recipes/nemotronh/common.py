@@ -20,8 +20,10 @@ import torch
 from megatron.core.quantization.utils import load_quantization_recipe
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config as nemotron_3_super_pretrain_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
-from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
@@ -60,6 +62,36 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
     return cfg
 
 
+def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
+    """Enable static-shape NCCL EP for an MXFP8 recipe.
+
+    The calling recipe builder still declares its own ``cfg.env_vars`` mapping inline, so the
+    launched environment stays readable next to the recipe instead of being derived here.
+    """
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_ncclep_zero_copy = False
+
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    cfg.model.offload_modules = []
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_router_padding_for_quantization = True
+
+
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
     cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
@@ -72,6 +104,16 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     """Apply shared Nemotron 3 Super perf defaults after recipe-specific overrides."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+
+    # The Nemotron 3 Super base recipe is memory-bounded for 16-GPU support
+    # runs. Benchmarks measure throughput on larger systems, so restore
+    # overlapped collectives and full-precision optimizer state.
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.model.moe_router_force_load_balancing = True
     cfg.checkpoint.async_save = False

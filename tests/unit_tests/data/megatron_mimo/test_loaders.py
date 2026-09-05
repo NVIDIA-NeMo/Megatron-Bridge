@@ -1,12 +1,17 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for build_megatron_mimo_data_loaders."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from torch.utils.data import Dataset
 
+from megatron.bridge.data.base import DatasetBuildContext
+from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
+from megatron.bridge.training.config import megatron_mimo_runtime_config_update
 
 
 class FakeMegatronMIMOProvider:
@@ -128,6 +133,7 @@ def _make_happy_cfg(micro_batch_size: int = 3):
     return SimpleNamespace(
         model=FakeMegatronMIMOProvider(megatron_mimo_parallelism_config=fake_parallelism_config, grids=fake_grids),
         train=SimpleNamespace(micro_batch_size=micro_batch_size),
+        validation=SimpleNamespace(eval_micro_batch_size=micro_batch_size),
     )
 
 
@@ -158,6 +164,23 @@ def test_build_megatron_mimo_data_loaders_happy_path(monkeypatch):
     assert all(c["drop_last"] is True for c in builder_calls)
     assert all(c["num_workers"] == 0 for c in builder_calls)
     assert all(c["pin_memory"] is False for c in builder_calls)
+
+
+def test_build_megatron_mimo_data_loaders_uses_eval_micro_batch_size_for_eval_splits(monkeypatch):
+    builder_calls = _patch_happy_path_dependencies(monkeypatch)
+    cfg = _make_happy_cfg(micro_batch_size=3)
+    cfg.validation = SimpleNamespace(eval_micro_batch_size=2)
+
+    build_megatron_mimo_data_loaders(
+        cfg,
+        train_state=SimpleNamespace(consumed_train_samples=0),
+        megatron_mimo_provider=FakeProvider(),
+        train_samples=10,
+        valid_samples=4,
+        test_samples=2,
+    )
+
+    assert [call["micro_batch_size"] for call in builder_calls] == [3, 2, 2]
 
 
 def test_build_megatron_mimo_data_loaders_wires_consumed_samples_for_resume(monkeypatch):
@@ -196,6 +219,20 @@ class IndexDataset(Dataset):
 
     def __getitem__(self, idx: int) -> int:
         return idx
+
+
+@dataclass(kw_only=True)
+class RuntimeFinalizedIndexDatasetProvider(MegatronMIMODatasetProvider):
+    """Concrete provider that relies on the shared dataloader finalization contract."""
+
+    train_size: int = 8
+
+    def build_datasets(self, context: DatasetBuildContext):
+        del context
+        return IndexDataset(self.train_size), None, None
+
+    def get_collate_fn(self):
+        return lambda batch: batch
 
 
 class IndexDatasetProvider:
@@ -248,7 +285,40 @@ def _make_real_loader_cfg(monkeypatch, *, micro_batch_size: int, sampler_dp_rank
     return SimpleNamespace(
         model=FakeMegatronMIMOProvider(megatron_mimo_parallelism_config=parallelism_config, grids={"llm": object()}),
         train=SimpleNamespace(micro_batch_size=micro_batch_size),
+        validation=SimpleNamespace(eval_micro_batch_size=micro_batch_size),
     )
+
+
+def test_mimo_runtime_update_normalizes_zero_worker_provider_before_loader_construction(monkeypatch):
+    provider = RuntimeFinalizedIndexDatasetProvider(num_workers=0)
+    runtime_cfg = MagicMock()
+    runtime_cfg.env_vars = {}
+    runtime_cfg.dataset = provider
+    runtime_cfg.train.num_epochs = None
+    runtime_cfg.train.global_batch_size = 2
+    runtime_cfg.train.micro_batch_size = 2
+    runtime_cfg.validation.eval_global_batch_size = None
+    runtime_cfg.validation.eval_micro_batch_size = None
+    runtime_cfg.profiling = None
+    runtime_cfg.ddp.use_distributed_optimizer = False
+    runtime_cfg.optimizer.use_distributed_optimizer = False
+    runtime_cfg.ddp.overlap_param_gather = False
+    runtime_cfg.optimizer.overlap_param_gather = False
+
+    megatron_mimo_runtime_config_update(runtime_cfg)
+
+    loader_cfg = _make_real_loader_cfg(monkeypatch, micro_batch_size=2)
+    train_loader, _, _ = build_megatron_mimo_data_loaders(
+        loader_cfg,
+        train_state=SimpleNamespace(consumed_train_samples=0),
+        megatron_mimo_provider=provider,
+        train_samples=provider.train_size,
+        valid_samples=0,
+        test_samples=0,
+    )
+
+    assert provider.persistent_workers is False
+    assert next(iter(train_loader)) == [0, 1]
 
 
 def test_train_loader_starts_from_consumed_samples_end_to_end(monkeypatch):
@@ -337,6 +407,7 @@ def test_build_megatron_mimo_data_loaders_skips_non_data_ranks(monkeypatch):
             grids={"llm": object()},
         ),
         train=SimpleNamespace(micro_batch_size=2),
+        validation=SimpleNamespace(eval_micro_batch_size=2),
     )
     provider = FakeProvider()
     monkeypatch.setattr(

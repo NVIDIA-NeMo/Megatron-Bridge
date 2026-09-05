@@ -61,6 +61,29 @@ def _native_conversation_adapter(example: Mapping[str, Any], kwargs: Mapping[str
     return dict(example)
 
 
+def _coderforge_json_list(example: Mapping[str, Any], field_name: str) -> list[dict[str, Any]]:
+    value = example.get(field_name)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"CoderForge {field_name} must contain valid JSON.") from error
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        raise ValueError(f"CoderForge {field_name} must decode to a list of dictionaries.")
+    return [dict(item) for item in value]
+
+
+def _coderforge_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
+    messages = _coderforge_json_list(example, "messages")
+    tools = _coderforge_json_list(example, "tools")
+    metadata = {key: value for key, value in example.items() if key not in {"messages", "tools", "image"}}
+    if example.get("image") is not None:
+        # CoderForge's image column names the trajectory's execution image; it
+        # is metadata, not visual input for a multimodal processor.
+        metadata["environment_image"] = example["image"]
+    return {"messages": messages, "tools": tools, **metadata}
+
+
 def _squad_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
     answers = example["answers"]["text"]
     prompt = f"Context: {example['context']} Question: {example['question']} Answer:"
@@ -181,13 +204,20 @@ def _cord_v2_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> d
     }
 
 
-def _medpix_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
+def _medpix_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    image = {"type": "image", "image": example["image_id"]}
+    resize = {name: kwargs.get(name) for name in ("resized_height", "resized_width")}
+    if any(value is not None for value in resize.values()):
+        if any(not isinstance(value, int) or isinstance(value, bool) or value <= 0 for value in resize.values()):
+            raise ValueError("medpix resized_height and resized_width must both be positive integers.")
+        image.update(resize)
+
     return {
         "conversation": [
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "image": example["image_id"]},
+                    image,
                     {"type": "text", "text": example["question"]},
                 ],
             },
@@ -361,6 +391,7 @@ def prepare_hf_dataset_for_adapter(
 
 
 _ADAPTERS: dict[str, HFDatasetAdapter] = {
+    "coderforge": _coderforge_adapter,
     "squad": _squad_adapter,
     "gsm8k": _gsm8k_adapter,
     "openmathinstruct2": _openmathinstruct2_adapter,

@@ -155,3 +155,81 @@ def test_dynamic_generation_accepts_stopping_controls(text_generation_entrypoint
             stop_words=["<END>"],
         )
     )
+
+
+@pytest.mark.unit
+def test_print_results_includes_returned_log_probabilities(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(text_generation_entrypoint, "print_rank_0", messages.append)
+    output = types.SimpleNamespace(
+        generated_text="generated",
+        prompt_log_probs=[-0.1, -0.2],
+        generated_log_probs=[-0.3],
+        prompt_top_n_logprobs=[{"prompt-token": -0.1}],
+        generated_top_n_logprobs=[{"generated-token": -0.3}],
+    )
+
+    text_generation_entrypoint._print_results(["prompt"], [output])
+
+    rendered = "\n".join(messages)
+    assert "Prompt log probs: [-0.1, -0.2]" in rendered
+    assert "Generated log probs: [-0.3]" in rendered
+    assert "Prompt top-n logprobs: [{'prompt-token': -0.1}]" in rendered
+    assert "Generated top-n logprobs: [{'generated-token': -0.3}]" in rendered
+
+
+@pytest.mark.unit
+def test_dynamic_generation_rejects_failed_inference_requests(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FailedLLM:
+        is_primary_rank = True
+
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> _FailedLLM:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def generate(self, _prompts: list[str], _sampling_params: object) -> list[types.SimpleNamespace]:
+            return [
+                types.SimpleNamespace(
+                    request_id=7,
+                    status=types.SimpleNamespace(name="FAILED"),
+                    generated_text="",
+                    failed=lambda: True,
+                )
+            ]
+
+    monkeypatch.setattr(text_generation_entrypoint, "MegatronLLM", _FailedLLM)
+    args = types.SimpleNamespace(
+        max_new_tokens=1,
+        max_seq_length=32,
+        max_batch_size=None,
+        tp=1,
+        block_size_tokens=8,
+        kv_cache_buffer_size_gb=1.0,
+        max_tokens=1,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+        use_coordinator=False,
+        coordinator_host=None,
+        coordinator_port=None,
+    )
+    tokenizer = types.SimpleNamespace(tokenize=lambda _prompt: [1, 2])
+
+    with pytest.raises(RuntimeError, match="request 7.*FAILED"):
+        text_generation_entrypoint._generate_with_dynamic_engine(
+            args,
+            model=object(),
+            tokenizer=tokenizer,
+            prompts=["Hello world"],
+            sampling_params=object(),
+        )

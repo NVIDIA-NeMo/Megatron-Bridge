@@ -17,6 +17,7 @@
 import hashlib
 import json
 import logging
+import math
 import re
 import warnings
 from dataclasses import asdict, dataclass
@@ -29,7 +30,12 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
-from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTDataset, get_dataset_root
+from megatron.bridge.data.datasets.gpt_sft import (
+    GPTSFTBlendDataset,
+    GPTSFTChatDataset,
+    GPTSFTDataset,
+    get_dataset_root,
+)
 from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.packing.paths import (
     is_packed_parquet_spec,
@@ -80,6 +86,104 @@ def _default_gpt_sft_preprocessing() -> PromptCompletionSFTPreprocessingConfig:
     )
 
 
+@dataclass(frozen=True)
+class _GPTSFTDataBlend:
+    """Resolved JSONL sources and optional relative weights for one split."""
+
+    paths: tuple[str, ...]
+    weights: tuple[float, ...] | None
+
+
+def _parse_gpt_sft_data_blend(value: Any, *, split_name: str) -> _GPTSFTDataBlend:
+    """Parse paths; an even-length list with numeric even-index entries is weight/path pairs."""
+    if isinstance(value, str):
+        entries = value.split()
+    elif isinstance(value, list):
+        entries = value
+    else:
+        raise TypeError(f"The {split_name!r} SFT data entry must be a string or list.")
+    if not entries:
+        raise ValueError(f"The {split_name!r} SFT data entry must name at least one JSONL path.")
+
+    weights: tuple[float, ...] | None = None
+    path_entries: list[Any] = entries
+    if len(entries) % 2 == 0:
+        parsed_weights: list[float | None] = []
+        for raw_weight in entries[::2]:
+            try:
+                parsed_weights.append(float(raw_weight))
+            except (TypeError, ValueError):
+                parsed_weights.append(None)
+        if all(weight is not None for weight in parsed_weights):
+            weights = tuple(weight for weight in parsed_weights if weight is not None)
+            path_entries = entries[1::2]
+        elif any(weight is not None for weight in parsed_weights):
+            raise ValueError(
+                f"The {split_name!r} SFT blend must consistently alternate weight and JSONL path entries."
+            )
+
+    paths: list[str] = []
+    for raw_path in path_entries:
+        if not isinstance(raw_path, (str, Path)) or not str(raw_path).strip():
+            raise ValueError(f"The {split_name!r} SFT blend contains an empty or invalid JSONL path.")
+        path = str(raw_path).strip()
+        if path.lower().endswith(".npy") or is_packed_parquet_spec(path):
+            raise ValueError(f"The {split_name!r} SFT blend accepts raw JSONL sources, not packed data: {path}")
+        paths.append(path)
+
+    if weights is not None:
+        if any(not math.isfinite(weight) or weight <= 0.0 for weight in weights):
+            raise ValueError(f"The {split_name!r} SFT blend weights must be positive finite numbers.")
+        if not math.isfinite(sum(weights)):
+            raise ValueError(f"The {split_name!r} SFT blend weights must have a finite sum.")
+    return _GPTSFTDataBlend(paths=tuple(paths), weights=weights)
+
+
+def _load_gpt_sft_data_blends(config: "GPTSFTDatasetConfig") -> dict[str, _GPTSFTDataBlend]:
+    """Load and validate an MLM-compatible per-split SFT data source manifest."""
+    path = config.per_split_data_source_manifest_path
+    if path is None:
+        return {}
+    try:
+        with Path(path).open(encoding="utf-8") as input_file:
+            raw_splits = json.load(input_file)
+    except OSError as error:
+        raise FileNotFoundError(f"Could not read per_split_data_source_manifest_path: {path}") from error
+    if not isinstance(raw_splits, dict):
+        raise TypeError(
+            "per_split_data_source_manifest_path must contain a JSON object with train/valid/test entries."
+        )
+
+    required_splits = ["train"]
+    if config.do_validation:
+        required_splits.append("valid")
+    if config.do_test:
+        required_splits.append("test")
+    missing_splits = [split for split in required_splits if split not in raw_splits]
+    if missing_splits:
+        missing = ", ".join(missing_splits)
+        raise ValueError(f"per_split_data_source_manifest_path is missing enabled SFT splits: {missing}.")
+    return {split: _parse_gpt_sft_data_blend(raw_splits[split], split_name=split) for split in required_splits}
+
+
+def _gpt_sft_blend_identity(config: "GPTSFTDatasetConfig") -> dict[str, Any] | None:
+    """Return cache identity from the per-split JSONL paths, sizes, and weights."""
+    if config.per_split_data_source_manifest_path is None:
+        return None
+    split_blends = _load_gpt_sft_data_blends(config)
+    identity: dict[str, Any] = {}
+    for split, blend in split_blends.items():
+        sources = []
+        for source_path in blend.paths:
+            try:
+                file_identity = {"size": Path(source_path).stat().st_size}
+            except OSError:
+                file_identity = None
+            sources.append({"path": source_path, "file": file_identity})
+        identity[split] = {"sources": sources, "weights": blend.weights}
+    return identity
+
+
 def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str, Any] | None) -> str:
     """Fingerprint every setting that can change builder-managed packed rows."""
     preprocessing = resolve_gpt_sft_preprocessing(config)
@@ -90,7 +194,13 @@ def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str
         "preprocessing_type": type(preprocessing).__name__,
         "preprocessing": asdict(preprocessing),
         "dataset_kwargs": dataset_kwargs,
+        "data_blends": _gpt_sft_blend_identity(config),
     }
+    if (
+        config.offline_packing_specs is not None
+        and config.offline_packing_specs.max_single_sequence_length is not None
+    ):
+        packing_identity["max_single_sequence_length"] = config.offline_packing_specs.max_single_sequence_length
     return hashlib.sha256(
         json.dumps(packing_identity, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     ).hexdigest()[:12]
@@ -101,14 +211,16 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     """Serializable configuration for text-only ``GPTSFTDataset`` construction.
 
     Exactly one source is required: ``dataset_root`` selects existing local
-    JSONL/packed artifacts, while ``hf_dataset`` selects a declarative Hugging
-    Face source that is materialized before construction. New callers should
-    set ``preprocessing`` explicitly. ``None`` preserves the established local
+    JSONL/packed artifacts, ``per_split_data_source_manifest_path`` selects MLM-style
+    JSONL blends, and ``hf_dataset`` selects a declarative Hugging Face source
+    that is materialized before construction. New callers should set
+    ``preprocessing`` explicitly. ``None`` preserves the established local
     prompt-completion and Hugging Face chat defaults for compatibility.
     """
 
     seq_length: int
     dataset_root: str | Path | None = None
+    per_split_data_source_manifest_path: str | Path | None = None
     hf_dataset: HFDatasetSourceConfig | None = None
     hf_validation_dataset: HFDatasetSourceConfig | None = None
     hf_test_dataset: HFDatasetSourceConfig | None = None
@@ -119,6 +231,8 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     memmap_workers: int = 1
     max_train_samples: int | None = None
     preprocessing: SFTPreprocessingConfig | None = None
+    enable_in_batch_packing: bool = False
+    in_batch_packing_pad_to_multiple_of: int = 1
     enable_offline_packing: bool = False
     offline_packing_specs: PackedSequenceSpecs | None = None
     dataset_kwargs: dict[str, Any] | None = None
@@ -129,11 +243,17 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     def validate(self) -> None:
         """Validate source selection and text-only SFT settings."""
         has_local_source = self.dataset_root is not None
+        has_blend_source = self.per_split_data_source_manifest_path is not None
         has_hf_source = self.hf_dataset is not None
-        if has_local_source == has_hf_source:
-            raise ValueError("Exactly one text-only SFT source must be set: dataset_root or hf_dataset.")
+        if sum((has_local_source, has_blend_source, has_hf_source)) != 1:
+            raise ValueError(
+                "Exactly one text-only SFT source must be set: dataset_root, "
+                "per_split_data_source_manifest_path, or hf_dataset."
+            )
         if has_local_source and not str(self.dataset_root).strip():
             raise ValueError("dataset_root must be a non-empty path.")
+        if has_blend_source and not str(self.per_split_data_source_manifest_path).strip():
+            raise ValueError("per_split_data_source_manifest_path must be a non-empty path.")
         hf_only_fields_set = (
             any(
                 value is not None
@@ -146,8 +266,10 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             )
             or self.hf_rewrite
         )
-        if has_local_source and hf_only_fields_set:
-            raise ValueError("Hugging Face split and materialization settings require hf_dataset, not dataset_root.")
+        if not has_hf_source and hf_only_fields_set:
+            raise ValueError(
+                "Hugging Face split and materialization settings require hf_dataset, not a local JSONL source."
+            )
         if self.hf_dataset is not None:
             self.hf_dataset.validate()
         if self.hf_validation_dataset is not None:
@@ -186,6 +308,14 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(resolve_gpt_sft_preprocessing(self))
+        if self.enable_offline_packing and self.enable_in_batch_packing:
+            raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
+        if self.in_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+        if self.enable_in_batch_packing and self.dataloader_type == "batch":
+            raise ValueError(
+                "GPT-SFT in-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
+            )
         if self.enable_offline_packing and self.offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if self.offline_packing_specs is not None and not self.enable_offline_packing:
@@ -205,6 +335,15 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         if self.dataset_kwargs is not None and "max_num_samples" in self.dataset_kwargs:
             raise ValueError("Set max_train_samples directly; dataset_kwargs must not contain max_num_samples.")
+        typed_packing_kwargs = {
+            "enable_in_batch_packing",
+            "in_batch_packing_pad_to_multiple_of",
+        }.intersection(self.dataset_kwargs or {})
+        if typed_packing_kwargs:
+            keys = ", ".join(sorted(typed_packing_kwargs))
+            raise ValueError(f"Set {keys} directly on GPTSFTDatasetConfig, not in dataset_kwargs.")
+        if self.enable_in_batch_packing and (self.dataset_kwargs or {}).get("get_attention_mask_from_fusion") is False:
+            raise ValueError("In-batch packing requires get_attention_mask_from_fusion=True.")
         semantic_kwargs = _SEMANTIC_DATASET_KWARGS.intersection(self.dataset_kwargs or {})
         if semantic_kwargs:
             keys = ", ".join(sorted(semantic_kwargs))
@@ -253,10 +392,20 @@ def resolve_gpt_sft_preprocessing(config: GPTSFTDatasetConfig) -> SFTPreprocessi
 
 
 def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
-    """Resolve the local JSONL root for the configured source."""
+    """Resolve the local artifact root for the configured source."""
     config.validate()
     if config.dataset_root is not None:
         return config.dataset_root
+    if config.per_split_data_source_manifest_path is not None:
+        blend_identity = _gpt_sft_blend_identity(config)
+        encoded_identity = json.dumps(
+            blend_identity,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        fingerprint = hashlib.sha256(encoded_identity).hexdigest()[:16]
+        return get_dataset_root(f"jsonl-sft-blend-{fingerprint}")
 
     source = config.hf_dataset
     assert source is not None
@@ -420,7 +569,7 @@ def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
 
 
 def build_gpt_sft_split(
-    path: str | Path,
+    path: str | Path | _GPTSFTDataBlend,
     *,
     tokenizer: MegatronTokenizer,
     seq_length: int,
@@ -430,10 +579,61 @@ def build_gpt_sft_split(
     pack_metadata_path: str | Path | None = None,
     pad_cu_seqlens: bool = False,
     pad_seq_to_mult: int | None = None,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
     is_test: bool = False,
     dataset_kwargs: dict[str, Any] | None = None,
 ) -> Any | None:
     """Build one GPT SFT split from a local JSONL or packed-data path."""
+    if isinstance(path, _GPTSFTDataBlend):
+        if len(path.paths) == 1:
+            return build_gpt_sft_split(
+                path.paths[0],
+                tokenizer=tokenizer,
+                seq_length=seq_length,
+                memmap_workers=memmap_workers,
+                seed=seed,
+                packed_sequence_size=packed_sequence_size,
+                pack_metadata_path=pack_metadata_path,
+                pad_cu_seqlens=pad_cu_seqlens,
+                pad_seq_to_mult=pad_seq_to_mult,
+                enable_in_batch_packing=enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                is_test=is_test,
+                dataset_kwargs=dataset_kwargs,
+            )
+
+        blend_options = dict(dataset_kwargs or {})
+        blend_size = blend_options.pop("max_num_samples", None)
+        source_datasets = [
+            build_gpt_sft_split(
+                source_path,
+                tokenizer=tokenizer,
+                seq_length=seq_length,
+                memmap_workers=memmap_workers,
+                seed=seed,
+                packed_sequence_size=packed_sequence_size,
+                pack_metadata_path=pack_metadata_path,
+                pad_cu_seqlens=pad_cu_seqlens,
+                pad_seq_to_mult=pad_seq_to_mult,
+                enable_in_batch_packing=enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                is_test=is_test,
+                dataset_kwargs=blend_options,
+            )
+            for source_path in path.paths
+        ]
+        missing_paths = [source_path for source_path, dataset in zip(path.paths, source_datasets) if dataset is None]
+        if missing_paths:
+            missing = ", ".join(missing_paths)
+            raise FileNotFoundError(f"GPT SFT blend source paths do not exist: {missing}")
+        return GPTSFTBlendDataset(
+            source_datasets,
+            path.weights,
+            size=blend_size,
+            seed=seed,
+        )
+
     path_str = str(path)
     if is_packed_parquet_spec(path_str):
         try:
@@ -453,6 +653,8 @@ def build_gpt_sft_split(
         return None
 
     is_not_packing = packed_sequence_size <= 0
+    if enable_in_batch_packing and not is_not_packing:
+        raise ValueError("Offline packed data cannot also use in-batch packing.")
     effective_metadata_path = None
     if not is_not_packing:
         if pad_cu_seqlens:
@@ -462,7 +664,7 @@ def build_gpt_sft_split(
 
     options = dict(dataset_kwargs or {})
     chat = options.pop("chat", False)
-    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", False)
+    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", True)
     chat_loss_mode = options.pop("chat_loss_mode", "assistant")
     tool_schemas = options.pop("tool_schemas", None)
     dataset_init_kwargs = {
@@ -516,9 +718,16 @@ def build_gpt_sft_split(
             use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
             loss_mode=chat_loss_mode,
             tool_schemas=tool_schemas,
+            enable_in_batch_packing=enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
             **options,
         )
-    return GPTSFTDataset(**dataset_init_kwargs, **options)
+    return GPTSFTDataset(
+        **dataset_init_kwargs,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        **options,
+    )
 
 
 class GPTSFTDatasetBuilder:
@@ -543,6 +752,7 @@ class GPTSFTDatasetBuilder:
         config.validate()
         dataset_root = resolve_gpt_sft_dataset_root(config)
         self._source_root = Path(dataset_root) if config.hf_dataset is not None else None
+        self._split_blends = _load_gpt_sft_data_blends(config)
 
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
@@ -555,10 +765,15 @@ class GPTSFTDatasetBuilder:
         self.seed = config.seed
         self.memmap_workers = config.memmap_workers
         self.max_train_samples = config.max_train_samples
+        self.enable_in_batch_packing = config.enable_in_batch_packing
+        self.in_batch_packing_pad_to_multiple_of = config.in_batch_packing_pad_to_multiple_of
         self.enable_offline_packing = config.enable_offline_packing
         self.offline_packing_specs = config.offline_packing_specs
         self.packed_sequence_size = (
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.packed_sequence_size
+        )
+        self._max_single_sequence_length = (
+            None if config.offline_packing_specs is None else config.offline_packing_specs.max_single_sequence_length
         )
         self.dataset_kwargs = normalize_gpt_sft_dataset_kwargs(config)
         self._pad_cu_seqlens = (
@@ -630,7 +845,7 @@ class GPTSFTDatasetBuilder:
         self,
         split_name: str,
         packed_path: Union[str, Path],
-        input_path: Path,
+        input_path: Path | _GPTSFTDataBlend,
     ) -> None:
         """Prepare a single packed data split if it doesn't already exist.
 
@@ -662,7 +877,7 @@ class GPTSFTDatasetBuilder:
             output_metadata_path=self.pack_metadata,
             packed_sequence_size=self.packed_sequence_size,
             tokenizer=self.tokenizer,
-            max_seq_length=self.seq_length,
+            max_seq_length=self._max_single_sequence_length or self.seq_length,
             seed=self.seed,
             dataset_kwargs=self.dataset_kwargs,
             pad_seq_to_mult=self._pad_seq_to_mult,
@@ -749,6 +964,8 @@ class GPTSFTDatasetBuilder:
             pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
             pad_cu_seqlens=self._pad_cu_seqlens,
             pad_seq_to_mult=self._pad_seq_to_mult,
+            enable_in_batch_packing=self.enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
             dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
         )
 
@@ -763,6 +980,8 @@ class GPTSFTDatasetBuilder:
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
                 pad_cu_seqlens=self._pad_cu_seqlens,
                 pad_seq_to_mult=self._pad_seq_to_mult,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )
@@ -777,6 +996,8 @@ class GPTSFTDatasetBuilder:
                 memmap_workers=self.memmap_workers,
                 seed=self.seed,
                 packed_sequence_size=-1,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )
@@ -786,8 +1007,10 @@ class GPTSFTDatasetBuilder:
         return [train_ds, valid_ds, test_ds]
 
     @property
-    def train_path(self) -> Path:
-        """Path to the training dataset file (training.jsonl)."""
+    def train_path(self) -> Path | _GPTSFTDataBlend:
+        """Training JSONL path or resolved multi-source blend."""
+        if self._split_blends:
+            return self._split_blends["train"]
         return self.dataset_root / "training.jsonl"
 
     @property
@@ -877,13 +1100,17 @@ class GPTSFTDatasetBuilder:
             raise ValueError("`validation_path_packed` invalid since packed sequence size is not specified.")
 
     @property
-    def validation_path(self) -> Path:
-        """Path to the validation dataset file (validation.jsonl)."""
+    def validation_path(self) -> Path | _GPTSFTDataBlend:
+        """Validation JSONL path or resolved multi-source blend."""
+        if self._split_blends:
+            return self._split_blends["valid"]
         return self.dataset_root / "validation.jsonl"
 
     @property
-    def test_path(self) -> Path:
-        """Path to the test dataset file (test.jsonl)."""
+    def test_path(self) -> Path | _GPTSFTDataBlend:
+        """Test JSONL path or resolved multi-source blend."""
+        if self._split_blends:
+            return self._split_blends["test"]
         return self.dataset_root / "test.jsonl"
 
     def _extract_tokenizer_model_name(self) -> str:

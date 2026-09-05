@@ -70,7 +70,7 @@ concurrency:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@c1a0837f362a1a696e647238ab1cf916b2a7cf4a # v1.8.6
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
@@ -80,7 +80,7 @@ jobs:
     secrets: inherit  # pragma: allowlist secret
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@f7af92c4d1caea5a58577ce4ac5314f7de1bc5d4 # v1.4.3
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@refs/pull/566/head # exact audited SHA 4f53d6ac1833b0a87b3d73a4f3b2fd4c169118eb
     needs: [pre-flight]
     if: |
       !cancelled() && !failure()
@@ -107,6 +107,7 @@ jobs:
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
+      build-wheel-env: '{"TMS_CUDA_MAJOR":"13"}'
       extra-no-build-isolation-packages: "grpcio-tools"
       restrict-to-admins: true
     secrets: inherit  # pragma: allowlist secret

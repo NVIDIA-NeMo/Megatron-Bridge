@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import List, Optional
 
+import torch
 import torch.nn.functional as F
 from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig
@@ -42,6 +43,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     apply_rotary_pos_emb_in_fp32: bool = False
     deepstack_visual_indexes: List[int] = field(default_factory=lambda: [8, 16, 24])
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 10000
@@ -100,8 +102,8 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.spatial_merge_size = hf_config.spatial_merge_size
     config.num_position_embeddings = hf_config.num_position_embeddings
     config.out_hidden_size = hf_config.out_hidden_size
-    # ``deepstack_visual_indexes`` is a Qwen3-VL-only field. Qwen3.5-VL's HF
-    # config does not declare it in the schema, so the field is sometimes
+    # ``deepstack_visual_indexes`` is a Qwen3-VL-only field. Qwen3.5/3.6-VL HF
+    # configs do not declare it in the schema, so the field is sometimes
     # absent — e.g. after a YAML round-trip through
     # ``PretrainedConfig.to_dict()`` / ``from_dict()`` which only persists
     # declared fields. ``Qwen3VLModel.__init__`` already reads it

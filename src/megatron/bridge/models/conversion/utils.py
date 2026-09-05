@@ -46,13 +46,18 @@ def unwrap_model(model, module_instances=None):
     if module_instances is None:
         from megatron.core.distributed import DistributedDataParallel as DDP
         from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
-        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-            FullyShardedDataParallel as megatron_FSDP,
-        )
         from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
         from megatron.core.transformer.module import Float16Module
 
-        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
+        from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+
+        module_instances = (
+            DDP,
+            torch_FSDP,
+            *MEGATRON_FSDP_TYPES,
+            Float16Module,
+            MegatronFSDP,
+        )
 
     return_list = True
     if not isinstance(model, list):
@@ -251,9 +256,10 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
         # Create a copy to avoid modifying the original
         cleaned_obj = copy.copy(obj)
 
-        for attr_name in list(vars(cleaned_obj).keys()):
-            attr_value = getattr(cleaned_obj, attr_name)
-
+        # Read stored attributes from ``__dict__`` directly. Configuration classes may
+        # deliberately reject dynamic attribute access for values whose meaning is
+        # layer-dependent, even though the raw value still needs to be copied for IPC.
+        for attr_name, attr_value in list(vars(cleaned_obj).items()):
             # Recursively clean attribute
             cleaned_value = remove_non_pickleables(attr_value, max_depth, current_depth + 1)
 

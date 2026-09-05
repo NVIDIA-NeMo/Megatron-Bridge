@@ -77,10 +77,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 
+logger = logging.getLogger(__name__)
+
+
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
+from benchmark_parallelism import (  # noqa: E402
+    ParallelTopology,
+    data_parallel_size,
+    topology_from_config,
+    weak_scaled_global_batch_size,
+)
 from recipe_metadata import (  # noqa: E402
     BenchmarkRecipeMetadata,
     infer_recipe_mode,
@@ -117,6 +130,9 @@ if TYPE_CHECKING:
 
 PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
+
+
+IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1"})
 
 
 COMMON_OVERRIDE_FIELDS = (
@@ -304,21 +320,61 @@ def _current_world_size() -> int | None:
     return None
 
 
-def _validate_benchmark_world_size(metadata: BenchmarkRecipeMetadata, *, dryrun: bool) -> None:
-    """Require the recipe's total GPU count for an executable run."""
-    if dryrun:
-        return
+def _benchmark_world_size(metadata: BenchmarkRecipeMetadata, *, dryrun: bool) -> int:
+    """Resolve the requested benchmark world size from the active launcher."""
     world_size = _current_world_size()
     if world_size is None:
+        if dryrun:
+            return metadata.num_gpus
         raise ValueError(
             "Benchmark recipes require an existing distributed environment with the world size set by torchrun "
             "or Slurm."
         )
-    if world_size != metadata.num_gpus:
-        raise ValueError(
-            f"Benchmark recipe requires exactly {metadata.num_gpus} GPUs, but the distributed world size is "
-            f"{world_size}. Select a recipe matching the allocation."
-        )
+    return world_size
+
+
+def _config_override_is_explicit(cli_overrides: list[str], field_name: str) -> bool:
+    """Return whether CLI overrides explicitly own a config field or its parent."""
+    parent_name = field_name.split(".", maxsplit=1)[0]
+    for override in cli_overrides:
+        override_name = override.lstrip("+~").split("=", maxsplit=1)[0]
+        if override_name in {field_name, parent_name}:
+            return True
+    return False
+
+
+def _apply_benchmark_weak_scaling(
+    recipe: ConfigContainer,
+    metadata: BenchmarkRecipeMetadata,
+    cli_overrides: list[str],
+    *,
+    canonical_topology: ParallelTopology,
+    canonical_global_batch_size: int,
+    world_size: int,
+) -> ConfigContainer:
+    """Validate topology and preserve samples per DP rank."""
+    model = getattr(recipe, "model", None)
+    canonical_dp = data_parallel_size(num_gpus=metadata.num_gpus, topology=canonical_topology)
+    requested_dp = data_parallel_size(num_gpus=world_size, topology=topology_from_config(model))
+
+    if _config_override_is_explicit(cli_overrides, "train.global_batch_size") or requested_dp == canonical_dp:
+        return recipe
+
+    train = getattr(recipe, "train", None)
+    scaled_gbs = weak_scaled_global_batch_size(
+        base_gbs=canonical_global_batch_size,
+        base_data_parallel=canonical_dp,
+        data_parallel=requested_dp,
+    )
+    train.global_batch_size = scaled_gbs
+    logger.info(
+        "Weak scaled benchmark global batch size from %d to %d for DP %d -> %d.",
+        canonical_global_batch_size,
+        scaled_gbs,
+        canonical_dp,
+        requested_dp,
+    )
+    return recipe
 
 
 def _apply_benchmark_runtime_defaults(
@@ -367,6 +423,12 @@ def _selected_recipe_name(args: argparse.Namespace) -> str:
     return args.recipe or f"{args.model}_{recipe_task(args.mode)}_config"
 
 
+def _requires_recipe_environment_bootstrap(recipe: ConfigContainer) -> bool:
+    """Return whether a recipe declares an unset import-time environment variable."""
+    recipe_env = getattr(recipe, "env_vars", None) or {}
+    return any(name in recipe_env and name not in os.environ for name in IMPORT_TIME_RECIPE_ENV_VARS)
+
+
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
     """Load the requested recipe by its complete name or model-derived library name."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
@@ -383,7 +445,8 @@ def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigC
 
     recipe.dataset = build_dataset_config(recipe, args.dataset)
     requested_train_mode = _train_mode(args.mode)
-    if dataset_train_mode(recipe.dataset) != requested_train_mode:
+    required_train_mode = dataset_train_mode(recipe.dataset)
+    if required_train_mode is not None and required_train_mode != requested_train_mode:
         raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
     return recipe
 
@@ -400,6 +463,10 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 def main(argv: list[str] | None = None) -> None:
     """Load, configure, and execute one library or benchmark recipe."""
+    # NeMo-Run executes container tasks from its private /nemo_run/code
+    # directory. Resolve user-facing relative dataset, checkpoint, cache, and
+    # logger paths from the mounted Bridge checkout instead.
+    os.chdir(REPO_ROOT)
     logging.basicConfig(level=logging.INFO)
     args, cli_overrides = parse_args(argv)
 
@@ -418,23 +485,39 @@ def main(argv: list[str] | None = None) -> None:
         recipe = _apply_benchmark_dataset_defaults(recipe, benchmark_metadata)
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
+    benchmark_canonical_topology = None
+    benchmark_canonical_global_batch_size = None
+    if benchmark_metadata is not None:
+        benchmark_canonical_topology = topology_from_config(getattr(recipe, "model", None))
+        benchmark_canonical_global_batch_size = getattr(getattr(recipe, "train", None), "global_batch_size", 1)
     recipe = apply_cli_overrides(recipe, cli_overrides)
     recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
+    benchmark_world_size = None
     if benchmark_metadata is not None:
         recipe = _apply_benchmark_runtime_defaults(recipe, benchmark_metadata, cli_overrides)
+        benchmark_world_size = _benchmark_world_size(benchmark_metadata, dryrun=args.dryrun)
+        recipe = _apply_benchmark_weak_scaling(
+            recipe,
+            benchmark_metadata,
+            cli_overrides,
+            canonical_topology=benchmark_canonical_topology,
+            canonical_global_batch_size=benchmark_canonical_global_batch_size,
+            world_size=benchmark_world_size,
+        )
     configuration_mode = _train_mode(args.mode)
-
-    if benchmark_metadata is not None:
-        _validate_benchmark_world_size(benchmark_metadata, dryrun=args.dryrun)
+    if benchmark_metadata is not None or _requires_recipe_environment_bootstrap(recipe):
         recipe = bootstrap_recipe_environment(
             recipe,
             script_path=str(Path(__file__).resolve()),
             argv=list(argv) if argv is not None else sys.argv[1:],
         )
+    else:
+        recipe = apply_runtime_environment(recipe)
+
+    if benchmark_metadata is not None:
         execution_mode = "pretrain"
         step_mode = benchmark_metadata.task
     else:
-        recipe = apply_runtime_environment(recipe)
         execution_mode = configuration_mode
         step_mode = configuration_mode
 
@@ -442,14 +525,18 @@ def main(argv: list[str] | None = None) -> None:
     recipe = sync_offline_packing_alignment(recipe)
     recipe = sync_model_dataset_sequence_length(recipe)
 
-    step_func_name = args.step_func or recipe_step(recipe_name)
+    native_energon_packing = getattr(getattr(recipe, "dataset", None), "packing_buffer_size", None) is not None
+    step_func_name = args.step_func or recipe_step(
+        recipe_name,
+        native_energon_packing=native_energon_packing,
+    )
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,
         mode=execution_mode,
         step_func=forward_step,
         dryrun=args.dryrun,
-        dryrun_world_size=benchmark_metadata.num_gpus if benchmark_metadata is not None else None,
+        dryrun_world_size=benchmark_world_size,
         dump_environment=args.dump_env,
     )
 

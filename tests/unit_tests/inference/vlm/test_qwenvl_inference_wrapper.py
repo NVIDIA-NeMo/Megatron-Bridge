@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.inference import config as mcore_inference_config
 
 from megatron.bridge.inference.vlm.qwenvl_inference_wrapper import QwenVLInferenceWrapper
 
@@ -37,6 +38,18 @@ class TestQwenVLInferenceWrapper:
             wrapper.inference_context = MagicMock()
             wrapper.inference_params = None
             return wrapper
+
+    def test_multimodal_prompt_config_uses_qwen_visual_tokens(self):
+        if not hasattr(mcore_inference_config, "MultimodalPromptConfig"):
+            assert not hasattr(QwenVLInferenceWrapper, "multimodal_prompt_config")
+            return
+
+        prompt_config = QwenVLInferenceWrapper.multimodal_prompt_config
+
+        assert prompt_config.image_spec.model_token == "<|image_pad|>"
+        assert prompt_config.image_spec.prefix == "<|vision_start|>"
+        assert prompt_config.image_spec.suffix == "<|vision_end|>"
+        assert prompt_config.video_spec.model_token == "<|video_pad|>"
 
     def test_prep_inference_input(self, wrapper):
         prompts_tokens = torch.tensor([[1, 2, 3]])
@@ -138,6 +151,28 @@ class TestQwenVLInferenceWrapper:
         assert result["mm_token_type_ids"].equal(torch.zeros(1, 2, dtype=torch.int32))
         assert result["position_ids"].equal(torch.arange(2, dtype=torch.long).unsqueeze(0).expand(1, 2))
         assert result["attention_mask"].equal(torch.ones(1, 2, dtype=torch.bool))
+
+    def test_nonzero_context_window_returns_only_current_logits(self, wrapper):
+        input_ids = torch.tensor([[1, 2, 3, 4]])
+        inference_input = {
+            "input_ids": input_ids,
+            "position_ids": torch.arange(4, dtype=torch.long).unsqueeze(0).expand_as(input_ids),
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
+            "pixel_values": None,
+            "image_grid_thw": None,
+            "mm_token_type_ids": None,
+        }
+
+        def position_logits(**model_input):
+            sequence_length = model_input["input_ids"].size(1)
+            return torch.arange(sequence_length, dtype=torch.float32).view(1, sequence_length, 1)
+
+        wrapper.model.side_effect = position_logits
+
+        context_window = wrapper.get_batch_for_context_window(inference_input, 2, 3)
+        logits = wrapper.forward_pass_without_pipeline_parallel(context_window)
+
+        assert logits.equal(torch.tensor([[[2.0]]]))
 
     def test_forward_pass_without_pipeline_parallel(self, wrapper):
         input_ids = torch.tensor([[1, 2, 3]])

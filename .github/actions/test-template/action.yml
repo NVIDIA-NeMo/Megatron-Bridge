@@ -43,8 +43,8 @@ inputs:
     description: "Has Azure credentials"
     required: false
     default: "false"
-  PAT:
-    description: "GitHub Personal Access Token"
+  github-token:
+    description: "GitHub token"
     required: true
   container-image:
     description: "Container image to use for test"
@@ -59,6 +59,14 @@ inputs:
   runner:
     description: "Runner to use for test"
     required: true
+  shard-id:
+    description: "Zero-based pytest shard index"
+    required: false
+    default: ""
+  num-shards:
+    description: "Total number of pytest shards"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -114,9 +122,14 @@ runs:
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
           VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
+          HF_HOME=/home/TestData/HF_HOME
+          NEMO_HOME=/home/TestData/nemo_home
         else
           VOLUME_ARGS=""
+          HF_HOME=/home/ubuntu/.cache/huggingface
+          NEMO_HOME=/home/ubuntu/.cache/nemo
         fi
+        HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules
 
         cmd=$(cat <<RUN_TEST_EOF
         #!/bin/bash
@@ -131,10 +144,13 @@ runs:
           --cpus=40 \
           --env GHA_RUNNER=${{ inputs.runner }} \
           --env HYDRA_FULL_ERROR=1 \
-          --env HF_HOME=/home/TestData/HF_HOME \
-          --env NEMO_HOME=/home/TestData/nemo_home \
+          --env HF_HOME=$HF_HOME \
+          --env HF_MODULES_CACHE=$HF_MODULES_CACHE \
+          --env NEMO_HOME=$NEMO_HOME \
           --env RUN_ID=${{ github.run_id }} \
           --env UV_NO_SYNC=1 \
+          --env SHARD_ID=${{ inputs.shard-id }} \
+          --env NUM_SHARDS=${{ inputs.num-shards }} \
           --workdir /opt/Megatron-Bridge \
           $VOLUME_ARGS \
           ${{ inputs.container-image }} \
@@ -159,40 +175,7 @@ runs:
 
         docker exec -t nemo_container_${{ github.run_id }} bash -c '
           set -e
-          export GH_TOKEN=${{ inputs.PAT }}
-
-          # Reinstall MCore if the submodule was updated
-          if [ -n "${{ github.event.inputs.mcore_commit }}" ]; then
-            echo "🔄 Reinstalling MCore from updated submodule..."
-            cd /opt/Megatron-Bridge
-
-            # Force uninstall existing megatron-core to ensure fresh install
-            uv pip uninstall megatron-core || true
-
-            # Reinstall from the updated submodule
-            uv sync --all-extras --all-groups
-            echo "✅ MCore reinstalled"
-
-            # Verify the commit matches what we expected
-            cd 3rdparty/Megatron-LM
-            EXPECTED_COMMIT="${{ github.event.inputs.mcore_commit }}"
-            ACTUAL_COMMIT=$(git rev-parse HEAD)
-            echo "🔍 Verifying MCore commit..."
-            echo "   Expected: ${EXPECTED_COMMIT}"
-            echo "   Actual:   ${ACTUAL_COMMIT}"
-
-            if [ "${ACTUAL_COMMIT}" != "${EXPECTED_COMMIT}" ]; then
-              echo "   ❌ ERROR: Commit mismatch!"
-              exit 1
-            fi
-
-            echo "   ✅ MCore commit verified"
-            cd /opt/Megatron-Bridge
-
-            # Store commit SHA for verification (since Docker build file was overridden by volume mount)
-            echo "${{ github.event.inputs.mcore_commit }}" > /opt/Megatron-Bridge/.mcore_commit_sha
-            echo "📝 Stored MCore commit SHA: ${{ github.event.inputs.mcore_commit }}"
-          fi
+          export GH_TOKEN=${{ inputs.github-token }}
 
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 

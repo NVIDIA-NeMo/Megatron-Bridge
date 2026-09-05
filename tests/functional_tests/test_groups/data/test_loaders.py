@@ -194,14 +194,15 @@ class TestDataLoaders:
     @mock.patch("torch.distributed.get_world_size")
     @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
-    def test_build_train_valid_test_data_loaders_eval_iters_0(
-        self, mock_broadcast, mock_get_rank, mock_get_world_size
+    @pytest.mark.parametrize("eval_iters", [0, None])
+    def test_build_train_valid_test_data_loaders_disabled_evaluation(
+        self, mock_broadcast, mock_get_rank, mock_get_world_size, eval_iters
     ):
         mock_get_rank.return_value = 0
         mock_get_world_size.return_value = 1
 
         cfg = create_simple_test_config()
-        cfg.validation.eval_iters = 0
+        cfg.validation.eval_iters = eval_iters
         cfg.dataset.tokenizer = _mock_tokenizer()
         cfg.dataset.finalize()
         dataset_provider = get_dataset_provider(cfg.dataset)
@@ -359,6 +360,53 @@ class TestDataLoaders:
     @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size", return_value=1)
     @mock.patch("torch.distributed.get_rank", return_value=0)
+    def test_gpt_sft_batch_eval_preserves_split_smaller_than_global_batch(
+        self, _mock_rank, _mock_world_size, _mock_broadcast
+    ):
+        class PaddingAwareDataset:
+            def __init__(self, size):
+                self.size = size
+
+            def __len__(self):
+                return self.size
+
+            def __getitem__(self, index):
+                return index
+
+        cfg = create_simple_test_config()
+        cfg.train.global_batch_size = 4
+        cfg.validation.eval_global_batch_size = 4
+        cfg.validation.eval_micro_batch_size = 1
+        cfg.dataset = GPTSFTDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            num_workers=0,
+            persistent_workers=False,
+        )
+        datasets = (PaddingAwareDataset(4), PaddingAwareDataset(3), PaddingAwareDataset(3))
+        real_torch_tensor = torch.tensor
+
+        with mock.patch(
+            "megatron.bridge.data.loaders.torch.tensor",
+            side_effect=lambda data, *, dtype, device: real_torch_tensor(data, dtype=dtype),
+        ):
+            _, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+                cfg=cfg,
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=mock.Mock(return_value=datasets),
+                dp_group=object(),
+            )
+
+        valid_batch = next(iter(valid_dataloader))
+        test_batch = next(iter(test_dataloader))
+        assert valid_batch.shape == (cfg.validation.eval_global_batch_size,)
+        assert test_batch.shape == (cfg.validation.eval_global_batch_size,)
+        assert -1 in valid_batch
+        assert -1 in test_batch
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
     def test_iteration_based_loader_respects_drop_last_false(self, _mock_rank, _mock_world_size, _mock_broadcast):
         class PaddingAwareDataset:
             def __len__(self):
@@ -397,6 +445,26 @@ class TestDataLoaders:
 
 class TestSampleBasedDataLoaders:
     """Tests for sample-based training data loader functionality."""
+
+    def test_get_train_valid_test_num_samples_disabled_evaluation(self):
+        cfg = create_simple_test_config()
+        cfg.validation.eval_interval = None
+        cfg.validation.eval_iters = None
+
+        train_samples, valid_samples, test_samples = get_train_valid_test_num_samples(cfg)
+
+        assert train_samples == cfg.train.train_iters * cfg.train.global_batch_size
+        assert valid_samples == 0
+        assert test_samples == 0
+
+    def test_get_train_valid_test_num_samples_final_only_validation(self):
+        cfg = create_simple_test_config()
+        cfg.validation.eval_interval = None
+
+        _, valid_samples, _ = get_train_valid_test_num_samples(cfg)
+
+        expected_valid_samples = cfg.validation.eval_iters * cfg.train.global_batch_size
+        assert valid_samples == expected_valid_samples
 
     def test_get_train_valid_test_num_samples_iteration_based(self):
         """Test sample calculation for iteration-based training."""

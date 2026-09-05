@@ -1,0 +1,360 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: nemotron_3_nano_omni_30b_a3b_reasoning
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Verification uses the immutable public model and CORD v2 revisions.
+  CPU and distributed GPU import and export, deterministic Megatron inference, 100-step
+  one-node H100 full-model SFT, in-batch-packed 8K SFT, and LoRA PEFT runs
+  completed. The H100 fine-tuning variants preserve real image-text samples and
+  natural routing while using lower-precision optimizer state; 4K SFT and PEFT
+  use HybridEP, while packed CP2 uses the standard all-to-all dispatcher. Strict
+  CPU and GPU round trips preserve all 7,349 tensors bitwise and reload with
+  the same native-loader notices as the pinned Hugging Face source. The one-step
+  HF/Megatron comparison predicts the same token but remains below the 0.99
+  cosine gate. Unsupported and incomplete workflows remain explicitly
+  identified rather than inferred from focused unit coverage.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - manual_forward_pass
+  training:
+    H100:
+      verified: [sft, sft_long_context, peft]
+      unverified: [sft_export_inference]
+      unsupported: [pretrain, checkpoint_resume]
+model:
+  hf_id: nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+  hf_revision: 24e67ea000b7c2837fc8f9488aa2008524fac8ba  # pragma: allowlist secret
+  architecture: NemotronH_Nano_Omni_Reasoning_V3
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.06
+  bridge_commit: fbbafc7ddfa818ef91d5eb64c8a00dcaa7bee78d  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+      --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+      --megatron-path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/cpu-megatron-clean
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 1 --etp 1
+      --trust-remote-code
+    last_verified: 2026-07-30
+    expected_result: >
+      The offline, immutable-revision CPU import exits successfully after
+      mapping 7,333 model parameters and creates a reloadable iter_0000000
+      torch_dist checkpoint with 33,015,546,816 parameters on the single model
+      parallel rank.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+      --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+      --megatron-path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean
+      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 4 --etp 1
+      --trust-remote-code --low-memory-save
+    last_verified: 2026-07-30
+    expected_result: >
+      The command exits successfully at TP2/PP1/EP4/ETP1 and creates a
+      reloadable iter_0000000 checkpoint. The paired strict GPU export contains
+      the source checkpoint's exact 7,349-key set, shapes, dtypes, and values.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 7783fc356b7d4768525eabf9825f9108c6544f4c  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+      --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+      --megatron-path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/cpu-megatron-clean/iter_0000000
+      --hf-path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/cpu-hf-export-clean
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-08-25
+    expected_result: >
+      CPU export completes in 14 indexed shards totaling 66,031,270,520 bytes.
+      Its exact comparison contains all 7,349 source tensors and
+      33,015,632,238 values, with identical keys, shapes, dtypes, and values
+      and no dtype conversions. Transformers reloads the local custom-code
+      export natively with the source-equivalent warning set: one generated
+      vision summary buffer is missing and four source-only audio/vision
+      buffers are unexpected.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 7783fc356b7d4768525eabf9825f9108c6544f4c  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+      --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+      --megatron-path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
+      --hf-path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-hf-export-clean
+      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 4 --etp 1
+      --trust-remote-code --distributed-save --save-every-n-ranks 1
+    last_verified: 2026-08-25
+    expected_result: >
+      Distributed export completes in 17 indexed shards totaling
+      66,031,270,520 bytes. All 7,349 tensors and 33,015,632,238 values match
+      the immutable HF source exactly in keys, shapes, dtypes, and values with
+      no dtype conversions. Transformers reloads the local custom-code export
+      natively with the same one missing generated buffer and four unexpected
+      source-only buffers reported when reloading the pinned source itself.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+      --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+      --megatron_model_path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
+      --tp 1 --pp 4 --ep 2 --etp 1
+      --prompt "The capital of France is " --trust-remote-code
+    last_verified: null
+    expected_result: >
+      The pinned one-step run exits successfully and both implementations
+      predict token ID 6993 (" Paris"), but cosine similarity is 0.969760 and
+      therefore does not satisfy the required 0.99 verification gate. The
+      maximum and mean absolute logit differences are 3.527344 and 0.527820,
+      respectively.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py
+      --hf_model_path nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+      --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+      --megatron_model_path
+      work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
+      --prompt "The capital of France is" --max_new_tokens 4
+      --tp 1 --pp 4 --ep 2 --etp 1
+    last_verified: 2026-07-30
+    expected_result: |-
+      Deterministic greedy decoding returns the exact 4-token result and
+      terminates with the model end token. Literal completion: "
+      Paris."
+
+  pretrain:
+    all:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Megatron Bridge does not publish a pretraining recipe for this
+        multimodal conditional-generation model; the supported package provides
+        supervised CORD v2 SFT and LoRA PEFT workflows.
+
+  sft:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 9b69b47a321de14b0453c230dd130e18ae0f00f7  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
+        --recipe nemotron_omni_cord_v2_sft_8gpu_h100_bf16_config
+        --mode sft --step_func nemotron_omni_step
+        --pretrained_checkpoint
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
+        --max_steps 100
+        --save_dir
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-4k-checkpoints
+        --save_interval 50
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        dataset.do_validation=false dataset.do_test=false
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        logger.log_interval=1 logger.log_throughput=true rng.seed=5678
+      last_verified: 2026-08-12
+      metrics:
+        initial_loss: 1.281308
+        final_loss: 0.03330838
+        last_10_steps_step_time_ms_avg: 3603.67
+        last_10_steps_model_tflops_per_gpu_avg: 197.10
+        last_10_steps_tokens_per_second_per_gpu_avg: 9092.952
+      expected_result: >
+        The immutable-revision, real image-text CORD v2 run completes exactly
+        100 full-SFT optimizer steps on eight H100 GPUs at
+        TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/4 with natural-routing HybridEP.
+        Execution uses selective MoE/layernorm recompute, fused attention, TE
+        cross entropy, fused weighted squared-ReLU, and router fusion without
+        changing the image-text objective or routing policy. Model parameters,
+        main gradients, and Adam moments use BF16; optimizer main parameters use
+        scaled FP16 without parameter remainders. LM loss is finite from
+        1.281308 to 0.03330838, the final ten steps average 3,603.67 ms and
+        197.10 TFLOP/s/GPU, sampled peak memory is 76,349 MiB, and no iteration
+        is skipped or NaN. Complete optimizer and RNG checkpoints are saved at
+        steps 50 and 100. Direct step-50 resume loads the complete state and
+        reaches step 100 at 197.07 final-ten TFLOP/s/GPU with finite loss and
+        zero skipped or NaN iterations.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 1 --gpus-per-node 8
+          --hf-model nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
+          --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
+          --megatron-path
+          work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-4k-checkpoints/iter_0000100
+          --hf-path
+          work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-hf-export-clean
+          --torch-dtype bfloat16 --tp 2 --pp 1 --ep 8 --etp 1
+          --trust-remote-code --distributed-save --not-strict
+        - >
+          uv run python
+          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          --hf-model
+          work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-hf-export-clean
+          --prompt "The capital of France is" --max-new-tokens 32
+          --chat-template --disable-thinking --trust-remote-code
+          --device cuda --dtype bfloat16
+      last_verified: null
+      expected_result: >
+        Non-strict export succeeds and writes 6,637 indexed tensors in 17
+        shards. The CORD v2 recipe intentionally disables sound, so 712 source
+        audio tensors are absent. Native Transformers generation remains
+        unverified because local dynamic-code loading omits
+        configuration_nemotron_h before model weights can reload.
+
+  sft_long_context:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: eb7cf72392ac07e7a095b87d9b1d6bf2b38c5b6e  # pragma: allowlist secret
+      enabled_features:
+        sequence_packing: in_batch
+        context_parallel_size: 2
+      command: >
+        ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
+        --recipe nemotron_omni_cord_v2_long_context_sft_8gpu_h100_bf16_config
+        --mode sft --step_func nemotron_omni_step
+        --pretrained_checkpoint
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
+        --max_steps 100
+        --save_dir
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/sft-8k-packed-checkpoints
+        --save_interval 50
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        dataset.do_validation=false dataset.do_test=false
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        logger.log_interval=1 logger.log_throughput=true rng.seed=5678
+      last_verified: 2026-08-11
+      metrics:
+        initial_loss: 1.251364
+        final_loss: 0.01020405
+        last_10_steps_step_time_ms_avg: 15577.9
+        last_10_steps_model_tflops_per_gpu_avg: 93.73
+        last_10_steps_tokens_per_second_per_gpu_avg: 4206.986
+      expected_result: >
+        The immutable-revision, real image-text CORD v2 run completes exactly
+        100 full-SFT optimizer steps on eight H100 GPUs at
+        TP4/PP1/CP2/EP8/ETP1 and GBS/MBS 64/2 with 8K in-batch packing and the
+        standard all-to-all dispatcher. Model parameters, main gradients, and
+        Adam moments use BF16; optimizer main parameters use scaled FP16 without
+        parameter remainders. LM loss is finite from 1.251364 to 0.01020405, the
+        final ten steps average 15,577.9 ms and 93.73 TFLOP/s/GPU, sampled peak
+        memory is 75,197 MiB, and no iteration is skipped or NaN. Complete
+        optimizer and RNG checkpoints are saved at steps 50 and 100. Direct
+        step-50 resume loads the complete state and reaches step 100 with finite
+        loss and zero skipped or NaN iterations.
+
+  peft:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: eb7cf72392ac07e7a095b87d9b1d6bf2b38c5b6e  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
+        --recipe nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config
+        --mode lora --step_func nemotron_omni_step
+        --pretrained_checkpoint
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/gpu-megatron-clean/iter_0000000
+        --max_steps 100
+        --save_dir
+        work/model-verification/nemotron-3-nano-omni-30b-a3b-reasoning/peft-checkpoints
+        --save_interval 50
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        dataset.do_validation=false dataset.do_test=false
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        logger.log_interval=1 logger.log_throughput=true rng.seed=5678
+      last_verified: 2026-08-11
+      metrics:
+        initial_loss: 1.282941
+        final_loss: 0.02634745
+        last_10_steps_step_time_ms_avg: 11621.42
+        last_10_steps_model_tflops_per_gpu_avg: 61.25
+        last_10_steps_tokens_per_second_per_gpu_avg: 2819.621
+      expected_result: >
+        The immutable-revision, real image-text CORD v2 run completes exactly
+        100 LoRA optimizer steps on eight H100 GPUs at
+        TP2/PP1/CP1/EP8/ETP1 and GBS/MBS 64/1 with natural-routing HybridEP.
+        Model parameters, main gradients, and Adam moments use BF16; optimizer
+        main parameters use scaled FP16 without parameter remainders. LM loss is
+        finite from 1.282941 to 0.02634745, the final ten steps average
+        11,621.42 ms and 61.25 TFLOP/s/GPU, sampled peak memory is 44,873 MiB,
+        and no iteration is skipped or NaN. Complete optimizer and RNG
+        checkpoints are saved at steps 50 and 100. Direct step-50 resume loads
+        the complete state and reaches step 100 with finite loss and zero
+        skipped or NaN iterations.
+
+  checkpoint_resume:
+    all:
+      status: unsupported
+      precision: null
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison: null
+      expected_result: >
+        There is no supported pretraining reference workflow for this model, so
+        no model-wide optimizer and RNG checkpoint-resume contract is available
+        for sentinel comparison.
