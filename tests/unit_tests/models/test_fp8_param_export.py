@@ -24,6 +24,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.fp8_export import FP8ExportLayout
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import (
     MegatronModelBridge,
@@ -31,7 +32,6 @@ from megatron.bridge.models.conversion.model_bridge import (
     _HFNameSuffixMapping,
 )
 from megatron.bridge.models.conversion.param_mapping import split_qkv_weights
-from megatron.bridge.models.conversion.quant_bridge import FP8ExportLayout
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -265,7 +265,7 @@ class TestFp8ParamExport:
     def test_build_export_fp8_tasks_scale_inv_trim(
         self, monkeypatch, caplog, scale_shape, quantizer, is_2d, warn_trim, expect_shape
     ):
-        caplog.set_level(logging.WARNING, logger="megatron.bridge.models.conversion.model_bridge")
+        caplog.set_level(logging.WARNING, logger="megatron.bridge.models.conversion.fp8_export")
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
         MappingT = _make_qkv_mapping_type(gname)

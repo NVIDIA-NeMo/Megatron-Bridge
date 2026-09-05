@@ -54,6 +54,11 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.common import ModelConfigOverrideMixin
+from megatron.bridge.models.conversion.fp8_export import (
+    FP8ExportLayout,
+    detect_fp8_export_layout,
+    get_fp8_export_tensors,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     LocalHFParamSpec,
@@ -64,7 +69,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeightConversionTask,
     MegatronPeftBridge,
 )
-from megatron.bridge.models.conversion.quant_bridge import FP8ExportLayout, MegatronQuantizationBridge
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -2212,7 +2217,6 @@ class MegatronModelBridge(
         """
         local_fp8_layouts: Dict[str, FP8ExportLayout] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
-        scale_inv_metadata_key = fp8_scale_inv_attr.removeprefix("_")
 
         for vp_stage, model in enumerate(megatron_model):
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
@@ -2228,60 +2232,13 @@ class MegatronModelBridge(
                 if local_weights is None:
                     continue
 
-                # Determine if this is a blockwise FP8 tensor with valid scale metadata.
-                # We intentionally require the scale_inv metadata to be non-None:
-                # - Some initialization paths may leave scale tensors unset; we should not emit
-                #   a scale task in that case (would break deterministic export/consumer assumptions).
-                metadata = {}
-                get_metadata = getattr(local_weights, "get_metadata", None)
-                if callable(get_metadata):
-                    try:
-                        candidate_metadata = get_metadata()
-                    except (AttributeError, RuntimeError, TypeError):
-                        pass
-                    else:
-                        if isinstance(candidate_metadata, dict):
-                            metadata = candidate_metadata
-
-                rowwise_data = metadata.get("rowwise_data")
-                scale_tensor = metadata.get(scale_inv_metadata_key)
-                is_mxfp8 = (
-                    getattr(model_config, "fp8_recipe", None) == "mxfp8"
-                    and rowwise_data is not None
-                    and "with_gemm_swizzled_scales" in metadata
+                layout = detect_fp8_export_layout(
+                    local_weights,
+                    fp8_recipe=getattr(model_config, "fp8_recipe", None),
+                    fp8_scale_inv_attr=fp8_scale_inv_attr,
                 )
-                if is_mxfp8 and scale_tensor is not None:
-                    local_fp8_layouts[global_name] = FP8ExportLayout(
-                        format_name="mxfp8",
-                        block_shape=(1, 32),
-                        data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
-                        scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
-                        scale_shape=tuple(scale_tensor.shape),
-                        compact_scale_shape=(
-                            math.prod(local_weights.shape[:-1]),
-                            math.ceil(local_weights.shape[-1] / 32),
-                        ),
-                        with_gemm_swizzled_scales=bool(metadata["with_gemm_swizzled_scales"]),
-                    )
-                elif "is_2D_scaled" in metadata and scale_tensor is not None:
-                    has_valid_row_ratio = (
-                        metadata.get("is_2D_scaled")
-                        and local_weights.ndim > 0
-                        and scale_tensor.ndim > 0
-                        and scale_tensor.shape[0] > 0
-                        and local_weights.shape[0] % scale_tensor.shape[0] == 0
-                    )
-                    row_block_size = local_weights.shape[0] // scale_tensor.shape[0] if has_valid_row_ratio else None
-                    block_len = getattr(metadata.get("quantizer"), "block_len", None)
-                    local_fp8_layouts[global_name] = FP8ExportLayout(
-                        format_name="blockwise",
-                        block_shape=(row_block_size, block_len if isinstance(block_len, int) else None),
-                        data_dtype=rowwise_data.dtype if isinstance(rowwise_data, torch.Tensor) else None,
-                        scale_dtype=scale_tensor.dtype if isinstance(scale_tensor, torch.Tensor) else None,
-                        scale_shape=tuple(scale_tensor.shape),
-                        compact_scale_shape=None,
-                        with_gemm_swizzled_scales=False,
-                    )
+                if layout is not None:
+                    local_fp8_layouts[global_name] = layout
 
         # Gather across PP ranks to ensure consistent insertion decisions
         fp8_layouts_list: list[Dict[str, FP8ExportLayout]] = [None] * get_pg_size(pp_group)
@@ -2376,15 +2333,11 @@ class MegatronModelBridge(
 
                 # Main (weight/bias) task
                 export_weight_tensor = local_weights
-                fp8_metadata = {}
                 fp8_layout = global_fp8_layouts.get(global_name)
                 if fp8_layout is not None:
-                    fp8_metadata = local_weights.get_metadata() if local_weights is not None else {}
-                    rowwise_data = fp8_metadata.get("rowwise_data")
-                    if rowwise_data is not None:
-                        # FP8 parameter weights are E4M3 in both E4M3 and hybrid recipes;
-                        # E5M2 is used only for backward gradients.
-                        export_weight_tensor = rowwise_data.contiguous().view(torch.float8_e4m3fn)
+                    export_weight_tensor, scale_tensor = get_fp8_export_tensors(
+                        local_weights, fp8_scale_inv_attr=fp8_scale_inv_attr
+                    )
                 tasks[global_names_index_dict[global_name]] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
@@ -2399,9 +2352,6 @@ class MegatronModelBridge(
                 if fp8_layout is not None:
                     scale_global_name = f"{global_name}{scale_inv_suffix}"
                     scale_local_name = f"{local_name}{scale_inv_suffix}"
-                    scale_tensor = fp8_metadata.get(fp8_scale_inv_attr.removeprefix("_"))
-                    if scale_tensor is not None:
-                        scale_tensor = self._trim_blockwise_fp8_scale_inv_padding(local_weights, scale_tensor)
                     # Note:
                     # Do NOT reuse the same mapping instance as the base weight task.
                     # We clone via `resolve(())` which returns a new mapping instance
@@ -2450,38 +2400,6 @@ class MegatronModelBridge(
             )
 
         return self._require_concrete_tasks(tasks)
-
-    def _trim_blockwise_fp8_scale_inv_padding(
-        self,
-        local_weights: Optional[torch.Tensor],
-        scale_tensor: Optional[torch.Tensor],
-    ) -> Optional[torch.Tensor]:
-        # TE pads MXFP8 scales to multiples of (128, 4), while 2D blockwise
-        # scales may pad their K dimension.
-        if local_weights is None or scale_tensor is None:
-            return scale_tensor
-
-        get_metadata = getattr(local_weights, "get_metadata", None)
-        metadata = get_metadata() if callable(get_metadata) else {}
-        if "with_gemm_swizzled_scales" in metadata:
-            expected_m = math.prod(local_weights.shape[:-1])
-            expected_k_tiles = math.ceil(local_weights.shape[-1] / 32)
-            if scale_tensor.shape == (expected_m, expected_k_tiles):
-                return scale_tensor
-            return scale_tensor[:expected_m, :expected_k_tiles].contiguous()
-
-        quantizer = metadata.get("quantizer")
-        block_len = getattr(quantizer, "block_len", None)
-        is_2d_scaled = metadata.get("is_2D_scaled")
-        if block_len is None or not is_2d_scaled:
-            logger.warning("WARNING: block_len or not is_2d_scaled")
-            return scale_tensor
-
-        q_k = local_weights.shape[-1]
-        expected_k_tiles = math.ceil(q_k / block_len)
-        if scale_tensor.shape[1] == expected_k_tiles:
-            return scale_tensor
-        return scale_tensor[:, :expected_k_tiles].contiguous()
 
     @classmethod
     def register_bridge(
