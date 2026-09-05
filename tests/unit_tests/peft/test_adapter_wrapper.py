@@ -29,7 +29,7 @@ import torch.nn as nn
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.peft.lora_layers import LoRALinear
+from megatron.bridge.peft.lora_layers import LoRALinear, _AddExpertLoRA
 
 
 class MockLinear(nn.Module):
@@ -477,6 +477,132 @@ class TestAdapterWrapper:
         assert torch.isfinite(x.grad).all()
         assert base.weight.grad is not None
         assert adapter.weight.grad is not None
+
+    @pytest.mark.parametrize(
+        ("surface", "input_is_parallel"),
+        (("linear_fc1", False), ("linear_fc2", True)),
+    )
+    def test_grouped_expert_linear_reuses_base_output_with_exact_gradients(
+        self, surface: str, input_is_parallel: bool
+    ):
+        """The grouped expert path must not allocate a second full-width output."""
+
+        class ViewLinearFunction(torch.autograd.Function):
+            @staticmethod
+            def forward(ctx, x, weight):
+                ctx.save_for_backward(x, weight)
+                output = x @ weight.t()
+                return output.view_as(output)
+
+            @staticmethod
+            def backward(ctx, grad_output):
+                x, weight = ctx.saved_tensors
+                return grad_output @ weight, grad_output.t() @ x
+
+        class GroupedViewLinear(nn.Module):
+            def __init__(self, in_features, out_features):
+                super().__init__()
+                self.weight = nn.Parameter(torch.randn(out_features, in_features))
+
+            def forward(self, x, *_):
+                return ViewLinearFunction.apply(x, self.weight), None
+
+        class RankLinear(nn.Module):
+            def __init__(self, in_features, out_features):
+                super().__init__()
+                self.input_size = in_features
+                self.weight = nn.Parameter(torch.randn(out_features, in_features))
+
+            def forward(self, x):
+                return x @ self.weight.t(), None
+
+        class OutputLinear(nn.Module):
+            def __init__(self, in_features, out_features):
+                super().__init__()
+                self.output_size = out_features
+                self.output_size_per_partition = out_features
+                self.weight = nn.Parameter(torch.randn(out_features, in_features))
+                self.bias = None
+                self.gradient_accumulation_fusion = False
+                self.gtp_remat_size = 1
+
+            def forward(self, _):
+                raise AssertionError("The fused path must not materialize the LoRA output")
+
+        class ExpertAdapter(nn.Module):
+            def __init__(self, in_features, out_features, rank):
+                super().__init__()
+                self.is_expert = True
+                self.input_is_parallel = input_is_parallel
+                self.disable_sequence_parallel_comm = True
+                self.activation = nn.Identity()
+                self.dropout = nn.Identity()
+                self.config = Mock(
+                    cpu_offloading=False,
+                    cpu_offloading_activations=False,
+                    expert_tensor_parallel_size=1,
+                )
+                self.base_linear_name = f"decoder.layers.0.mlp.experts.{surface}"
+                self.use_a2a = False
+                self.dim = rank
+                self.alpha = rank
+                self.linear_in = RankLinear(in_features, rank)
+                self.linear_out = OutputLinear(rank, out_features)
+
+        torch.manual_seed(7)
+        base = GroupedViewLinear(9, 7)
+        adapter = ExpertAdapter(9, 7, 3)
+        wrapper = LoRALinear(base, adapter)
+        x = torch.randn(11, 9, requires_grad=True)
+        upstream = torch.randn(11, 7)
+        expected = x @ base.weight.t() + (x @ adapter.linear_in.weight.t()) @ adapter.linear_out.weight.t()
+        expected_grads = torch.autograd.grad(
+            expected,
+            (x, base.weight, adapter.linear_in.weight, adapter.linear_out.weight),
+            upstream,
+            retain_graph=True,
+        )
+        base_ptr = []
+        base.register_forward_hook(lambda _module, _inputs, output: base_ptr.append(output[0].data_ptr()))
+
+        with (
+            patch("megatron.bridge.peft.lora_layers.te.GroupedLinear", GroupedViewLinear),
+            patch("megatron.bridge.peft.lora_layers.ParallelLinearAdapter", ExpertAdapter),
+        ):
+            actual, _ = wrapper(x)
+            assert wrapper._can_reuse_grouped_expert_output(x, actual)
+            adapter.config.expert_tensor_parallel_size = 2
+            assert not wrapper._can_reuse_grouped_expert_output(x, actual)
+            adapter.config.expert_tensor_parallel_size = 1
+            adapter.use_a2a = True
+            assert not wrapper._can_reuse_grouped_expert_output(x, actual)
+            adapter.use_a2a = False
+            adapter.input_is_parallel = not input_is_parallel
+            assert not wrapper._can_reuse_grouped_expert_output(x, actual)
+            adapter.input_is_parallel = input_is_parallel
+            adapter.base_linear_name = "decoder.layers.0.mlp.experts.linear_fc3"
+            assert not wrapper._can_reuse_grouped_expert_output(x, actual)
+            adapter.base_linear_name = f"decoder.layers.0.mlp.experts.{surface}"
+        actual_grads = torch.autograd.grad(
+            actual,
+            (x, base.weight, adapter.linear_in.weight, adapter.linear_out.weight),
+            upstream,
+        )
+
+        torch.testing.assert_close(actual, expected)
+        assert actual.data_ptr() == base_ptr[0]
+        for actual_grad, expected_grad in zip(actual_grads, expected_grads):
+            torch.testing.assert_close(actual_grad, expected_grad)
+
+    def test_expert_lora_storage_reuse_rejects_partial_views(self):
+        """Storage reuse must fail closed when the grouped output is not the full allocation."""
+        rank_input = torch.randn(4, 2, requires_grad=True)
+        weight = torch.randn(3, 2, requires_grad=True)
+        oversized = torch.randn(5, 3)
+
+        with pytest.raises(RuntimeError, match="complete contiguous allocation"):
+            partial = oversized[:4]
+            _AddExpertLoRA.apply(rank_input, weight, partial, partial.detach())
 
     def test_peft_enable_disable_adapter_layers_manual(self, mock_linear_simple, simple_adapter):
         """Test manual adapter enable/disable via PEFT helpers."""
