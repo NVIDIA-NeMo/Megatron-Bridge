@@ -83,6 +83,8 @@ class TestPretrainProcessGroupOwnership:
     def test_framework_owned_failure_is_logged_before_cleanup_and_abort(self, caplog):
         """Test Bridge logs the original failure before cleaning up framework-owned state."""
         state = MagicMock()
+        signal_handler = MagicMock()
+        state._signal_handler = signal_handler
         async_queue = MagicMock()
         state._async_calls_queue = async_queue
         original_error = RuntimeError("setup failed after distributed initialization")
@@ -112,6 +114,8 @@ class TestPretrainProcessGroupOwnership:
                 _pretrain(state, MagicMock())
 
         assert exc_info.value is original_error
+        signal_handler.release.assert_called_once_with()
+        assert state._signal_handler is None
         mock_destroy_global_state.assert_called_once_with()
         mock_dist.barrier.assert_not_called()
         mock_dist.distributed_c10d._abort_process_group.assert_called_once_with()
