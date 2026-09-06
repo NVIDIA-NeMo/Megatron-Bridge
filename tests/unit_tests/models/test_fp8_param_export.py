@@ -73,8 +73,7 @@ class _FakeNativeMXFP8Tensor:
         return {
             "rowwise_data": self.data_bytes,
             "rowwise_scale_inv": self.scale_bytes,
-            "is_2D_scaled": False,
-            "quantizer": SimpleNamespace(block_len=32),
+            "with_gemm_swizzled_scales": False,
         }
 
 
@@ -100,7 +99,7 @@ def test_native_mxfp8_storage_crops_rank_generic_scale_padding():
     param.shape = torch.Size((2, 5, 64))
     param.ndim = 3
     param.data_bytes = torch.arange(2 * 5 * 64, dtype=torch.uint8).view(2, 5, 64)
-    param.scale_bytes = torch.zeros((4, 128, 4), dtype=torch.uint8)
+    param.scale_bytes = torch.zeros((128, 4), dtype=torch.uint8)
 
     storage = _extract_native_mxfp8_storage(param, "decoder.linear.weight")
 
@@ -168,21 +167,7 @@ def test_native_mxfp8_storage_crops_rank_generic_scale_padding():
                 lambda: {
                     "rowwise_data": param.data_bytes,
                     "rowwise_scale_inv": param.scale_bytes,
-                    "is_2D_scaled": False,
-                    "quantizer": SimpleNamespace(block_len=16),
-                },
-            ),
-            id="invalid-block-length",
-        ),
-        pytest.param(
-            lambda param: setattr(
-                param,
-                "get_metadata",
-                lambda: {
-                    "rowwise_data": param.data_bytes,
-                    "rowwise_scale_inv": param.scale_bytes,
-                    "is_2D_scaled": True,
-                    "quantizer": SimpleNamespace(block_len=32),
+                    "with_gemm_swizzled_scales": True,
                 },
             ),
             id="swizzled-scale-storage",

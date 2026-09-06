@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import itertools
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, List, Mapping, Optional, Tuple, TypeVar, Union
 
@@ -86,7 +87,9 @@ def _validate_native_mxfp8_storage(
 
     rowwise_data = metadata.get("rowwise_data")
     rowwise_scale = metadata.get("rowwise_scale_inv")
-    expected_scale_shape = torch.Size((*logical_shape[:-1], logical_shape[-1] // 32))
+    flat_leading_dim = math.prod(logical_shape[:-1])
+    scale_k = logical_shape[-1] // 32
+    expected_scale_shape = torch.Size((*logical_shape[:-1], scale_k))
     if (
         not isinstance(rowwise_data, torch.Tensor)
         or rowwise_data.dtype != torch.uint8
@@ -99,15 +102,13 @@ def _validate_native_mxfp8_storage(
         or not rowwise_scale.is_contiguous()
     ):
         raise ValueError(f"{global_param_name}: invalid native MXFP8 rowwise_scale_inv")
-    if metadata.get("is_2D_scaled") is not False:
-        raise ValueError(f"{global_param_name}: expected native MXFP8 rowwise scale storage")
-    if getattr(metadata.get("quantizer"), "block_len", None) != 32:
-        raise ValueError(f"{global_param_name}: expected an MXFP8 block length of 32")
-    if rowwise_data.ndim != len(logical_shape) or rowwise_scale.ndim != len(expected_scale_shape):
+    if metadata.get("with_gemm_swizzled_scales") is not False:
+        raise ValueError(f"{global_param_name}: native MXFP8 scales must use compact storage")
+    if rowwise_data.ndim != len(logical_shape) or rowwise_scale.ndim != 2:
         raise ValueError(f"{global_param_name}: native MXFP8 storage rank mismatch")
     if any(actual < expected for actual, expected in zip(rowwise_data.shape, logical_shape)):
         raise ValueError(f"{global_param_name}: native MXFP8 value storage is too small")
-    if any(actual < expected for actual, expected in zip(rowwise_scale.shape, expected_scale_shape)):
+    if rowwise_scale.shape[0] < flat_leading_dim or rowwise_scale.shape[1] < scale_k:
         raise ValueError(f"{global_param_name}: native MXFP8 scale storage is too small")
     if rowwise_data.device != rowwise_scale.device:
         raise ValueError(f"{global_param_name}: native MXFP8 value and scale storage must use the same device")
@@ -139,10 +140,13 @@ def _extract_native_mxfp8_storage(
     storage_spec, rowwise_data, rowwise_scale = _validate_native_mxfp8_storage(param, global_param_name)
 
     data_slices = tuple(slice(0, size) for size in storage_spec.weight_shape)
-    scale_slices = tuple(slice(0, size) for size in storage_spec.weight_scale_shape)
+    flat_leading_dim = math.prod(storage_spec.weight_shape[:-1])
+    scale_k = storage_spec.weight_shape[-1] // 32
     return _NativeMXFP8Storage(
         weight=rowwise_data[data_slices].view(torch.float8_e4m3fn),
-        weight_scale=rowwise_scale[scale_slices],
+        weight_scale=rowwise_scale[:flat_leading_dim, :scale_k].view(
+            storage_spec.weight_scale_shape
+        ),
     )
 
 
