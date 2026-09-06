@@ -38,6 +38,7 @@ from megatron.bridge.training.checkpointing import (
     DefaultCheckpointManager,
     _build_auto_bridge_for_save,
     _clear_auto_bridge_cache,
+    _align_rng_state_sharded_metadata,
     _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
@@ -6001,3 +6002,53 @@ class TestMaybeSaveDataloaderState:
             {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}, expected_path
         )
         mock_torch_save.assert_not_called()
+
+
+class TestAlignRngStateShardedMetadata:
+    @staticmethod
+    def _rng(global_offset=(1, 3), global_shape=(2, 4), replica_id=5):
+        from megatron.core.dist_checkpointing.mapping import ShardedObject
+
+        return ShardedObject(
+            "rng_state",
+            None,
+            global_shape,
+            global_offset,
+            replica_id=replica_id,
+        )
+
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_keeps_exact_stored_layout(self, mock_strategy):
+        rng_state = self._rng()
+        mock_strategy.return_value.load_sharded_metadata.return_value = {rng_state.unique_key: rng_state}
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result is rng_state
+        mock_strategy.return_value.load_sharded_metadata.assert_called_once_with(Path("/checkpoint"))
+
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_adopts_unique_dp_cp_sharded_layout(self, mock_strategy):
+        rng_state = self._rng()
+        stored = self._rng(global_offset=(1, 3, 5), global_shape=(2, 4, 8), replica_id=0)
+        mock_strategy.return_value.load_sharded_metadata.return_value = {stored.unique_key: stored}
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result.global_shape == (2, 4, 8)
+        assert result.global_offset == (1, 3, 5)
+        assert result.replica_id == 0
+
+    @pytest.mark.parametrize("stored", [{}, None])
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_keeps_generated_layout_without_unique_match(self, mock_strategy, stored):
+        rng_state = self._rng()
+        if stored is None:
+            first = self._rng(global_offset=(1, 3, 0), global_shape=(2, 4, 8), replica_id=0)
+            second = self._rng(global_offset=(1, 3, 5), global_shape=(2, 4, 9), replica_id=1)
+            stored = {"first": first, "second": second}
+        mock_strategy.return_value.load_sharded_metadata.return_value = stored
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result is rng_state
