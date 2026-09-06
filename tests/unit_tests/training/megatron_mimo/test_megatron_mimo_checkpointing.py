@@ -522,6 +522,61 @@ class TestTrainMegatronMIMOCheckpointIntegration:
     @patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
     @patch("torch.distributed.get_world_size", return_value=1)
+    def test_enabled_nvrx_instruments_mimo_train_step(
+        self,
+        mock_world_size,
+        mock_rank,
+        mock_num_mb,
+        mock_prep_fwd,
+        mock_get_grid,
+        mock_build_pg,
+        mock_train_step,
+        mock_ckpt_exit,
+    ):
+        """Enabled NVRx should instrument the MegatronMIMO training step."""
+        from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+        del mock_world_size, mock_rank, mock_num_mb, mock_prep_fwd, mock_get_grid, mock_ckpt_exit
+        mock_train_step.return_value = ({}, 0, 0.0, 0)
+        instrumented_step = Mock(return_value=({}, 0, 0.0, 0))
+        nvrx_manager = Mock()
+        nvrx_manager.wrap_train_step_function.return_value = instrumented_step
+
+        infra = Mock()
+        infra.pg_collections = {"language": Mock()}
+        infra.module_to_grid_map = {"language": Mock()}
+        infra.topology = Mock()
+        mock_build_pg.return_value = Mock(spec=[])
+
+        state = _make_global_state(save_dir=None, train_iters=1, step=0)
+        state.nvrx_straggler_manager = nvrx_manager
+
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={"language": _make_scheduler_mock()},
+            train_data_iterator=Mock(),
+            valid_data_iterator=None,
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
+
+        nvrx_manager.initialize.assert_called_once_with()
+        nvrx_manager.wrap_train_step_function.assert_called_once_with(mock_train_step)
+        instrumented_step.assert_called_once()
+        mock_train_step.assert_not_called()
+
+    @patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False)
+    @patch("megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo")
+    @patch("megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule")
+    @patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple")
+    @patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func")
+    @patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1)
+    @patch("torch.distributed.get_rank", return_value=0)
+    @patch("torch.distributed.get_world_size", return_value=1)
     def test_calls_checkpoint_and_decide_exit_with_pg_collection(
         self,
         mock_world_size,

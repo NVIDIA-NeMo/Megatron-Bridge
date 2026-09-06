@@ -47,6 +47,7 @@ from megatron.bridge.training.utils.train_utils import (
     prepare_forward_step_func,
     training_log,
 )
+from megatron.bridge.utils.common_utils import print_rank_0
 
 
 if TYPE_CHECKING:
@@ -299,6 +300,16 @@ def train_megatron_mimo(
         gc.disable()
         gc.collect()
 
+    nvrx_straggler_manager = global_state.nvrx_straggler_manager
+    wrapped_train_step = train_step_megatron_mimo
+    if nvrx_straggler_manager is not None:
+        try:
+            nvrx_straggler_manager.initialize()
+            wrapped_train_step = nvrx_straggler_manager.wrap_train_step_function(train_step_megatron_mimo)
+        except Exception as e:
+            print_rank_0(f"Failed to initialize NVRx straggler detection: {e}")
+            global_state._nvrx_straggler_manager = None
+
     logger.info(f"Rank {dist.get_rank()}: Starting MegatronMIMO training loop")
 
     # Main training loop
@@ -326,7 +337,7 @@ def train_megatron_mimo(
         timers("iteration-time", log_level=0).start(barrier=False)
 
         # Run single training step
-        loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = train_step_megatron_mimo(
+        loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = wrapped_train_step(
             forward_step_func=wrapped_forward_step_func,
             data_iterator=train_data_iterator,
             model=model,
