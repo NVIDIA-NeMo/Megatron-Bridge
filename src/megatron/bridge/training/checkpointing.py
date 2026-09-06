@@ -618,7 +618,11 @@ def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name:
     when its exact key exists; otherwise adopt a unique stored layout whose
     PP/TP prefix matches this rank.
     """
-    sharded_metadata = TorchDistLoadShardedStrategy().load_sharded_metadata(Path(checkpoint_name))
+    checkpoint_path = Path(checkpoint_name)
+    if not (checkpoint_path / ".metadata").is_file():
+        return rng_state
+
+    sharded_metadata = TorchDistLoadShardedStrategy().load_sharded_metadata(checkpoint_path)
     if rng_state.unique_key in sharded_metadata:
         return rng_state
 
@@ -631,6 +635,7 @@ def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name:
         and metadata.global_offset[:2] == prefix
         and len(metadata.global_offset) == len(rng_state.global_offset) + 1
         and metadata.global_offset[-1] == rng_state.replica_id
+        and metadata.replica_id == 0
     ]
     if len(matches) != 1:
         return rng_state
