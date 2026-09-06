@@ -6018,17 +6018,29 @@ class TestAlignRngStateShardedMetadata:
         )
 
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
-    def test_keeps_exact_stored_layout(self, mock_strategy):
+    def test_keeps_generated_layout_without_torch_dist_metadata(self, mock_strategy, tmp_path):
+        rng_state = self._rng()
+
+        result = _align_rng_state_sharded_metadata(rng_state, str(tmp_path))
+
+        assert result is rng_state
+        mock_strategy.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_keeps_exact_stored_layout(self, mock_strategy, mock_is_file):
         rng_state = self._rng()
         mock_strategy.return_value.load_sharded_metadata.return_value = {rng_state.unique_key: rng_state}
 
         result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
 
         assert result is rng_state
+        mock_is_file.assert_called_once_with()
         mock_strategy.return_value.load_sharded_metadata.assert_called_once_with(Path("/checkpoint"))
 
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
-    def test_adopts_unique_dp_cp_sharded_layout(self, mock_strategy):
+    def test_adopts_unique_dp_cp_sharded_layout(self, mock_strategy, _mock_is_file):
         rng_state = self._rng()
         stored = self._rng(global_offset=(1, 3, 5), global_shape=(2, 4, 8), replica_id=0)
         mock_strategy.return_value.load_sharded_metadata.return_value = {stored.unique_key: stored}
@@ -6040,8 +6052,9 @@ class TestAlignRngStateShardedMetadata:
         assert result.replica_id == 0
 
     @pytest.mark.parametrize("stored", [{}, None])
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
-    def test_keeps_generated_layout_without_unique_match(self, mock_strategy, stored):
+    def test_keeps_generated_layout_without_unique_match(self, mock_strategy, _mock_is_file, stored):
         rng_state = self._rng()
         if stored is None:
             first = self._rng(global_offset=(1, 3, 0), global_shape=(2, 4, 8), replica_id=0)
