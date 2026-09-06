@@ -88,6 +88,45 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     assert state.train_state.skipped_train_samples == expected_batch
 
 
+def test_should_skip_dist_train_iteration_uses_language_dp_for_sample_accounting(monkeypatch):
+    """DistTrain sample counters must agree across heterogeneous module grids."""
+    from megatron.bridge.training import train as train_module
+    from megatron.bridge.training.state import GlobalState
+
+    state = GlobalState()
+    model_config = SimpleNamespace(dist_train=SimpleNamespace(use_dist_train=True))
+    state.cfg = SimpleNamespace(
+        model=model_config,
+        data_parallel_size=2,
+        train=SimpleNamespace(
+            iterations_to_skip={1},
+            micro_batch_size=2,
+            exit_signal_handler=False,
+            exit_signal=signal.SIGTERM,
+        ),
+    )
+
+    # The supported DistTrain layout has vision DP=4 and language DP=2. The
+    # microbatch calculator and global batch contract use language DP on every rank.
+    vision_data_distribution_group = SimpleNamespace(size=lambda: 4)
+    fake_vision_pg = SimpleNamespace()
+    monkeypatch.setattr(train_module, "get_num_microbatches", lambda: 8)
+    monkeypatch.setattr(
+        train_module,
+        "get_data_distribution_group",
+        lambda _pg_collection, _model_config: vision_data_distribution_group,
+    )
+    monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
+
+    did_skip = train_module._should_skip_and_handle_iteration(state, None, fake_vision_pg)
+
+    assert did_skip is True
+    assert state.train_state.step == 1
+    expected_global_batch = 2 * 2 * 8
+    assert state.train_state.consumed_train_samples == expected_global_batch
+    assert state.train_state.skipped_train_samples == expected_global_batch
+
+
 def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(monkeypatch):
     """Skipping the stop iteration must still close an active Nsys capture."""
     from megatron.bridge.training import profiling as profiling_module

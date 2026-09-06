@@ -21,6 +21,7 @@ from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig, Qw
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.callbacks import Callback, CallbackContext
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -35,6 +36,16 @@ from megatron.bridge.training.config import (
 )
 from megatron.bridge.training.pretrain import pretrain
 from tests.functional_tests.utils import initialize_distributed
+
+
+class DistTrainSampleAccountingCallback(Callback):
+    """Validate that every module grid records the configured global batch size."""
+
+    def __init__(self, expected_samples: int) -> None:
+        self.expected_samples = expected_samples
+
+    def on_train_end(self, context: CallbackContext) -> None:
+        assert context.state.train_state.consumed_train_samples == self.expected_samples
 
 
 class TestPretrainDistTrain:
@@ -183,4 +194,8 @@ class TestPretrainDistTrain:
             ),
         )
 
-        pretrain(cfg, qwen3_vl_forward_step)
+        pretrain(
+            cfg,
+            qwen3_vl_forward_step,
+            callbacks=[DistTrainSampleAccountingCallback(total_iters * global_batch_size)],
+        )

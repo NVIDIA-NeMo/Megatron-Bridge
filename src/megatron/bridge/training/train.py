@@ -123,6 +123,15 @@ except ImportError:
     HAS_OPTIMIZER_CUDA_GRAPH = False
 
 
+def _get_sample_accounting_data_parallel_size(
+    config: ConfigContainer, data_distribution_group: torch.distributed.ProcessGroup
+) -> int:
+    """Return the data-parallel size used by the global batch contract."""
+    if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
+        return config.data_parallel_size
+    return data_distribution_group.size()
+
+
 def train(
     forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
@@ -338,7 +347,7 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     data_distribution_group = get_data_distribution_group(pg_collection, config.model)
-    dp_size = data_distribution_group.size()
+    dp_size = _get_sample_accounting_data_parallel_size(config, data_distribution_group)
     # Anchor for interval-average throughput logging: training_log reports the FLOPS
     # performed over each logging interval as the delta of
     # floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
@@ -1606,7 +1615,8 @@ def _should_skip_and_handle_iteration(
 
     # Update step and sample counters
     global_state.train_state.step += 1
-    dp_size = get_data_distribution_group(pg_collection, cfg.model).size()
+    data_distribution_group = get_data_distribution_group(pg_collection, cfg.model)
+    dp_size = _get_sample_accounting_data_parallel_size(cfg, data_distribution_group)
     batch_size = dp_size * cfg.train.micro_batch_size * get_num_microbatches()
     global_state.train_state.consumed_train_samples += batch_size
     global_state.train_state.skipped_train_samples += batch_size
