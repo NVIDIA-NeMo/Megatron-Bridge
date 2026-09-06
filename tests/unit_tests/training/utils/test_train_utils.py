@@ -29,6 +29,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
     _get_num_moe_layers,
+    _track_moe_metrics_supports_num_moe_layers,
     calc_params_l2_norm,
     create_value_head_hook,
     freeze_moe_router,
@@ -112,6 +113,14 @@ def make_default_model_config():
         moe_z_loss_scale=None,
         is_hybrid_model=False,
     )
+
+
+@pytest.mark.parametrize("parameters, expected", [({"num_moe_layers": None}, True), ({}, False)])
+def test_track_moe_metrics_supports_num_moe_layers(parameters, expected):
+    """Detect the MCore signature difference without calling the helper."""
+    with mock.patch("inspect.signature") as mock_signature:
+        mock_signature.return_value.parameters = parameters
+        assert _track_moe_metrics_supports_num_moe_layers() is expected
 
 
 @pytest.mark.parametrize(
@@ -1051,12 +1060,22 @@ class TestTrainingLog:
         mock_report_memory.assert_called_once()
 
     @pytest.mark.parametrize(
-        ("model_num_layers", "mtp_num_layers", "hybrid_pattern", "moe_layer_freq", "expected_num_moe_layers"),
+        (
+            "model_num_layers",
+            "mtp_num_layers",
+            "hybrid_pattern",
+            "moe_layer_freq",
+            "expected_num_moe_layers",
+            "supports_num_moe_layers",
+        ),
         [
-            pytest.param(12, None, None, 2, 6, id="non_hybrid"),
-            pytest.param(4, 2, "MMME/*E/*E", None, 3, id="hybrid"),
+            pytest.param(12, None, None, 2, 6, True, id="non_hybrid-supported"),
+            pytest.param(12, None, None, 2, 6, False, id="non_hybrid-unsupported"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, True, id="hybrid-supported"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, False, id="hybrid-unsupported"),
         ],
     )
+    @mock.patch("megatron.bridge.training.utils.train_utils._track_moe_metrics_supports_num_moe_layers")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -1075,6 +1094,7 @@ class TestTrainingLog:
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
+        mock_supports_num_moe_layers,
         mock_config,
         mock_global_state,
         loss_dict,
@@ -1083,12 +1103,14 @@ class TestTrainingLog:
         hybrid_pattern,
         moe_layer_freq,
         expected_num_moe_layers,
+        supports_num_moe_layers,
     ):
         """Test MoE (Mixture of Experts) logging when enabled."""
         # Get fresh total_loss_dict for this test
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_supports_num_moe_layers.return_value = supports_num_moe_layers
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -1130,7 +1152,10 @@ class TestTrainingLog:
         assert "load_balancing_loss" in call_args.kwargs["track_names"]
         assert "z_loss" in call_args.kwargs["track_names"]
         assert call_args.kwargs["num_layers"] == model_num_layers
-        assert call_args.kwargs["num_moe_layers"] == expected_num_moe_layers
+        if supports_num_moe_layers:
+            assert call_args.kwargs["num_moe_layers"] == expected_num_moe_layers
+        else:
+            assert "num_moe_layers" not in call_args.kwargs
         assert call_args.kwargs["mtp_num_layers"] == mtp_num_layers
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
