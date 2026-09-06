@@ -610,9 +610,7 @@ def get_rng_state(
     return rng_state_list
 
 
-def _align_rng_state_sharded_metadata(
-    rng_state: ShardedObject, checkpoint_name: str
-) -> ShardedObject:
+def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject:
     """Align RNG load metadata with the layout stored in a torch-dist checkpoint.
 
     Newer MCore checkpoints shard RNG state across PP, TP, and DP/CP, while
