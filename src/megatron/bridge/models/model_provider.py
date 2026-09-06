@@ -42,6 +42,7 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
@@ -58,6 +59,14 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
+
+
+def _finalize_model_quantization(model: torch.nn.Module) -> None:
+    """Finalize module quantization against paths in the assembled model."""
+    for name, module in model.named_modules():
+        if hasattr(module, "finish_init"):
+            quant_config = get_quant_config_or_none(name, module.config.quant_recipe)
+            module.finish_init(quant_config)
 
 
 def _apply_mixed_precision_wrapper(
@@ -666,6 +675,9 @@ def get_model(
             _model = pre_wrap_hook(model)
             if _model is not None:
                 model = _model
+
+    for model_module in model:
+        _finalize_model_quantization(model_module)
 
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
