@@ -34,6 +34,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    ColumnParallelMapping,
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
@@ -474,8 +475,31 @@ def test_output_native_mxfp8_rejects_mismatched_scale_shape():
         )
 
 
+@pytest.mark.parametrize("tp_size,local_rows", [pytest.param(1, 64, id="tp1"), pytest.param(2, 32, id="tp2")])
+def test_output_native_mxfp8_column_parallel_preserves_views(monkeypatch, tp_size, local_rows):
+    mapping = ColumnParallelMapping("decoder.linear_fc1.weight", "hf.up_proj.weight")
+    monkeypatch.setattr(type(mapping), "tp_size", PropertyMock(return_value=tp_size))
+    weight = torch.arange(local_rows * 64, dtype=torch.uint8).view(local_rows, 64).view(torch.float8_e4m3fn)
+    scale = torch.arange(local_rows * 2, dtype=torch.uint8).view(local_rows, 2)
+
+    params = mapping.local_mxfp8_params(
+        weight,
+        scale,
+        global_param_name="decoder.linear_fc1.weight",
+        megatron_module=SimpleNamespace(),
+    )
+
+    assert len(params) == 1
+    assert params[0].name == "hf.up_proj.weight"
+    assert params[0].weight is weight
+    assert params[0].weight_scale is scale
+    assert params[0].global_weight_shape == (64, 64)
+    assert params[0].shard_group == "tp"
+    assert params[0].shard_dim == 0
+
+
 @pytest.mark.parametrize("tp_size,local_k", [pytest.param(1, 64, id="tp1"), pytest.param(2, 32, id="tp2")])
-def test_output_native_mxfp8_auto_mapping_delegates_only_to_row_parallel(monkeypatch, tp_size, local_k):
+def test_output_native_mxfp8_auto_mapping_delegates_to_row_parallel(monkeypatch, tp_size, local_k):
     mapping = AutoMapping("decoder.linear_proj.weight", "hf.o")
     monkeypatch.setattr(RowParallelMapping, "tp_size", PropertyMock(return_value=tp_size))
     module = type("RowParallelLinear", (), {})()
@@ -496,16 +520,36 @@ def test_output_native_mxfp8_auto_mapping_delegates_only_to_row_parallel(monkeyp
     assert isinstance(mapping._mapping, RowParallelMapping)
 
 
-@pytest.mark.parametrize(
-    "module_type",
-    [
-        pytest.param("ColumnParallelLinear", id="column"),
-        pytest.param("LayerNorm", id="replicated"),
-    ],
-)
-def test_output_native_mxfp8_auto_mapping_rejects_unsupported_mapping(module_type):
+def test_expert_fc1_native_mxfp8_auto_mapping_delegates_to_column_parallel(monkeypatch):
+    mapping = AutoMapping(
+        "decoder.layers.3.mlp.experts.linear_fc1.weight8",
+        "model.layers.3.mlp.experts.8.up_proj.weight",
+    )
+    monkeypatch.setattr(ColumnParallelMapping, "tp_size", PropertyMock(return_value=4))
+    module = type("TEColumnParallelGroupedLinear", (), {})()
+    weight = torch.zeros((32, 64), dtype=torch.float8_e4m3fn)
+    scale = torch.zeros((32, 2), dtype=torch.uint8)
+
+    params = mapping.local_mxfp8_params(
+        weight,
+        scale,
+        global_param_name="decoder.layers.3.mlp.experts.linear_fc1.weight8",
+        megatron_module=module,
+    )
+
+    assert len(params) == 1
+    assert params[0].name == "model.layers.3.mlp.experts.8.up_proj.weight"
+    assert params[0].weight is weight
+    assert params[0].weight_scale is scale
+    assert params[0].global_weight_shape == (128, 64)
+    assert params[0].shard_group == "etp"
+    assert params[0].shard_dim == 0
+    assert isinstance(mapping._mapping, ColumnParallelMapping)
+
+
+def test_output_native_mxfp8_auto_mapping_rejects_unsupported_mapping():
     mapping = AutoMapping("decoder.linear_proj.weight", "hf.o")
-    module = type(module_type, (), {})()
+    module = type("LayerNorm", (), {})()
 
     with pytest.raises(ValueError, match=r"decoder\.linear_proj\.weight"):
         mapping.local_mxfp8_params(

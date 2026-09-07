@@ -1135,6 +1135,31 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         along their only dimension following the same pattern.
     """
 
+    def local_mxfp8_params(
+        self,
+        weight: torch.Tensor,
+        weight_scale: torch.Tensor,
+        *,
+        global_param_name: str,
+        megatron_module: nn.Module,
+    ) -> tuple[LocalMXFP8Param, ...]:
+        """Project a local column-parallel native MXFP8 weight without gathering."""
+        _validate_native_mxfp8_pair(weight, weight_scale, global_param_name)
+
+        global_weight_shape = list(weight.shape)
+        global_weight_shape[0] *= self.tp_size
+        shard_group: MXFP8ShardGroup = "etp" if self.is_expert else "tp"
+        return (
+            LocalMXFP8Param(
+                name=str(self.hf_param),
+                weight=weight,
+                weight_scale=weight_scale,
+                global_weight_shape=torch.Size(global_weight_shape),
+                shard_group=shard_group,
+                shard_dim=0,
+            ),
+        )
+
     def hf_to_megatron(
         self,
         hf_weights: torch.Tensor,
@@ -1760,7 +1785,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         global_param_name: str,
         megatron_module: nn.Module,
     ) -> tuple[LocalMXFP8Param, ...]:
-        """Delegate direct native MXFP8 export only to a row-parallel mapping."""
+        """Delegate direct native MXFP8 export to the detected mapping."""
         if not self.local_hf_param_specs(global_param_name):
             raise ValueError(f"{global_param_name}: mapping does not expose canonical local HF views")
         if self.permute_dims is not None or getattr(self, "transpose_on_export", False):
@@ -1775,11 +1800,6 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             except ValueError as error:
                 raise ValueError(f"{global_param_name}: {error}") from error
 
-        if not isinstance(self._mapping, RowParallelMapping):
-            raise ValueError(
-                f"{global_param_name}: native MXFP8 export requires RowParallelMapping, "
-                f"got {type(self._mapping).__name__}"
-            )
         return self._mapping.local_mxfp8_params(
             weight,
             weight_scale,
