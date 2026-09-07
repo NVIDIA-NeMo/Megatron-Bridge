@@ -320,8 +320,8 @@ def build_inference_config(
     one source of truth. Pure: never mutates caller state.
 
     ``max_requests`` resolves to ``max_batch_size`` if set, else ``num_prompts``. When both are
-    ``None``, an explicit token budget caps server capacity; otherwise ``max_requests`` is left as
-    ``None`` for the engine to size from the KV-cache memory buffer.
+    ``None``, the effective token budget caps pure-transformer server capacity. Recurrent models
+    retain MCore's joint KV/recurrent-state auto-sizing.
     """
     effective_block_size = block_size_tokens
     if getattr(getattr(model, "config", None), "cache_mla_latents", False) and block_size_tokens != 64:
@@ -331,6 +331,7 @@ def build_inference_config(
         )
         effective_block_size = 64
 
+    mamba_inference_state_config = MambaInferenceStateConfig.from_model(model)
     max_requests = max_batch_size or num_prompts
     if max_requests is not None and max_requests % tp != 0:
         rounded = ((max_requests + tp - 1) // tp) * tp
@@ -345,7 +346,7 @@ def build_inference_config(
         max_requests = rounded
 
     max_tokens_limit = max_tokens or DynamicInferenceContext.DEFAULT_MAX_TOKENS
-    if max_requests is None and max_tokens is not None:
+    if max_requests is None and (max_tokens is not None or mamba_inference_state_config is None):
         max_requests = max_tokens_limit // tp * tp
         if max_requests == 0:
             raise ValueError(f"--max_tokens ({max_tokens_limit}) must be at least --tp ({tp}).")
@@ -366,7 +367,7 @@ def build_inference_config(
         max_requests=max_requests,
         max_tokens=max_tokens,
         max_sequence_length=_effective_max_sequence_length(model, max_sequence_length),
-        mamba_inference_state_config=MambaInferenceStateConfig.from_model(model),
+        mamba_inference_state_config=mamba_inference_state_config,
         pg_collection=getattr(model, "pg_collection", None),
         materialize_only_last_token_logits=not return_log_probs,
         enable_chunked_prefill=enable_chunked_prefill,
