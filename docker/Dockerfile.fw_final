@@ -103,7 +103,7 @@ RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
 
 # Patch wandb-core with fixed gRPC-Go and Go standard-library versions.
 ARG TARGETARCH
-RUN GRPC_VERSION=1.82.1 && \
+RUN GRPC_VERSION=1.83.0 && \
     GO_VERSION=1.26.5 && \
     WANDB_VERSION=$(python3 -c "import wandb; print(wandb.__version__)") && \
     WANDB_CORE_BIN=/opt/venv/lib/python3.12/site-packages/wandb/bin/wandb-core && \
@@ -123,8 +123,8 @@ RUN GRPC_VERSION=1.82.1 && \
 # This stock upstream binary ships with go-git v5.17.2 and is a separate wandb install from the
 # /opt/venv copy rebuilt above, so it must be rebuilt against its own wandb version (resolved via
 # the system interpreter that owns dist-packages) to avoid a python/wandb-core version mismatch.
-RUN GO_GIT_VERSION=5.19.0 && \
-    GRPC_VERSION=1.82.1 && \
+RUN GO_GIT_VERSION=5.19.2 && \
+    GRPC_VERSION=1.83.0 && \
     GO_VERSION=1.26.5 && \
     WANDB_VERSION=$(/usr/bin/python3 -c "import wandb; print(wandb.__version__)") && \
     WANDB_CORE_BIN=/usr/local/lib/python3.12/dist-packages/wandb/bin/wandb-core && \

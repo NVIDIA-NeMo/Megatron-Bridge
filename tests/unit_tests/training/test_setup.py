@@ -572,6 +572,7 @@ class TestBuildDistributedModel:
             num_layers=1,
             hidden_size=64,
             num_attention_heads=4,
+            num_query_groups=4,
             heterogeneous_layers_config_encoded_json=json.dumps({"block_configs": [block]}),
         )
         expected_model = [MagicMock()]

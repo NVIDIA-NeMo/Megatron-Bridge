@@ -610,6 +610,45 @@ def get_rng_state(
     return rng_state_list
 
 
+def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject:
+    """Align RNG load metadata with the layout stored in a torch-dist checkpoint.
+
+    Newer MCore checkpoints shard RNG state across PP, TP, and DP/CP, while
+    older checkpoints encode DP as a replica ID. Keep the generated metadata
+    when its exact key exists; otherwise adopt a unique stored layout whose
+    PP/TP prefix matches this rank.
+    """
+    checkpoint_path = Path(checkpoint_name)
+    if not (checkpoint_path / ".metadata").is_file():
+        return rng_state
+
+    sharded_metadata = TorchDistLoadShardedStrategy().load_sharded_metadata(checkpoint_path)
+    if rng_state.unique_key in sharded_metadata:
+        return rng_state
+
+    prefix = rng_state.global_offset[:2]
+    matches = [
+        metadata
+        for metadata in sharded_metadata.values()
+        if isinstance(metadata, ShardedObject)
+        and metadata.key == rng_state.key
+        and metadata.global_offset[:2] == prefix
+        and len(metadata.global_offset) == len(rng_state.global_offset) + 1
+        and metadata.global_offset[-1] == rng_state.replica_id
+        and metadata.replica_id == 0
+    ]
+    if len(matches) != 1:
+        return rng_state
+
+    stored = matches[0]
+    return replace(
+        rng_state,
+        global_shape=stored.global_shape,
+        global_offset=stored.global_offset,
+        replica_id=stored.replica_id,
+    )
+
+
 class CheckpointType(Enum):
     """Types of checkpoints to save."""
 
@@ -2974,6 +3013,8 @@ def _load_checkpoint_from_path(
                 pg_collection=pg_collection,
                 module_name=module_name,
             )
+            if ckpt_type != CheckpointType.LOCAL:
+                gen_sd_rng_state = _align_rng_state_sharded_metadata(gen_sd_rng_state, checkpoint_name)
         else:
             ignore_rng_state = True
             gen_sd_rng_state = None
