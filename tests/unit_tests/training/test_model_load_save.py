@@ -184,18 +184,8 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_gloo(self, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_gloo(self, mock_parallel_state, mock_dist):
         """Test temporary distributed context with gloo backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
-
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
             patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed,
@@ -204,8 +194,9 @@ class TestTemporaryDistributedContext:
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="gloo", init_method="tcp://localhost:12345", world_size=1, rank=0
+            backend="gloo", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
@@ -213,41 +204,62 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_with_env_vars(self, mock_os, mock_parallel_state, mock_dist):
-        """Test temporary distributed context when env vars are already set."""
-        mock_os.environ = {"MASTER_ADDR": "localhost", "MASTER_PORT": "12345"}
+    def test_temporary_distributed_context_ignores_rendezvous_env(self, mock_parallel_state, mock_dist):
+        """Rendezvous env vars must not leak into the temporary context init."""
+        with patch.dict(os.environ, {"MASTER_ADDR": "203.0.113.1", "MASTER_PORT": "1"}):
+            with temporary_distributed_context(backend="gloo"):
+                pass
 
-        with temporary_distributed_context(backend="gloo"):
-            pass
-
-        mock_dist.init_process_group.assert_called_once_with(backend="gloo", init_method=None, world_size=1, rank=0)
+        mock_dist.init_process_group.assert_called_once_with(
+            backend="gloo", store=mock_dist.HashStore.return_value, world_size=1, rank=0
+        )
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
     @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
-    def test_temporary_distributed_context_nccl(self, mock_seed, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_nccl(self, mock_seed, mock_parallel_state, mock_dist):
         """Test temporary distributed context with nccl backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
-
-        with temporary_distributed_context(backend="nccl"):
-            pass
+        with (
+            patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True),
+            patch("megatron.bridge.training.model_load_save.torch.cuda.device_count", return_value=1),
+        ):
+            with temporary_distributed_context(backend="nccl"):
+                pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="nccl", init_method="tcp://localhost:12345", world_size=1, rank=0
+            backend="nccl", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
         mock_seed.assert_called_once_with(0)
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
-        mock_dist.destroy_process_group.assert_called_once()
+
+    @pytest.mark.skipif(
+        not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
+        reason="requires torch.distributed with gloo",
+    )
+    def test_temporary_distributed_context_real_gloo_single_process(self):
+        """End-to-end single-process init with the real gloo backend.
+
+        No TCP rendezvous is used, so this works without MASTER_ADDR/MASTER_PORT
+        set to anything usable and does not contend for a host port.
+        """
+        import torch.distributed as dist
+
+        for var in ("MASTER_ADDR", "MASTER_PORT"):
+            os.environ.pop(var, None)
+
+        with (
+            patch("megatron.bridge.training.model_load_save.parallel_state"),
+            patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
+            temporary_distributed_context(backend="gloo"),
+        ):
+            assert dist.is_initialized()
+            assert dist.get_world_size() == 1
+            assert dist.get_rank() == 0
+
+        assert not dist.is_initialized()
 
 
 class TestLoadMegatronModel:
