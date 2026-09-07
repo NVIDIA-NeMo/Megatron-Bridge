@@ -25,7 +25,9 @@ from typing import Callable
 
 import pytest
 import torch
+import torch.nn as nn
 
+from megatron.bridge.training.setup import _apply_peft_transformation
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -78,6 +80,21 @@ class _FakeAutoBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         """Return a fake model config."""
         return _FakeModelCfg()
+
+
+class _TinyQwen25VLModel(nn.Module):
+    """Qwen-shaped model for checking the public recipe's trainable components."""
+
+    def __init__(self, config: _FakeModelCfg):
+        super().__init__()
+        self.config = config
+        self.language_model = nn.Module()
+        self.language_model.linear_qkv = nn.Linear(4, 4)
+        self.visual = nn.Module()
+        self.visual.patch_embed = nn.Linear(4, 4)
+        self.visual.blocks = nn.ModuleList([nn.Module()])
+        self.visual.blocks[0].qkv = nn.Linear(4, 4)
+        self.visual.merger = nn.Sequential(nn.Linear(4, 4))
 
 
 def _assert_basic_config(cfg):
@@ -328,6 +345,55 @@ def test_qwen25_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_vision_projection is False
+
+
+def test_qwen25_vl_peft_freeze_overrides_control_trainable_components(monkeypatch: pytest.MonkeyPatch):
+    """Test the documented language-frozen, vision-trainable PEFT configuration."""
+    patch_recipe_module_global(monkeypatch, _qwen25_vl_module, "AutoBridge", _FakeAutoBridge)
+    cfg = _qwen25_vl_module.qwen25_vl_3b_peft_config(peft_scheme="lora")
+    cfg.model.freeze_language_model = True
+    cfg.model.freeze_vision_model = False
+    cfg.model.freeze_vision_projection = False
+    model = _TinyQwen25VLModel(cfg.model)
+
+    from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
+
+    Qwen25VLModel.freeze(
+        model,
+        freeze_language_model=cfg.model.freeze_language_model,
+        freeze_vision_model=cfg.model.freeze_vision_model,
+        freeze_vision_projection=cfg.model.freeze_vision_projection,
+    )
+    [model] = _apply_peft_transformation(cfg.peft, [model])
+
+    trainable = {name for name, param in model.named_parameters() if param.requires_grad}
+    assert trainable == {
+        "language_model.linear_qkv.adapter.linear_in.weight",
+        "language_model.linear_qkv.adapter.linear_out.weight",
+        "visual.blocks.0.qkv.bias",
+        "visual.blocks.0.qkv.weight",
+        "visual.merger.0.bias",
+        "visual.merger.0.weight",
+        "visual.patch_embed.bias",
+        "visual.patch_embed.weight",
+    }
+    assert cfg.peft.params_to_save == trainable
+
+
+def test_qwen25_vl_peft_defaults_remain_adapter_only(monkeypatch: pytest.MonkeyPatch):
+    """Test that component preservation is opt-in through an explicit freeze override."""
+    patch_recipe_module_global(monkeypatch, _qwen25_vl_module, "AutoBridge", _FakeAutoBridge)
+    cfg = _qwen25_vl_module.qwen25_vl_3b_peft_config(peft_scheme="lora")
+    model = _TinyQwen25VLModel(cfg.model)
+
+    [model] = _apply_peft_transformation(cfg.peft, [model])
+
+    trainable = {name for name, param in model.named_parameters() if param.requires_grad}
+    assert trainable == {
+        "language_model.linear_qkv.adapter.linear_in.weight",
+        "language_model.linear_qkv.adapter.linear_out.weight",
+    }
+    assert cfg.peft.params_to_save == trainable
 
 
 def test_qwen25_vl_precision_config(monkeypatch: pytest.MonkeyPatch):

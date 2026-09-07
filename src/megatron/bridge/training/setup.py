@@ -726,7 +726,24 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
         Model with PEFT transformation applied
     """
     print_rank_0("Applying PEFT transformation...")
+    component_freeze_fields = (
+        "freeze_language_model",
+        "freeze_vision_model",
+        "freeze_vision_projection",
+    )
+    preserve_provider_trainability = any(
+        getattr(getattr(model_chunk, "config", None), field, False)
+        for model_chunk in base_model
+        for field in component_freeze_fields
+    )
+    provider_trainable_params = (
+        {param for model_chunk in base_model for param in model_chunk.parameters() if param.requires_grad}
+        if preserve_provider_trainability
+        else set()
+    )
     transformed_model = peft(base_model, training=True)
+    for param in provider_trainable_params:
+        param.requires_grad = True
     peft.set_params_to_save(transformed_model)
 
     # Log PEFT statistics
