@@ -431,10 +431,13 @@ class TestMegatronFSDP:
         cfg = create_fsdp_config_container(
             seq_length=128,
             train_iters=10,
-            optimizer={"use_precision_aware_optimizer": True},
+            optimizer={"use_precision_aware_optimizer": True, "optimizer_cuda_graph": True},
         )
         cfg.model = create_dense_hybrid_smoke_model_config()
         cfg.ddp.megatron_fsdp_version = 2
+        # Capturable TE FusedAdam requires the main-gradient and main-weight dtypes
+        # to match (https://github.com/NVIDIA/TransformerEngine/issues/3358).
+        cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
 
         pretrain(cfg, forward_step)
 

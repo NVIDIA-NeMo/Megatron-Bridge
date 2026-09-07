@@ -1192,8 +1192,6 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
         if self.optimizer.use_layer_wise_distributed_optimizer:
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
-        if self.optimizer.optimizer_cuda_graph:
-            raise ValueError("MFSDP V2 does not support optimizer CUDA graphs.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
         if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
