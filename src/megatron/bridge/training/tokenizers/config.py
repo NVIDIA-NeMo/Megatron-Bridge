@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 from megatron.training.config import TokenizerConfig as MTrainTokenizerConfig
-
-from megatron.bridge.utils.common_utils import warn_rank_0
 
 
 @dataclass(kw_only=True)
