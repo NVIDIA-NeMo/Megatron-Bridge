@@ -13,10 +13,11 @@ Key components:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional
 
 import torch.distributed as dist
+from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
@@ -41,6 +42,21 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _to_mcore_optimizer_config(config: MCoreOptimizerConfig) -> MCoreOptimizerConfig:
+    """Normalize a deferred Bridge optimizer config before MCore copies it.
+
+    MCore's MIMO optimizer derives per-module configs with ``dataclasses.replace``.
+    Replacing Bridge's deferred-post-init subclass skips MCore's computed fields, so
+    construct the native config at this boundary and let its post-init run normally.
+    """
+    if not isinstance(config, MCoreOptimizerConfig) or type(config) is MCoreOptimizerConfig:
+        return config
+
+    return MCoreOptimizerConfig(
+        **{field.name: getattr(config, field.name) for field in fields(MCoreOptimizerConfig) if field.init}
+    )
 
 
 @dataclass
@@ -222,8 +238,10 @@ def setup_megatron_mimo(
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")
     from megatron.core.models.mimo.optimizer import get_mimo_optimizer
 
-    # cfg.optimizer already finalized by megatron_mimo_runtime_config_update().
-    optimizer = get_mimo_optimizer(unwrapped_model, cfg.optimizer)
+    # cfg.optimizer is finalized by megatron_mimo_runtime_config_update(), but it is a
+    # deferred-post-init Bridge subclass. MCore's MIMO optimizer copies the config per
+    # module with dataclasses.replace(), so normalize it to the native class first.
+    optimizer = get_mimo_optimizer(unwrapped_model, _to_mcore_optimizer_config(cfg.optimizer))
 
     # Auto-create per-module LR schedulers
     cfg._calculate_scheduler_steps()

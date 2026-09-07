@@ -95,6 +95,8 @@ The most important interactions are:
 - `delay_wgrad_compute`: adds extra constraints when captured scopes include attention or MoE router
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`: requires `NCCL_GRAPH_REGISTER=0` in the relevant path
 - CPU offloading: incompatible
+- `overlap_param_gather_with_optimizer_step`: incompatible with full-iteration capture because the parameter gather
+  is dispatched from the preceding optimizer step, outside the captured iteration
 
 These interactions are stable enough to treat as design constraints, not just
 debugging tips.

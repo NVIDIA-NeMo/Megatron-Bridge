@@ -49,6 +49,17 @@ from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 logger = logging.getLogger(__name__)
 
 
+def _validate_hybrid_stack_spec(spec: object) -> None:
+    """Validate an MLM ``--spec`` module/object pair before importing it."""
+    if not isinstance(spec, (list, tuple)) or len(spec) != 2 or not all(isinstance(item, str) for item in spec):
+        raise ValueError(
+            "args.spec must be the two-element [module_path, object_name] value produced by Megatron-LM --spec"
+        )
+
+    module_path, object_name = spec
+    _validate_target_prefix(target=f"{module_path}.{object_name}", full_key="args.spec")
+
+
 def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitchen: bool) -> ModuleSpec:
     """Get transformer layer specification based on configuration.
 
@@ -162,7 +173,7 @@ def _hybrid_provider(
         config = _transformer_config_from_args(args)
 
     assert args.spec is not None, "You must provide a valid Hybrid layer spec!"
-    _validate_target_prefix(target=args.spec, full_key="args.spec")
+    _validate_hybrid_stack_spec(args.spec)
     hybrid_stack_spec = import_module(args.spec)
 
     # Migrate deprecated hybrid_override_pattern → hybrid_layer_pattern

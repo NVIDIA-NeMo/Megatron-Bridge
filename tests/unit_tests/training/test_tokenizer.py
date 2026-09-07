@@ -173,6 +173,24 @@ class TestTokenizers:
         assert tokenizer.additional_args["pattern"] == pattern
         assert tokenizer.additional_args["num_special_tokens"] == num_special_tokens
 
+    @patch("megatron.core.tokenizers.utils.build_tokenizer.MegatronTokenizer.from_pretrained")
+    def test_build_sft_tokenizer_uses_mcore_prompt_format_alias(self, mock_from_pretrained):
+        """Bridge's canonical prompt field is exposed under the name MCore reads."""
+        mock_from_pretrained.return_value = sentinel.tokenizer
+        config = TokenizerConfig(
+            tokenizer_type="SFTTokenizer",
+            tokenizer_model="tokenizer.model",
+            tokenizer_prompt_format="nemotron-h-aligned",
+        )
+
+        assert build_tokenizer(config) is sentinel.tokenizer
+
+        mock_from_pretrained.assert_called_once_with(
+            tokenizer_path="tokenizer.model",
+            metadata_path={"library": "sft"},
+            prompt_format="nemotron-h-aligned",
+        )
+
     @pytest.mark.timeout(30)
     def test_hf_tokenizer_as_local_path_object(self, tmp_path):
         # Cover the user case where a user has made a local path object of a WIP tokenizer and wants

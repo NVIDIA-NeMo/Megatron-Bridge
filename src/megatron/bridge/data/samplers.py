@@ -2,6 +2,7 @@
 
 """Dataloaders."""
 
+import multiprocessing
 import random
 from typing import Any, Callable, Iterator, Optional
 
@@ -409,7 +410,7 @@ class RandomSeedDataset(Dataset):
     def __init__(self, dataset: Dataset, seed: int) -> None:
         """Initialize RandomSeedDataset."""
         self.base_seed = seed
-        self.curr_seed = seed
+        self.curr_seed = multiprocessing.Value("q", seed, lock=False)
         self.dataset = dataset
 
     def __len__(self) -> int:
@@ -418,11 +419,11 @@ class RandomSeedDataset(Dataset):
 
     def set_epoch(self, epoch: int) -> None:
         """Set the current epoch number to adjust the random seed."""
-        self.curr_seed = self.base_seed + epoch
+        self.curr_seed.value = self.base_seed + epoch
 
     def __getitem__(self, idx: int) -> Any:
         """Get an item from the dataset, setting the random seed first."""
-        seed = idx + self.curr_seed
+        seed = idx + self.curr_seed.value
         torch.manual_seed(seed)
         random.seed(seed)
         np.random.seed(seed)
@@ -505,12 +506,11 @@ class MegatronPretrainingRandomSampler:
             random_idx = torch.randperm(bucket_size, generator=g).tolist()
             idx_range = [start_idx + x for x in random_idx[bucket_offset:]]
         else:
-            full_bucket_size = (self.total_samples // self.micro_batch_size) * self.micro_batch_size
             full_bucket_offset = current_epoch_samples
             g = torch.Generator()
             g.manual_seed(self.epoch)
-            idx_range_total = torch.randperm(full_bucket_size, generator=g).tolist()
-            idx_range_active = idx_range_total[full_bucket_offset:]
+            idx_range_total = torch.randperm(self.total_samples, generator=g).tolist()
+            idx_range_active = idx_range_total[full_bucket_offset:active_total_samples]
             idx_range = idx_range_active[self.data_parallel_rank :: self.data_parallel_size]
 
         batch = []

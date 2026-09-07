@@ -19,7 +19,7 @@ override system while maintaining compatibility with Megatron Core's post_init b
 """
 
 import copy
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
     HeterogeneousTransformerConfig as MCoreHeterogeneousTransformerConfig,
@@ -88,14 +88,13 @@ def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> N
         config.expert_tensor_parallel_size = 1
 
 
-def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
-    """Ensure eager HybridEP can dispatch different token counts across ranks.
+def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig, *, uses_thd: bool) -> None:
+    """Enable uneven-input padding for an eager HybridEP THD recipe.
 
-    Bridge model configs are finalized before runtime batches expose whether their
-    THD token counts differ by rank. HybridEP requires equal dispatch shapes, so use
-    Megatron Core's padding path for eager Bridge-configured HybridEP dispatchers.
-    CUDA-graph configs retain their explicit setting because the padding path's host
-    scalar synchronization is not capture-safe; those configs require equal inputs.
+    The combined training recipe owns the tensor layout, so it requests this
+    path only when its dataset produces THD packed-sequence metadata. CUDA-graph
+    configs retain their explicit setting because the padding path's host scalar
+    synchronization is not capture-safe; those configs require equal inputs.
     """
 
     def _uses_legacy_full_iteration(value: object) -> bool:
@@ -107,17 +106,22 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig) -> None:
             for item in values
         )
 
+    has_cuda_graph_impl = hasattr(config, "cuda_graph_impl")
     cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")
+    uses_legacy_full_iteration = not has_cuda_graph_impl and (
+        _uses_legacy_full_iteration(getattr(config, "cuda_graph_modules", None))
+        or _uses_legacy_full_iteration(getattr(config, "cuda_graph_scope", None))
+    )
     cuda_graphs_enabled = (
         cuda_graph_impl not in (None, "none")
         or getattr(config, "enable_cuda_graph", False)
         or getattr(config, "external_cuda_graph", False)
-        or _uses_legacy_full_iteration(getattr(config, "cuda_graph_modules", None))
-        or _uses_legacy_full_iteration(getattr(config, "cuda_graph_scope", None))
+        or uses_legacy_full_iteration
     )
     if (
-        config.moe_token_dispatcher_type != "flex"
-        or config.moe_flex_dispatcher_backend != "hybridep"
+        not uses_thd
+        or getattr(config, "moe_token_dispatcher_type", None) != "flex"
+        or getattr(config, "moe_flex_dispatcher_backend", None) != "hybridep"
         or cuda_graphs_enabled
     ):
         return
@@ -153,6 +157,13 @@ class TransformerConfig(MCoreTransformerConfig):
 
     _NO_COPY_KEYS = {"_pg_collection"}
 
+    # Generalized tensor-parallel metadata was added after the frozen MCore dev pin.
+    # Keep it on the Bridge wrapper so one configuration remains usable with both pins.
+    tensor_parallel_num_weight_shards: int | None = None
+    expert_tensor_parallel_num_weight_shards: int | None = None
+    gtp_weight_remat_size: int = field(init=False, default=1)
+    expert_gtp_weight_remat_size: int = field(init=False, default=1)
+
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
 
@@ -175,7 +186,7 @@ class TransformerConfig(MCoreTransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
-        _enable_safe_hybridep_dispatch(self)
+        self._finalize_gtp_weight_shards()
         MCoreTransformerConfig.__post_init__(self)
 
         # In-batch packing produces variable-length packed sequences across microbatches,
@@ -184,6 +195,24 @@ class TransformerConfig(MCoreTransformerConfig):
         # dispatcher check (irrelevant for non-MoE models).
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
+
+    def _finalize_gtp_weight_shards(self) -> None:
+        """Derive rematerialization sizes from optional logical weight-shard counts."""
+        for field_name, parallel_size_name, output_name in (
+            ("tensor_parallel_num_weight_shards", "tensor_model_parallel_size", "gtp_weight_remat_size"),
+            (
+                "expert_tensor_parallel_num_weight_shards",
+                "expert_tensor_parallel_size",
+                "expert_gtp_weight_remat_size",
+            ),
+        ):
+            num_weight_shards = getattr(self, field_name, None)
+            if num_weight_shards is None:
+                continue
+            parallel_size = getattr(self, parallel_size_name) or 1
+            if num_weight_shards < parallel_size or num_weight_shards % parallel_size:
+                raise ValueError(f"{field_name} must be divisible by and at least {parallel_size_name}")
+            setattr(self, output_name, num_weight_shards // parallel_size)
 
     def __deepcopy__(self, memo):
         """Custom deepcopy to preserve process group handles when cloning configs.
@@ -252,7 +281,7 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
-        _enable_safe_hybridep_dispatch(self)
+        self._finalize_gtp_weight_shards()
         MCoreMLATransformerConfig.__post_init__(self)
 
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
@@ -309,7 +338,7 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
         _set_moe_expert_tensor_parallel_default(self)
-        _enable_safe_hybridep_dispatch(self)
+        self._finalize_gtp_weight_shards()
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
         if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True

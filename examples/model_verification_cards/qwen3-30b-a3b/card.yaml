@@ -4,9 +4,12 @@
 title: qwen3_30b_a3b
 summary: >
   Performance scope: pretrain_performance.H100 and pretrain_performance.GB200
-  use tuned canonical performance recipes; timing and throughput metrics from
-  functional training items remain sanity checks rather than optimized
-  performance results.
+  and pretrain_performance.GB300 use tuned canonical performance recipes;
+  timing and throughput metrics from functional
+  training items remain sanity checks rather than optimized performance
+  results.
+  Weak-scaling scope: pretrain_weak_scaling.GB300 records measured scaling
+  from 8 through 256 GPUs with constant token slots per GPU per step.
   Qwen3-30B-A3B support verification covers conversion, inference, and training.
 verification_index:
   model_level:
@@ -26,13 +29,16 @@ verification_index:
   performance:
     H100: verified
     GB200: verified
+    GB300: verified
+  weak_scaling:
+    GB300: verified
 model:
   hf_id: Qwen/Qwen3-30B-A3B
   hf_revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39  # pragma: allowlist secret
   architecture: Qwen3MoeForCausalLM
   min_transformers_version: "5.8.1"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.06
+  base_container: nvcr.io/nvidia/nemo:26.08
   bridge_commit: aabb29d0ed15fc7ed881f0538352c6bd2d2fd52d  # pragma: allowlist secret
 
 items:
@@ -183,7 +189,7 @@ items:
     GB200:
       status: verified
       precision: fp8_mx
-      bridge_commit: 487f563983f00b190a1a8322d663f317ad8e611c  # pragma: allowlist secret
+      bridge_commit: 1a6383a7a526ec52de03c5d7faf086407eecab01  # pragma: allowlist secret
       enabled_features:
         cuda_graph:
           implementation: transformer_engine
@@ -191,7 +197,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config
+        --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config
         --mode pretrain --dataset megatron-indexed --seq_length 4096
         --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
         'dataset.blend=[["work/data/rp2/head_01"],null]'
@@ -210,24 +216,25 @@ items:
         --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-23
+      last_verified: 2026-08-25
       metrics:
-        initial_loss: 12.41293
-        final_loss: 6.183484
-        last_10_steps_step_time_ms_avg: 12362.340
-        last_10_steps_model_tflops_per_gpu_avg: 487.880
-        last_10_steps_tokens_per_second_per_gpu_avg: 21205.047
+        initial_loss: 10.70991
+        final_loss: 6.046449
+        last_10_steps_step_time_ms_avg: 15807.670
+        last_10_steps_model_tflops_per_gpu_avg: 357.220
+        last_10_steps_tokens_per_second_per_gpu_avg: 16583.342
       expected_result: >
         On 8x GB200, this support-verification workload completes exactly 100
         bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off,
         GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural
         routing, HybridEP, Transformer Engine CUDA graphs for moe_router and
-        moe_preprocess, communication overlap, functional safety checks, and
-        MXFP8 parameter all-gather remain active. Loss is finite from 12.41293
-        to 6.183484 with no skipped or NaN iterations, all five metrics are
-        recorded, and complete eight-shard iter_0000050 and iter_0000100
-        checkpoints are saved. Timing and throughput are support sanity checks,
-        not cross-model convergence or tuned performance claims.
+        moe_preprocess, selective MoE activation recompute, communication
+        overlap, functional safety checks, and MXFP8 parameter all-gather remain
+        active. Loss is finite from 10.70991 to 6.046449 with no skipped or NaN
+        iterations, all five metrics are recorded, and complete eight-shard
+        iter_0000050 and iter_0000100 checkpoints are saved. Timing and
+        throughput are support sanity checks, not cross-model convergence or
+        tuned performance claims.
 
   sft:
     H100:
@@ -456,11 +463,11 @@ items:
     GB200:
       status: verified
       precision: fp8_mx
-      bridge_commit: 487f563983f00b190a1a8322d663f317ad8e611c  # pragma: allowlist secret
+      bridge_commit: 1a6383a7a526ec52de03c5d7faf086407eecab01  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config
+        --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config
         --mode pretrain --dataset megatron-indexed --seq_length 4096
         --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
         'dataset.blend=[["work/data/rp2/head_01"],null]'
@@ -482,13 +489,13 @@ items:
         train.empty_unused_memory_level=2
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-23
+      last_verified: 2026-08-25
       metrics:
-        initial_loss: 6.774675
-        final_loss: 6.187264
-        last_10_steps_step_time_ms_avg: 18694.970
-        last_10_steps_model_tflops_per_gpu_avg: 322.620
-        last_10_steps_tokens_per_second_per_gpu_avg: 14022.167
+        initial_loss: 6.715488
+        final_loss: 6.046449
+        last_10_steps_step_time_ms_avg: 20340.300
+        last_10_steps_model_tflops_per_gpu_avg: 277.770
+        last_10_steps_tokens_per_second_per_gpu_avg: 12887.912
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -500,11 +507,9 @@ items:
         from iter_0000050, keeps the MXFP8 forward pre-hook active before the
         first resumed forward pass, begins at step 51, and finishes at step 100
         in a distinct resumed root with finite losses and no skipped or NaN
-        iterations. Step-51 loss 6.774675 matches the uninterrupted reference
-        exactly; step-100 loss 6.187264 differs from reference 6.183484 by
-        0.061131%, within the declared one-percent gate. Both sentinels match,
-        all five metrics are recorded, and a complete iter_0000100 checkpoint
-        is saved.
+        iterations. Step-51 loss 6.715488 and step-100 loss 6.046449 both match
+        the uninterrupted reference exactly. Both sentinels match, all five
+        metrics are recorded, and a complete iter_0000100 checkpoint is saved.
 
   pretrain_performance:
     H100:
@@ -554,3 +559,94 @@ items:
         load balancing, HybridEP, MXFP8, and full-iteration CUDA graphs. Over
         steps 41-50, the run averages at most 7 seconds per step and at least
         900 model TFLOP/s/GPU.
+
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
+        --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 4096
+        logger.save_config_filepath=work/model-verification/qwen3-30b-a3b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-18
+      metrics:
+        initial_loss: 12.34753
+        final_loss: 8.125566
+        last_10_steps_step_time_ms_avg: 5854.910
+        last_10_steps_model_tflops_per_gpu_avg: 1030.070
+        last_10_steps_tokens_per_second_per_gpu_avg: 44773.361
+      expected_result: >
+        On exactly 8 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP8/ETP1, GBS/MBS 512/8,
+        and sequence length 4096. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.34753 to 8.125566; the
+        final ten steps average 5854.910 ms, 1030.070 TFLOP/s/GPU, and
+        44773.361 tokens/s/GPU. The resolved configuration persists.
+
+  pretrain_weak_scaling:
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: fbb7570cf7eec94fd2e6064454d84f7fad07fbfa  # pragma: allowlist secret
+      last_verified: 2026-08-15
+      points:
+        - num_gpus: 8
+          global_batch_size: 512
+          command: >
+            ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 512
+          metrics:
+            initial_loss: 12.347530
+            final_loss: 8.131992
+            last_10_steps_step_time_ms_avg: 5889.420
+            last_10_steps_model_tflops_per_gpu_avg: 1024.020
+            last_10_steps_tokens_per_second_per_gpu_avg: 44511.004
+        - num_gpus: 32
+          global_batch_size: 2048
+          command: >
+            ./scripts/training/train.sh --nodes 8 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 2048
+          metrics:
+            initial_loss: 12.347100
+            final_loss: 8.131451
+            last_10_steps_step_time_ms_avg: 5814.290
+            last_10_steps_model_tflops_per_gpu_avg: 1037.270
+            last_10_steps_tokens_per_second_per_gpu_avg: 45086.158
+        - num_gpus: 128
+          global_batch_size: 8192
+          command: >
+            ./scripts/training/train.sh --nodes 32 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 8192
+          metrics:
+            initial_loss: 12.346790
+            final_loss: 8.126566
+            last_10_steps_step_time_ms_avg: 5831.720
+            last_10_steps_model_tflops_per_gpu_avg: 1034.180
+            last_10_steps_tokens_per_second_per_gpu_avg: 44951.404
+        - num_gpus: 256
+          global_batch_size: 16384
+          command: >
+            ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
+            --recipe qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config
+            --mode pretrain --max_steps 50 --seq_length 4096
+            --global_batch_size 16384
+          metrics:
+            initial_loss: 12.346980
+            final_loss: 8.129371
+            last_10_steps_step_time_ms_avg: 5818.620
+            last_10_steps_model_tflops_per_gpu_avg: 1036.490
+            last_10_steps_tokens_per_second_per_gpu_avg: 45052.607
+      expected_result: >
+        On GB300, the exact mock-data MXFP8 recipe completes 50 steps at each
+        of 8, 32, 128, and 256 GPUs with TP1/PP1/CP1/EP8/ETP1, MBS8, sequence
+        length 4096, and GBS proportional to GPU count. Every point has finite
+        losses and performance values, zero skipped or NaN iterations, a
+        persisted post-setup runtime config, and all five metrics recorded from
+        complete keyed optimizer-step rows.

@@ -588,7 +588,7 @@ class _FakeInfraForMIMOBridge:
 
 class _FakeTaskSourceBridge(_RecordingBridge):
     def build_conversion_tasks(self, hf_pretrained, megatron_model):
-        return [None, "task"]
+        return ["task"]
 
 
 def _bridge_parallelism_config() -> MegatronMIMOParallelismConfig:

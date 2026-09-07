@@ -82,6 +82,11 @@ class TokenizerConfig(MTrainTokenizerConfig):
     tokenizer_prompt_format: Optional[str] = None
     """Prompt format for the tokenizer."""
 
+    @property
+    def sft_tokenizer_prompt_format(self) -> str | None:
+        """Expose the prompt-format name expected by MCore's SFT tokenizer builder."""
+        return self.tokenizer_prompt_format
+
     image_tag_type: Optional[str] = None
     """Image tag to apply, if any. For example <img><image></img>."""
 

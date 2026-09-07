@@ -664,6 +664,14 @@ def build_index_files(
         workers=workers,
     )
 
+    # safe_map yields None for a file whose index build raised; summing it masks the real error.
+    failed = [fn for fn, status in zip(dataset_paths, build_status) if status is None]
+    if failed:
+        raise RuntimeError(
+            f"Failed to build memmap index files for {len(failed)} of {len(dataset_paths)} "
+            f"data files: {failed}. See the preceding warnings for the underlying error."
+        )
+
     logger.info(
         f"Time building {sum(build_status)} / {len(build_status)} "
         f"mem-mapped files: {datetime.timedelta(seconds=time.time() - start_time)}"
@@ -1310,6 +1318,8 @@ def _index_fn(fn: str, index_mapping_dir: str) -> str:
                 If None, will write to the same folder as the dataset.
     """
     if index_mapping_dir:
+        # A scheme left inside the composed path reads back as a nested URL.
+        fn = fn.replace("://", "/")
         # Remove leading "/" and "..".
         while fn.startswith(("/", "..")):
             if fn.startswith(".."):

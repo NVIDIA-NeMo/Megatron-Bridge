@@ -84,6 +84,7 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.num_layers_in_last_pipeline_stage = None
 
     # Set pipeline layout
+    cfg.model._pipeline_model_parallel_layout_builder = _get_kimi_k25_vl_pipeline_layout
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k25_vl_pipeline_layout(16, 1)
 
     # Tokenizer - uses NullTokenizer with model vocab_size

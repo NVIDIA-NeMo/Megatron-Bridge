@@ -75,7 +75,12 @@ unchanged to the selected repository entry point.
         "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
-        help="GPUs and inference tasks per node.",
+        help="GPUs allocated per node.",
+    )
+    execution.add_argument(
+        "--tasks-per-node",
+        type=int,
+        help="Inference tasks per node; defaults to one task per GPU.",
     )
     execution.add_argument("--cpus-per-task", type=int, help="CPUs allocated to each inference task.")
     execution.add_argument("--mem", help="Optional Slurm memory request, such as 64G.")
@@ -170,6 +175,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--nodes must be at least 1.")
     if args.gpus_per_node is None or args.gpus_per_node < 1:
         raise ValueError("--gpus-per-node is required and must be at least 1.")
+    if args.tasks_per_node is not None and not 1 <= args.tasks_per_node <= args.gpus_per_node:
+        raise ValueError("--tasks-per-node must be between 1 and --gpus-per-node.")
     if args.cpus_per_task is not None and args.cpus_per_task < 1:
         raise ValueError("--cpus-per-task must be at least 1.")
     if any(not value.strip() for value in args.srun_args):
@@ -201,7 +208,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
         account=args.account,
         partition=args.partition,
         nodes=args.nodes,
-        ntasks_per_node=args.gpus_per_node,
+        ntasks_per_node=args.tasks_per_node or args.gpus_per_node,
         cpus_per_task=args.cpus_per_task,
         mem=args.mem,
         exclusive=True if args.exclusive else None,
