@@ -30,7 +30,7 @@ from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.checkpointing import _CpuTorchDistSaveShardedStrategy, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
@@ -266,7 +266,7 @@ def load_model_config(
         read_run_config,
     )
     from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
-    from megatron.bridge.utils.instantiate_utils import instantiate
+    from megatron.bridge.utils.instantiate_utils import _resolve_target, instantiate
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
 
@@ -291,7 +291,15 @@ def load_model_config(
 
     if mbridge_ckpt:
         if "_builder_" in run_config["model"]:
-            model_cfg = ModelConfig.from_dict(run_config["model"])
+            model_dict = run_config["model"]
+            target = model_dict.get("_target_")
+            if isinstance(target, str):
+                model_config_cls = _resolve_target(target, full_key="model._target_")
+                if not isinstance(model_config_cls, type) or not issubclass(model_config_cls, ModelConfig):
+                    raise TypeError(f"Builder model target must resolve to a ModelConfig class, got {target!r}.")
+                model_cfg = model_config_cls.from_dict(model_dict)
+            else:
+                model_cfg = ModelConfig.from_dict(model_dict)
         else:
             model_cfg = instantiate(run_config["model"])
     else:
@@ -571,16 +579,18 @@ def save_megatron_model(
             hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
-    # Get model config from the first model instance
-    model_config = get_model_config(model[0])
+    # Builder-backed models retain their complete outer ModelConfig for
+    # checkpoint reconstruction. Legacy provider models expose their provider
+    # through ``config`` as before.
+    model_config = getattr(model[0], "model_config", None)
+    if not isinstance(model_config, ModelConfig):
+        model_config = get_model_config(model[0])
 
-    # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            "Expected model config to be an instance of ModelConfig or ModelProviderMixin, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
-            f"model instantiation and configuration handling."
+            "Model configs must support builder- or provider-backed reconstruction."
         )
 
     # Create global state for checkpointing
@@ -630,6 +640,17 @@ def save_megatron_model(
                 raise RuntimeError(f"Failed to save tokenizer assets on one or more ranks: {failures}")
         elif tokenizer_error is not None:
             raise tokenizer_error
+
+    runtime_config = getattr(model[0], "config", None)
+    use_cpu_save_strategy = getattr(runtime_config, "use_cpu_initialization", False) is True
+    if isinstance(model_config, ModelConfig):
+        transformer_config = getattr(model_config, "transformer", None)
+        use_cpu_save_strategy = (
+            use_cpu_save_strategy or getattr(transformer_config, "use_cpu_initialization", False) is True
+        )
+    checkpointing_context = None
+    if ckpt_format == "torch_dist" and use_cpu_save_strategy:
+        checkpointing_context = {"save_strategy": _CpuTorchDistSaveShardedStrategy("torch_dist", 1)}
 
     if low_memory_save:
         # Low-memory save flow: process factories incrementally, freeing memory as we go
@@ -789,6 +810,7 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
             pg_collection=pg_collection,
+            checkpointing_context=checkpointing_context,
             callback_manager=None,
         )
     else:
@@ -799,6 +821,7 @@ def save_megatron_model(
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=checkpointing_context,
             callback_manager=None,
         )
 

@@ -6,56 +6,399 @@ Gemma 3 VL models support multimodal tasks including image captioning, visual qu
 
 Gemma family models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
-## Available Models
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
-### Vision-Language Models
-- **Gemma 3 VL 4B** (`google/gemma-3-4b-it`): 4B parameter vision-language model
-  - 34 layers, 2560 hidden size
-  - 16 attention heads, 4 query groups (GQA)
-  - Vision encoder: SigLIP with 729M parameters
-  - Recommended: 1 node, 8 GPUs
-  
-- **Gemma 3 VL 12B** (`google/gemma-3-12b-it`): 12B parameter vision-language model
-  - 48 layers, 3840 hidden size
-  - 24 attention heads, 8 query groups (GQA)
-  - Vision encoder: SigLIP with 729M parameters
-  - Recommended: 1 node, 8 GPUs
-  
-- **Gemma 3 VL 27B** (`google/gemma-3-27b-it`): 27B parameter vision-language model
-  - 62 layers, 5376 hidden size
-  - 32 attention heads, 16 query groups (GQA)
-  - Vision encoder: SigLIP with 729M parameters
-  - Recommended: 2 nodes, 16 GPUs
+## Verified configurations
 
-All models support a sequence length of 131,072 tokens and use hybrid attention patterns (sliding window + global).
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
 
-## Model Architecture Features
+<a id="verified-gemma-3-4b-it"></a>
+### Run a configuration
 
-Gemma 3 VL builds on the Gemma 3 architecture with additional multimodal capabilities:
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
 
-**Language Model Features:**
-- **Hybrid Attention Pattern**: Alternates between global and local sliding window attention for efficient long-context processing
-- **GeGLU Activation**: Uses gated linear units with GELU activation for improved performance
-- **RMSNorm**: Layer normalization without mean centering for faster computation
-- **Rotary Embeddings**: Separate RoPE configurations for local and global attention layers
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="gemma-3-4b-it-hf-to-megatron-cpu" aria-controls="gemma-3-4b-it-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="gemma-3-4b-it-hf-to-megatron-gpu" aria-controls="gemma-3-4b-it-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="gemma-3-4b-it-megatron-to-hf-cpu" aria-controls="gemma-3-4b-it-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="gemma-3-4b-it-megatron-to-hf-gpu" aria-controls="gemma-3-4b-it-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="" data-hardware="" data-status="unsupported" data-entry="gemma-3-4b-it-pretrain-all" aria-controls="gemma-3-4b-it-pretrain-all" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="gemma-3-4b-it-sft-h100" aria-controls="gemma-3-4b-it-sft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="" data-hardware="H100" data-status="unsupported" data-entry="gemma-3-4b-it-sft-long-context-h100" aria-controls="gemma-3-4b-it-sft-long-context-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H100</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="gemma-3-4b-it-peft-h100" aria-controls="gemma-3-4b-it-peft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="gemma-3-4b-it-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-24</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model google/gemma-3-4b-it --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767 --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron --torch-dtype bfloat16</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Exact-revision BF16 CPU import loaded all 781 Bridge tensors and saved one reloadable DCP shard. An independent Gloo reload mapped all 883 source tensors with exact keys, shapes, dtypes, and torch.equal values, including all 437 legacy vision-tower keys.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model google/gemma-3-4b-it --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767 --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron --torch-dtype bfloat16 --tp 2 --pp 2 --ep 1 --etp 1</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Exact-revision distributed BF16 import completed with TP2/PP2/EP1/ETP1. All 781 Bridge tensors loaded and all four ranks saved a reloadable checkpoint with the vision tower and multimodal projector on the owning pipeline stage. Independent TP2/PP2 and Gloo reloads retained FusedAttention and matched all 883 mapped tensors exactly.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-26</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model google/gemma-3-4b-it --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767 --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron/iter_0000000 --hf-path work/model-verification/gemma-3-4b-it/cpu-hf-export --torch-dtype bfloat16</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The exact-revision CPU export exits successfully and writes all 883 tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16 source with no dtype conversions, including all 437 legacy vision_tower.vision_model.* tensors. Transformers strictly reloads the output natively as Gemma3ForConditionalGeneration with all 884 state entries and no loading discrepancies.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-30</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model google/gemma-3-4b-it --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767 --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --hf-path work/model-verification/gemma-3-4b-it/hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --tp 2 --pp 2 --ep 1 --etp 1</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Transformers exposes 884 logical state entries after reload because tied lm_head.weight aliases the single stored language_model.model.embed_tokens.weight tensor; no extra tensor is serialized. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-pretrain-all" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-pretrain-all" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>all</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Megatron Bridge does not provide a public Gemma 3 VL 4B pretraining recipe. The available exact-model recipes cover SFT and PEFT, so a supported pretraining command and checkpoint contract cannot be stated.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-sft-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-sft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Pending exact-revision CORD-v2 full-SFT verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final full-model checkpoint.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-sft-long-context-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-sft-long-context-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H100</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Gemma 3 VL image-bidirectional attention uses dense local/global additive biases with FusedAttention. The provider rejects context parallelism greater than one, and the public recipes disable in-batch THD packing, so there is no supported exact-model long-context SFT contract.
+</p>
+      </section>
+    </article>
+    <article id="gemma-3-4b-it-peft-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-peft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_peft_config --mode lora --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/peft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Pending exact-revision CORD-v2 LoRA verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable adapter checkpoint.
+</p>
+      </section>
+    </article>
+  </div>
+</div>
 
-**Vision-Language Features:**
-- **SigLIP Vision Encoder**: Pre-trained vision encoder with 729M parameters for robust visual understanding
-- **Multimodal Integration**: Seamless integration of visual and textual information through learned projection layers
-- **Flexible Image Handling**: Supports variable resolution images and multiple images per conversation
-
-## Examples
-
-For checkpoint conversion, inference, finetuning recipes, and step-by-step training guides, see the [Gemma 3 VL Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma3_vl/README.md).
-
-## Hugging Face Model Cards
-
-- Gemma 3 VL 4B: https://huggingface.co/google/gemma-3-4b-it
-- Gemma 3 VL 12B: https://huggingface.co/google/gemma-3-12b-it
-- Gemma 3 VL 27B: https://huggingface.co/google/gemma-3-27b-it
-
-## Related Docs
-- Related Gemma variant: [Gemma 3](gemma3.md)
-- Recipe usage: [Recipe usage](../../recipe-usage.md)
-- Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
-- Training entry points: [Entry points](../../training/entry-points.md)
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->

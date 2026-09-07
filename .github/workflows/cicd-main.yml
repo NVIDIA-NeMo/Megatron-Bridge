@@ -112,11 +112,17 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+          PR_HEAD_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha }}
+          PR_MERGE_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
         run: |
           if [[ "$IS_PR" == "true" ]]; then
-            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+            SHA=${PR_MERGE_SHA:-$PR_HEAD_SHA}
           else
             SHA=${GITHUB_SHA}
+          fi
+          if [[ -z "$SHA" ]]; then
+            echo "Unable to resolve a non-empty workflow revision" >&2
+            exit 1
           fi
           echo "merge_sha=${SHA}" | tee -a "$GITHUB_OUTPUT"
 
