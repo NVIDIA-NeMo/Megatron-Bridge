@@ -386,17 +386,6 @@ def train_megatron_mimo(
                 pg_collection=local_pg_collection,
             )
 
-            # Log iteration-time directly for MegatronMIMO models.
-            # training_log only logs this inside a hasattr(config.model, "kv_channels")
-            # block which MegatronMIMO models don't satisfy, so we log it here as a workaround.
-            if cfg.logger.log_timers_to_tensorboard and train_state.step % cfg.logger.log_interval == 0:
-                writer = global_state.tensorboard_logger
-                if writer:
-                    writer.add_scalar("iteration-time", iteration_time, train_state.step)
-                wandb_writer = global_state.wandb_logger
-                if wandb_writer:
-                    wandb_writer.log({"iteration-time": iteration_time}, train_state.step)
-
         # Evaluation at specified intervals
         if eval_interval and train_state.step % eval_interval == 0 and valid_data_iterator is not None:
             if train_config.manual_gc and train_config.manual_gc_eval:
