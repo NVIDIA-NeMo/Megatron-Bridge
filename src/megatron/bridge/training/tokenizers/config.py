@@ -44,35 +44,6 @@ class TokenizerConfig(MTrainTokenizerConfig):
     resuming a run created with a different vocabulary policy.
     """
 
-    hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
-    """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
-
-    Common options include:
-        - use_fast (bool): Whether to use fast tokenizer implementation
-        - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
-        - include_special_tokens (bool): Whether to include special tokens when converting text to ids
-        - revision (str): Hugging Face Hub revision used to resolve an immutable tokenizer snapshot
-
-    Example:
-        hf_tokenizer_kwargs = {
-            "use_fast": True,
-            "trust_remote_code": True,
-            "include_special_tokens": True
-        }
-    """
-
-    sp_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
-    """Additional keyword arguments to pass to SentencePiece tokenizer.
-
-    Common options include:
-        - legacy (bool): Whether to use legacy format of sentencepiece tokenizer
-
-    Example:
-        sp_tokenizer_kwargs = {
-            "legacy": True,
-        }
-    """
-
     chat_template_path: Optional[str] = None
     """Path to a jinja chat template file, loaded at build time as ``chat_template``. Supports local
     paths and ``msc://`` URLs. Mutually exclusive with ``chat_template``. Useful for supplying a
@@ -96,22 +67,3 @@ class TokenizerConfig(MTrainTokenizerConfig):
         """Sync with MCore values"""
         # Don't pad vocab size since MBridge does it's own padding
         self.pad_vocab_size = False
-
-        # HuggingFace tokenizer kwargs
-        self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
-        self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs.get("include_special_tokens", True)
-        self.trust_remote_code = self.hf_tokenizer_kwargs.get("trust_remote_code", False)
-        if self.hf_tokenizer_kwargs:
-            warn_rank_0(
-                "`hf_tokenizer_kwargs` is deprecated and will be removed soon. "
-                "Please, use `tokenizer_hf_no_use_fast` / `tokenizer_hf_no_include_special_tokens` / "
-                "`trust_remote_code` arguments directly instead."
-            )
-
-        # SentencePiece tokenizer kwargs
-        self.tokenizer_sentencepiece_legacy = self.sp_tokenizer_kwargs.get("legacy", False)
-        if self.sp_tokenizer_kwargs:
-            warn_rank_0(
-                "`sp_tokenizer_kwargs` is deprecated and will be removed soon. "
-                "Please, use `tokenizer_sentencepiece_legacy` (bool) argument directly instead."
-            )
