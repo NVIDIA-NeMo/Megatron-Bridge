@@ -144,9 +144,7 @@ def _extract_native_mxfp8_storage(
     scale_k = storage_spec.weight_shape[-1] // 32
     return _NativeMXFP8Storage(
         weight=rowwise_data[data_slices].view(torch.float8_e4m3fn),
-        weight_scale=rowwise_scale[:flat_leading_dim, :scale_k].view(
-            storage_spec.weight_scale_shape
-        ),
+        weight_scale=rowwise_scale[:flat_leading_dim, :scale_k].view(storage_spec.weight_scale_shape),
     )
 
 
