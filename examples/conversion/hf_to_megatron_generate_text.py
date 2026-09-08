@@ -317,12 +317,13 @@ def main(args) -> None:
                 input_ids,
                 legacy_full_prefix=args.legacy_full_prefix,
             )
-            iterator = SingleBatchIterator(input_ids, position_ids, inference_context)
+            iterators = [SingleBatchIterator(input_ids, position_ids, inference_context) for _ in model]
+            data_iterator = iterators if len(iterators) > 1 else iterators[0]
 
             output = _run_megatron_forward(
                 fwd_bwd_function,
                 forward_step_func=text_forward_step,
-                data_iterator=iterator,
+                data_iterator=data_iterator,
                 model=model,
                 num_microbatches=1,
                 forward_only=True,
