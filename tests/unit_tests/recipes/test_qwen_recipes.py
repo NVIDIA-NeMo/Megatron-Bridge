@@ -831,7 +831,7 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     assert main_cfg.model.recompute_granularity == "selective"
     assert main_cfg.model.recompute_modules == ["moe_act"]
     assert perf_cfg.model.recompute_granularity is None
-    assert perf_cfg.model.recompute_modules is None
+    assert perf_cfg.model.recompute_modules == []
 
     # Full-iteration graphs conflict with the main recipe's loss-NaN check and
     # therefore remain benchmark-only.
