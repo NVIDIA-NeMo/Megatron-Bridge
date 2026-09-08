@@ -575,7 +575,6 @@ class TestGlobalState:
 
         mock_async_queue = MagicMock()
         mock_async_queue_cls = MagicMock(return_value=mock_async_queue)
-        mock_modules = {"AsyncCallsQueue": mock_async_queue_cls, "get_write_results_queue": MagicMock()}
 
         state.initialize_async_checkpoint_worker()
 
