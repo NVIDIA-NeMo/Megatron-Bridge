@@ -1695,7 +1695,7 @@ class TestFp8ParamExport:
         with pytest.raises(ValueError, match=rf"{grouped}.*1 local members.*expected 2"):
             bridge.build_export_mxfp8_tasks(SimpleNamespace(config=SimpleNamespace()), [model])
 
-    def test_grouped_native_mxfp8_rejects_missing_cached_members():
+    def test_grouped_native_mxfp8_rejects_missing_cached_members(self):
         bridge = DummyBridge()
         grouped = "decoder.layers.0.mlp.experts.linear_fc2.weight"
         task = WeightConversionTask(
