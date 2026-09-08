@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
+from megatron.core.dist_checkpointing.strategies.nvrx import has_nvrx_async_support
 from megatron.core.energy_monitor import EnergyMonitor
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.timers import Timers
@@ -37,6 +37,8 @@ from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.training.utils.log_utils import safe_serialize
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe
+
+HAVE_NVRX = has_nvrx_async_support()
 
 
 @dataclass
@@ -418,21 +420,26 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
-            async_calls_queue_cls = async_modules["AsyncCallsQueue"]
-            get_write_results_queue_fn = async_modules["get_write_results_queue"]
+            if HAVE_NVRX:
+                from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncCallsQueue
+                from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import (
+                    get_write_results_queue
+                )
 
-            self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+                self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
-            if self.cfg.checkpoint.use_persistent_ckpt_worker:
-                warmup_kwargs = {
-                    "cpu_priority": self.cfg.checkpoint.async_ckpt_cpu_priority,
-                    "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
-                }
-                if async_strategy == "mcore":
-                    warmup_kwargs["mp_mode"] = "spawn"
-                self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
-                get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
+                if self.cfg.checkpoint.use_persistent_ckpt_worker:
+                    warmup_kwargs = {
+                        "cpu_priority": self.cfg.checkpoint.async_ckpt_cpu_priority,
+                        "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
+                    }
+                    self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
+                    get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
+            else:
+                raise ModuleNotFoundError(
+                    "`nvidia-resiliency-ext` should be installed to use async save.
+                    "`pip install nvidia-resiliency-ext`"
+                )
 
     @property
     def async_calls_queue(self) -> Optional[Any]:

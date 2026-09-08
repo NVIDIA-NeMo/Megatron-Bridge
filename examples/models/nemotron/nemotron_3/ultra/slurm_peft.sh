@@ -61,7 +61,6 @@ LR=1e-4
 MIN_LR=1e-5
 SAVE_INTERVAL=${SAVE_INTERVAL:-$TRAIN_ITERS}
 ASYNC_SAVE=${ASYNC_SAVE:-True}
-ASYNC_STRATEGY=${ASYNC_STRATEGY:-nvrx}
 LOG_INTERVAL=1
 
 TP=${TP:-2}
@@ -122,7 +121,6 @@ CLI_OVERRIDES="\
     checkpoint.save=${SAVE_DIR} \
     checkpoint.save_interval=${SAVE_INTERVAL} \
     checkpoint.async_save=${ASYNC_SAVE} \
-    checkpoint.async_strategy=${ASYNC_STRATEGY} \
     train.train_iters=${TRAIN_ITERS} \
     train.global_batch_size=${GLOBAL_BATCH_SIZE} \
     train.micro_batch_size=${MICRO_BATCH_SIZE} \
@@ -171,7 +169,7 @@ echo "GPUs/node: ${GPUS_PER_NODE}"
 echo "Recipe: ${RECIPE_NAME}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
 echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_MODULES}"
-echo "Async save: ${ASYNC_SAVE} (${ASYNC_STRATEGY})"
+echo "Async save: ${ASYNC_SAVE}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"
 echo "======================================"

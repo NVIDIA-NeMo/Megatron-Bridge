@@ -97,7 +97,6 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.async_save = True
-    cfg.checkpoint.async_strategy = "mcore"
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
@@ -306,7 +305,6 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.async_save = True
-    cfg.checkpoint.async_strategy = "mcore"
 
     cfg.logger.log_interval = 1
     cfg.rng.seed = 5678
@@ -415,7 +413,6 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.async_save = True
-    cfg.checkpoint.async_strategy = "nvrx"
 
     cfg.logger.log_interval = 1
     cfg.rng.seed = 5678

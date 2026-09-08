@@ -569,7 +569,6 @@ class TestGlobalState:
         mock_config.checkpoint.save = "/tmp/checkpoints"
         mock_config.checkpoint.async_save = True
         mock_config.checkpoint.use_persistent_ckpt_worker = True
-        mock_config.checkpoint.async_strategy = "mcore"
         mock_config.checkpoint.async_ckpt_cpu_priority = 10
         mock_config.checkpoint.async_ckpt_io_priority = 3
         state._cfg = mock_config
@@ -578,11 +577,10 @@ class TestGlobalState:
         mock_async_queue_cls = MagicMock(return_value=mock_async_queue)
         mock_modules = {"AsyncCallsQueue": mock_async_queue_cls, "get_write_results_queue": MagicMock()}
 
-        with patch("megatron.bridge.training.state.get_async_strategy", return_value=("mcore", mock_modules)):
-            state.initialize_async_checkpoint_worker()
+        state.initialize_async_checkpoint_worker()
 
-            mock_async_queue_cls.assert_called_once_with(persistent=True)
-            assert state._async_calls_queue == mock_async_queue
+        mock_async_queue_cls.assert_called_once_with(persistent=True)
+        assert state._async_calls_queue == mock_async_queue
 
     def test_initialize_async_checkpoint_worker_disabled(self):
         """Test async checkpoint worker not initialized when disabled."""
@@ -592,11 +590,10 @@ class TestGlobalState:
         mock_config.checkpoint.async_save = False
         state._cfg = mock_config
 
-        with patch("megatron.bridge.training.state.get_async_strategy") as mock_gas:
-            state.initialize_async_checkpoint_worker()
+        state.initialize_async_checkpoint_worker()
 
-            mock_gas.assert_not_called()
-            assert state._async_calls_queue is None
+        mock_gas.assert_not_called()
+        assert state._async_calls_queue is None
 
     def test_async_calls_queue_property(self):
         """Test async_calls_queue property."""
