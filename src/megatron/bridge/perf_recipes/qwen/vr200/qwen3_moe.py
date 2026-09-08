@@ -147,6 +147,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     # cfg.model.moe_paged_stash = False
     cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.moe_mlp_glu_interleave_size = None
+    cfg.model.moe_use_grouped_tensor = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
