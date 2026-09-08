@@ -196,8 +196,9 @@ def forward_step(
             modality_modules = megatron_mimo_model.role.modality_module_names
             needs_data = any(megatron_mimo_model.role.is_first_stage(mod) for mod in modality_modules)
 
-    # MegatronMIMO in-batch sequence packing, read from the dataset config (absent -> off).
+    # MegatronMIMO data-efficiency settings, read from the dataset config (absent -> off).
     pack_sequences_enabled = resolve_step_packing(state.cfg.dataset)
+    scalable_dp = bool(getattr(state.cfg.dataset, "megatron_mimo_scalable_dp", False))
 
     if needs_data:
         data_batch = get_batch(data_iterator)
@@ -207,7 +208,6 @@ def forward_step(
                 "This indicates a data-loading or parallelism misconfiguration."
             )
         # Slice the global micro-batch for this module's DP shard.
-        # All data-loading ranks receive identical batches (sampler dp_size=1).
         # slice_batch_for_megatron_mimo contiguously sub-shards to match the
         # BridgeCommunicator's fan-in/fan-out batch-dimension routing.
         if (
@@ -221,7 +221,9 @@ def forward_step(
             # sample batch.
             data_batch["modality_inputs"] = None
         dp_rank, dp_size = _get_module_dp_info(megatron_mimo_model)
-        data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
+        if not scalable_dp:
+            # With megatron_mimo_scalable_dp the sampler already delivered this rank's shard.
+            data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
         pack_lengths = None
         if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:
             # Lengths come from the batch's attention_mask; it must cover modality placeholder tokens.
