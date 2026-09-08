@@ -6155,6 +6155,17 @@ class TestAlignRngStateShardedMetadata:
         assert result.global_offset == (1, 3, 5)
         assert result.replica_id == 0
 
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_returns_none_without_a_dp_cp_shard_for_this_rank(self, mock_strategy, _mock_is_file):
+        rng_state = self._rng(replica_id=5)
+        stored = [self._rng(global_offset=(1, 3, rank), global_shape=(2, 4, 4), replica_id=0) for rank in range(4)]
+        mock_strategy.return_value.load_sharded_metadata.return_value = {item.unique_key: item for item in stored}
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result is None
+
     @pytest.mark.parametrize("stored", [{}, None])
     @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
