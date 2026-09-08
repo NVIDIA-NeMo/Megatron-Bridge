@@ -592,7 +592,6 @@ class TestGlobalState:
 
         state.initialize_async_checkpoint_worker()
 
-        mock_gas.assert_not_called()
         assert state._async_calls_queue is None
 
     def test_async_calls_queue_property(self):

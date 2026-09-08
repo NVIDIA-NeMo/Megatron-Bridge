@@ -426,7 +426,7 @@ class GlobalState:
                     get_write_results_queue
                 )
 
-                self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+                self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
                 if self.cfg.checkpoint.use_persistent_ckpt_worker:
                     warmup_kwargs = {
@@ -434,7 +434,7 @@ class GlobalState:
                         "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
                     }
                     self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
-                    get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
+                    get_write_results_queue(self.cfg.checkpoint.async_write_results_mp_mode)
             else:
                 raise ModuleNotFoundError(
                     "`nvidia-resiliency-ext` should be installed to use async save. "
