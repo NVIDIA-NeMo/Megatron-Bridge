@@ -28,6 +28,7 @@ from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
 from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.checkpointing import load_checkpoint
 from megatron.bridge.training.setup import (
@@ -626,3 +627,25 @@ def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
         _update_model_config_funcs([rebuilt_model], transformer_config, ddp_config, optimizer=None)
 
     assert transformer_config.no_sync_func.__self__ is rebuilt_model
+
+
+def test_update_model_config_funcs_installs_expert_adapter_grad_sync():
+    """The finalize wrapper is always installed and the per-layer fallback hooks are removed at setup."""
+    model_config = _make_gpt_model_config()
+    transformer_config = model_config.transformer
+    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False, align_param_gather=False)
+    optimizer = Mock()
+    model = torch.nn.Linear(2, 2)
+    model.weight.expert_parallel_replicated = True
+    hook_handle = Mock()
+    model.weight._expert_parallel_grad_hook = hook_handle
+
+    _update_model_config_funcs(
+        [model], transformer_config, ddp_config, optimizer=optimizer, pg_collection="process-groups"
+    )
+
+    assert transformer_config.finalize_model_grads_func.func is finalize_model_grads_with_expert_adapter_sync
+    assert transformer_config.finalize_model_grads_func.keywords == {"pg_collection": "process-groups"}
+    assert transformer_config.grad_scale_func is optimizer.scale_loss
+    hook_handle.remove.assert_called_once()
+    assert not hasattr(model.weight, "_expert_parallel_grad_hook")

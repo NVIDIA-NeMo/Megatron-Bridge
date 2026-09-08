@@ -101,7 +101,7 @@ lora_config = LoRA(
 
 #### MoE Expert Adapter Modes
 
-`LoRA` and `CanonicalLoRA` expose two MoE-specific controls for grouped expert
+`LoRA` and `CanonicalLoRA` expose MoE-specific controls for grouped expert
 MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
 `linear_fc1_gate`:
 
@@ -109,6 +109,7 @@ MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
 |-----------|------|---------|-------------|
 | `share_expert_adapters` | `bool` | `True` | Preserve the original behavior and share one adapter across all local experts on each EP rank |
 | `normalize_moe_lora` | `bool` | `False` | Use `dim // moe_router_topk` for expert layers only so MoE adapter capacity stays comparable to a dense model |
+| `experts_shared_outer_loras` | `bool` | `False` | `LoRA` only. Shared-outer layout for grouped experts: the gate/up LoRA-A and the down LoRA-B are shared across experts while the other factor stays per expert (SGLang's `experts_shared_outer_loras` serving contract) |
 
 - `share_expert_adapters=True` keeps the original shared-adapter behavior for grouped expert linears.
 - `share_expert_adapters=False` opts into per-local-expert adapters.
@@ -126,6 +127,38 @@ lora_config = LoRA(
     share_expert_adapters=False,
 )
 ```
+
+##### Expert-parallel synchronization of shared adapters
+
+Adapter weights that serve every expert (the default shared adapter, and the shared
+factor of each `experts_shared_outer_loras=True` adapter) are replicated across
+expert-parallel ranks, but Megatron-Core's expert DDP only reduces gradients over
+expert-data-parallel replicas. Megatron Bridge therefore sums those gradients across
+the expert-parallel group once per step, coalesced into a single collective right
+after the data-parallel gradient sync, the same point where Megatron-Core sums
+sequence-parallel layernorm gradients across tensor parallelism. The training loop
+installs this automatically through `finalize_model_grads_with_expert_adapter_sync`
+(`megatron.bridge.peft.utils`), and it stays correct with
+`gradient_accumulation_fusion` enabled because it reads the fused `main_grad` buffers.
+
+External training loops that call Megatron-Core's `finalize_model_grads` themselves
+must install the Bridge wrapper (or call `allreduce_expert_parallel_replicated_grads`
+right after their own finalize step):
+
+```python
+from functools import partial
+
+from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
+
+model_config.finalize_model_grads_func = partial(
+    finalize_model_grads_with_expert_adapter_sync, pg_collection=pg_collection
+)
+```
+
+A per-layer fallback hook keeps eagerly computed weight gradients in sync until the
+finalize path takes over (Bridge's setup removes the hooks before the first step; otherwise
+the wrapper's first call does). The fallback cannot cover fused weight-gradient accumulation
+and logs a warning in that case.
 
 #### LoRA+
 

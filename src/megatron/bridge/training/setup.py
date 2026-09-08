@@ -26,7 +26,7 @@ import numpy as np
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
-from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -43,6 +43,10 @@ from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.peft.utils import (
+    enable_expert_parallel_grad_sync_in_finalize,
+    finalize_model_grads_with_expert_adapter_sync,
+)
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import (
@@ -643,7 +647,12 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = partial(finalize_model_grads, pg_collection=pg_collection)
+        # Shared expert adapters are replicated across EP: sum their gradients once per step after the DP sync
+        # instead of once per layer and microbatch (a no-op for models without such adapters).
+        enable_expert_parallel_grad_sync_in_finalize(model)
+        model_config.finalize_model_grads_func = partial(
+            finalize_model_grads_with_expert_adapter_sync, pg_collection=pg_collection
+        )
         model_config.grad_scale_func = optimizer.scale_loss
 
 
