@@ -422,9 +422,7 @@ class GlobalState:
         ):
             if HAVE_NVRX:
                 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncCallsQueue
-                from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import (
-                    get_write_results_queue
-                )
+                from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import get_write_results_queue
 
                 self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
 
