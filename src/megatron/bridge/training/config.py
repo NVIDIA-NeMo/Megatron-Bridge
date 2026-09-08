@@ -1178,10 +1178,6 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support use_tp_pp_dp_mapping.")
         if self.rng.data_parallel_random_init:
             raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
-        if self.ddp.num_distributed_optimizer_instances != 1:
-            raise ValueError("MFSDP V2 does not currently support HSDP.")
-        if self.ddp.outer_dp_sharding_strategy != "no_shard":
-            raise ValueError("MFSDP V2 does not currently support outer DP sharding.")
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
         if self.checkpoint.pretrained_checkpoint is not None:
