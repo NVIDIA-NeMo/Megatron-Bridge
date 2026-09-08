@@ -145,8 +145,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
     if args.dump_env:
         _dump_env_rank0()
 
-    # Preserve BF16 Adam precision-aware behavior from the previous script path. Parallelism-dependent
-    # optimizer-step overlap is encoded directly in the flat perf recipes.
+    # Preserve BF16 Adam precision-aware behavior from the previous script path.
     if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
 
