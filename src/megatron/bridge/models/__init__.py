@@ -13,7 +13,15 @@
 # limitations under the License.
 
 # Import model providers for easy access
-from megatron.bridge.models.bagel import BagelBridge, BagelConfig, BagelModelProvider
+import importlib.util
+
+
+_BAGEL_EXPORTS = []
+if importlib.util.find_spec("megatron.core.models.bagel") is not None:
+    from megatron.bridge.models.bagel import BagelBridge, BagelConfig, BagelModelProvider
+
+    _BAGEL_EXPORTS = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
+
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
@@ -218,9 +226,6 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
-    "BagelBridge",
-    "BagelConfig",
-    "BagelModelProvider",
     "BailingMoeV2Bridge",
     # DeepSeek Models
     "DeepSeekV2Bridge",
@@ -337,4 +342,4 @@ __all__ = [
     "Exaone45ModelProvider",
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
-]
+] + _BAGEL_EXPORTS

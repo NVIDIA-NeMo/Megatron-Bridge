@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.bagel.conversion import BagelBridge, BagelConfig
-from megatron.bridge.models.bagel.provider import BagelModelProvider
+import importlib.util
 
 
-__all__ = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
+__all__ = []
+if importlib.util.find_spec("megatron.core.models.bagel") is not None:
+    from megatron.bridge.models.bagel.conversion import BagelBridge, BagelConfig
+    from megatron.bridge.models.bagel.provider import BagelModelProvider
+
+    __all__ = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
