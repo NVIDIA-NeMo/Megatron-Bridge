@@ -595,6 +595,11 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _track_moe_metrics_supports_num_moe_layers() -> bool:
+    """Return whether the active MCore accepts explicit MoE layer counts."""
+    return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
+
+
 def _get_num_moe_layers(model_config: Any) -> int:
     """Count MoE aux-loss contributors for MCore metric averaging."""
     num_layers = model_config.num_layers
@@ -1026,21 +1031,23 @@ def training_log(
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
         # No-op when neither logger is configured: the original writer is returned as-is.
         moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
-        track_moe_metrics(
-            loss_scale=moe_loss_scale,
-            iteration=iteration,
-            writer=moe_metric_writer,
-            wandb_writer=wandb_writer,
-            total_loss_dict=total_loss_dict,
-            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
-            force_initialize=True,
-            track_names=track_names,
-            num_layers=config.model.num_layers,
-            num_moe_layers=_get_num_moe_layers(config.model),
-            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
-            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
-            pg_collection=pg_collection,
-        )
+        track_moe_metrics_kwargs = {
+            "loss_scale": moe_loss_scale,
+            "iteration": iteration,
+            "writer": moe_metric_writer,
+            "wandb_writer": wandb_writer,
+            "total_loss_dict": total_loss_dict,
+            "per_layer_logging": getattr(config.model, "moe_per_layer_logging", False),
+            "force_initialize": True,
+            "track_names": track_names,
+            "num_layers": config.model.num_layers,
+            "moe_layer_freq": getattr(config.model, "moe_layer_freq", None),
+            "mtp_num_layers": getattr(config.model, "mtp_num_layers", None),
+            "pg_collection": pg_collection,
+        }
+        if _track_moe_metrics_supports_num_moe_layers():
+            track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
+        track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
