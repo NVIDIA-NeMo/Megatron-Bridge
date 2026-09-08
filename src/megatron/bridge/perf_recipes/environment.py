@@ -24,3 +24,16 @@ COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
     # Run NCCL work on its high-priority stream for every measured workload.
     "TORCH_NCCL_HIGH_PRIORITY": 1,
 }
+
+# HybridEP tuning, read by DeepEP's HybridEPBuffer. Megatron Core only builds that buffer when
+# moe_flex_dispatcher_backend is "hybridep", so these names are inert on any other backend. NCCL EP
+# recipes still drop them so the launched environment, which is dumped with the run, does not
+# advertise HybridEP tuning that nothing reads.
+HYBRID_EP_ENV_NAMES: frozenset[str] = frozenset(
+    {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+)

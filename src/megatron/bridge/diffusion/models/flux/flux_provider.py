@@ -89,7 +89,7 @@ class FluxProvider(TransformerConfig, ModelProviderMixin[VisionModule]):
     apply_rope_fusion: bool = False
 
     # Initialization and performance settings
-    use_cpu_initialization: bool = True
+    use_cpu_initialization: bool = False
     gradient_accumulation_fusion: bool = False
     enable_cuda_graph: bool = False
     cuda_graph_scope: Optional[str] = None  # full, full_iteration

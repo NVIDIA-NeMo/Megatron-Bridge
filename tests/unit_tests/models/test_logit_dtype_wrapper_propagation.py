@@ -209,9 +209,10 @@ def test_legacy_nemotron_omni_provider_rejects_requested_dtype_at_llava_boundary
             return_value=object(),
         ),
         patch(
-            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.get_language_mlp_submodules",
+            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider._get_transformer_engine_projection_submodules",
             return_value=object(),
         ),
+        patch.object(provider, "_resolve_hybrid_stack_spec", return_value=object()),
     ):
         with pytest.raises(RuntimeError, match="LLaVAModel does not support logit_dtype"):
             provider._provide_llava()

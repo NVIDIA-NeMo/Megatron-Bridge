@@ -18,6 +18,7 @@ import os
 import socket
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -113,6 +114,16 @@ class _RecordingProjection(nn.Module):
     def forward(self, hidden_states):
         self.input_shape = hidden_states.shape
         return hidden_states * 2
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
 
 
 @dataclass
@@ -233,6 +244,35 @@ def test_canonical_model_advertises_collator_owned_packing():
     assert NemotronOmniModel.model_slices_context_parallel_inputs is True
 
 
+def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config():
+    class UncopyableProcessGroupCollection:
+        def __deepcopy__(self, memo):
+            raise TypeError("runtime process groups cannot be copied")
+
+    provider = _TinyOmniProvider()
+    pg_collection = UncopyableProcessGroupCollection()
+    provider._pg_collection = pg_collection
+
+    def create_model(**kwargs):
+        copied_config = _copy_attention_config(kwargs["language_transformer_config"])
+        assert copied_config._pg_collection is None
+        return Mock()
+
+    with (
+        patch.object(_TinyOmniProvider, "_build_vision_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_vision_projection_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_resolve_hybrid_stack_spec", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_sound_modules", return_value=(None, None)),
+        patch(
+            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.NemotronOmniModel",
+            side_effect=create_model,
+        ),
+    ):
+        provider.provide(pre_process=True, post_process=True)
+
+    assert provider._pg_collection is pg_collection
+
+
 def test_canonical_provider_rejects_ambiguous_legacy_class_name():
     provider = _TinyOmniProvider(nemotron_omni_contract=None)
 
@@ -315,6 +355,47 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     provider = NemotronOmniLlavaModelProvider(nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT)
 
     assert provider.radio_interpolate_only_cpe is True
+
+
+def test_llava_provider_uses_exact_replacement_counts_with_production_tile_limit():
+    provider = NemotronOmniLlavaModelProvider(temporal_patch_dim=1)
+    llava_model = SimpleNamespace(_dynamic_resolution=True, _max_num_tiles=12, img_seq_len=256)
+
+    provider._configure_llava_preprocess_contract(llava_model)
+
+    assert llava_model._max_num_tiles == 12
+    assert llava_model._dynamic_resolution is False
+    assert llava_model.img_seq_len == 1
+
+
+def test_llava_forward_normalizes_all_one_frame_tensor_before_delegating():
+    class _RecordingLlava:
+        def __init__(self):
+            self.kwargs = None
+
+        def __call__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            return args
+
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
+    nn.Module.__init__(model)
+    model.llava_model = _RecordingLlava()
+
+    result = model.forward("input", num_frames=torch.ones(3, dtype=torch.int32), imgs_sizes=torch.ones(3, 2))
+
+    assert result == ("input",)
+    assert model.llava_model.kwargs["num_frames"] == 1
+    assert model.llava_model.kwargs["imgs_sizes"].shape == (3, 2)
+
+
+@pytest.mark.parametrize("num_frames", [2, torch.tensor([1, 2], dtype=torch.int32)])
+def test_llava_forward_rejects_video_frame_counts(num_frames):
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
+    nn.Module.__init__(model)
+    model.llava_model = lambda *args, **kwargs: None
+
+    with pytest.raises(NotImplementedError, match="every num_frames value must be 1|num_frames must be 1"):
+        model.forward(num_frames=num_frames)
 
 
 def test_llava_model_emits_deprecation_notice(monkeypatch):

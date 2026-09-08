@@ -149,8 +149,13 @@ start `summary` with this exact disclaimer before the functional-support
 summary:
 
 ```text
-Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results.
+Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
 ```
+
+This wording describes the evidence recorded by the card, not whether the
+model has ever been tuned elsewhere. The validator continues to accept the
+older untuned-model wording on existing cards for backward compatibility, but
+new and updated cards must use the wording above.
 
 Omit `pretrain_performance` entirely when no canonical recipe exists; do not
 add an `all` terminal placeholder. Routine timing and throughput metrics in
@@ -483,7 +488,7 @@ Freeze the following workload profiles:
 
 | Field | Pretrain | Full SFT | PEFT |
 | --- | --- | --- | --- |
-| Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
+| Start / trainable set | MoE: exact immutable imported Megatron checkpoint, full model; dense: random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
 | Sequence / GBS | `4096 / 1024` | `8192 / 8` | `8192 / 8` |
 | Reference MBS | `1` | `1` | `1` |
@@ -493,6 +498,25 @@ Freeze the following workload profiles:
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
 | RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
 | Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
+
+For MoE pretraining, keep pretrained-checkpoint selection out of the reusable
+recipe. The resolved recipe must leave `checkpoint.pretrained_checkpoint`
+unset; the model-verification-card command must pass exactly one
+`--pretrained_checkpoint` pointing to the card's immutable imported Megatron
+checkpoint. This is a weight-only warm start, not a full-state resume, so the
+uninterrupted reference command must still keep `checkpoint.load=null` and must
+not use `--load_dir`. Starting from trained router weights makes natural expert
+traffic, load imbalance, memory use, and reported TFLOP/s more representative
+than random router initialization.
+
+Apply the same launch-time checkpoint rule to any MoE
+`pretrain_performance` item that claims natural-routing throughput. A
+benchmark-only forced-balance recipe may omit the checkpoint because its router
+traffic is synthetic by construction; state that distinction explicitly.
+Never add a checkpoint path to a library or performance recipe merely to make a
+card pass. Historical verified random-initialization evidence may remain on its
+exact recorded command, but do not rewrite it as checkpoint-backed evidence;
+adopt this contract when that item is rerun.
 
 Derive `pad_seq_to_mult` for both SFT and PEFT from the resolved execution
 topology:
@@ -672,6 +696,10 @@ result. Private executor configuration stays outside the card.
   required verification evidence. Specify positive node and GPU counts and run
   synchronously; do not use `--detach` or a dry-run flag in a verified command.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
+  For every MoE reference that measures natural-routing behavior, pass the
+  immutable imported checkpoint with `--pretrained_checkpoint` in the card
+  command while leaving the selected recipe's pretrained checkpoint unset.
+  Do not use `--load_dir` for this weight-only initialization.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
   suitable support-verification run when it crosses the peak learning rate and
@@ -704,7 +732,9 @@ result. Private executor configuration stays outside the card.
   the reference evidence.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
-  run and state public hardware plus thresholds.
+  run and state public hardware plus thresholds. A natural-routing MoE
+  performance command must warm-start through the card's
+  `--pretrained_checkpoint`; a forced-balance benchmark may omit it.
 
 Before adding checkpoint overrides, inspect the selected recipe and its
 inherited checkpoint defaults. Keep only values that change the effective
@@ -835,7 +865,7 @@ an item verified merely to make validation pass.
 - Include `pretrain_weak_scaling` only after at least two proportional-GBS
   points complete on the same public hardware, recipe, precision, sequence
   length, step count, and GPUs-per-node layout; otherwise omit it.
-- Start the summary with the exact untuned performance disclaimer unless at
+- Start the summary with the exact no-canonical-performance-result disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;
@@ -879,6 +909,9 @@ an item verified merely to make validation pass.
   plus actual generated-token count under an explicit maximum bound in a
   two-command ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
+- Keep MoE pretrain recipes checkpoint-agnostic, and put the immutable imported
+  weight-only `--pretrained_checkpoint` in every card command that measures
+  natural-routing pretrain or performance behavior.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.
 - Confirm the card, commit, and PR contain no private runtime information.

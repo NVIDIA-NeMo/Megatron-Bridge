@@ -4,8 +4,8 @@
 Megatron checkpoint conversion. It uses NeMo Run for both local execution and
 Slurm submission and selects one of two conversion backends:
 
-- `--device cpu`: one process on one node, with model construction and export
-  on CPU;
+- `--device cpu`: CPU conversion, with optional distributed export across
+  Gloo ranks for checkpoints that cannot be exported on one host;
 - `--device gpu`: distributed conversion with one process per GPU and TP, PP,
   EP, and ETP support.
 
@@ -49,8 +49,9 @@ conversion to finish.
   --hf-path /workspace/models/llama32-1b-hf
 ```
 
-CPU conversion intentionally supports one process on one node. Allocate more
-host memory and CPUs for large checkpoints rather than increasing `--nodes`.
+CPU import and the default CPU export use one process on one node. Distributed
+CPU export is available through the Slurm workflow below for checkpoints that
+cannot be loaded on one host within the available memory or wall-time limit.
 
 ## Distributed GPU conversion on Slurm
 
@@ -162,6 +163,34 @@ CPU mode submits one task and does not request GPUs or GRES:
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path /workspace/models/llama32-1b
 ```
+
+For a very large Megatron checkpoint, distribute only the export load and save
+across CPU processes. This uses Gloo, initializes every model shard on CPU, and
+enables distributed Hugging Face saving by default. It does not request GPUs:
+
+```bash
+./scripts/conversion/convert.sh export \
+  --executor slurm \
+  --device cpu \
+  --nodes 4 \
+  --cpu-processes-per-node 8 \
+  --cpus-per-task 16 \
+  --mem 0 \
+  --exclusive \
+  --account ACCOUNT \
+  --partition CPU_PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/model/iter_0000000 \
+  --hf-path /workspace/models/model-hf \
+  --tp 1 --pp 4 --ep 8 --etp 1
+```
+
+The topology must satisfy
+`nodes * cpu-processes-per-node % (TP * PP) == 0` and
+`nodes * cpu-processes-per-node % (ETP * EP * PP) == 0`. Distributed CPU
+conversion currently supports export only and requires distributed saving.
 
 `--env` accepts names only. Export values in the launcher environment so
 secrets are inherited by Slurm without being materialized in generated job
