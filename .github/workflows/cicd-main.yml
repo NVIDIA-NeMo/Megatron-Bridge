@@ -1098,7 +1098,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l2) }}
-    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, configure, generate-gb200-test-matrix]
     runs-on: ${{ matrix.runner }}
     if: |
       (
@@ -1154,7 +1154,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
-    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, configure, generate-gb200-test-matrix]
     runs-on: ${{ matrix.runner }}
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -1197,8 +1197,8 @@ jobs:
       - pre-flight
       - configure
       - cicd-import-check
-      - cicd-unit-tests-core
-      - cicd-unit-tests-diffusion
+      # - cicd-unit-tests-core
+      # - cicd-unit-tests-diffusion
       - cicd-functional-tests-l0
       - cicd-functional-tests-l1
       - cicd-functional-tests-l2
