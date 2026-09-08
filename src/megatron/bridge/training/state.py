@@ -437,7 +437,7 @@ class GlobalState:
                     get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
             else:
                 raise ModuleNotFoundError(
-                    "`nvidia-resiliency-ext` should be installed to use async save.
+                    "`nvidia-resiliency-ext` should be installed to use async save. "
                     "`pip install nvidia-resiliency-ext`"
                 )
 
