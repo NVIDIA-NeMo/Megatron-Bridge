@@ -20,6 +20,36 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
+def _enable_ncclep_bf16(cfg: ConfigContainer) -> None:
+    """Swap the recipe's flex dispatcher for eager NCCL EP on BF16.
+
+    Only the dispatch stack changes. Parallelism, batch sizes, precision, recompute and the CUDA
+    graph mode are left exactly as the parent recipe set them. The calling recipe builder still
+    declares its own ``cfg.env_vars`` mapping inline, so the launched environment stays readable
+    next to the recipe instead of being derived here.
+    """
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_ncclep_zero_copy = False
+
+    if cfg.comm_overlap is None:
+        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = False
+
+    cfg.model.offload_modules = []
+
+    # GPT-OSS's clamped quick-GeLU does not have a BF16 op-fuser kernel. Eager NCCL EP sizes the
+    # receive buffer per step, so it needs neither the op fuser nor a static capacity factor.
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_paged_stash = False
+
+
 def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:
     """Apply legacy GPT-OSS 120B FP8-MX full-iteration CUDA graph settings."""
     cfg.model.cuda_graph_impl = "full_iteration"

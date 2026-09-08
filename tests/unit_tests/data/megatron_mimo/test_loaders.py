@@ -1,12 +1,17 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for build_megatron_mimo_data_loaders."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from torch.utils.data import Dataset
 
+from megatron.bridge.data.base import DatasetBuildContext
+from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
+from megatron.bridge.training.config import megatron_mimo_runtime_config_update
 
 
 class FakeMegatronMIMOProvider:
@@ -137,7 +142,7 @@ def test_build_megatron_mimo_data_loaders_happy_path(monkeypatch):
     cfg = _make_happy_cfg(micro_batch_size=3)
     provider = FakeProvider()
 
-    train_state = SimpleNamespace(consumed_train_samples=0)
+    train_state = SimpleNamespace(consumed_train_samples=0, consumed_valid_samples=0)
     train_loader, valid_loader, test_loader = build_megatron_mimo_data_loaders(
         cfg,
         train_state=train_state,
@@ -168,7 +173,7 @@ def test_build_megatron_mimo_data_loaders_uses_eval_micro_batch_size_for_eval_sp
 
     build_megatron_mimo_data_loaders(
         cfg,
-        train_state=SimpleNamespace(consumed_train_samples=0),
+        train_state=SimpleNamespace(consumed_train_samples=0, consumed_valid_samples=0),
         megatron_mimo_provider=FakeProvider(),
         train_samples=10,
         valid_samples=4,
@@ -179,15 +184,12 @@ def test_build_megatron_mimo_data_loaders_uses_eval_micro_batch_size_for_eval_sp
 
 
 def test_build_megatron_mimo_data_loaders_wires_consumed_samples_for_resume(monkeypatch):
-    """Regression test for issue #11: train loader must receive
-    train_state.consumed_train_samples so data resumes after checkpoint load;
-    valid/test loaders always start from 0.
-    """
+    """Train and validation loaders resume from their persisted sample offsets."""
     builder_calls = _patch_happy_path_dependencies(monkeypatch)
     cfg = _make_happy_cfg(micro_batch_size=2)
     provider = FakeProvider()
 
-    train_state = SimpleNamespace(consumed_train_samples=50000)
+    train_state = SimpleNamespace(consumed_train_samples=50000, consumed_valid_samples=4000)
     build_megatron_mimo_data_loaders(
         cfg,
         train_state=train_state,
@@ -197,9 +199,9 @@ def test_build_megatron_mimo_data_loaders_wires_consumed_samples_for_resume(monk
         test_samples=2,
     )
 
-    # Train loader gets resume offset; valid/test always start from 0.
+    # Train and validation loaders get their own resume offsets; test always starts from 0.
     assert builder_calls[0]["consumed_samples"] == 50000
-    assert builder_calls[1]["consumed_samples"] == 0
+    assert builder_calls[1]["consumed_samples"] == 4000
     assert builder_calls[2]["consumed_samples"] == 0
 
 
@@ -214,6 +216,20 @@ class IndexDataset(Dataset):
 
     def __getitem__(self, idx: int) -> int:
         return idx
+
+
+@dataclass(kw_only=True)
+class RuntimeFinalizedIndexDatasetProvider(MegatronMIMODatasetProvider):
+    """Concrete provider that relies on the shared dataloader finalization contract."""
+
+    train_size: int = 8
+
+    def build_datasets(self, context: DatasetBuildContext):
+        del context
+        return IndexDataset(self.train_size), None, None
+
+    def get_collate_fn(self):
+        return lambda batch: batch
 
 
 class IndexDatasetProvider:
@@ -270,6 +286,38 @@ def _make_real_loader_cfg(monkeypatch, *, micro_batch_size: int, sampler_dp_rank
     )
 
 
+def test_mimo_runtime_update_normalizes_zero_worker_provider_before_loader_construction(monkeypatch):
+    provider = RuntimeFinalizedIndexDatasetProvider(num_workers=0)
+    runtime_cfg = MagicMock()
+    runtime_cfg.env_vars = {}
+    runtime_cfg.dataset = provider
+    runtime_cfg.train.num_epochs = None
+    runtime_cfg.train.global_batch_size = 2
+    runtime_cfg.train.micro_batch_size = 2
+    runtime_cfg.validation.eval_global_batch_size = None
+    runtime_cfg.validation.eval_micro_batch_size = None
+    runtime_cfg.profiling = None
+    runtime_cfg.ddp.use_distributed_optimizer = False
+    runtime_cfg.optimizer.use_distributed_optimizer = False
+    runtime_cfg.ddp.overlap_param_gather = False
+    runtime_cfg.optimizer.overlap_param_gather = False
+
+    megatron_mimo_runtime_config_update(runtime_cfg)
+
+    loader_cfg = _make_real_loader_cfg(monkeypatch, micro_batch_size=2)
+    train_loader, _, _ = build_megatron_mimo_data_loaders(
+        loader_cfg,
+        train_state=SimpleNamespace(consumed_train_samples=0, consumed_valid_samples=0),
+        megatron_mimo_provider=provider,
+        train_samples=provider.train_size,
+        valid_samples=0,
+        test_samples=0,
+    )
+
+    assert provider.persistent_workers is False
+    assert next(iter(train_loader)) == [0, 1]
+
+
 def test_train_loader_starts_from_consumed_samples_end_to_end(monkeypatch):
     """Issue #11 end-to-end: real MegatronPretrainingSampler skips already-seen samples.
 
@@ -283,7 +331,7 @@ def test_train_loader_starts_from_consumed_samples_end_to_end(monkeypatch):
     consumed = 12  # pretend 3 iterations already ran before the crash
     cfg = _make_real_loader_cfg(monkeypatch, micro_batch_size=micro_batch_size)
     provider = IndexDatasetProvider(train_size=train_size)
-    train_state = SimpleNamespace(consumed_train_samples=consumed)
+    train_state = SimpleNamespace(consumed_train_samples=consumed, consumed_valid_samples=0)
 
     train_loader, _, _ = build_megatron_mimo_data_loaders(
         cfg,
@@ -303,14 +351,12 @@ def test_train_loader_starts_from_consumed_samples_end_to_end(monkeypatch):
     )
 
 
-def test_valid_and_test_loaders_always_start_from_zero_end_to_end(monkeypatch):
-    """Issue #11 end-to-end: valid/test loaders must start at 0 even when the train
-    checkpoint carries a non-zero consumed_train_samples.
-    """
+def test_valid_loader_starts_from_consumed_samples_end_to_end(monkeypatch):
+    """The validation loader resumes while the test loader starts from zero."""
     micro_batch_size = 2
     cfg = _make_real_loader_cfg(monkeypatch, micro_batch_size=micro_batch_size)
     provider = IndexDatasetProvider(train_size=16, valid_size=8, test_size=8)
-    train_state = SimpleNamespace(consumed_train_samples=10)
+    train_state = SimpleNamespace(consumed_train_samples=10, consumed_valid_samples=4)
 
     _, valid_loader, test_loader = build_megatron_mimo_data_loaders(
         cfg,
@@ -321,7 +367,7 @@ def test_valid_and_test_loaders_always_start_from_zero_end_to_end(monkeypatch):
         test_samples=8,
     )
 
-    assert next(iter(valid_loader)) == [0, 1]
+    assert next(iter(valid_loader)) == [4, 5]
     assert next(iter(test_loader)) == [0, 1]
 
 
@@ -336,7 +382,7 @@ def test_build_megatron_mimo_data_loaders_forwards_dataloader_type(monkeypatch):
 
     build_megatron_mimo_data_loaders(
         cfg,
-        train_state=SimpleNamespace(consumed_train_samples=0),
+        train_state=SimpleNamespace(consumed_train_samples=0, consumed_valid_samples=0),
         megatron_mimo_provider=provider,
         train_samples=10,
         valid_samples=4,

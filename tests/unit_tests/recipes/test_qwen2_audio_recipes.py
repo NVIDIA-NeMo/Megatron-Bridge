@@ -180,6 +180,7 @@ class TestQwen2AudioSftConfig:
         assert cfg.peft is None
         # Cosine annealing scheduler exposes max_lr / min_lr.
         assert cfg.optimizer.lr == pytest.approx(5e-6)
+        assert cfg.optimizer.min_lr <= cfg.optimizer.lr
 
     def test_sft_config_lora_uses_higher_lr(self):
         """The PEFT recipe uses lr=1e-4 for LoRA."""

@@ -28,6 +28,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
@@ -259,7 +260,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigContainer:
+def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
     """Return the full-pretraining config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs.
 
     The recipe defaults to the mock VLM dataset, while maintained launchers may
@@ -1336,7 +1337,7 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 36
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -1448,7 +1449,7 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -1499,7 +1500,9 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-def qwen35_vl_800m_peft_1gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_800m_peft_1gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 800M (dense).
 
     Default configuration: 1 GPU
@@ -1508,7 +1511,7 @@ def qwen35_vl_800m_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-0.8B"
@@ -1598,7 +1601,9 @@ def qwen35_vl_800m_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_2b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_2b_peft_1gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 2B (dense).
 
     Default configuration: 1 GPU
@@ -1607,7 +1612,7 @@ def qwen35_vl_2b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-2B"
@@ -1697,7 +1702,9 @@ def qwen35_vl_2b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_4b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_4b_peft_1gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 4B (dense).
 
     Default configuration: 1 GPU
@@ -1706,7 +1713,7 @@ def qwen35_vl_4b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-4B"
@@ -1796,7 +1803,9 @@ def qwen35_vl_4b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_9b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_9b_peft_1gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 9B (dense).
 
     Default configuration: 1 GPU
@@ -1805,7 +1814,7 @@ def qwen35_vl_9b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-9B"
@@ -1895,7 +1904,9 @@ def qwen35_vl_9b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_27b_peft_2gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 27B (dense).
 
     Default configuration: 2 GPUs
@@ -1904,7 +1915,7 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-27B"
@@ -1999,7 +2010,9 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 4 GPUs
@@ -2008,7 +2021,7 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-35B-A3B"
@@ -2139,7 +2152,9 @@ def qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 122B-A10B (MoE).
 
     Default configuration: 8 GPUs
@@ -2148,7 +2163,7 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-122B-A10B"
@@ -2206,7 +2221,7 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 36
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -2252,7 +2267,9 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config() -> ConfigContainer:
+def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 397B-A17B (MoE).
 
     Default configuration: 32 GPUs
@@ -2261,7 +2278,7 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config() -> ConfigContainer:
     - Sequence length: 4096
     """
     cfg = _peft_common_vlm()
-    cfg.peft = default_peft_config("lora")
+    cfg.peft = default_peft_config(peft_scheme)
 
     # Model config
     hf_path = "Qwen/Qwen3.5-397B-A17B"
@@ -2319,7 +2336,7 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -2377,7 +2394,7 @@ __all__ = [
     "qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config",
     "qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
-    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config",
+    "qwen35_vl_35b_a3b_pretrain_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config",

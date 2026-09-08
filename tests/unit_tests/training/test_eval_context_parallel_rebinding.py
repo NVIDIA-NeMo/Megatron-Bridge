@@ -17,7 +17,13 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from megatron.core.ssm.gated_delta_net import GatedDeltaNet, GatedDeltaNet2
+from megatron.core.ssm.gated_delta_net import GatedDeltaNet
+
+
+try:
+    from megatron.core.ssm.gated_delta_net import GatedDeltaNet2
+except (ImportError, AttributeError):
+    GatedDeltaNet2 = None
 
 from megatron.bridge.training.eval_context_parallel_rebinding import eval_cp_context
 
@@ -33,7 +39,11 @@ class _FakeProcessGroup:
 def _make_gdn(cp_size: int) -> GatedDeltaNet:
     gdn = GatedDeltaNet.__new__(GatedDeltaNet)
     torch.nn.Module.__init__(gdn)
-    gdn.config = SimpleNamespace(context_parallel_size=cp_size, deterministic_mode=False)
+    gdn.config = SimpleNamespace(
+        context_parallel_size=cp_size,
+        deterministic_mode=False,
+        gdn_pre_gated_delta_rule_fusion=False,
+    )
     gdn.pg_collection = SimpleNamespace(cp=_FakeProcessGroup(cp_size))
     gdn.cp_size = cp_size
     gdn.tp_size = 1
@@ -45,7 +55,9 @@ def _make_gdn(cp_size: int) -> GatedDeltaNet:
     return gdn
 
 
-def _make_gdn2(cp_size: int) -> GatedDeltaNet2:
+def _make_gdn2(cp_size: int) -> torch.nn.Module:
+    if GatedDeltaNet2 is None:
+        pytest.skip("GatedDeltaNet2 is not available in this MCore revision")
     gdn = GatedDeltaNet2.__new__(GatedDeltaNet2)
     torch.nn.Module.__init__(gdn)
     gdn.config = SimpleNamespace(context_parallel_size=cp_size, deterministic_mode=True)
@@ -75,7 +87,10 @@ def test_eval_cp_context_refreshes_gdn_runtime_shape_metadata(monkeypatch: pytes
     with eval_cp_context(gdn, eval_pgs, train_pgs):
         assert gdn.cp_size == 2
         live_feature_width = sum(gdn.in_proj_split_sections) // gdn.cp_size
-        torch.split(torch.empty(live_feature_width), gdn.feat_dim_split)
+        split_sizes = getattr(gdn, "feat_dim_split", None)
+        if split_sizes is None:
+            split_sizes = gdn._get_feat_dim_split(gdn.cp_size)
+        torch.split(torch.empty(live_feature_width), split_sizes)
 
     assert gdn.cp_size == 1
     assert gdn.config.context_parallel_size == 1

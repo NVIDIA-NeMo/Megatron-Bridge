@@ -231,6 +231,9 @@ def build_mcore_thd_sequence_batch_from_rows(
         cu_seqlens_padded_t = torch.tensor(cu_seqlens_padded, dtype=torch.int32, device=first_tokens.device)
         packed["cu_seqlens_q_padded"] = cu_seqlens_padded_t
         packed["cu_seqlens_kv_padded"] = cu_seqlens_padded_t
+    # TE must retain physical alignment gaps in its output when the THD token
+    # stream contains padding between logical sequences (or in the final slot).
+    packed["pad_between_seqs"] = padded_lengths != unpadded_lengths
     packed["max_seqlen_q"] = torch.tensor(max(padded_lengths), dtype=torch.int32)
     packed["max_seqlen_kv"] = torch.tensor(max(padded_lengths), dtype=torch.int32)
     # MCore uses total_tokens together with the physical (padded) boundaries
@@ -341,6 +344,7 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
         "cu_seqlens_kv",
         "cu_seqlens_q_padded",
         "cu_seqlens_kv_padded",
+        "pad_between_seqs",
         "max_seqlen_q",
         "max_seqlen_kv",
         "total_tokens",

@@ -1,5 +1,6 @@
 title: moe_dispatcher_selection
 validated_on: "2026-07-31"
+guidance_updated_on: "2026-08-25"
 summary: >
   Evidence-gated guide for selecting MoE token dispatchers (AlltoAll, DeepEP,
   HybridEP). Hardware and EP degree form a candidate set; matched target-stack
@@ -40,8 +41,14 @@ training_dimensions:
     rationale: >
       Higher EP means more communication; HybridEP's NVLink optimization
       benefits more at EP=32+ vs EP=8.
-
 dispatcher_recommendations:
+  nvl8_bf16:
+    bring_up: alltoall
+    tuned_candidates: [HybridEP]
+    rationale: >
+      Treat both as matched candidates on the exact stack. Their throughput
+      can be close, so a small or negative delta is a valid reason to keep the
+      simpler alltoall path.
   h100:
     bring_up: alltoall
     tuned_candidates: [DeepEP, HybridEP]

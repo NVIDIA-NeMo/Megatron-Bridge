@@ -34,6 +34,7 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
@@ -141,7 +142,11 @@ def evaluate(
     eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
     # MegatronMIMO has heterogeneous per-module DP groups and intentionally owns
     # global-batch accounting through the container-level DP size.
-    eval_data_parallel_size = state.cfg.data_parallel_size if is_multimodule else pg_collection.dp.size()
+    eval_data_parallel_size = (
+        state.cfg.data_parallel_size
+        if is_multimodule
+        else get_data_distribution_group(pg_collection, state.cfg.model).size()
+    )
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * eval_data_parallel_size)
 
     if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
@@ -290,7 +295,9 @@ def evaluate(
                 if is_multimodule:
                     dp_cp_group = pg_collection.get_language_model_collection().dp_cp
                 else:
-                    dp_cp_group = pg_collection.dp_cp
+                    dp_cp_group = get_data_distribution_group(
+                        pg_collection, state.cfg.model, with_context_parallel=True
+                    )
 
                 for key in loss_dicts[0].keys():
                     if key not in total_loss_dict:

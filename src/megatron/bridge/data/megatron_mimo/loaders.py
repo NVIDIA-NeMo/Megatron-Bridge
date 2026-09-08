@@ -156,7 +156,11 @@ def build_megatron_mimo_data_loaders(
         consumed_samples=train_state.consumed_train_samples,
         split_micro_batch_size=micro_batch_size,
     )
-    valid_loader = _make_loader(valid_ds, consumed_samples=0, split_micro_batch_size=eval_micro_batch_size)
+    valid_loader = _make_loader(
+        valid_ds,
+        consumed_samples=train_state.consumed_valid_samples,
+        split_micro_batch_size=eval_micro_batch_size,
+    )
     test_loader = _make_loader(test_ds, consumed_samples=0, split_micro_batch_size=eval_micro_batch_size)
 
     return train_loader, valid_loader, test_loader

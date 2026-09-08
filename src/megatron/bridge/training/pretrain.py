@@ -225,13 +225,15 @@ def _abort_async_checkpoint_worker(state: GlobalState) -> None:
     finally:
         state._async_calls_queue = None
 
-        from megatron.core.dist_checkpointing.strategies import filesystem_async
+        from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        from nvidia_resiliency_ext.checkpointing.async_ckpt import filesystem_async as nvrx_filesystem_async
 
-        if filesystem_async._results_queue is not None:
-            try:
-                filesystem_async._results_queue._manager.shutdown()
-            finally:
-                filesystem_async._results_queue = None
+        for filesystem_async in (mcore_filesystem_async, nvrx_filesystem_async):
+            if filesystem_async._results_queue is not None:
+                try:
+                    filesystem_async._results_queue._manager.shutdown()
+                finally:
+                    filesystem_async._results_queue = None
 
 
 def _safe_distributed_rank() -> str:
@@ -255,6 +257,13 @@ def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_g
         _abort_async_checkpoint_worker(state)
     except Exception:
         logger.exception("Failed to abort async checkpointing after pretrain failure")
+
+    try:
+        if state._signal_handler is not None:
+            state._signal_handler.release()
+            state._signal_handler = None
+    except Exception:
+        logger.exception("Failed to release the signal handler after pretrain failure")
 
     try:
         destroy_global_state()
