@@ -144,7 +144,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
 
     cfg.train.micro_batch_size = 4
-    cfg.model.moe_paged_stash = False
+    # cfg.model.moe_paged_stash = False
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -165,7 +165,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 0,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
