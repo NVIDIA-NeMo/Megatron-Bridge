@@ -715,9 +715,9 @@ class AutoBridge(Generic[MegatronModelT]):
             model = [model]
         return self._model_bridge.build_export_mxfp8_tasks(self.hf_pretrained, model)
 
-    def iter_local_native_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:
+    def iter_local_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:
         """Yield local native MXFP8 projections through the public bridge API."""
-        return self._model_bridge.iter_local_native_mxfp8_params(tasks)
+        return self._model_bridge.iter_local_mxfp8_params(tasks)
 
     def export_hf_weights(
         self,

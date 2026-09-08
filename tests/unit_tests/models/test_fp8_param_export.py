@@ -972,7 +972,7 @@ class TestFp8ParamExport:
         monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda _weight: False)
         monkeypatch.setattr(f"{_QUANT_MB}.is_mxfp8tensor", lambda weight: weight in parameters)
 
-        iterator = bridge.iter_local_native_mxfp8_params(tasks)
+        iterator = bridge.iter_local_mxfp8_params(tasks)
         first = next(iterator)
         gc.collect()
 
@@ -1019,7 +1019,7 @@ class TestFp8ParamExport:
         exposed = []
 
         with pytest.raises(ValueError, match=malformed_name):
-            exposed.extend(bridge.iter_local_native_mxfp8_params(tasks))
+            exposed.extend(bridge.iter_local_mxfp8_params(tasks))
 
         assert exposed == []
 
@@ -1077,7 +1077,7 @@ class TestFp8ParamExport:
         exposed = []
 
         with pytest.raises(ValueError, match=rf"{malformed_name}.*expected weight_scale shape"):
-            exposed.extend(bridge.iter_local_native_mxfp8_params(tasks))
+            exposed.extend(bridge.iter_local_mxfp8_params(tasks))
 
         assert exposed == []
         assert projection_devices == [(first_name, "meta"), (malformed_name, "meta")]
@@ -1104,7 +1104,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*DTensor/FSDP"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_wraps_grouped_cache_errors(self, monkeypatch):
         bridge = DummyBridge()
@@ -1127,7 +1127,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*cached grouped MXFP8 members"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_rejects_inherited_specialized_mapping(self, monkeypatch):
         bridge = DummyBridge()
@@ -1158,7 +1158,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*exact native MXFP8 projection"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     @pytest.mark.parametrize(
         "result",
@@ -1263,7 +1263,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*invalid native MXFP8 mapping result"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_validates_grouped_mapping_results(self, monkeypatch):
         bridge = DummyBridge()
@@ -1304,7 +1304,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}0.*invalid native MXFP8 mapping result"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_preserves_task_expert_and_mapping_order(self, monkeypatch):
         bridge = DummyBridge()
@@ -1407,7 +1407,7 @@ class TestFp8ParamExport:
             ),
         ]
 
-        params = list(bridge.iter_local_native_mxfp8_params(tasks))
+        params = list(bridge.iter_local_mxfp8_params(tasks))
 
         assert [param.name for param in params] == [
             "hf.q",
@@ -1442,10 +1442,10 @@ class TestFp8ParamExport:
             param_weight=parameter,
         )
 
-        first = list(bridge.iter_local_native_mxfp8_params([task]))[0]
+        first = list(bridge.iter_local_mxfp8_params([task]))[0]
         parameter.data_bytes.fill_(3)
         parameter.scale_bytes.fill_(5)
-        second = list(bridge.iter_local_native_mxfp8_params([task]))[0]
+        second = list(bridge.iter_local_mxfp8_params([task]))[0]
 
         assert torch.count_nonzero(first.weight.view(torch.uint8) != 3) == 0
         assert torch.count_nonzero(first.weight_scale != 5) == 0
@@ -1480,7 +1480,7 @@ class TestFp8ParamExport:
             param_weight=parameter,
         )
 
-        params = list(bridge.iter_local_native_mxfp8_params([task]))
+        params = list(bridge.iter_local_mxfp8_params([task]))
 
         assert [param.name for param in params] == ["hf.o"]
 
@@ -1501,7 +1501,7 @@ class TestFp8ParamExport:
         with pytest.raises(
             ValueError, match=rf"{global_name}.*does not explicitly support exact native MXFP8 projection"
         ):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_rejects_mtp(self, monkeypatch):
         bridge = DummyBridge()
@@ -1518,7 +1518,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*co-trained MTP"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_rejects_fsdp(self, monkeypatch):
         bridge = DummyBridge()
@@ -1537,7 +1537,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*DTensor/FSDP"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     @pytest.mark.parametrize(
         "configure",
@@ -1568,7 +1568,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=global_name):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_native_mxfp8_materialization_rejects_bad_grouped_count(self, monkeypatch):
         bridge = DummyBridge()
@@ -1590,7 +1590,7 @@ class TestFp8ParamExport:
         )
 
         with pytest.raises(ValueError, match=rf"{global_name}.*1 local members.*expected 2"):
-            list(bridge.iter_local_native_mxfp8_params([task]))
+            list(bridge.iter_local_mxfp8_params([task]))
 
     def test_build_export_mxfp8_tasks_keeps_resolved_expert_mapping_ordinary(self):
         global_name = "decoder.layers.0.mlp.experts.local_experts.2.linear_fc1.weight"
@@ -1952,19 +1952,19 @@ class TestFp8ParamExport:
         assert tasks == expected_tasks
         mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(mock_hf, [model])
 
-    def test_iter_local_native_mxfp8_params_uses_public_auto_bridge_api(self):
+    def test_iter_local_mxfp8_params_uses_public_auto_bridge_api(self):
         mock_hf = Mock(spec=PreTrainedCausalLM)
         mock_model_bridge = Mock()
         tasks = [Mock(spec=WeightConversionTask)]
         expected_params = [Mock(spec=LocalMXFP8Param)]
-        mock_model_bridge.iter_local_native_mxfp8_params.return_value = iter(expected_params)
+        mock_model_bridge.iter_local_mxfp8_params.return_value = iter(expected_params)
 
         with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
             bridge = AutoBridge(mock_hf)
-            params = list(bridge.iter_local_native_mxfp8_params(tasks))
+            params = list(bridge.iter_local_mxfp8_params(tasks))
 
         assert params == expected_params
-        mock_model_bridge.iter_local_native_mxfp8_params.assert_called_once_with(tasks)
+        mock_model_bridge.iter_local_mxfp8_params.assert_called_once_with(tasks)
 
     def test_build_export_mxfp8_tasks_keeps_remote_placeholders_concrete(self, monkeypatch):
         bridge = DummyBridge()

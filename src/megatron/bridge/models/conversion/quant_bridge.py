@@ -510,7 +510,7 @@ class MegatronQuantizationBridge:
                 )
         return [tasks_by_name[name] for name in ordered_names]
 
-    def iter_local_native_mxfp8_params(
+    def iter_local_mxfp8_params(
         self,
         tasks: Iterable["WeightConversionTask"],
     ) -> Iterator["LocalMXFP8Param"]:
