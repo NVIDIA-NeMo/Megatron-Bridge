@@ -167,11 +167,22 @@ class PEFT(ABC):
         """
         Disables the adapter module.
         """
+        adapter_states: list[tuple[nn.Module, bool]] = []
+
+        def disable(module: nn.Module) -> nn.Module:
+            method = getattr(module, "disable_adapter_layers", None)
+            if callable(method):
+                adapter_states.append((module, getattr(module, "_adapter_enabled", True)))
+                method()
+            return module
+
         try:
-            self.disable_adapter_layers(model)
+            self._walk_model(model, disable)
             yield
         finally:
-            self.enable_adapter_layers(model)
+            for module, was_enabled in adapter_states:
+                method_name = "enable_adapter_layers" if was_enabled else "disable_adapter_layers"
+                getattr(module, method_name)()
 
     def freeze_model(self, model: ModelType, training: bool = True) -> None:
         """Apply a default freeze method to the model.

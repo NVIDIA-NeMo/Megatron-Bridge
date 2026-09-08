@@ -23,8 +23,10 @@ import shutil
 import sys
 import threading
 from abc import ABC
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from enum import Enum, auto
+from functools import partial
 from logging import getLogger
 from pathlib import Path
 from time import time
@@ -160,6 +162,56 @@ HF_WEIGHTS_SUBDIR = "hf"
 # default (currently only Megatron Energon). Used to derive dataloader_save / dataloader_load when
 # those config fields are left unset.
 DATALOADER_STATE_SUBDIR = "energon"
+
+
+def _get_run_config_tp_pp(model_config: Mapping[str, Any]) -> tuple[int, int]:
+    """Read TP/PP sizes from a flat provider or nested HybridModel config."""
+    transformer_config = model_config.get("transformer")
+    parallel_config = transformer_config if isinstance(transformer_config, Mapping) else model_config
+    return (
+        parallel_config["tensor_model_parallel_size"],
+        parallel_config["pipeline_model_parallel_size"],
+    )
+
+
+class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
+    """Run MCore's synchronous torch-dist writer without a CUDA staging barrier."""
+
+    @staticmethod
+    def _run_finalize(finalize_fn: Callable[[], None]) -> None:
+        """Use a backend-compatible device for MCore's failure-status tensor."""
+        if torch.distributed.is_initialized() and torch.distributed.get_backend() == "nccl":
+            finalize_fn()
+            return
+
+        current_device = torch.cuda.current_device
+        try:
+            torch.cuda.current_device = lambda: torch.device("cpu")
+            finalize_fn()
+        finally:
+            torch.cuda.current_device = current_device
+
+    def save(self, sharded_state_dict: ShardedStateDict, checkpoint_dir: Path) -> None:
+        """Save CPU tensors synchronously without calling ``torch.cuda.synchronize``."""
+        async_request = self.async_save(sharded_state_dict, checkpoint_dir, async_strategy="mcore")
+        preload_fn = async_request.preload_fn
+        if preload_fn is not None:
+            if not isinstance(preload_fn, partial):
+                raise TypeError(f"Expected a partial CPU preload callback, got {type(preload_fn).__name__}.")
+            bound = inspect.signature(preload_fn.func).bind_partial(
+                *preload_fn.args,
+                **(preload_fn.keywords or {}),
+            )
+            if "non_blocking" not in bound.signature.parameters:
+                raise TypeError("MCore checkpoint preload callback does not accept non_blocking.")
+            bound.arguments["non_blocking"] = False
+            async_request = async_request._replace(
+                preload_fn=partial(preload_fn.func, *bound.args, **bound.kwargs),
+            )
+        async_request = async_request._replace(
+            finalize_fns=[partial(self._run_finalize, finalize_fn) for finalize_fn in async_request.finalize_fns],
+        )
+        async_request.execute_sync()
 
 
 # ============================================================================
@@ -556,6 +608,45 @@ def get_rng_state(
         rng_state_list = {f"({pp_rank}, {tp_rank})": rng_state_list}
 
     return rng_state_list
+
+
+def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject:
+    """Align RNG load metadata with the layout stored in a torch-dist checkpoint.
+
+    Newer MCore checkpoints shard RNG state across PP, TP, and DP/CP, while
+    older checkpoints encode DP as a replica ID. Keep the generated metadata
+    when its exact key exists; otherwise adopt a unique stored layout whose
+    PP/TP prefix matches this rank.
+    """
+    checkpoint_path = Path(checkpoint_name)
+    if not (checkpoint_path / ".metadata").is_file():
+        return rng_state
+
+    sharded_metadata = TorchDistLoadShardedStrategy().load_sharded_metadata(checkpoint_path)
+    if rng_state.unique_key in sharded_metadata:
+        return rng_state
+
+    prefix = rng_state.global_offset[:2]
+    matches = [
+        metadata
+        for metadata in sharded_metadata.values()
+        if isinstance(metadata, ShardedObject)
+        and metadata.key == rng_state.key
+        and metadata.global_offset[:2] == prefix
+        and len(metadata.global_offset) == len(rng_state.global_offset) + 1
+        and metadata.global_offset[-1] == rng_state.replica_id
+        and metadata.replica_id == 0
+    ]
+    if len(matches) != 1:
+        return rng_state
+
+    stored = matches[0]
+    return replace(
+        rng_state,
+        global_shape=stored.global_shape,
+        global_offset=stored.global_offset,
+        replica_id=stored.replica_id,
+    )
 
 
 class CheckpointType(Enum):
@@ -1487,7 +1578,9 @@ def save_checkpoint(
                     else:
                         open_file = open
                     with open_file(tracker_filename, "r") as f:
-                        previous_step = int(f.read().strip())
+                        previous_metadata = f.read().strip()
+                        if previous_metadata != "release":
+                            previous_step = int(previous_metadata)
 
                 train_state_dict["floating_point_operations_so_far"] = torch.tensor(
                     num_floating_point_operations_so_far, dtype=torch.float32
@@ -2898,10 +2991,7 @@ def _load_checkpoint_from_path(
             tp_pp_match = True
             mismatch_msg = ""
         else:
-            ckpt_tp_pp = (
-                run_config["model"]["tensor_model_parallel_size"],
-                run_config["model"]["pipeline_model_parallel_size"],
-            )
+            ckpt_tp_pp = _get_run_config_tp_pp(run_config["model"])
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,
                 cfg.model.pipeline_model_parallel_size,
@@ -2923,6 +3013,8 @@ def _load_checkpoint_from_path(
                 pg_collection=pg_collection,
                 module_name=module_name,
             )
+            if ckpt_type != CheckpointType.LOCAL:
+                gen_sd_rng_state = _align_rng_state_sharded_metadata(gen_sd_rng_state, checkpoint_name)
         else:
             ignore_rng_state = True
             gen_sd_rng_state = None
@@ -3021,10 +3113,7 @@ def _load_checkpoint_from_path(
             run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
             if file_exists(run_config_filename):
                 run_config = read_run_config(run_config_filename)
-                ckpt_tp_pp = (
-                    run_config["model"]["tensor_model_parallel_size"],
-                    run_config["model"]["pipeline_model_parallel_size"],
-                )
+                ckpt_tp_pp = _get_run_config_tp_pp(run_config["model"])
                 run_tp_pp = (
                     cfg.model.tensor_model_parallel_size,
                     cfg.model.pipeline_model_parallel_size,

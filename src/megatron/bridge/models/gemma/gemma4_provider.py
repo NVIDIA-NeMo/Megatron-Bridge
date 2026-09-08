@@ -200,6 +200,20 @@ class Gemma4DenseProvider(GPTModelProvider):
         if vp_stage is not None or getattr(self, "pipeline_model_parallel_size", 1) != 1:
             raise NotImplementedError("Gemma4DenseProvider currently supports PP=1 only.")
 
+        if getattr(self, "context_parallel_size", 1) != 1:
+            # get_gemma4_layer_spec() builds the dense layer from LocalSpecProvider,
+            # whose core_attention() is the non-TE DotProductAttention. That module
+            # asserts context_parallel_size == 1, so CP fails deep inside layer
+            # construction with "Context parallelism is only supported by
+            # TEDotProductAttention! when instantiating Gemma4DenseSelfAttention".
+            # Surface it here instead, next to the PP guard, so the message names the
+            # provider and the knob to change.
+            raise NotImplementedError(
+                "Gemma4DenseProvider currently supports CP=1 only: its layer spec uses "
+                "the local DotProductAttention, which does not implement context "
+                "parallelism."
+            )
+
         return self.build(
             pre_process=True if pre_process is None else pre_process,
             post_process=True if post_process is None else post_process,

@@ -257,12 +257,41 @@ Set the four flags below as a matched column — a mismatched set produces incor
 | Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs, 512²) |
 |----------------------------------------------------|-------------------------------------------|--------------------------------------------|
 | `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                                     |
-| `model.temporal_patchrecipe_dim`                         | `1`                                       | `2`                                        |
+| `model.temporal_patch_dim`                         | `1`                                       | `2`                                        |
 | `model.separate_video_embedder`                    | `False`                                   | `True`                                     |
 | `model.temporal_ckpt_compat`                       | `False`                                   | `True`                                     |
 
 Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
 
+### Vision DP Over CP
+
+`model.vision_dp_over_cp` shards the microbatch's images (or
+temporal tubelets) across the language model's context-parallel group, so each
+CP rank encodes `1/CP` of them instead of all of them. This is data parallelism
+over images, not ring attention — RADIO already attends within each image via
+`cu_seqlens`, so nothing is split along the sequence dimension and no
+cross-rank attention communication is introduced. The vision projector runs on
+the rank-local shard, and a single gather afterwards restores the full feature
+set that every rank needs to merge media into the packed text sequence.
+
+The flag defaults to `True` and is a no-op unless
+`model.context_parallel_size > 1`. Both recipes below ship with CP=1, so it only
+takes effect once you raise CP. Set `model.vision_dp_over_cp=False` to
+encode every image redundantly on every CP rank.
+
+Measured on 2 nodes / 16 GPUs (PP=1, DP=2, EP=8, ETP=1, MBS=2, GBS=64, GA=16),
+flipping only this flag:
+
+| Dataset       | TP | CP | Step time      | Peak memory   |
+|---------------|----|----|----------------|---------------|
+| InfoVQA       | 4  | 2  | 13.2 → 12.5 s  | 81 → 73 GB    |
+| Mantis        | 2  | 4  | 12.2 → 11.6 s  | 81 → 77 GB    |
+| llava_video   | 4  | 2  | 13.6 → 13.0 s  | 84 → 75 GB    |
+
+Images are split by count, with the remainder assigned to the last rank.
+Multi-image data whose per-sample image count varies (Mantis at CP=4) therefore
+balances less evenly than uniform data, which is why its memory saving is the
+smallest of the three.
 
 ### Image-Text — CORD-V2
 

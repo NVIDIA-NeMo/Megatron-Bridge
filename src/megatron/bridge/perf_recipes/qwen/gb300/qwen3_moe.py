@@ -22,7 +22,6 @@ from megatron.bridge.perf_recipes.qwen.common import (
     _benchmark_common,
     _enable_hybridep_full_iteration_mxfp8,
     _enable_hybridep_full_iteration_nvfp4,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -743,7 +742,6 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_hybridep_num_sms = 16
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -771,8 +769,6 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB300, MXFP8 (same layout as BF16)."""
     cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

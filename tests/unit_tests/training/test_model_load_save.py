@@ -21,6 +21,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -309,6 +310,56 @@ class TestLoadMegatronModel:
         built_layer_count = load_megatron_model("/ckpt")
 
         assert built_layer_count == provider.num_layers
+
+    @pytest.mark.parametrize(
+        ("mp_overrides", "expect_saved_layout"),
+        [
+            ({"pipeline_model_parallel_size": 2}, True),
+            ({"pipeline_model_parallel_size": 4}, False),
+            (
+                {
+                    "pipeline_model_parallel_size": 2,
+                    "pipeline_model_parallel_layout": None,
+                },
+                False,
+            ),
+        ],
+        ids=["same-pp", "changed-pp", "explicit-clear"],
+    )
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_pipeline_override_does_not_reuse_incompatible_saved_layout(
+        self,
+        mock_load_model_config,
+        mock_build_and_load_model,
+        mp_overrides,
+        expect_saved_layout,
+    ):
+        """A saved PP layout is retained only for a compatible requested topology."""
+        provider = GPTModelProvider(
+            num_layers=4,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=[
+                ["embedding", "decoder", "decoder"],
+                ["decoder", "decoder", "loss"],
+            ],
+        )
+        mock_load_model_config.return_value = (provider, None)
+
+        def _finalized_layout(checkpoint_path, model_cfg, *args):
+            model_cfg.finalize()
+            return model_cfg.pipeline_model_parallel_layout
+
+        mock_build_and_load_model.side_effect = _finalized_layout
+
+        result = load_megatron_model("/ckpt", mp_overrides=mp_overrides)
+
+        if expect_saved_layout:
+            assert isinstance(result, PipelineParallelLayerLayout)
+        else:
+            assert result is None
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
@@ -945,7 +996,45 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=None,
             callback_manager=None,
+        )
+
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_megatron_model_accepts_builder_config(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+    ):
+        """Builder-backed checkpoints serialize the complete outer model config."""
+        mock_model = Mock()
+        model_config = Mock(spec=ModelConfig)
+        model_config.transformer = SimpleNamespace(use_cpu_initialization=True)
+        mock_model.model_config = model_config
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        save_megatron_model([mock_model], "/checkpoint", low_memory_save=False)
+
+        mock_get_model_config.assert_not_called()
+        assert mock_config_container.call_args.kwargs["model"] is model_config
+        save_kwargs = mock_save_checkpoint.call_args.kwargs
+        assert save_kwargs["state"] is mock_state
+        assert save_kwargs["model"] == [mock_model]
+        assert isinstance(
+            save_kwargs["checkpointing_context"]["save_strategy"],
+            model_load_save._CpuTorchDistSaveShardedStrategy,
         )
 
     @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
@@ -1026,6 +1115,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=None,
             callback_manager=None,
         )
 
@@ -1213,6 +1303,7 @@ class TestSaveMegatronModel:
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=None,
             callback_manager=None,
         )
 

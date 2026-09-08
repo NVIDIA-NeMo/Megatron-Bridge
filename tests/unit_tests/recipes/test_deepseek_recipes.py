@@ -46,6 +46,7 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
     {
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
+        "deepseek_v4_flash_peft_openmath_thinking_packed_config",
         "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",
@@ -385,6 +386,15 @@ def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
     return getattr(mod, name)()
 
 
+def test_deepseek_v4_portable_peft_recipe_disables_recompute(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_peft_openmath_thinking_packed_config", monkeypatch)
+
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+
+
 def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_pretrain_mxfp8_config", monkeypatch)
 
@@ -482,7 +492,7 @@ def test_deepseek_v4_recipes_keep_hardware_qualified_dispatcher(
     if expected_dispatcher == "flex":
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 16
-        assert cfg.model.moe_hybridep_num_sms is None
+        assert getattr(cfg.model, "moe_hybridep_num_sms", None) is None
 
 
 @pytest.mark.parametrize(

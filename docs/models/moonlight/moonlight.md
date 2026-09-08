@@ -6,153 +6,411 @@ The model features 27 decoder layers with 64 routed experts and 8 shared experts
 
 Moonlight models are supported via the Bridge system with specialized configurations for MoE and MLA optimizations.
 
-## Model Architecture
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
-- **Parameters**: 16B total, 3B activated per forward pass
-- **Layers**: 27 decoder layers
-- **Attention**: Multi-head Latent Attention (MLA) with RoPE fusion support
-- **MoE**: 64 routed experts + 8 shared experts per layer
-- **Hidden size**: 2048
-- **Intermediate size**: 10944 (with MLP and expert gating)
-- **Vocab size**: 151,936
-- **Context Length**: 8K tokens
-- **Training**: 5.7T tokens with Muon optimizer
+## Verified configurations
 
-## Conversion with 🤗 Hugging Face
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
 
-Moonlight shares the same architecture as DeepSeek-V3, which enables compatibility with various inference engines like vLLM and SGLang. The model can be loaded from HuggingFace or used with Megatron checkpoints.
+<a id="verified-moonlight-16b-a3b"></a>
+### Run a configuration
 
-### Load HF → Megatron
-```python
-from megatron.bridge import AutoBridge
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
 
-# Example: Moonlight-16B-A3B
-bridge = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B")
-provider = bridge.to_megatron_provider()
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="moonlight-16b-a3b-hf-to-megatron-cpu" aria-controls="moonlight-16b-a3b-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="moonlight-16b-a3b-hf-to-megatron-gpu" aria-controls="moonlight-16b-a3b-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="moonlight-16b-a3b-megatron-to-hf-cpu" aria-controls="moonlight-16b-a3b-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="moonlight-16b-a3b-megatron-to-hf-gpu" aria-controls="moonlight-16b-a3b-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="moonlight-16b-a3b-pretrain-h100" aria-controls="moonlight-16b-a3b-pretrain-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="moonlight-16b-a3b-sft-h100" aria-controls="moonlight-16b-a3b-sft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="moonlight-16b-a3b-sft-long-context-h100" aria-controls="moonlight-16b-a3b-sft-long-context-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="moonlight-16b-a3b-peft-h100" aria-controls="moonlight-16b-a3b-peft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="moonlight-16b-a3b-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-19</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model moonshotai/Moonlight-16B-A3B --megatron-path work/model-verification/moonlight-16b-a3b/cpu-megatron --torch-dtype bfloat16 --trust-remote-code</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The command exits successfully, creates iter_0000000, and the checkpoint round-trips through CPU export with exact model configuration. After native reload, all 377 registered parameters and persistent buffers match bitwise by key, shape, dtype, and value. In the serialized files, 26 router correction-bias buffers widen losslessly from BF16 to FP32.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-19</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model moonshotai/Moonlight-16B-A3B --megatron-path work/model-verification/moonlight-16b-a3b/imported-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The command exits successfully, creates a reloadable iter_0000000, and an exact audit finds all 5,344 serialized source tensors and the model configuration unchanged after the paired GPU export.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-19</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model moonshotai/Moonlight-16B-A3B --megatron-path work/model-verification/moonlight-16b-a3b/cpu-megatron/iter_0000000 --hf-path work/model-verification/moonlight-16b-a3b/cpu-hf-export --torch-dtype bfloat16 --trust-remote-code</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The command exits successfully, the model configuration is exact, and all 377 registered parameters and persistent buffers match bitwise by key, shape, dtype, and value after native reload. Transformers strictly reloads the output as DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized files, 26 router correction-bias buffers widen losslessly from BF16 to FP32 and 27 stale, nonpersistent source inv_freq tensors are omitted.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-19</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model moonshotai/Moonlight-16B-A3B --megatron-path work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --hf-path work/model-verification/moonlight-16b-a3b/hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Strict distributed export exits successfully, all 5,344 serialized tensor keys, shapes, dtypes, and values match the recorded HF revision, and native Transformers strictly reloads the output as DeepseekV3ForCausalLM with trust_remote_code disabled and no missing or unexpected keys.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-pretrain-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-pretrain-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-22</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>12.43248</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>5.15842</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>11,636.350 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>386.590 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>22,528.026 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe moonlight_16b_pretrain_16gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01&quot;],null]&#x27; dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2-convergence-v1 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null dist.distributed_timeout_minutes=30 --save_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient accumulation with natural MoE routing and the HybridEP flex dispatcher. It reaches peak learning rate at step 40 and completes cosine decay at step 100. LM loss is finite from 12.43248 to 5.158420 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and complete 16-shard iter_0000050 and iter_0000100 checkpoints are saved.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-sft-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-sft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-22</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.770799</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.180197</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>562.140 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>229.500 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>14,572.882 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe moonlight_16b_sft_8gpu_h100_bf16_tp1_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-hybridep-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=1 &#x27;dataset.dataset_kwargs={pad_to_max_length:true}&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 8/1, and no gradient accumulation, using the HybridEP flex dispatcher with overlapped expert communication and delayed weight-gradient compute. Fixed-width 8K, pad-1 offline packing is 99.73% efficient and averages 21.550 source sequences per pack while retaining 6,553,600 token slots across the 100 updates. LM loss is finite from 1.770799 to 1.180197 with no skipped or NaN iterations, all five metrics are recorded, and the complete eight-shard iter_0000100 full-model checkpoint saves successfully.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-sft-long-context-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-20</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.30644</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.228019</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>60,599.310 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>40.840 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>2,162.929 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe moonlight_16b_sft_8k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 20 --seq_length 8192 --context_parallel_size 2 --lr 1e-6 --min_lr 0 --warmup_iters 2 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-long-context-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The immutable-revision 8-GPU run completes exactly 20 Tulu3 SFT steps at the model&#x27;s 8192-token context limit with recipe-owned TP2/PP1/CP2/EP8/SP-on, GBS/MBS 128/1, and explicit pad-4 offline packing. LM loss is 1.306440 to 1.228019; skipped/NaN totals are 0/0. The persisted post-setup runtime config matches the command, packing is 99.69%, and the sampled training window contains 13,765,732 actual supervised tokens.
+</p>
+      </section>
+    </article>
+    <article id="moonlight-16b-a3b-peft-h100" class="verification-model-detail" data-entry-detail="moonlight-16b-a3b-peft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-07-22</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.264324</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.100755</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>3,822.840 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>67.380 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>4,285.819 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --recipe moonlight_16b_peft_4gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 2048 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;476b36a473d4467f94469414bef6cee75c9c8172&quot;&#x27; dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-peft-b14afda60f1b dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/moonlight-16b-a3b/peft-convergence-v1-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The immutable-revision 4-GPU run completes exactly 100 PEFT steps at TP1/PP1/CP1/EP4/ETP1, DP4, SP off, GBS/MBS 32/1, and eight-way gradient accumulation. Pad-4 offline packing is 99.29% efficient, and the sampled 6,553,600 token slots contain 4,291,091 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_q_proj, linear_kv_down_proj, linear_kv_up_proj, and linear_proj is trainable. LM loss is finite from 1.264324 to 1.100755 with no skipped or NaN iterations, all five metrics are recorded, and the complete four-shard iter_0000100 adapter checkpoint covers all 216 expected adapter entries.
+</p>
+      </section>
+    </article>
+  </div>
+</div>
 
-# Configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 2
-provider.pipeline_model_parallel_size = 1
-provider.expert_model_parallel_size = 8
-provider.sequence_parallel = True
-
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
-```
-
-### Export Megatron → HF
-```python
-# Convert from a Megatron checkpoint directory to HF format
-bridge.export_ckpt(
-    megatron_path="/results/moonlight_16b/checkpoints/iter_0500000",
-    hf_path="./moonlight-hf-export",
-)
-```
-
-## Examples
-
-- Checkpoint conversion: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
-
-## Recipes
-
-See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md)
-
-### Available Recipes
-
-- **Pretrain recipes**:
-  - `moonlight_16b_pretrain_config`: Pre-training for Moonlight-16B (16B parameters, 3B activated per token)
-
-- **SFT recipes**:
-  - `moonlight_16b_sft_config`: Full SFT for Moonlight-16B
-- **PEFT recipes** (LoRA, DoRA):
-  - `moonlight_16b_peft_config`: PEFT for Moonlight-16B
-
-### Parallelism Configurations
-
-| Model | Mode | TP | PP | EP | Total GPUs | Use Case |
-|-------|------|----|----|----|-----------:|----------|
-| **Moonlight-16B** | Pretrain | 1 | 1 | 8 | 16 | Pre-training (2 nodes) |
-| **Moonlight-16B** | Full SFT | 1 | 1 | 8 | 8 | Full supervised finetuning (single node) |
-| **Moonlight-16B** | LoRA/DoRA | 1 | 1 | 4 | 4 | PEFT finetuning (single node) |
-
-**Key Features**:
-- **Expert Parallelism**: EP=8 for pretraining/full SFT and EP=4 for PEFT
-- **Sequence Parallel**: Disabled in the bounded-convergence recipes; enabled by higher-TP support configs
-- **Packed SFT**: The TP1 full-SFT recipe uses 8K offline packs with GBS/MBS 8/1, one dense-DP step per update, and 65,536 token slots per update
-- **Selective Recomputation**: Available for long-context and memory-constrained support configs
-- **RoPE Fusion**: Optional MLA-specific optimization (`apply_rope_fusion=True`)
-- **DeePEP**: Optional expert permutation optimization (`enable_deepep=True`)
-
-**Performance Optimizations**:
-- **MoE Permute Fusion**: Fused expert permutation operations
-- **RoPE Fusion**: Optional fusion for Multi-head Latent Attention
-- **Manual GC**: Aggressive garbage collection (interval=5)
-- **Precision-Aware Optimizer**: BF16 gradients and optimizer states with FP32 master weights
-
-**Pipeline Layouts** (optional):
-- **PP=1**: No pipelining (default)
-- **PP=2**: 14+13 layer split with embedding/loss
-- **PP=4**: 8+7+7+6 layer split
-- **PP=8**: 5+4+4+4+4+4+4+4 layer split
-- **VP**: PP=2,VP=2 and PP=4,VP=2 supported
-
-### Pre-training Example
-
-```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_pretrain_config
-
-cfg = moonlight_16b_pretrain_config()
-cfg.logger.tensorboard_dir = "/results/moonlight_16b/tb_logs"
-cfg.checkpoint.save = "/results/moonlight_16b/checkpoints"
-cfg.dataset.data_path = "/path/to/preprocessed_text_document"
-cfg.train.train_iters = 500_000
-cfg.train.global_batch_size = 2048
-# Uses TP=1, PP=1, EP=8 (16 GPUs) automatically
-```
-
-### Finetuning Examples
-
-#### Full Finetuning (1 Node)
-
-```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
-
-cfg = moonlight_16b_sft_config()
-cfg.logger.tensorboard_dir = "/results/moonlight_16b/sft/tb_logs"
-cfg.checkpoint.save = "/results/moonlight_16b/sft/checkpoints"
-cfg.checkpoint.pretrained_checkpoint = "/results/moonlight_16b/checkpoints/iter_0500000"
-cfg.train.train_iters = 1000
-cfg.train.global_batch_size = 8
-cfg.optimizer.lr = 5e-6
-# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
-```
-
-#### LoRA Finetuning
-
-```python
-from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
-
-cfg = moonlight_16b_peft_config(peft_scheme="lora")  # or "dora" for DoRA
-cfg.logger.tensorboard_dir = "/results/moonlight_16b/peft/tb_logs"
-cfg.checkpoint.save = "/results/moonlight_16b/peft/checkpoints"
-cfg.checkpoint.pretrained_checkpoint = "/results/moonlight_16b/checkpoints/iter_0500000"
-cfg.train.train_iters = 1000
-cfg.train.global_batch_size = 128
-cfg.optimizer.lr = 1e-4
-# Uses TP=1, PP=1, EP=4 (4 GPUs) automatically
-```
-
-## Hugging Face model cards
-
-- Moonlight-16B-A3B (Base): [moonshotai/Moonlight-16B-A3B](https://huggingface.co/moonshotai/Moonlight-16B-A3B)
-- Moonlight-16B-A3B-Instruct: [moonshotai/Moonlight-16B-A3B-Instruct](https://huggingface.co/moonshotai/Moonlight-16B-A3B-Instruct)
-
-## Technical Paper
-
-- Muon is Scalable for LLM Training: [arXiv:2502.16982](https://arxiv.org/abs/2502.16982)
-
-## Related docs
-
-- Recipe usage and customization: [Recipe usage](../../recipe-usage.md)
-- Training configuration: [Configuration overview](../../training/config-container-overview.md)
-- Training entry points: [Entry points](../../training/entry-points.md)
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->

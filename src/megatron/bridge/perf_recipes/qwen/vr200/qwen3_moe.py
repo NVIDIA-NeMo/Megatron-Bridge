@@ -31,6 +31,8 @@ from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
 def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, BF16 (alias of GB300)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config()
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -38,7 +40,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -87,6 +89,8 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -94,7 +98,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,

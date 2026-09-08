@@ -16,7 +16,6 @@
 
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
 )
 from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
@@ -37,6 +36,11 @@ def _enable_hybridep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_scope = []
     cfg.rng.te_rng_tracker = True

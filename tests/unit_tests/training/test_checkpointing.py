@@ -17,12 +17,15 @@ import os
 import pickle
 import tempfile
 from contextlib import ExitStack
+from functools import partial
 from pathlib import Path
 from unittest.mock import Mock, mock_open, patch
 
 import numpy as np
 import pytest
 import torch
+from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
+from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
@@ -33,11 +36,14 @@ from megatron.bridge.training.checkpointing import (
     CheckpointSaveContext,
     CheckpointType,
     DefaultCheckpointManager,
+    _align_rng_state_sharded_metadata,
     _build_auto_bridge_for_save,
     _clear_auto_bridge_cache,
+    _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
+    _get_run_config_tp_pp,
     _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
@@ -94,6 +100,17 @@ class _MaliciousDataloaderState:
 
 class TestCheckpointUtilities:
     """Test utility functions for checkpoint management."""
+
+    @pytest.mark.parametrize(
+        "model_config",
+        [
+            {"tensor_model_parallel_size": 4, "pipeline_model_parallel_size": 2},
+            {"transformer": {"tensor_model_parallel_size": 4, "pipeline_model_parallel_size": 2}},
+        ],
+    )
+    def test_get_run_config_tp_pp_supports_flat_and_hybrid_configs(self, model_config):
+        """Checkpoint parallelism checks support provider and HybridModel layouts."""
+        assert _get_run_config_tp_pp(model_config) == (4, 2)
 
     @pytest.mark.parametrize(
         "checkpoints_path,iteration,release,expected",
@@ -776,6 +793,7 @@ class TestSaveCheckpoint:
             mock_get_rng.assert_called_once()
         else:
             mock_get_rng.assert_not_called()
+        assert mock_gen_state.call_args.args[4] is (mock_get_rng.return_value if save_rng else None)
 
         # Verify that the tracker file was written with the correct iteration
         tracker_calls = [
@@ -792,6 +810,54 @@ class TestSaveCheckpoint:
         # Check that the iteration (1000) was written
         written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
         assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
+
+    def test_cpu_torch_dist_strategy_uses_blocking_preload(self, tmp_path):
+        """CPU checkpoint staging must not synchronize an unavailable CUDA device."""
+        preload_modes = []
+        written_buckets = []
+        finalize_devices = []
+
+        def preload(write_buckets, non_blocking=True):
+            preload_modes.append(non_blocking)
+            return write_buckets
+
+        def write(_rank, write_buckets, _results_queue):
+            written_buckets.extend(write_buckets)
+
+        request = AsyncRequest(
+            async_fn=write,
+            async_fn_args=(0, None, None),
+            finalize_fns=[lambda: finalize_devices.append(torch.cuda.current_device())],
+            preload_fn=partial(preload, ["cpu-tensor"], True),
+        )
+        strategy = _CpuTorchDistSaveShardedStrategy()
+        original_current_device = torch.cuda.current_device
+
+        with (
+            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request),
+            patch("torch.distributed.barrier"),
+        ):
+            strategy.save({}, tmp_path)
+
+        assert preload_modes == [False]
+        assert written_buckets == ["cpu-tensor"]
+        assert finalize_devices == [torch.device("cpu")]
+        assert torch.cuda.current_device is original_current_device
+
+    def test_cpu_torch_dist_strategy_preserves_cuda_finalize_for_nccl(self):
+        """NCCL cannot broadcast MCore's final status tensor from the CPU."""
+        finalize_devices = []
+
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_backend", return_value="nccl"),
+            patch("torch.cuda.current_device", return_value=3),
+        ):
+            _CpuTorchDistSaveShardedStrategy._run_finalize(
+                lambda: finalize_devices.append(torch.cuda.current_device())
+            )
+
+        assert finalize_devices == [3]
 
     def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
         """The tracker-selected checkpoint must survive until its async replacement is durable."""
@@ -891,14 +957,27 @@ class TestSaveCheckpoint:
         assert future_incomplete_checkpoint.is_dir()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
-    @pytest.mark.parametrize("previous_step, previous_checkpoint_remains", [(10, False), (20, True)])
+    @pytest.mark.parametrize(
+        "previous_tracker, previous_checkpoint_name, previous_checkpoint_remains",
+        [
+            ("10", "iter_0000010", False),
+            ("20", "iter_0000020", True),
+            ("release", "release", True),
+        ],
+    )
     def test_sync_persistent_save_honors_retain_interval(
-        self, tmp_path, save_checkpoint_fixtures, previous_step, previous_checkpoint_remains
+        self,
+        tmp_path,
+        save_checkpoint_fixtures,
+        previous_tracker,
+        previous_checkpoint_name,
+        previous_checkpoint_remains,
     ):
         """Persistent saves retain only interval checkpoints and the latest checkpoint."""
-        previous_checkpoint = tmp_path / f"iter_{previous_step:07d}"
+        previous_checkpoint = tmp_path / previous_checkpoint_name
         previous_checkpoint.mkdir()
-        (tmp_path / "latest_checkpointed_iteration.txt").write_text(str(previous_step))
+        tracker = tmp_path / "latest_checkpointed_iteration.txt"
+        tracker.write_text(previous_tracker)
         current_checkpoint = tmp_path / "iter_0000030"
 
         state = save_checkpoint_fixtures["mock_state"]
@@ -956,6 +1035,7 @@ class TestSaveCheckpoint:
 
         assert previous_checkpoint.exists() is previous_checkpoint_remains
         assert current_checkpoint.is_dir()
+        assert tracker.read_text() == "30"
 
     def test_async_persistent_save_defers_retain_interval_cleanup(self, tmp_path, save_checkpoint_fixtures):
         """The previous checkpoint remains available until its async replacement is durable."""
@@ -4364,6 +4444,8 @@ class TestFSDPDTensorFunctionality:
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
                 patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mla_down_proj_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mtp_in_state_dict", None),
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
@@ -5920,3 +6002,66 @@ class TestMaybeSaveDataloaderState:
             {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}, expected_path
         )
         mock_torch_save.assert_not_called()
+
+
+class TestAlignRngStateShardedMetadata:
+    @staticmethod
+    def _rng(global_offset=(1, 3), global_shape=(2, 4), replica_id=5):
+        from megatron.core.dist_checkpointing.mapping import ShardedObject
+
+        return ShardedObject(
+            "rng_state",
+            None,
+            global_shape,
+            global_offset,
+            replica_id=replica_id,
+        )
+
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_keeps_generated_layout_without_torch_dist_metadata(self, mock_strategy, tmp_path):
+        rng_state = self._rng()
+
+        result = _align_rng_state_sharded_metadata(rng_state, str(tmp_path))
+
+        assert result is rng_state
+        mock_strategy.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_keeps_exact_stored_layout(self, mock_strategy, mock_is_file):
+        rng_state = self._rng()
+        mock_strategy.return_value.load_sharded_metadata.return_value = {rng_state.unique_key: rng_state}
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result is rng_state
+        mock_is_file.assert_called_once_with()
+        mock_strategy.return_value.load_sharded_metadata.assert_called_once_with(Path("/checkpoint"))
+
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_adopts_unique_dp_cp_sharded_layout(self, mock_strategy, _mock_is_file):
+        rng_state = self._rng()
+        stored = self._rng(global_offset=(1, 3, 5), global_shape=(2, 4, 8), replica_id=0)
+        mock_strategy.return_value.load_sharded_metadata.return_value = {stored.unique_key: stored}
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result.global_shape == (2, 4, 8)
+        assert result.global_offset == (1, 3, 5)
+        assert result.replica_id == 0
+
+    @pytest.mark.parametrize("stored", [{}, None])
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_keeps_generated_layout_without_unique_match(self, mock_strategy, _mock_is_file, stored):
+        rng_state = self._rng()
+        if stored is None:
+            first = self._rng(global_offset=(1, 3, 0), global_shape=(2, 4, 8), replica_id=0)
+            second = self._rng(global_offset=(1, 3, 5), global_shape=(2, 4, 9), replica_id=1)
+            stored = {"first": first, "second": second}
+        mock_strategy.return_value.load_sharded_metadata.return_value = stored
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result is rng_state

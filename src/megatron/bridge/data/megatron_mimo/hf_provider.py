@@ -146,9 +146,11 @@ class HFMegatronMIMODatasetProvider(MegatronMIMODatasetProvider):
                 ),
             )
             return dataset
-        except ValueError:
-            # Split doesn't exist
-            return None
+        except ValueError as error:
+            message = str(error)
+            if message.startswith('Unknown split "') and ". Should be one of " in message:
+                return None
+            raise
 
     def _build_split_dataset(
         self,

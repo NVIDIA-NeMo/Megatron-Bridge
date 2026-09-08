@@ -613,8 +613,14 @@ class Qwen3VLModel(MegatronModule):
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
+        # A singleton BSHD row is shape-identical to THD. The legacy Qwen step
+        # supplies a keep mask and lets this model construct MRoPE, while THD
+        # producers supply explicit 3D MRoPE positions.
         legacy_packed_bshd = (
-            packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
+            packed_seq_params is not None
+            and input_ids is not None
+            and input_ids.dim() == 2
+            and (input_ids.size(0) > 1 or (attention_mask is not None and position_ids is None))
         )
         packed_input_pre_sharded = _is_packed_input_pre_sharded(
             input_ids,

@@ -7,19 +7,20 @@ summary: >
   verified against the pinned blockwise-FP8 checkpoint. The canonical
   pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU
   MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified.
+  A distributed CPU export of the same pinned checkpoint is also verified.
   Timing and throughput metrics from future functional training items remain
-  sanity checks rather than optimized performance results. CPU conversion,
-  forward correlation, functional training, fine-tuning, and checkpoint-resume
+  sanity checks rather than optimized performance results. CPU import, forward
+  correlation, functional training, fine-tuning, and checkpoint-resume
   verification remain deferred.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - manual_forward_pass
   training:
     GB300:
@@ -69,14 +70,28 @@ items:
       matched all 46,183 model tensors and 684,489,845,504 values exactly.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: b758d52cb3d12e3ca316d41d9527e6072a1c325b  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0
+      --exclusive --hf-model deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/deepseek-v3/cpu-hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --tp 1 --pp 4 --ep 8 --etp 1 --distributed-timeout-minutes 240
+      --distributed-save --save-every-n-ranks 1 --no-progress
+    last_verified: 2026-08-26
     expected_result: >
-      A CPU export from a verified Megatron checkpoint must preserve every
-      mapped tensor and strictly reload as DeepseekV3ForCausalLM. This workflow
-      is deferred by this card.
+      The 32-process distributed CPU export exits successfully and writes all
+      163 source-shaped shards. The index contains exactly 46,183 BF16 model
+      tensors; an exhaustive audit matches all 684,489,845,504 values against
+      the pinned source after blockwise dequantization of all 45,808 FP8
+      tensors and 59 other declared dtype normalizations. Transformers strictly
+      reloads the output as DeepseekV3ForCausalLM with all 967 state tensors and
+      no loading discrepancies.
 
   megatron_to_hf_gpu:
     status: verified
