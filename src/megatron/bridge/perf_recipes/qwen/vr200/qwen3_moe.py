@@ -144,6 +144,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
 
     cfg.train.micro_batch_size = 4
+    cfg.model.moe_paged_stash = False
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
