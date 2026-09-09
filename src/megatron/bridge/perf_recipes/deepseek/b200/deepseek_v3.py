@@ -32,7 +32,7 @@ def deepseek_v3_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
@@ -80,7 +80,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
@@ -131,28 +131,19 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
-
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
-    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.recompute_modules = ["mla_up_proj"]
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
-    cfg.model.moe_hybridep_num_sms = 16
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     _enable_deepseek_transformer_engine_graph(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -165,6 +156,11 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -175,19 +171,19 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× B200, NVFP4 (same layout as BF16)."""
+    """DeepSeek V3 pretrain: 256× B200, NVFP4 with HybridEP."""
     cfg = deepseek_v3_pretrain_256gpu_b200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.mixed_precision.fp4_param = False
     cfg.mixed_precision.fp4_param_gather = False
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.recompute_modules = ["mla_up_proj", "layernorm", "moe_act"]
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_hybridep_num_sms = 16
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -200,6 +196,11 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -209,7 +210,6 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
-
 
 def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""
