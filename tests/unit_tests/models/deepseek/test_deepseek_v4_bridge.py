@@ -343,6 +343,36 @@ def test_sequential_expert_mappings_present(bridge_with_mtp):
     assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
 
 
+@pytest.mark.parametrize(
+    "megatron_param",
+    [
+        "decoder.layers.0.mlp.router.expert_bias",
+        "mtp.layers.0.mtp_model_layer.mlp.router.expert_bias",
+    ],
+)
+def test_expert_bias_mapping_accepts_missing_hf_bias(bridge_with_mtp, megatron_param):
+    """MCore's zero-initialized expert bias may be absent from HF checkpoints."""
+    mapping = bridge_with_mtp.mapping_registry().megatron_to_hf_lookup(megatron_param)
+
+    assert mapping is not None
+    assert mapping.allow_hf_name_mismatch is True
+
+
+def test_missing_expert_bias_is_initialized_to_float32_zeros():
+    """Missing training-state expert bias preserves MCore's zero initialization."""
+    bridge = DeepSeekV4Bridge()
+    gate_weight = torch.ones(8, 16, dtype=torch.bfloat16)
+
+    result = bridge.maybe_modify_loaded_hf_weight(
+        "layers.2.ffn.gate.bias",
+        {"layers.2.ffn.gate.weight": gate_weight},
+    )
+
+    assert result.dtype == torch.float32
+    assert result.shape == (8,)
+    assert torch.count_nonzero(result) == 0
+
+
 class TestDecoderHCHeadMappings:
     """The global decoder HC-head triplet must be replicated mappings."""
 

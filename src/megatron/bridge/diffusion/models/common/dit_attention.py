@@ -72,6 +72,7 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
         attn_mask_type: AttnMaskType,
         cp_comm_type: str = None,
         pg_collection=None,
+        is_mtp_layer: bool = False,
         name: str | None = None,
     ):
         super().__init__(
@@ -81,6 +82,7 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
             attn_mask_type,
             cp_comm_type,
             pg_collection,
+            is_mtp_layer=is_mtp_layer,
             name=name,
         )
 
@@ -222,6 +224,7 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
         attn_mask_type: AttnMaskType,
         cp_comm_type: str = None,
         pg_collection=None,
+        is_mtp_layer: bool = False,
         name: str | None = None,
     ):
         super().__init__(
@@ -231,6 +234,7 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             attn_mask_type,
             cp_comm_type,
             pg_collection,
+            is_mtp_layer=is_mtp_layer,
             name=name,
         )
 

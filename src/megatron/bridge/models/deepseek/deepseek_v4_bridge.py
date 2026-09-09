@@ -341,6 +341,14 @@ class _ReplicatedOptional(ReplicatedMapping):
         self.allow_hf_name_mismatch = True
 
 
+class _OptionalExpertBiasMapping(AutoMapping):
+    """Map MCore's zero-initialized router bias when the HF checkpoint omits it."""
+
+    def __init__(self, megatron_param: str, hf_param: str, permute_dims: tuple[int, ...] | None = None) -> None:
+        super().__init__(megatron_param, hf_param, permute_dims)
+        self.allow_hf_name_mismatch = True
+
+
 # ---------------------------------------------------------------------------
 # Bridge registration
 # ---------------------------------------------------------------------------
@@ -585,6 +593,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         Optional CSA indexer weights may use the legacy flat name or the native
         Transformers scorer submodule name.
         """
+        if isinstance(hf_param, str) and hf_param.endswith(".ffn.gate.bias") and hf_param not in hf_state_dict:
+            gate_weight_param = hf_param.removesuffix(".bias") + ".weight"
+            gate_weight = hf_state_dict[gate_weight_param]
+            return torch.zeros(gate_weight.shape[0], dtype=torch.float32, device=gate_weight.device)
         if isinstance(hf_param, str) and hf_param not in hf_state_dict:
             legacy_param = hf_param.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
             if legacy_param in hf_state_dict:
@@ -709,7 +721,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "decoder.layers.*.mlp.router.weight",
                 "layers.*.ffn.gate.weight",
             ),
-            AutoMapping(
+            _OptionalExpertBiasMapping(
                 "decoder.layers.*.mlp.router.expert_bias",
                 "layers.*.ffn.gate.bias",
             ),
@@ -852,7 +864,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 (f"{mg_pfx}.hc_head_scale", f"{ck_pfx}.hc_head_scale"),
             ]
             for mg, hf in _mtp_plain:
-                mappings.append(AutoMapping(mg, hf))
+                mapping_cls = _OptionalExpertBiasMapping if mg.endswith(".mlp.router.expert_bias") else AutoMapping
+                mappings.append(mapping_cls(mg, hf))
             for mg, hf in _mtp_hc_plain:
                 mappings.append(ReplicatedMapping(mg, hf))
             # MTP attn_sink: TP-split like the main model attn_sink
