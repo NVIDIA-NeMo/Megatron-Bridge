@@ -12,6 +12,7 @@ from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
 from megatron.bridge.training.config import megatron_mimo_runtime_config_update
+from megatron.bridge.training.state import TrainState
 
 
 class FakeMegatronMIMOProvider:
@@ -451,7 +452,7 @@ def test_scalable_dp_loader_shards_on_canonical_grid_end_to_end(monkeypatch):
     provider = IndexDatasetProvider(train_size=train_size)
     provider.dataloader_type = "cyclic"
     provider.data_sharding = True
-    train_state = SimpleNamespace(consumed_train_samples=0)
+    train_state = TrainState()
 
     train_loader, _, _ = build_megatron_mimo_data_loaders(
         cfg,
