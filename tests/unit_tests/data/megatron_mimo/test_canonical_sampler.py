@@ -14,10 +14,14 @@
 
 """Unit tests for canonical-grid batch sampling (MegatronMIMO scalable reads)."""
 
+import multiprocessing
+
 import pytest
 
+import megatron.bridge.data.samplers as samplers
 from megatron.bridge.data.megatron_mimo.canonical_sampler import (
     build_canonical_group_batch_sampler,
+    build_canonical_mimo_data_loader,
     canonical_grid_size,
     covered_canonical_groups,
 )
@@ -96,6 +100,35 @@ class TestFactoryValidation:
                 groups=[0],
                 data_sharding=True,
             )
+
+
+def test_canonical_loader_releases_inherited_gpu_fds_in_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scalable MIMO workers must use the shared GPU descriptor cleanup."""
+    cleanup_calls = multiprocessing.Value("i", 0)
+
+    def record_cleanup() -> None:
+        cleanup_calls.value += 1
+
+    monkeypatch.setattr(samplers, "_close_nvidia_device_fds", record_cleanup)
+    dataloader = build_canonical_mimo_data_loader(
+        _FakeDataset(8),
+        consumed_samples=0,
+        dataloader_type="single",
+        micro_batch_size=2,
+        module_dp_sizes=[1],
+        dp_rank=0,
+        dp_size=1,
+        data_sharding=False,
+        drop_last=True,
+        num_workers=1,
+        pin_memory=False,
+        collate_fn=None,
+        persistent_workers=False,
+    )
+
+    next(iter(dataloader))
+
+    assert cleanup_calls.value == 1
 
 
 def _build(groups, *, dataloader_type, total=48, consumed=0, mbs=4, grid=2, data_sharding=True):

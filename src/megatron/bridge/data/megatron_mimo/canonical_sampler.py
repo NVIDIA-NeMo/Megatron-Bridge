@@ -29,12 +29,17 @@ reproduces the identical ordered global micro-batch under any deterministic samp
 
 from __future__ import annotations
 
+import functools
 import math
 from typing import Callable, Iterator
 
 from torch.utils.data import DataLoader, Dataset
 
-from megatron.bridge.data.samplers import MegatronPretrainingRandomSampler, MegatronPretrainingSampler
+from megatron.bridge.data.samplers import (
+    MegatronPretrainingRandomSampler,
+    MegatronPretrainingSampler,
+    _initialize_worker,
+)
 
 
 def canonical_grid_size(module_dp_sizes: list[int]) -> int:
@@ -203,6 +208,7 @@ def build_canonical_mimo_data_loader(
         data_sharding=data_sharding,
         drop_last=drop_last,
     )
+    worker_init_fn = functools.partial(_initialize_worker, worker_init_fn=None) if num_workers > 0 else None
     return DataLoader(
         dataset,
         batch_sampler=batch_sampler,
@@ -210,4 +216,5 @@ def build_canonical_mimo_data_loader(
         pin_memory=pin_memory,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers,
+        worker_init_fn=worker_init_fn,
     )
