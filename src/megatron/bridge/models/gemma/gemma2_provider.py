@@ -568,7 +568,7 @@ class Gemma2ModelProvider(GPTModelProvider):
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = gemma2_layer_spec
 
     query_pre_attn_scalar: int = 224
-    attn_logit_softcapping: float = 50.0
+    attn_logit_softcapping: Optional[float] = 50.0
     final_logit_softcapping: float = 30.0
 
     def __post_init__(self) -> None:
