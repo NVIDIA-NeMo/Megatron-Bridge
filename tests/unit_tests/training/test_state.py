@@ -576,7 +576,21 @@ class TestGlobalState:
         mock_async_queue = MagicMock()
         mock_async_queue_cls = MagicMock(return_value=mock_async_queue)
 
-        state.initialize_async_checkpoint_worker()
+        mock_nvrx_core = MagicMock()
+        mock_nvrx_core.AsyncCallsQueue = mock_async_queue_cls
+        mock_nvrx_filesystem = MagicMock()
+
+        with (
+            patch("megatron.bridge.training.state.HAVE_NVRX", True),
+            patch.dict(
+                "sys.modules",
+                {
+                    "nvidia_resiliency_ext.checkpointing.async_ckpt.core": mock_nvrx_core,
+                    "nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async": mock_nvrx_filesystem,
+                },
+            ),
+        ):
+            state.initialize_async_checkpoint_worker()
 
         mock_async_queue_cls.assert_called_once_with(persistent=True)
         assert state._async_calls_queue == mock_async_queue
@@ -830,31 +844,16 @@ class TestGlobalState:
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
             patch.dict("sys.modules", {"mlflow": mock_mlflow}),
         ):
-            # Need to reimport to use the patched mlflow
-            import importlib
+            logger = state.mlflow_logger
 
-            import megatron.bridge.training.state as state_module
-
-            importlib.reload(state_module)
-
-            # Re-create state after reload
-            state = state_module.GlobalState()
-            state._cfg = mock_config
-
-            with (
-                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
-                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
-            ):
-                logger = state.mlflow_logger
-
-                mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
-                mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
-                mock_mlflow.start_run.assert_called_once_with(
-                    run_name="test_run", tags={"env": "test"}, description=None
-                )
-                mock_mlflow.log_params.assert_called_once()
-                assert logger == mock_mlflow
-                assert state._mlflow_logger == mock_mlflow
+            mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
+            mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
+            mock_mlflow.start_run.assert_called_once_with(
+                run_name="test_run", tags={"env": "test"}, description=None
+            )
+            mock_mlflow.log_params.assert_called_once()
+            assert logger == mock_mlflow
+            assert state._mlflow_logger == mock_mlflow
 
     def test_mlflow_logger_passes_description_to_start_run(self):
         """Test mlflow logger forwards mlflow_description as the run description."""
@@ -876,24 +875,11 @@ class TestGlobalState:
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
             patch.dict("sys.modules", {"mlflow": mock_mlflow}),
         ):
-            import importlib
+            _ = state.mlflow_logger
 
-            import megatron.bridge.training.state as state_module
-
-            importlib.reload(state_module)
-
-            state = state_module.GlobalState()
-            state._cfg = mock_config
-
-            with (
-                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
-                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
-            ):
-                _ = state.mlflow_logger
-
-                mock_mlflow.start_run.assert_called_once_with(
-                    run_name="test_run", tags=None, description="Pretraining sweep on H100, seed 42"
-                )
+            mock_mlflow.start_run.assert_called_once_with(
+                run_name="test_run", tags=None, description="Pretraining sweep on H100, seed 42"
+            )
 
     def test_mlflow_logger_property_missing_run_name(self):
         """Test mlflow logger raises error when run name is empty."""
@@ -933,25 +919,12 @@ class TestGlobalState:
             patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
             patch.dict("sys.modules", {"mlflow": mock_mlflow}),
         ):
-            import importlib
+            _ = state.mlflow_logger
 
-            import megatron.bridge.training.state as state_module
-
-            importlib.reload(state_module)
-
-            state = state_module.GlobalState()
-            state._cfg = mock_config
-
-            with (
-                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
-                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
-            ):
-                _ = state.mlflow_logger
-
-                # Should not start a new run since one is active
-                mock_mlflow.start_run.assert_not_called()
-                # Should set tags on the active run
-                mock_mlflow.set_tags.assert_called_once_with({"env": "test"})
+            # Should not start a new run since one is active
+            mock_mlflow.start_run.assert_not_called()
+            # Should set tags on the active run
+            mock_mlflow.set_tags.assert_called_once_with({"env": "test"})
 
     def test_mlflow_logger_not_on_last_rank(self):
         """Test mlflow logger is None when not on last rank."""
