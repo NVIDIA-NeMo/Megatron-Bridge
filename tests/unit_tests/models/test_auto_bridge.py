@@ -1705,6 +1705,7 @@ class TestAutoBridge:
                         show_progress=False,
                         exclude_adapter_base_prefixes=None,
                         expand_shared_outer=False,
+                        stack_3d_moe=False,
                     )
 
     def test_export_adapter_weights_forwards_expand_shared_outer(self):
