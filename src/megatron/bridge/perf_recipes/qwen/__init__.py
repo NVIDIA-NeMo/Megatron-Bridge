@@ -14,6 +14,7 @@ from megatron.bridge.perf_recipes.qwen.b200.qwen3_moe import (
     qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_fp8mx_large_scale_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_full_iteration_config,
     qwen3_next_80b_a3b_pretrain_64gpu_b200_bf16_config,
     qwen3_next_80b_a3b_pretrain_64gpu_b200_fp8mx_config,
 )
@@ -31,6 +32,7 @@ from megatron.bridge.perf_recipes.qwen.b300.qwen3_moe import (
     qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config,
     qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config,
     qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config,
     qwen3_next_80b_a3b_pretrain_64gpu_b300_fp8mx_config,
 )
@@ -47,6 +49,7 @@ from megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe import (
     qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config,
     qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config,
     qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_paged_stash_dev_config,
     qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_partial_cg_dev_config,
     qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config,
@@ -54,6 +57,7 @@ from megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe import (
     qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_full_iteration_config,
     qwen3_next_80b_a3b_pretrain_64gpu_gb200_bf16_config,
     qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config,
 )
@@ -67,12 +71,14 @@ from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config,
     qwen3_235b_a22b_pretrain_128gpu_gb300_fp8mx_paged_stash_dev_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_full_iteration_config,
     qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config,
     qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config,
 )
