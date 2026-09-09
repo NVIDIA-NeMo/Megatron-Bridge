@@ -5045,7 +5045,7 @@ class TestTokenizerConfig:
             tokenizer_type=tokenizer_type,
             metadata_path=metadata_path,
             hf_tokenizer_kwargs={"use_fast": use_fast},
-            sp_tokenizer_kwargs={"legacy": legacy},
+            tokenizer_sentencepiece_legacy=legacy,
         )
 
         assert config.tokenizer_model == tokenizer_model
