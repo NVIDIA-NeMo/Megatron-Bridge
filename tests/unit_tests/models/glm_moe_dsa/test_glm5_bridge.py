@@ -142,6 +142,14 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
     assert provider.dsa_indexer_use_sparse_loss is True
 
 
+def test_provider_bridge_keeps_pretrained_router_bias_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain pretrained expert bias without updating it during fine-tuning."""
+    provider = _provider_from_hf_config(monkeypatch)
+
+    assert provider.moe_router_enable_expert_bias is True
+    assert provider.moe_router_bias_update_rate == 0
+
+
 def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatch) -> None:
     """GLM-5 avoids the affected grouped all-to-all transport path."""
     provider = _provider_from_hf_config(monkeypatch)
