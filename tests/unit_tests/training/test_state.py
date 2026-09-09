@@ -848,9 +848,7 @@ class TestGlobalState:
 
             mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
             mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
-            mock_mlflow.start_run.assert_called_once_with(
-                run_name="test_run", tags={"env": "test"}, description=None
-            )
+            mock_mlflow.start_run.assert_called_once_with(run_name="test_run", tags={"env": "test"}, description=None)
             mock_mlflow.log_params.assert_called_once()
             assert logger == mock_mlflow
             assert state._mlflow_logger == mock_mlflow
