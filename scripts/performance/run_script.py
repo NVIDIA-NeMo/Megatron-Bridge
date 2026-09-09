@@ -20,6 +20,7 @@ import re
 import sys
 
 from argument_parser import parse_cli_args
+from utils.mcore_patches import patch_skip_force_all_tensors_to_non_fp8
 from utils.utils import PerfRecipeNotFoundError, get_perf_optimized_recipe, get_perf_recipe_by_name
 
 
@@ -178,6 +179,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
 def main() -> None:
     """Parse the final training arguments and run the workload once."""
+    patch_skip_force_all_tensors_to_non_fp8()
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
     _run_training(args, cli_overrides)
