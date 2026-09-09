@@ -581,6 +581,17 @@ class Gemma2ModelProvider(GPTModelProvider):
         """
         if self.use_transformer_engine_attention:
             self.attention_backend = AttnBackend.flash
+        # None disables the cap, as HuggingFace spells it. Anything else has to be positive and
+        # finite: 0.0 divides by zero in the unfused path, a negative cap is applied as its
+        # absolute value because tanh is odd, and nan is truthy so it slips past `if not scale`
+        # and yields all-NaN scores.
+        if self.attn_logit_softcapping is not None and not (
+            math.isfinite(self.attn_logit_softcapping) and self.attn_logit_softcapping > 0
+        ):
+            raise ValueError(
+                "attn_logit_softcapping must be a positive finite value or None, got "
+                f"{self.attn_logit_softcapping}."
+            )
         super().__post_init__()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
