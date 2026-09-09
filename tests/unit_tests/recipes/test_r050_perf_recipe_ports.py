@@ -18,6 +18,10 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v3_pretrain_256gpu_b200_bf16_config,
+    deepseek_v3_pretrain_256gpu_b200_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_b200_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_b200_nvfp4_config,
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
@@ -161,6 +165,43 @@ def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
     cfg = deepseek_v3_pretrain_256gpu_b300_fp8mx_config()
 
     _assert_full_iteration_hybridep_mxfp8(cfg)
+
+
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        deepseek_v3_pretrain_256gpu_b200_bf16_config,
+        deepseek_v3_pretrain_256gpu_b200_fp8cs_config,
+    ],
+)
+def test_deepseek_v3_b200_base_recipes_use_updated_pipeline_size(recipe) -> None:
+    cfg = recipe()
+
+    assert cfg.model.pipeline_model_parallel_size == 8
+
+
+def test_deepseek_v3_b200_mxfp8_uses_updated_v2_base_settings() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_b200_fp8mx_config()
+
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.virtual_pipeline_model_parallel_size == 2
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.recompute_modules == ["mla_up_proj"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
+
+
+def test_deepseek_v3_b200_nvfp4_uses_hybridep_with_ep8() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_b200_nvfp4_config()
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.recompute_modules == ["mla_up_proj", "layernorm", "moe_act"]
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
 
 
 def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:

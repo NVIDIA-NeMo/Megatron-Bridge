@@ -137,9 +137,12 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
 
     cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
@@ -210,6 +213,7 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""
