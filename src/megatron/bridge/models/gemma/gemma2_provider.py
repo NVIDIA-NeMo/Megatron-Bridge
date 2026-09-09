@@ -449,11 +449,6 @@ class Gemma2TEDotProductAttention(TEDotProductAttention):
             softmax_scale = 1.0 / math.sqrt(config.query_pre_attn_scalar)
         config.softmax_scale = softmax_scale
 
-        # Ensure the 50.0 attn logit softcap survives to the config TEDotProductAttention reads: the
-        # provider sets 50.0, but set defensively so the TE flash `softcap` kwarg is populated.
-        if config.attn_logit_softcapping is None:
-            config.attn_logit_softcapping = 50.0
-
         super().__init__(
             config=config,
             layer_number=layer_number,

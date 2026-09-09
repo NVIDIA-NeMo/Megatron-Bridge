@@ -29,14 +29,12 @@ Run with:
 """
 
 import datetime
-import math
 import os
 
 import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
-from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.enums import AttnMaskType
@@ -251,17 +249,12 @@ class TestGemma2TEDotProductAttentionParity:
         oracle = self._make_oracle(config, layer_number)  # applies 50*tanh softcap
         te_capped = self._make_te(config, layer_number)
 
-        # Uncapped reference: identical config/scale but softcap disabled.
+        # Uncapped reference: identical config/scale but softcap disabled. Built through the same
+        # Gemma2 subclass as the capped arm, so that a None cap being reinstated on this path
+        # would show up here rather than being sidestepped by using the base class.
         uncapped_config = _make_config(window_size=(3, 0), softcap=_SOFTCAP)
         uncapped_config.attn_logit_softcapping = None
-        te_uncapped = TEDotProductAttention(
-            config=uncapped_config,
-            layer_number=layer_number,
-            attn_mask_type=AttnMaskType.causal,
-            attention_type="self",
-            softmax_scale=1.0 / math.sqrt(_QUERY_PRE_ATTN_SCALAR),
-            pg_collection=self._pg_collection(),
-        ).cuda()
+        te_uncapped = self._make_te(uncapped_config, layer_number)
 
         oracle_out = oracle.forward(query=q, key=k, value=v, attention_mask=None).float()
         capped_out = te_capped.forward(query=q, key=k, value=v, attention_mask=None).float()
