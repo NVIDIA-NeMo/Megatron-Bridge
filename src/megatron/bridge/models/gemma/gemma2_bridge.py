@@ -52,10 +52,9 @@ class Gemma2Bridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
 
         provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
-        # Validate the cap where it enters from outside. MCore's TransformerConfig check is
-        # deferred to finalize(), and this is a post-construction assignment, so a malformed
-        # HuggingFace config would otherwise reach attention unchecked on flows that never
-        # finalize. None means disabled on both sides; 0.0 does not survive the local path.
+        # Validate the cap where it enters from outside. This is a post-construction assignment,
+        # so it bypasses the provider's own check, and a malformed HuggingFace config would
+        # otherwise reach attention unvalidated. None means disabled on both sides.
         attn_softcap = hf_config.attn_logit_softcapping
         if attn_softcap is not None and not (math.isfinite(attn_softcap) and attn_softcap > 0):
             raise ValueError(
