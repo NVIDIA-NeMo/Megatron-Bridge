@@ -3917,3 +3917,84 @@ def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[tor
     k = kv_reshaped[k_slice].reshape(-1, hidden_size)
     v = kv_reshaped[v_slice].reshape(-1, hidden_size)
     return k, v
+
+
+class HCAlphaMapping(MegatronParamMapping):
+    """Map a 3-element HF hyper-connection scale tensor to/from Megatron's
+    three separate ``alpha_pre`` / ``alpha_post`` / ``alpha_res`` parameters.
+
+    The HF checkpoint stores the three scaling coefficients stacked along dim 0
+    as ``<layer>.hc_{kind}_scale`` (shape ``[3]``); Megatron keeps them as three
+    independent ``nn.Parameter([1])`` tensors on a single module.
+
+    One :class:`HCAlphaMapping` is registered **per alpha parameter** (index 0, 1,
+    or 2). Import extracts element ``[index:index+1]`` from the HF scale tensor.
+    Only the ``index == 0`` (``alpha_pre``) mapping exports: it gathers all three
+    alphas from the same module and concatenates them back into the ``[3]`` tensor.
+    The ``index != 0`` mappings return ``{}`` on export (the primary already wrote
+    all three), so they exist only to drive the import side and suppress export
+    "no mapping found" warnings.
+
+    This serves both models with a single wrapped ``hyper_connection`` submodule
+    (e.g. GLM-5.3-Flash) and models with separate ``self_attention_hyper_connection`` /
+    ``mlp_hyper_connection`` submodules (e.g. DeepSeek-V4); the caller chooses the
+    ``megatron_param`` path accordingly.
+    """
+
+    def __init__(self, megatron_param: str, hf_param: str, index: int):
+        super().__init__(megatron_param=megatron_param, hf_param=hf_param)
+        self._index = index
+        # index != 0 imports from the shared HF scale tensor but never exports
+        # (the index-0 mapping writes all three alphas). Its HF key collides with
+        # the index-0 key, so skip the strict hf_keys presence check.
+        self.allow_hf_name_mismatch = index != 0
+
+    def resolve(self, captures):
+        resolved_mg, resolved_hf = self._resolve_names(captures)
+        return HCAlphaMapping(resolved_mg, resolved_hf, self._index)
+
+    def hf_to_megatron(self, hf_weights, megatron_module):
+        attr = ("alpha_pre", "alpha_post", "alpha_res")[self._index]
+        return hf_weights[self._index : self._index + 1].to(getattr(megatron_module, attr).device)
+
+    def megatron_to_hf(self, megatron_weights, megatron_module):
+        if self._index != 0:
+            return {}
+        parts = []
+        for attr, weight in (
+            ("alpha_pre", megatron_weights),
+            ("alpha_post", getattr(megatron_module, "alpha_post", None)),
+            ("alpha_res", getattr(megatron_module, "alpha_res", None)),
+        ):
+            parts.append(self.broadcast_from_pp_rank(weight, cache_key=f"{self.hf_param}_{attr}"))
+        if parts[0] is None:
+            return {}
+        return {self.hf_param: torch.cat([self.maybe_dequantize(part).float() for part in parts])}
+
+
+class InitOnlyMapping(MegatronParamMapping[torch.Tensor]):
+    """Keep Megatron initialization for parameters that have no HF counterpart.
+
+    Used for hyper-connection / MTP parameters that MCore creates but the source
+    checkpoint does not store. The mapping declares a synthetic HF key ending in
+    ``__init_only__`` (which never exists in any checkpoint) and returns ``None``
+    on import so the random init is preserved. Export is a no-op.
+
+    Bridges that want this behaviour should also short-circuit the HF state-dict
+    lookup for the synthetic key (e.g. in ``maybe_modify_loaded_hf_weight``).
+    """
+
+    def __init__(self, megatron_param: str):
+        super().__init__(megatron_param=megatron_param, hf_param=megatron_param + ".__init_only__")
+        self.allow_hf_name_mismatch = True
+
+    def resolve(self, captures):
+        resolved_mg, _ = self._resolve_names(captures)
+        return InitOnlyMapping(resolved_mg)
+
+    def hf_to_megatron(self, hf_weights, megatron_module):
+        # hf_weights is None when the (synthetic) HF key is absent -> keep init.
+        return None
+
+    def megatron_to_hf(self, megatron_weights, megatron_module):
+        return {}
