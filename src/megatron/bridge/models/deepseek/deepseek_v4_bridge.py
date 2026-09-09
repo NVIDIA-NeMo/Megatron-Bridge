@@ -425,8 +425,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
-        provider.o_groups = hf_config.o_groups  # 8
-        provider.o_lora_rank = hf_config.o_lora_rank  # 1024
+        provider.output_projection_groups = hf_config.o_groups  # 8
+        provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
 
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
