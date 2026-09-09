@@ -44,7 +44,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
-    preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
@@ -54,6 +53,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3
 from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_cp_partition_indices,
     get_packed_seq_q_cu_seqlens,
+    preprocess_packed_seqs,
 )
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
