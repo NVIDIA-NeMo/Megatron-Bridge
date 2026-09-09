@@ -1188,9 +1188,22 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            if iteration > (loaded_iteration + 1):
-                # Make sure the memory after the second iteration is reported
-                # to include optimizer state memory.
+            cuda_graphs_enabled = (
+                config.model.cuda_graph_impl != "none"
+                or config.optimizer.optimizer_cuda_graph
+                or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
+            )
+            memory_reporting_iterations = 2
+            if cuda_graphs_enabled:
+                # Capture runs at the zero-based warmup-step offset. training_log runs
+                # after that step, so warmup_steps + 1 is the post-capture iteration.
+                memory_reporting_iterations = max(
+                    memory_reporting_iterations,
+                    config.model.cuda_graph_warmup_steps + 1,
+                )
+            if iteration >= loaded_iteration + memory_reporting_iterations:
+                # Always include optimizer state memory and, when enabled, CUDA graph
+                # capture memory before disabling the one-shot report.
                 report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
