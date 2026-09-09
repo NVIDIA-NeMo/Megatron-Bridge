@@ -317,7 +317,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         maintain zero changes to nemotron_vl/.
         """
         self._validate_omni_config()
-        language_cfg = copy.deepcopy(self)
+        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
 
         vision_cfg = self._build_vision_config(language_cfg)
         # Nano Omni checkpoints were trained with RADIO's ten class tokens.
@@ -437,7 +437,7 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
         self.validate_model_contract()
 
-        language_cfg = copy.deepcopy(self)
+        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
         vision_cfg = self._build_vision_config(language_cfg)
         vision_proj_cfg = self._build_vision_projection_config(language_cfg)
 

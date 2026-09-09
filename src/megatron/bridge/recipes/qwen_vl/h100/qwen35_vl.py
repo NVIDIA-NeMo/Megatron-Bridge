@@ -260,7 +260,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config() -> ConfigContainer:
+def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
     """Return the full-pretraining config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 H100 GPUs.
 
     The recipe defaults to the mock VLM dataset, while maintained launchers may
@@ -1337,7 +1337,7 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 36
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -1449,7 +1449,7 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -2221,7 +2221,7 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config(
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 36
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -2336,7 +2336,7 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config(
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -2394,7 +2394,7 @@ __all__ = [
     "qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config",
     "qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
-    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config",
+    "qwen35_vl_35b_a3b_pretrain_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config",

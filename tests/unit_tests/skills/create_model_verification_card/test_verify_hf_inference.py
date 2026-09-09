@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -83,6 +84,78 @@ class _Model:
     def generate(self, **kwargs):
         self.calls.append(kwargs)
         return torch.tensor([[1, 2, 3, 4]])
+
+
+def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
+    module = _load_module()
+    calls = []
+
+    class _LoadedModel:
+        hf_device_map = {"model.embed_tokens": 0, "model.layers": 1}
+
+        @classmethod
+        def from_pretrained(cls, model_name, **kwargs):
+            calls.append((model_name, kwargs))
+            return cls(), {key: [] for key in module._LOADING_ISSUE_KEYS}
+
+        def to(self, device):
+            raise AssertionError(f"sharded model must not be moved to {device}")
+
+        def eval(self):
+            return self
+
+        def modules(self):
+            return iter((self,))
+
+    transformers = types.ModuleType("transformers")
+    transformers.AutoModelForCausalLM = _LoadedModel
+    transformers.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer())
+    monkeypatch.setitem(sys.modules, "transformers", transformers)
+    args = types.SimpleNamespace(
+        image=None,
+        hf_model="model",
+        trust_remote_code=True,
+        dtype="bfloat16",
+        device_map="auto",
+        device="cuda",
+        require_gpu_only=True,
+    )
+
+    _, model, _ = module._load_runtime(args)
+
+    assert isinstance(model, _LoadedModel)
+    assert calls == [
+        (
+            "model",
+            {
+                "dtype": torch.bfloat16,
+                "trust_remote_code": True,
+                "output_loading_info": True,
+                "device_map": "auto",
+            },
+        )
+    ]
+
+
+def test_model_input_device_prefers_input_embeddings():
+    module = _load_module()
+    model = types.SimpleNamespace(
+        device=torch.device("cuda:1"),
+        get_input_embeddings=lambda: types.SimpleNamespace(weight=torch.empty(1, device="meta")),
+    )
+
+    assert module._model_input_device(model) == torch.device("cuda:1")
+
+    model.get_input_embeddings = lambda: types.SimpleNamespace(weight=torch.empty(1))
+    assert module._model_input_device(model) == torch.device("cpu")
+
+
+def test_gpu_only_placement_rejects_cpu_or_disk_shards():
+    module = _load_module()
+    model = types.SimpleNamespace(hf_device_map={"layers.0": 0, "layers.1": "cpu", "layers.2": "disk"})
+
+    with pytest.raises(RuntimeError, match="non-GPU placements"):
+        module._validate_gpu_only_placement(model)
 
 
 def test_image_content_uses_processor_native_location_keys():
@@ -220,3 +293,36 @@ def test_text_main_keeps_the_legacy_tokenizer_path(monkeypatch):
     assert tokenizer.prompt == "formatted text prompt"
     assert len(model.calls) == 1
     assert "pixel_values" not in model.calls[0]
+
+
+def test_text_main_enables_requested_autocast(monkeypatch):
+    module = _load_module()
+    tokenizer = _Tokenizer()
+
+    class _AutocastModel(_Model):
+        def generate(self, **kwargs):
+            assert torch.is_autocast_enabled("cpu")
+            assert torch.get_autocast_dtype("cpu") == torch.bfloat16
+            return super().generate(**kwargs)
+
+    model = _AutocastModel()
+    monkeypatch.setattr(module, "_load_runtime", lambda args: (torch, model, tokenizer))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_hf_inference.py",
+            "--hf-model",
+            "model",
+            "--prompt",
+            "Describe Paris.",
+            "--max-new-tokens",
+            "2",
+            "--dtype",
+            "bfloat16",
+            "--autocast",
+        ],
+    )
+
+    assert module.main() == 0
+    assert len(model.calls) == 1

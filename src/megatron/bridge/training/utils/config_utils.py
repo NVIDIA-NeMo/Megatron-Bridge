@@ -102,8 +102,12 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
 
         if include_target and is_dataclass(value):
             field_names = {field.name for field in dataclass_fields(value) if not field.name.startswith("_")}
+            raw_values = vars(value)
             config_items = [
-                (field.name, getattr(value, field.name))
+                (
+                    field.name,
+                    raw_values[field.name] if field.name in raw_values else object.__getattribute__(value, field.name),
+                )
                 for field in dataclass_fields(value)
                 if not field.name.startswith("_")
             ]

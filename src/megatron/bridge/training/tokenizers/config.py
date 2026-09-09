@@ -61,18 +61,6 @@ class TokenizerConfig(MTrainTokenizerConfig):
         }
     """
 
-    sp_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
-    """Additional keyword arguments to pass to SentencePiece tokenizer.
-
-    Common options include:
-        - legacy (bool): Whether to use legacy format of sentencepiece tokenizer
-
-    Example:
-        sp_tokenizer_kwargs = {
-            "legacy": True,
-        }
-    """
-
     chat_template_path: Optional[str] = None
     """Path to a jinja chat template file, loaded at build time as ``chat_template``. Supports local
     paths and ``msc://`` URLs. Mutually exclusive with ``chat_template``. Useful for supplying a
@@ -106,12 +94,4 @@ class TokenizerConfig(MTrainTokenizerConfig):
                 "`hf_tokenizer_kwargs` is deprecated and will be removed soon. "
                 "Please, use `tokenizer_hf_no_use_fast` / `tokenizer_hf_no_include_special_tokens` / "
                 "`trust_remote_code` arguments directly instead."
-            )
-
-        # SentencePiece tokenizer kwargs
-        self.tokenizer_sentencepiece_legacy = self.sp_tokenizer_kwargs.get("legacy", False)
-        if self.sp_tokenizer_kwargs:
-            warn_rank_0(
-                "`sp_tokenizer_kwargs` is deprecated and will be removed soon. "
-                "Please, use `tokenizer_sentencepiece_legacy` (bool) argument directly instead."
             )

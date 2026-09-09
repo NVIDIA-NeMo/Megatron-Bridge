@@ -169,12 +169,15 @@ class MultiLoRALinear(AdapterWrapper):
         # q/kv down-projections): their adapters are unsharded and need no TP
         # collectives between the two adapter projections.
         self.base_linear_is_parallel = attrs.base_linear_is_parallel
+        self.replicate_adapter = attrs.replicate_adapter
         self.use_a2a = a2a_experimental
-        # Mirrors ParallelLinearAdapter's lin_out_gather_output: row-parallel
-        # bases and replicated bases produce a full [tokens, out] tensor, so the
-        # column-sharded adapter output must be gathered before the residual
-        # add; a column-parallel base keeps the [tokens, out/tp] shard.
-        self._gather_output = attrs.input_is_parallel or not attrs.base_linear_is_parallel
+        self._adapter_in_features = attrs.in_features
+        self._adapter_out_features = attrs.out_features
+        # Row-parallel adapters gather their output to full width; column-parallel
+        # adapters keep an output shard; replicated adapters already produce full width.
+        self._gather_output = not self.replicate_adapter and (
+            attrs.input_is_parallel or not attrs.base_linear_is_parallel
+        )
 
         # ModuleList of ParallelLinearAdapters gives per-adapter optimizer state
         # isolation, clean checkpoint serialization, and bridge export compatibility.
@@ -195,6 +198,7 @@ class MultiLoRALinear(AdapterWrapper):
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                     base_linear_is_parallel=attrs.base_linear_is_parallel,
+                    replicate_adapter=attrs.replicate_adapter,
                     a2a_experimental=a2a_experimental,
                     dropout=dropout,
                     dropout_position=dropout_position,
@@ -241,7 +245,7 @@ class MultiLoRALinear(AdapterWrapper):
         # The shard is contiguous in the same sequence-major flattening the spans
         # address (same invariant as the MoE slot routing's SP narrow).
         total = self.tokens_per_adapter_total
-        if total is not None and x_flat.shape[0] != total:
+        if self.replicate_adapter and total is not None and x_flat.shape[0] != total:
             tp_size = parallel_state.get_tensor_model_parallel_world_size()
             if x_flat.shape[0] * tp_size != total:
                 raise RuntimeError(
@@ -261,15 +265,13 @@ class MultiLoRALinear(AdapterWrapper):
 
         mid = _dense_multi_lora_mm(x_flat, stacked_A, token_splits=token_splits, offsets=offsets)
 
-        # TP collective between A and B: row-parallel base needs an all-reduce
-        # of the partial sums; every other base (column-parallel and replicated
-        # alike — ParallelLinearAdapter shards A on the rank axis whenever
-        # input_is_parallel is False) needs an all-gather of the rank-sharded
-        # mid to a full [tokens, dim] for the second GEMM.
-        if self.input_is_parallel:
-            mid = reduce_from_tensor_model_parallel_region(mid)
-        else:
-            mid = gather_from_tensor_model_parallel_region(mid)
+        # TP collective between A and B: row-parallel A needs an all-reduce;
+        # column-parallel A needs an all-gather; replicated A is already complete.
+        if not self.replicate_adapter:
+            if self.input_is_parallel:
+                mid = reduce_from_tensor_model_parallel_region(mid)
+            else:
+                mid = gather_from_tensor_model_parallel_region(mid)
 
         out = _dense_multi_lora_mm(mid, stacked_B, token_splits=token_splits, offsets=offsets)
 
@@ -307,14 +309,32 @@ class MultiLoRALinear(AdapterWrapper):
         # advanced since model build. A bare nn.init here diverges replicas on
         # slot reuse (breaking the DP-equal invariant the weight checker relies
         # on). Mirror the construction-time init methods rather than hardcoding.
-        from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
+        from megatron.core.tensor_parallel.random import (
+            get_cuda_rng_tracker,
+            get_data_parallel_rng_tracker_name,
+        )
 
         from megatron.bridge.peft.utils import ParallelLinearAdapter
 
         adapter = self.adapters[idx]
-        col_fn = ParallelLinearAdapter._get_init_fn(None, self._column_init_method)
-        row_fn = ParallelLinearAdapter._get_init_fn(None, self._row_init_method)
-        with get_cuda_rng_tracker().fork():
+        col_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._column_init_method,
+            fan_in=self._adapter_in_features,
+            fan_out=self.max_rank,
+        )
+        row_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._row_init_method,
+            fan_in=self.max_rank,
+            fan_out=self._adapter_out_features,
+        )
+        rng_context = (
+            get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name())
+            if self.replicate_adapter
+            else get_cuda_rng_tracker().fork()
+        )
+        with rng_context:
             col_fn(adapter.linear_in.weight.data)
             row_fn(adapter.linear_out.weight.data)
 

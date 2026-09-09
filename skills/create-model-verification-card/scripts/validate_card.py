@@ -122,9 +122,18 @@ MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
 MEGATRON_FSDP_STRATEGIES = frozenset({"optim_grads_params"})
 MANUAL_FORWARD_COSINE_THRESHOLD = 0.99
 MANUAL_FORWARD_REVISION_PINNING_DATE = dt.date(2026, 7, 20)
-UNTUNED_PERFORMANCE_DISCLAIMER = (
+NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER = (
+    "Performance disclaimer: this card does not record a canonical pretrain performance result; "
+    "reported timing and throughput metrics are functional verification observations, "
+    "not standalone optimized performance results."
+)
+LEGACY_UNTUNED_PERFORMANCE_DISCLAIMER = (
     "Performance disclaimer: this model has not been performance-tuned; "
     "reported timing and throughput metrics are sanity checks, not optimized performance results."
+)
+PERFORMANCE_DISCLAIMERS = (
+    NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER,
+    LEGACY_UNTUNED_PERFORMANCE_DISCLAIMER,
 )
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "verification_index", "items"})
@@ -2145,15 +2154,15 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
     summary = card.get("summary")
     if isinstance(summary, str) and items is not None:
         normalized_summary = " ".join(summary.split())
-        has_untuned_disclaimer = normalized_summary.startswith(UNTUNED_PERFORMANCE_DISCLAIMER)
-        if not has_canonical_performance_recipe and not has_untuned_disclaimer:
+        has_performance_disclaimer = normalized_summary.startswith(PERFORMANCE_DISCLAIMERS)
+        if not has_canonical_performance_recipe and not has_performance_disclaimer:
             errors.append(
                 f"{_pointer('summary')}: cards without a canonical pretrain_performance recipe "
-                "must start with the untuned performance disclaimer"
+                "must start with the no-canonical-performance-result disclaimer"
             )
-        elif has_canonical_performance_recipe and has_untuned_disclaimer:
+        elif has_canonical_performance_recipe and has_performance_disclaimer:
             errors.append(
-                f"{_pointer('summary')}: remove the untuned performance disclaimer when a canonical "
+                f"{_pointer('summary')}: remove the performance disclaimer when a canonical "
                 "pretrain_performance recipe exists"
             )
         if has_canonical_performance_recipe:
