@@ -139,9 +139,9 @@ def test_weight_verification_recreates_bridge_synthesized_hf_state(monkeypatch: 
     class FakeBridge:
         hf_pretrained = SimpleNamespace(state={"router.weight": torch.ones(2)})
 
-        def maybe_modify_loaded_hf_weight(self, name, state):
-            calls.append((name, state))
-            return expected
+        _model_bridge = SimpleNamespace(
+            maybe_modify_loaded_hf_weight=lambda name, state: calls.append((name, state)) or expected
+        )
 
     bridge = FakeBridge()
 

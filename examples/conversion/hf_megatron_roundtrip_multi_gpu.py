@@ -121,7 +121,7 @@ def _get_original_hf_weight(bridge: Any, name: str) -> torch.Tensor:
     try:
         return bridge.hf_pretrained.state[name]
     except KeyError:
-        return bridge.maybe_modify_loaded_hf_weight(name, bridge.hf_pretrained.state)
+        return bridge._model_bridge.maybe_modify_loaded_hf_weight(name, bridge.hf_pretrained.state)
 
 
 def _print_verification_results(
