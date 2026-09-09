@@ -199,11 +199,12 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
     cfg.model.recompute_granularity = "selective"
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
-    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

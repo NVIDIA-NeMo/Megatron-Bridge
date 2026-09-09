@@ -383,21 +383,25 @@ def test_nemotron_3_super_64gpu_b200_uses_single_nvlink_domain_ep(recipe_name):
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
 
 
-@pytest.mark.parametrize(
-    "recipe_name",
-    [
-        "nemotron_3_super_pretrain_64gpu_b200_fp8mx_config",
-        "nemotron_3_super_pretrain_64gpu_b200_nvfp4_config",
-    ],
-)
-def test_nemotron_3_super_64gpu_b200_low_precision_uses_selective_recompute(recipe_name):
-    """B200 MXFP8 and NVFP4 recipes recompute activations to fit EP8."""
+def test_nemotron_3_super_64gpu_b200_fp8mx_uses_selective_recompute():
+    """B200 MXFP8 recomputes activations to fit EP8."""
     module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
-    cfg = getattr(module, recipe_name)()
+    cfg = module.nemotron_3_super_pretrain_64gpu_b200_fp8mx_config()
 
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_modules == ["moe_act", "moe", "layernorm", "core_attn"]
     assert cfg.model.cuda_graph_impl == "none"
+
+
+def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recompute():
+    """B200 NVFP4 retains CUDA graphs with graph-compatible recompute."""
+    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
+    cfg = module.nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
+
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["mamba", "attn", "moe_router", "moe_preprocess"]
 
 
 def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():
