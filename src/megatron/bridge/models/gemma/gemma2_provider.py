@@ -414,11 +414,9 @@ class Gemma2TEDotProductAttention(TEDotProductAttention):
     Mirrors Gemma3TEDotProductAttention: deep-copies the config and rewrites the per-layer
     sliding-window setting before delegating to TEDotProductAttention. Sliding window attention
     (window_size=(4095, 0)) is applied on even-numbered layers only; odd-numbered layers use full
-    causal attention — matching the unfused Gemma2DotProductAttention oracle. The Gemma2 attention
-    scale (1/sqrt(query_pre_attn_scalar)) is set on the config so the flash kernel matches the
-    oracle. The softcap reaches TE only once Megatron-LM plumbs attn_logit_softcapping to TE's
-    `softcap` kwarg (NVIDIA/Megatron-LM#6590) and 3rdparty/Megatron-LM is bumped past it; until
-    then this path runs uncapped, which is why the parity tests skip.
+    causal attention — matching the unfused Gemma2DotProductAttention oracle. The softcap (50.0) and
+    the Gemma2 attention scale (1/sqrt(query_pre_attn_scalar)) are activated on the config/kwargs so
+    the fused TE flash kernel reproduces the oracle numerics exactly.
 
     cuDNN attention cannot serve Gemma2 (head_dim=256, and no softcap support), so the provider forces
     AttnBackend.flash.
