@@ -47,8 +47,9 @@ from megatron.bridge.models.gemma.gemma2_provider import (
 
 
 try:
-    # Some patched TE builds expose a `softcap` kwarg on DotProductAttention. When it is absent,
-    # attn_logit_softcapping cannot be used on the TE path, so the parity tests cannot run.
+    # Megatron-LM plumbs attn_logit_softcapping to TE's `softcap` kwarg and exports this probe
+    # alongside it. Its absence means 3rdparty/Megatron-LM predates that change, so the TE path
+    # cannot carry a cap yet and these parity tests would compare two uncapped runs.
     from megatron.core.extensions.transformer_engine import _te_dpa_supports_softcap
 except Exception:  # pragma: no cover - import guard
     _te_dpa_supports_softcap = False
@@ -57,7 +58,11 @@ except Exception:  # pragma: no cover - import guard
 _HAVE_CUDA = torch.cuda.is_available()
 requires_te_flash_softcap = pytest.mark.skipif(
     not (_HAVE_CUDA and _te_dpa_supports_softcap),
-    reason="Requires CUDA and a TransformerEngine build with DotProductAttention softcap support",
+    reason=(
+        "Requires CUDA, a Megatron-LM with attn_logit_softcapping plumbed to TE "
+        "(NVIDIA/Megatron-LM#6590 plus a 3rdparty/Megatron-LM bump), and a TransformerEngine "
+        "build whose DotProductAttention accepts softcap (NVIDIA/TransformerEngine#3391)"
+    ),
 )
 
 # bf16 flash attention vs an eager fp-accumulated reference: loose but meaningful tolerances.
