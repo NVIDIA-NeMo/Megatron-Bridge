@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+
 from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Gemma2ForCausalLM
@@ -50,7 +52,17 @@ class Gemma2Bridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
 
         provider.query_pre_attn_scalar = hf_config.query_pre_attn_scalar
-        provider.attn_logit_softcapping = hf_config.attn_logit_softcapping
+        # Validate the cap where it enters from outside. MCore's TransformerConfig check is
+        # deferred to finalize(), and this is a post-construction assignment, so a malformed
+        # HuggingFace config would otherwise reach attention unchecked on flows that never
+        # finalize. None means disabled on both sides; 0.0 does not survive the local path.
+        attn_softcap = hf_config.attn_logit_softcapping
+        if attn_softcap is not None and not (math.isfinite(attn_softcap) and attn_softcap > 0):
+            raise ValueError(
+                f"attn_logit_softcapping must be a positive finite value or null, got "
+                f"{attn_softcap} in the HuggingFace config."
+            )
+        provider.attn_logit_softcapping = attn_softcap
         provider.final_logit_softcapping = hf_config.final_logit_softcapping
         provider.window_size = (hf_config.sliding_window - 1, 0)
 
