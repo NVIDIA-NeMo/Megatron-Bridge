@@ -20,6 +20,8 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
     _build_nemotron_3_nano_gb300_mxfp8,
     _build_nemotron_3_super_gb300_mxfp8,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
     nemotron_3_super_pretrain_64gpu_gb300_bf16_config,
@@ -236,5 +238,55 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_CPU_OFFLOAD_V1": 1,
         # Enable TE's CuteDSL fused grouped MLP kernel on Rubin.
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× VR200, BF16 (alias of GB300)."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config()
+
+    # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× VR200, MXFP8 (alias of GB300)."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config()
+
+    # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg

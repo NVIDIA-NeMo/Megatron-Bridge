@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+    deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -129,6 +130,13 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+
+
+def test_deepseek_v4_flash_128gpu_vr200_fp8mx_matches_gb300_config() -> None:
+    vr200_cfg = deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config()
+    gb300_cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
+
+    assert vr200_cfg == gb300_cfg
 
 
 def test_deepseek_v4_flash_128gpu_b300_fp8mx_config() -> None:
