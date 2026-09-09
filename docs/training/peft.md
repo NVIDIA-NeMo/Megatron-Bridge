@@ -137,7 +137,7 @@ expert-data-parallel replicas. Megatron Bridge therefore sums those gradients ac
 the expert-parallel group once per step, coalesced into a single collective right
 after the data-parallel gradient sync, the same point where Megatron-Core sums
 sequence-parallel layernorm gradients across tensor parallelism. The training loop
-installs this automatically through `finalize_model_grads_with_expert_adapter_sync`
+installs this automatically for PEFT runs through `finalize_model_grads_with_expert_adapter_sync`
 (`megatron.bridge.peft.utils`), and it stays correct with
 `gradient_accumulation_fusion` enabled because it reads the fused `main_grad` buffers.
 

@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
+from megatron.core.distributed import finalize_model_grads
 
 import megatron.bridge.training.setup as training_setup
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
@@ -629,23 +630,27 @@ def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
     assert transformer_config.no_sync_func.__self__ is rebuilt_model
 
 
-def test_update_model_config_funcs_installs_expert_adapter_grad_sync():
-    """The finalize wrapper is always installed and the per-layer fallback hooks are removed at setup."""
+def test_update_model_config_funcs_installs_expert_adapter_grad_sync_for_peft_only():
+    """Only PEFT runs get the finalize wrapper; the fallback hooks are removed at setup."""
     model_config = _make_gpt_model_config()
     transformer_config = model_config.transformer
     ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False, align_param_gather=False)
     optimizer = Mock()
-    model = torch.nn.Linear(2, 2)
-    model.weight.expert_parallel_replicated = True
+
+    plain_model = torch.nn.Linear(2, 2)
+    _update_model_config_funcs([plain_model], transformer_config, ddp_config, optimizer=optimizer, pg_collection="pgs")
+    assert transformer_config.finalize_model_grads_func.func is finalize_model_grads
+    assert transformer_config.finalize_model_grads_func.keywords == {"pg_collection": "pgs"}
+
+    peft_model = torch.nn.Linear(2, 2)
+    peft_model.weight.expert_parallel_replicated = True
     hook_handle = Mock()
-    model.weight._expert_parallel_grad_hook = hook_handle
-
+    peft_model.weight._expert_parallel_grad_hook = hook_handle
     _update_model_config_funcs(
-        [model], transformer_config, ddp_config, optimizer=optimizer, pg_collection="process-groups"
+        [peft_model], transformer_config, ddp_config, optimizer=optimizer, pg_collection="pgs", peft_enabled=True
     )
-
     assert transformer_config.finalize_model_grads_func.func is finalize_model_grads_with_expert_adapter_sync
-    assert transformer_config.finalize_model_grads_func.keywords == {"pg_collection": "process-groups"}
+    assert transformer_config.finalize_model_grads_func.keywords == {"pg_collection": "pgs"}
     assert transformer_config.grad_scale_func is optimizer.scale_loss
     hook_handle.remove.assert_called_once()
-    assert not hasattr(model.weight, "_expert_parallel_grad_hook")
+    assert not hasattr(peft_model.weight, "_expert_parallel_grad_hook")
