@@ -3,6 +3,14 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
+
+pytest.importorskip(
+    "megatron.core.models.bagel.bagel_mimo",
+    reason="BAGEL conversion requires the Megatron Core BAGEL implementation",
+)
+
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.bagel.conversion import BagelBridge, BagelConfig
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource

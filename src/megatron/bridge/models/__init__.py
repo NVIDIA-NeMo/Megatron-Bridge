@@ -17,7 +17,10 @@ import importlib.util
 
 
 _BAGEL_EXPORTS = []
-if importlib.util.find_spec("megatron.core.models.bagel") is not None:
+if (
+    importlib.util.find_spec("megatron.core.models.bagel") is not None
+    and importlib.util.find_spec("megatron.core.models.bagel.bagel_mimo") is not None
+):
     from megatron.bridge.models.bagel import BagelBridge, BagelConfig, BagelModelProvider
 
     _BAGEL_EXPORTS = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
