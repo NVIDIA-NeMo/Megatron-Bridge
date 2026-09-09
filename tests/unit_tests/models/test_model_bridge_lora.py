@@ -807,6 +807,7 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
         input_is_parallel,
         base_linear_is_parallel,
         requires_expert_splits,
+        has_weight_magnitude,
         alpha,
         dim,
         pp_rank,
@@ -816,6 +817,7 @@ def test_megatron_global_adapters_info_all_pp_ranks(monkeypatch):
     assert local_base_prefix == "decoder.layers.0.mlp.linear_fc1"
     assert input_is_parallel is True and base_linear_is_parallel is True
     assert requires_expert_splits is False
+    assert has_weight_magnitude is False
     assert alpha == 8 and dim == 2 and pp_rank == 0 and vp_stage == 0
 
 
@@ -868,6 +870,7 @@ def test_build_adapter_conversion_tasks(monkeypatch):
             False,
             False,
             False,
+            True,
             4,
             8,
             0,
@@ -878,6 +881,7 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     adapter = SimpleNamespace(
         linear_in=SimpleNamespace(weight=torch.ones(2, 2)),
         linear_out=SimpleNamespace(weight=torch.ones(2, 2)),
+        weight_magnitude=torch.tensor([3.0, 4.0]),
         alpha=4,
         dim=8,
     )
@@ -906,6 +910,8 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     assert task.adapter_key is None
     assert task.linear_in_task.param_weight.shape == torch.Size([2, 2])
     assert task.linear_out_task.param_weight.shape == torch.Size([2, 2])
+    assert task.magnitude_task is not None
+    torch.testing.assert_close(task.magnitude_task.param_weight, torch.tensor([3.0, 4.0]))
 
 
 def test_build_adapter_conversion_tasks_excludes_base_prefix_before_mapping(monkeypatch):
@@ -917,6 +923,7 @@ def test_build_adapter_conversion_tasks_excludes_base_prefix_before_mapping(monk
         (
             "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj.adapter",
             "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj",
+            False,
             False,
             False,
             False,
@@ -968,6 +975,13 @@ def test_materialize_adapter_weights(monkeypatch):
                 megatron_module=None,
                 param_weight=None,
             ),
+            magnitude_task=WeightConversionTask(
+                param_name="magnitude_name",
+                global_param_name="magnitude_name",
+                mapping=DummyMapping(torch.tensor([3.0, 4.0])),
+                megatron_module=None,
+                param_weight=None,
+            ),
         )
     ]
 
@@ -975,6 +989,8 @@ def test_materialize_adapter_weights(monkeypatch):
     assert len(materials) == 1
     assert torch.all(materials[0].linear_in_weight.weight == torch.ones(2, 2))
     assert torch.all(materials[0].linear_out_weight.weight == 2 * torch.ones(2, 2))
+    assert materials[0].magnitude_weight is not None
+    torch.testing.assert_close(materials[0].magnitude_weight.weight, torch.tensor([3.0, 4.0]))
 
 
 def test_materialize_adapter_weights_grouped_expert_fc1_uses_expert_tp_axis(monkeypatch):
@@ -1189,6 +1205,7 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
         dim=4,
         linear_in_weight=MegatronWeightTuple("local_in", torch.ones(2, 2), vp_stage=0),
         linear_out_weight=MegatronWeightTuple("local_out", 2 * torch.ones(2, 2), vp_stage=0),
+        magnitude_weight=MegatronWeightTuple("magnitude", torch.tensor([3.0, 4.0]), vp_stage=0),
     )
 
     monkeypatch.setattr(
@@ -1218,11 +1235,13 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
             show_progress=False,
         )
     )
-    assert len(weights) == 2
-    assert weights[0].param_name.endswith("lora_A.weight")
-    assert weights[1].param_name.endswith("lora_B.weight")
-    torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
-    torch.testing.assert_close(weights[1].weight, 2 * torch.ones(2, 2))
+    assert len(weights) == 3
+    assert weights[0].param_name.endswith("lora_magnitude_vector")
+    assert weights[1].param_name.endswith("lora_A.weight")
+    assert weights[2].param_name.endswith("lora_B.weight")
+    torch.testing.assert_close(weights[0].weight, torch.tensor([3.0, 4.0]))
+    torch.testing.assert_close(weights[1].weight, torch.ones(2, 2))
+    torch.testing.assert_close(weights[2].weight, 2 * torch.ones(2, 2))
 
 
 def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):

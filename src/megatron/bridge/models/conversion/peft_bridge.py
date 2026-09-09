@@ -109,6 +109,7 @@ class AdapterWeightConversionTask:
     linear_in_task: "WeightConversionTask"
     linear_out_task: "WeightConversionTask"
     requires_expert_splits: bool = False
+    magnitude_task: Optional["WeightConversionTask"] = None
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ class AdapterWeight:
     dim: int
     linear_in_weight: "MegatronWeightTuple"
     linear_out_weight: "MegatronWeightTuple"
+    magnitude_weight: Optional["MegatronWeightTuple"] = None
 
 
 def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expected_suffix: str) -> Optional[str]:
@@ -290,7 +292,7 @@ class MegatronPeftBridge:
         if not has_gate_up:
             return False
 
-        if linear_out_tensor.ndim != 2 or linear_out_tensor.shape[0] % 2 != 0:
+        if linear_out_tensor.ndim not in (1, 2) or linear_out_tensor.shape[0] % 2 != 0:
             return False
 
         if base_weight_shape is not None and linear_out_tensor.shape[0] != 2 * base_weight_shape[0]:
@@ -549,10 +551,10 @@ class MegatronPeftBridge:
 
     def _megatron_global_adapters_info_all_pp_ranks(
         self, megatron_model: Union[MegatronModel, List[MegatronModel]]
-    ) -> List[tuple[str, str, bool, bool, bool, int, int, int, int]]:
+    ) -> List[tuple[str, str, bool, bool, bool, bool, int, int, int, int]]:
         """Get all adapters' information tuple:
          (global_base_name, local_base_prefix, input_is_parallel, base_linear_is_parallel,
-          requires_expert_splits, alpha, dim, pp_rank, vp_stage)
+          requires_expert_splits, has_weight_magnitude, alpha, dim, pp_rank, vp_stage)
         across all pipeline parallel ranks."""
         # Cache the result after first call
         if hasattr(self, "_cached_param_objects_adapter"):
@@ -566,7 +568,7 @@ class MegatronPeftBridge:
         pp_group = parallel_state.get_pipeline_model_parallel_group()
         pp_rank = get_pg_rank(pp_group)
         model_config = unwrap_model(megatron_model)[0].config
-        global_param_objects: List[tuple[str, str, bool, bool, bool, int, int, int, int]] = []
+        global_param_objects: List[tuple[str, str, bool, bool, bool, bool, int, int, int, int]] = []
 
         for vp_stage, model in enumerate(megatron_model):
             for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):  # type: ignore[name-defined]
@@ -614,6 +616,7 @@ class MegatronPeftBridge:
                         input_is_parallel,
                         base_linear_is_parallel,
                         requires_expert_splits,
+                        hasattr(adapter, "weight_magnitude"),
                         adapter.alpha,
                         adapter.dim,
                         pp_rank,
@@ -656,6 +659,14 @@ class MegatronPeftBridge:
         linear_out_name += ".linear_out.weight"
         return linear_in_name, linear_out_name
 
+    def _construct_adapter_magnitude_name(self, prefix: str, adapter_key: Optional[str]) -> str:
+        """Build the Megatron parameter name for a DoRA magnitude vector."""
+
+        magnitude_name = prefix + ".adapter"
+        if adapter_key is not None:
+            magnitude_name += f".{adapter_key}"
+        return magnitude_name + ".weight_magnitude"
+
     def build_adapter_conversion_tasks(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -688,6 +699,7 @@ class MegatronPeftBridge:
             input_is_parallel,
             base_linear_is_parallel,
             requires_expert_splits,
+            has_weight_magnitude,
             alpha,
             dim,
             pp_rank,
@@ -724,6 +736,7 @@ class MegatronPeftBridge:
 
             linear_in_module, linear_in_weight = None, None
             linear_out_module, linear_out_weight = None, None
+            magnitude_module, magnitude_weight = None, None
             if parallel_state.get_pipeline_model_parallel_rank() == pp_rank:
                 adapter, _ = self._get_adapter_wrap_module(local_base_prefix, megatron_model, vp_stage)
                 if isinstance(adapter, ModuleDict):
@@ -733,6 +746,9 @@ class MegatronPeftBridge:
                 local_linear_in_name, local_linear_out_name = self._construct_adapters_names(
                     local_base_prefix, adapter_key
                 )
+                if has_weight_magnitude:
+                    magnitude_module = adapter
+                    magnitude_weight = adapter.weight_magnitude
 
             # Pick mapping strategies based on base layer parallelism
             if base_linear_is_parallel:
@@ -741,6 +757,28 @@ class MegatronPeftBridge:
             else:
                 linear_in_mapping_cls = ReplicatedMapping
                 linear_out_mapping_cls = ReplicatedMapping
+
+            magnitude_task = None
+            if has_weight_magnitude:
+                global_magnitude_name = self._construct_adapter_magnitude_name(global_base_prefix, adapter_key)
+                local_magnitude_name = self._construct_adapter_magnitude_name(local_base_prefix, adapter_key)
+                magnitude_mapping_cls = (
+                    ColumnParallelMapping if base_linear_is_parallel and not input_is_parallel else ReplicatedMapping
+                )
+                assert hf_linear_out_name is not None
+                hf_magnitude_name = hf_linear_out_name.removesuffix(".lora_B.weight") + ".lora_magnitude_vector"
+                magnitude_task = WeightConversionTask(
+                    param_name=local_magnitude_name,
+                    global_param_name=global_magnitude_name,
+                    mapping=magnitude_mapping_cls(
+                        megatron_param=local_magnitude_name,
+                        hf_param=hf_magnitude_name,
+                    ),
+                    pp_rank=pp_rank,
+                    vp_stage=vp_stage,
+                    megatron_module=magnitude_module,
+                    param_weight=magnitude_weight,
+                )
 
             linear_in_task = WeightConversionTask(
                 param_name=local_linear_in_name,
@@ -777,6 +815,7 @@ class MegatronPeftBridge:
                     requires_expert_splits=requires_expert_splits,
                     linear_in_task=linear_in_task,
                     linear_out_task=linear_out_task,
+                    magnitude_task=magnitude_task,
                 )
             )
 
@@ -789,6 +828,7 @@ class MegatronPeftBridge:
 
         materialized: List[AdapterWeight] = []
         for adapter_task in adapter_tasks:
+            magnitude_weight = None
             if adapter_task.requires_expert_splits:
                 linear_in_tp_axis = 2 if isinstance(adapter_task.linear_in_task.mapping, RowParallelMapping) else 1
                 linear_in_tensor = self._materialize_grouped_expert_adapter_tensor(
@@ -810,6 +850,18 @@ class MegatronPeftBridge:
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
+            if adapter_task.magnitude_task is not None:
+                magnitude_dict = adapter_task.magnitude_task.mapping.megatron_to_hf(
+                    adapter_task.magnitude_task.param_weight,
+                    adapter_task.magnitude_task.megatron_module,
+                )
+                magnitude_tensor = next(iter(magnitude_dict.values()))
+                magnitude_weight = MegatronWeightTuple(
+                    adapter_task.magnitude_task.param_name,
+                    magnitude_tensor,
+                    adapter_task.magnitude_task.vp_stage,
+                )
+
             materialized.append(
                 AdapterWeight(
                     global_base_prefix=adapter_task.global_base_prefix,
@@ -826,6 +878,7 @@ class MegatronPeftBridge:
                         linear_out_tensor,
                         adapter_task.linear_out_task.vp_stage,
                     ),
+                    magnitude_weight=magnitude_weight,
                 )
             )
 
@@ -891,6 +944,31 @@ class MegatronPeftBridge:
             linear_in_tensor = adapter_weight.linear_in_weight.weight
             linear_out_tensor = adapter_weight.linear_out_weight.weight
             is_expert = is_expert_linear(adapter_task.global_base_prefix)
+            if adapter_weight.magnitude_weight is not None:
+                assert not is_expert, "DoRA export does not support expert linear layers"
+                magnitude_tensor = adapter_weight.magnitude_weight.weight
+                if cpu:
+                    magnitude_tensor = magnitude_tensor.cpu()
+                base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
+                    mapping_registry,
+                    adapter_task.global_base_prefix,
+                    adapter_task.adapter_key,
+                    ".weight",
+                )
+                per_base_magnitude = self._get_fused_adapter_linear_out_slices(
+                    megatron_model,
+                    base_hf_weight_names,
+                    magnitude_tensor,
+                )
+                for base_name in base_hf_weight_names:
+                    current_magnitude = (
+                        per_base_magnitude.get(base_name) if per_base_magnitude is not None else magnitude_tensor
+                    )
+                    if isinstance(current_magnitude, _AbsentProjectionSentinel):
+                        continue
+                    assert current_magnitude is not None, f"No DoRA magnitude slice for {base_name!r}"
+                    hf_magnitude_name = base_name.removesuffix(".weight") + ".lora_magnitude_vector"
+                    yield HFWeightTuple(hf_magnitude_name, current_magnitude)
             is_grouped_expert = is_expert and ".local_experts." not in adapter_task.global_base_prefix
             is_shared_outer_lora = is_grouped_expert and linear_in_tensor.ndim != linear_out_tensor.ndim
 
@@ -1687,6 +1765,10 @@ def convert_adapter_weights_to_peft_state(
     for adapter_weight in adapter_weights:
         name = adapter_weight.param_name
         tensor = adapter_weight.weight
+        if not name.endswith(_HF_LORA_SUFFIXES):
+            adapter_state[f"base_model.model.{name}"] = tensor
+            module_weight_names.append(name)
+            continue
         base_name, lora_suffix = _split_hf_lora_weight_name(name)
         if tensor.ndim == 3:
             if base_name not in target_parameters:
@@ -1728,6 +1810,8 @@ def infer_rank_pattern_from_adapter_weights(
     for adapter_weight in adapter_weights:
         name = adapter_weight.param_name
         tensor = adapter_weight.weight
+        if not name.endswith(_HF_LORA_SUFFIXES):
+            continue
         base_name, lora_suffix = _split_hf_lora_weight_name(name)
         if lora_suffix != ".lora_A.weight":
             continue
