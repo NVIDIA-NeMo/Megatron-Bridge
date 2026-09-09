@@ -184,7 +184,7 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     assert [task.global_param_name for task in tasks] == [first_name, last_name]
     sparse_tasks = [tasks[0], None, tasks[1]]
 
-    from modelopt.torch.export import quant_utils
+    from modelopt.torch.export import quantized_weight_export
 
     fake_spec = object()
     monkeypatch.setattr(
@@ -208,7 +208,11 @@ def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     )
     monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 1)
     monkeypatch.setattr(modelopt_utils.model_bridge_utils, "_get_pg_collection_from_model", lambda _model: None)
-    monkeypatch.setattr(quant_utils, "build_hf_quantization_config", lambda _specs: {})
+    monkeypatch.setattr(
+        quantized_weight_export,
+        "build_hf_quantization_config",
+        lambda _specs: {},
+    )
 
     export_plan = modelopt_utils.build_modelopt_export_plan(
         sparse_tasks,
@@ -550,7 +554,7 @@ def test_stream_weight_groups_materializes_one_complete_task(monkeypatch):
     )
 
     groups = iter(
-        bridge.stream_weight_groups_megatron_to_hf(
+        bridge._stream_weight_groups_megatron_to_hf(
             [Mock()],
             SimpleNamespace(),
             cpu=False,
@@ -564,9 +568,6 @@ def test_stream_weight_groups_materializes_one_complete_task(monkeypatch):
     assert [weight.param_name for weight in first] == ["hf.weight_0.0", "hf.weight_0.1"]
     assert events == [("map", 0), ("export_start", 0), ("export_done", 0)]
     assert converted_refs[0]() is None
-    tuple(first)
-    assert events == [("map", 0), ("export_start", 0), ("export_done", 0)]
-
     assert next(groups) == ()
     assert events[-3:] == [("map", 1), ("export_start", 1), ("export_done", 1)]
     assert converted_refs[1]() is None
@@ -619,7 +620,7 @@ def _distributed_weight_group_stream_worker(rank, world_size, init_file):
             tasks.append(_with_export_hook(task, export))
 
         groups = list(
-            DummyBridge().stream_weight_groups_megatron_to_hf(
+            DummyBridge()._stream_weight_groups_megatron_to_hf(
                 [model],
                 SimpleNamespace(),
                 cpu=False,

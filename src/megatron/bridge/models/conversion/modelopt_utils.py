@@ -126,7 +126,7 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
     if weight_name is None:
         return _SourceState(None, tuple(task.param_weight.shape))
 
-    from modelopt.torch.export.quant_utils import capture_quantized_weight_export_state
+    from modelopt.torch.export.quantized_weight_export import capture_quantized_weight_export_state
 
     return _SourceState(
         capture_quantized_weight_export_state(
@@ -150,7 +150,7 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
     if weight_name is None:
         return _SourceState(None, tuple(task.param_weight.shape))
 
-    from modelopt.torch.export.quant_utils import get_quantized_weight_export_spec
+    from modelopt.torch.export.quantized_weight_export import get_quantized_weight_export_spec
 
     spec = get_quantized_weight_export_spec(task.megatron_module, weight_name)
     if spec is not None:
@@ -231,7 +231,7 @@ def _mapping_names(mapping: Any) -> dict[str, str]:
 
 
 def _merge_states(states: list[object], weight_dim: int) -> object:
-    from modelopt.torch.export.quant_utils import merge_quantized_weight_export_states
+    from modelopt.torch.export.quantized_weight_export import merge_quantized_weight_export_states
 
     if len(states) == 1:
         return states[0]
@@ -239,7 +239,7 @@ def _merge_states(states: list[object], weight_dim: int) -> object:
 
 
 def _select_state(state: object, weight_dim: int, indices: torch.Tensor) -> object:
-    from modelopt.torch.export.quant_utils import select_quantized_weight_export_state
+    from modelopt.torch.export.quantized_weight_export import select_quantized_weight_export_state
 
     return select_quantized_weight_export_state(state, weight_dim, indices)
 
@@ -249,7 +249,7 @@ def _gather_source_states(
     mapping: Any,
     capture_error: str | None = None,
 ) -> list[_SourceState]:
-    from modelopt.torch.export.quant_utils import (
+    from modelopt.torch.export.quantized_weight_export import (
         restore_quantized_weight_export_state,
         split_quantized_weight_export_state,
     )
@@ -456,7 +456,7 @@ def _stage_tensor_for_collective(tensor: torch.Tensor, group: Any) -> torch.Tens
 
 
 def _capture_current_source_state(task: WeightConversionTask) -> tuple[_SourceState | None, str | None]:
-    from modelopt.torch.export.quant_utils import (
+    from modelopt.torch.export.quantized_weight_export import (
         restore_quantized_weight_export_state,
         split_quantized_weight_export_state,
     )
@@ -567,7 +567,7 @@ def _compose_export_hooks(
 
 
 def _make_export_hook(task: WeightConversionTask) -> HFExportHook:
-    from modelopt.torch.export.quant_utils import export_quantized_weight_tensors
+    from modelopt.torch.export.quantized_weight_export import export_quantized_weight_tensors
 
     expected_names = {name for name in _mapping_names(task.mapping).values() if name.endswith(".weight")}
     transformed_states = None
@@ -691,7 +691,7 @@ def build_modelopt_export_plan(
     if not any(spec is not None for spec in named_specs.values()):
         raise RuntimeError("No supported ModelOpt quantized weights were found")
 
-    from modelopt.torch.export.quant_utils import build_hf_quantization_config
+    from modelopt.torch.export.quantized_weight_export import build_hf_quantization_config
 
     quantization_config = build_hf_quantization_config(named_specs)
 

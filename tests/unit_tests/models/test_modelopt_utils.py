@@ -20,7 +20,7 @@ import torch
 
 
 mtq = pytest.importorskip("modelopt.torch.quantization")
-quant_utils = pytest.importorskip("modelopt.torch.export.quant_utils")
+weight_export = pytest.importorskip("modelopt.torch.export.quantized_weight_export")
 
 from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -252,8 +252,8 @@ def test_gated_state_is_split_before_tp_merge(monkeypatch):
         calls.append(result)
         return result
 
-    monkeypatch.setattr(quant_utils, "select_quantized_weight_export_state", select)
-    monkeypatch.setattr(quant_utils, "merge_quantized_weight_export_states", merge)
+    monkeypatch.setattr(weight_export, "select_quantized_weight_export_state", select)
+    monkeypatch.setattr(weight_export, "merge_quantized_weight_export_states", merge)
 
     transformed = modelopt_utils._transform_source_state(task, shards[0])
 
@@ -282,7 +282,7 @@ def test_qkv_state_uses_megatron_interleaving(monkeypatch):
         selections.append((state, dim, tuple(indices.tolist())))
         return selections[-1]
 
-    monkeypatch.setattr(quant_utils, "select_quantized_weight_export_state", select)
+    monkeypatch.setattr(weight_export, "select_quantized_weight_export_state", select)
 
     transformed = modelopt_utils._transform_source_state(task, source)
 
@@ -399,7 +399,7 @@ def _distributed_topology_worker(rank, world_size, init_file):
         task = SimpleNamespace(mapping=mapping, global_param_name="projection.weight")
         module = _fp8_linear()
         source = _source(
-            quant_utils.capture_quantized_weight_export_state(module),
+            weight_export.capture_quantized_weight_export_state(module),
             tuple(module.weight.shape),
             "column",
         )
@@ -494,7 +494,7 @@ def _distributed_capture_failure_worker(rank, world_size, init_file):
         expert_mapping = ColumnParallelMapping("expert.weight", "model.expert.weight")
         expert_mapping._tp_group = etp_group
         source = _source(
-            quant_utils.capture_quantized_weight_export_state(module),
+            weight_export.capture_quantized_weight_export_state(module),
             tuple(module.weight.shape),
             "column",
         )
