@@ -3401,13 +3401,21 @@ class TestLoadModelWeightsFromCheckpoint:
 class TestLoadModelStateDictHelper:
     """Tests for _load_model_state_dict strict fallback behavior and logging."""
 
+    def test_strict_load_rejects_non_extra_state_mismatch(self):
+        module = torch.nn.Linear(2, 2)
+        state_dict = {"weight": torch.ones_like(module.weight)}
+
+        with pytest.raises(RuntimeError, match=r'Missing key\(s\) in state_dict: "bias"'):
+            _load_model_state_dict(module, state_dict, strict=True)
+
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_load_model_state_dict_strict_fallback(self, mock_print_rank_0):
         module = Mock()
         load_return = Mock(missing_keys=["layer.weight"], unexpected_keys=[])
         module.load_state_dict.side_effect = [Exception("boom"), load_return]
 
-        _load_model_state_dict(module, {"w": 1}, strict=True)
+        with pytest.raises(Exception, match="boom"):
+            _load_model_state_dict(module, {"w": 1}, strict=True)
 
         assert module.load_state_dict.call_count == 2
         first_args, first_kwargs = module.load_state_dict.call_args_list[0]
@@ -3442,7 +3450,8 @@ class TestLoadModelStateDictHelper:
         err = Exception("strict mismatch")
         module.load_state_dict.side_effect = [err, load_return]
 
-        _load_model_state_dict(module, {"w": 1}, strict=True)
+        with pytest.raises(Exception, match="strict mismatch"):
+            _load_model_state_dict(module, {"w": 1}, strict=True)
 
         assert module.load_state_dict.call_count == 2
         assert mock_print_rank_0.call_count == 2

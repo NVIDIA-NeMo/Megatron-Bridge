@@ -2840,6 +2840,7 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
             if non_extra:
                 print_rank_0(f"Warning: Exception during strict loading: {e}")
                 print_rank_0(f"Non-extra-state mismatched keys: {non_extra}")
+                raise
         else:
             # Re-raise if we were already in non-strict mode
             raise
