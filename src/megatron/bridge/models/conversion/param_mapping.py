@@ -3061,7 +3061,7 @@ class FusedExpertMapping(AutoMapping):
         if self.permute_dims is not None or self.transpose_on_export:
             return ()
         expert_idx = extract_expert_number_from_param(global_param_name or self.megatron_param)
-        prefix = self.hf_param.removesuffix(".down_proj")
+        prefix = self.hf_param.removesuffix(".weight").removesuffix(".down_proj")
         return (LocalHFParamSpec(f"{prefix}.{expert_idx}.down_proj.weight"),)
 
     def hf_to_megatron(self, hf_weights: torch.Tensor, megatron_module: nn.Module) -> torch.Tensor:
@@ -3119,7 +3119,7 @@ class FusedGatedExpertMapping(AutoMapping):
         if self.permute_dims is not None or self.transpose_on_export:
             return ()
         expert_idx = extract_expert_number_from_param(global_param_name or self.megatron_param)
-        prefix = self.hf_param.removesuffix(".gate_up_proj")
+        prefix = self.hf_param.removesuffix(".weight").removesuffix(".gate_up_proj")
         return (
             LocalHFParamSpec(f"{prefix}.{expert_idx}.gate_proj.weight", -2, 0, 2),
             LocalHFParamSpec(f"{prefix}.{expert_idx}.up_proj.weight", -2, 1, 2),

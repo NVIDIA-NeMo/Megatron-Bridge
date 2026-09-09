@@ -27,6 +27,8 @@ from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, Weight
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
     ReplicatedMapping,
@@ -158,8 +160,8 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
     return _SourceState(
         spec,
         tuple(task.param_weight.shape),
-        _mapping_parallelism(task.mapping, task.megatron_module),
-        _qkv_layout(task.mapping, task.megatron_module),
+        _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
+        _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
     )
 
 
@@ -425,18 +427,29 @@ class _LocalExpertGatedMLPMapping(_LocalExpertMappingMixin, GatedMLPMapping):
     pass
 
 
-def _local_expert_mapping(mapping: Any, pg_collection: Any) -> Any | None:
-    if type(mapping) is AutoMapping and isinstance(mapping.hf_param, str):
-        replacement = _LocalExpertAutoMapping(
-            mapping.megatron_param,
-            mapping.hf_param,
-            mapping.permute_dims,
-        )
-    elif type(mapping) is GatedMLPMapping and isinstance(mapping.hf_param, dict):
+def _local_expert_mapping(mapping: Any, global_param_name: str, pg_collection: Any) -> Any | None:
+    specs = mapping.local_hf_param_specs(global_param_name)
+    if isinstance(mapping, FusedGatedExpertMapping) or type(mapping) is GatedMLPMapping:
+        if (
+            len(specs) != 2
+            or {spec.split_index for spec in specs} != {0, 1}
+            or any(spec.split_count != 2 for spec in specs)
+            or len({spec.split_dim for spec in specs}) != 1
+        ):
+            return None
+        gate, up = sorted(specs, key=lambda spec: spec.split_index)
         replacement = _LocalExpertGatedMLPMapping(
             mapping.megatron_param,
-            mapping.hf_param["gate"],
-            mapping.hf_param["up"],
+            gate.name,
+            up.name,
+        )
+    elif isinstance(mapping, FusedExpertMapping) or type(mapping) is AutoMapping:
+        if len(specs) != 1 or specs[0].split_count != 1:
+            return None
+        replacement = _LocalExpertAutoMapping(
+            mapping.megatron_param,
+            specs[0].name,
+            getattr(mapping, "permute_dims", None),
         )
     else:
         return None
@@ -517,22 +530,29 @@ def _gather_expert_outputs(
     outputs: Iterable[HFWeightTuple],
     group: Any,
 ) -> Iterable[HFWeightTuple]:
+    world_size = get_pg_size(group)
     error = None
-    # Materialize inside the error envelope so every EP rank reaches the same
-    # metadata gather even when one local exporter fails.
+    # Materialize and pack inside the error envelope so every EP rank reaches
+    # the same metadata gather even when one local exporter fails.
     try:
         outputs = tuple(outputs)
         metadata = tuple((name, tuple(tensor.shape), tensor.dtype) for name, tensor in outputs)
+        if world_size > 1:
+            staged = tuple(_stage_tensor_for_collective(tensor.contiguous(), group) for _, tensor in outputs)
+            packed = torch.cat([tensor.reshape(-1).view(torch.uint8) for tensor in staged]) if staged else None
+        else:
+            packed = None
     except Exception as exception:
         outputs = ()
         metadata = ()
+        packed = None
         error = f"{type(exception).__name__}: {exception}"
     gathered = _all_gather_objects((metadata, error), group)
     errors = [rank_error for _, rank_error in gathered if rank_error is not None]
     if errors:
         raise RuntimeError("ModelOpt expert export failed: " + "; ".join(dict.fromkeys(errors)))
     gathered_metadata = [rank_metadata for rank_metadata, _ in gathered]
-    if len(gathered_metadata) == 1:
+    if world_size == 1:
         yield from outputs
         return
 
@@ -543,14 +563,18 @@ def _gather_expert_outputs(
     ):
         raise RuntimeError("Inconsistent ModelOpt expert output tensors across EP")
 
-    for index, (_, tensor) in enumerate(outputs):
-        tensor = _stage_tensor_for_collective(tensor.contiguous(), group)
-        local_bytes = tensor.reshape(-1).view(torch.uint8)
-        gathered = [torch.empty_like(local_bytes) for _ in gathered_metadata]
-        torch.distributed.all_gather(gathered, local_bytes, group=group)
-        for rank_metadata, value in zip(gathered_metadata, gathered, strict=True):
-            name, shape, dtype = rank_metadata[index]
-            yield HFWeightTuple(name, value.view(dtype).reshape(shape))
+    assert packed is not None
+    gathered_buffers = [torch.empty_like(packed) for _ in gathered_metadata]
+    torch.distributed.all_gather(gathered_buffers, packed, group=group)
+    for rank_metadata, buffer in zip(gathered_metadata, gathered_buffers, strict=True):
+        offset = 0
+        for name, shape, dtype in rank_metadata:
+            num_bytes = torch.empty((), dtype=dtype).element_size()
+            for size in shape:
+                num_bytes *= size
+            value = buffer[offset : offset + num_bytes].clone().view(dtype).reshape(shape)
+            offset += num_bytes
+            yield HFWeightTuple(name, value)
 
 
 def _compose_export_hooks(
@@ -609,12 +633,32 @@ def build_modelopt_export_plan(
         for task in conversion_tasks
         if task is not None and not isinstance(getattr(task, "mapping", None), AmaxMapping)
     ]
+    pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
+    local_expert_mappings = {}
+    planning_tasks = concrete_tasks
     local_specs = {}
     capture_error = None
     try:
+        for task in concrete_tasks:
+            mapping = getattr(task, "mapping", None)
+            if mapping is None or not mapping.is_expert:
+                continue
+            local_mapping = _local_expert_mapping(
+                mapping,
+                task.global_param_name,
+                pg_collection,
+            )
+            if local_mapping is not None:
+                local_expert_mappings[task.global_param_name] = local_mapping
+        planning_tasks = [
+            replace(task, mapping=local_expert_mappings[task.global_param_name])
+            if task.global_param_name in local_expert_mappings
+            else task
+            for task in concrete_tasks
+        ]
         local_specs = {
             task.global_param_name: source
-            for task in concrete_tasks
+            for task in planning_tasks
             if (source := _capture_source_spec(task)) is not None
         }
     except Exception as error:
@@ -628,21 +672,18 @@ def build_modelopt_export_plan(
     pp_group = model_bridge_utils._get_pp_group(model) if torch.distributed.is_initialized() else None
     source_specs = _sync_source_specs(local_specs, pp_group)
 
-    pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
-    local_expert_mappings = {}
     expert_mapping_error = None
     try:
         for task in concrete_tasks:
             source = source_specs.get(task.global_param_name)
             if source is None or source.state is None or not task.mapping.is_expert:
                 continue
-            local_mapping = _local_expert_mapping(task.mapping, pg_collection)
+            local_mapping = local_expert_mappings.get(task.global_param_name)
             if local_mapping is None:
                 raise NotImplementedError(
                     "ModelOpt real-quant export cannot pack expert mapping "
                     f"{type(task.mapping).__name__} before its EP gather"
                 )
-            local_expert_mappings[task.global_param_name] = local_mapping
     except Exception as error:
         expert_mapping_error = f"{type(error).__name__}: {error}"
     _raise_distributed_errors(
@@ -652,14 +693,15 @@ def build_modelopt_export_plan(
     )
 
     named_specs: dict[str, object | None] = {}
-    for task in concrete_tasks:
+    fused_expert_specs: dict[str, list[tuple[str, object | None]]] = {}
+    for task, planning_task in zip(concrete_tasks, planning_tasks, strict=True):
         source = source_specs.get(task.global_param_name)
         if source is None:
             continue
         transformed = None
         transform_error = None
         try:
-            transformed = _transform_source_spec(task, source)
+            transformed = _transform_source_spec(planning_task, source)
         except Exception as error:
             transform_error = f"{type(error).__name__}: {error}"
 
@@ -683,10 +725,24 @@ def build_modelopt_export_plan(
             raise RuntimeError(f"ModelOpt metadata transform failed for {task.global_param_name}: {transform_error}")
 
         assert transformed is not None
+        if task.global_param_name in local_expert_mappings and getattr(task.mapping, "is_grouped_export", False):
+            module_names = {name.rsplit(".", 3)[0] for name in transformed}
+            if len(module_names) != 1:
+                raise RuntimeError(
+                    f"Unable to identify one fused expert module for {task.global_param_name}: {sorted(transformed)}"
+                )
+            module_name = module_names.pop()
+            fused_expert_specs.setdefault(module_name, []).extend(transformed.items())
         for name, spec in transformed.items():
             if name in named_specs and named_specs[name] != spec:
                 raise RuntimeError(f"Duplicate ModelOpt spec for {name}")
             named_specs[name] = spec
+
+    for module_name, named_module_specs in fused_expert_specs.items():
+        reference = named_module_specs[0][1]
+        if any(spec != reference for _, spec in named_module_specs[1:]):
+            names = sorted(name for name, _ in named_module_specs)
+            raise RuntimeError(f"Inconsistent ModelOpt export specs for fused expert module {module_name}: {names}")
 
     if not any(spec is not None for spec in named_specs.values()):
         raise RuntimeError("No supported ModelOpt quantized weights were found")

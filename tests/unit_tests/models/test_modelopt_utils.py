@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
     FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
 )
@@ -64,20 +65,36 @@ def _fp8_linear(out_features=4, in_features=4):
     )
 
 
+def _nvfp4_linear(out_features=32, in_features=16):
+    module = torch.nn.Linear(in_features, out_features, bias=False)
+    with torch.no_grad():
+        module.weight.copy_(
+            torch.arange(out_features * in_features, dtype=torch.float32).reshape(out_features, in_features) / 64 - 4
+        )
+    return mtq.quantize(
+        module,
+        copy.deepcopy(mtq.NVFP4_DEFAULT_CFG),
+        lambda candidate: candidate(torch.ones(2, in_features)),
+    )
+
+
 def _source(state, shape, parallelism, qkv_layout=None):
     return modelopt_utils._SourceState(state, shape, parallelism, qkv_layout)
 
 
 class _GroupedWeights(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, factory=_fp8_linear, num_gemms=2):
         super().__init__()
-        source = _fp8_linear()
-        self.weight0 = torch.nn.Parameter(source.weight.detach().clone())
-        self.quantizers = torch.nn.ModuleList([source.weight_quantizer])
-        self.input_quantizer = source.input_quantizer
+        sources = [factory() for _ in range(num_gemms)]
+        for index, source in enumerate(sources):
+            self.register_parameter(f"weight{index}", torch.nn.Parameter(source.weight.detach().clone()))
+        self.weight_quantizer = torch.nn.ModuleList([source.weight_quantizer for source in sources])
+        self.input_quantizer = sources[0].input_quantizer
+        self.num_gemms = num_gemms
 
     def iter_weights_for_calibration(self):
-        yield self.weight0, self.quantizers[0]
+        for index, quantizer in enumerate(self.weight_quantizer):
+            yield getattr(self, f"weight{index}"), quantizer
 
 
 def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
@@ -336,18 +353,119 @@ def test_quantized_expert_is_packed_before_ep_gather():
     }.issubset(exported)
 
 
-def test_grouped_hf_expert_mapping_is_rejected_before_export():
-    module = _fp8_linear()
+def test_grouped_hf_expert_mapping_exports_one_expert_before_ep_gather():
+    module = _GroupedWeights()
+    module.tensor_model_parallel = True
+    module.partition_dim = 1
     mapping = FusedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc2.weight1",
+        "model.layers.0.mlp.experts.down_proj.weight",
+    )
+    task = _task(mapping, module, global_name=mapping.megatron_param, weight_name="weight1")
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    mapped = export_task.mapping.megatron_to_hf(module.weight1, module)
+    exported = {
+        name: value for hf_name, weight in mapped.items() for name, value in export_task.export_hook(hf_name, weight)
+    }
+
+    hf_name = "model.layers.0.mlp.experts.1.down_proj.weight"
+    assert not export_task.mapping.is_expert
+    assert not getattr(export_task.mapping, "is_grouped_export", False)
+    assert exported[hf_name].dtype == torch.float8_e4m3fn
+    assert f"{hf_name.removesuffix('.weight')}.weight_scale" in exported
+
+
+def test_grouped_gated_expert_preserves_shared_fp8_input_scale():
+    module = _GroupedWeights(lambda: _fp8_linear(out_features=8))
+    mapping = FusedGatedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+        "model.layers.0.mlp.experts.gate_up_proj",
+    )
+    task = _task(mapping, module, global_name=mapping.megatron_param, weight_name="weight0")
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    mapped = export_task.mapping.megatron_to_hf(module.weight0, module)
+    exported = {
+        name: value for hf_name, weight in mapped.items() for name, value in export_task.export_hook(hf_name, weight)
+    }
+
+    gate_prefix = "model.layers.0.mlp.experts.0.gate_proj"
+    up_prefix = "model.layers.0.mlp.experts.0.up_proj"
+    assert exported[f"{gate_prefix}.weight"].dtype == torch.float8_e4m3fn
+    assert exported[f"{up_prefix}.weight"].dtype == torch.float8_e4m3fn
+    assert torch.equal(exported[f"{gate_prefix}.input_scale"], exported[f"{up_prefix}.input_scale"])
+
+
+def test_grouped_gated_expert_preserves_shared_nvfp4_weight_scale_2():
+    module = _GroupedWeights(_nvfp4_linear)
+    mapping = FusedGatedExpertMapping(
+        "decoder.layers.0.mlp.experts.linear_fc1.weight1",
+        "model.layers.0.mlp.experts.gate_up_proj.weight",
+    )
+    task = _task(mapping, module, global_name=mapping.megatron_param, weight_name="weight1")
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+    export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    mapped = export_task.mapping.megatron_to_hf(module.weight1, module)
+    exported = {
+        name: value for hf_name, weight in mapped.items() for name, value in export_task.export_hook(hf_name, weight)
+    }
+
+    gate_prefix = "model.layers.0.mlp.experts.1.gate_proj"
+    up_prefix = "model.layers.0.mlp.experts.1.up_proj"
+    assert torch.equal(exported[f"{gate_prefix}.weight_scale_2"], exported[f"{up_prefix}.weight_scale_2"])
+
+
+def test_grouped_expert_module_rejects_inconsistent_projection_specs():
+    gate_up = _fp8_linear(out_features=8)
+    down = torch.nn.Linear(4, 4, bias=False)
+    down.tensor_model_parallel = True
+    down.partition_dim = 1
+    gate_up_mapping = FusedGatedExpertMapping(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+        "model.layers.0.mlp.experts.gate_up_proj.weight",
+    )
+    down_mapping = FusedExpertMapping(
         "decoder.layers.0.mlp.experts.local_experts.0.linear_fc2.weight",
-        "model.layers.0.mlp.experts.down_proj",
+        "model.layers.0.mlp.experts.down_proj.weight",
     )
 
-    with pytest.raises(RuntimeError, match="grouped HF expert weights"):
+    with pytest.raises(RuntimeError, match="Inconsistent ModelOpt export specs for fused expert module"):
         modelopt_utils.build_modelopt_export_plan(
-            [_task(mapping, module, global_name=mapping.megatron_param)],
-            model=[module],
+            [
+                _task(gate_up_mapping, gate_up, global_name=gate_up_mapping.megatron_param),
+                _task(down_mapping, down, global_name=down_mapping.megatron_param),
+            ],
+            model=[gate_up],
         )
+
+
+def test_unquantized_grouped_transpose_mapping_keeps_offline_export_path():
+    expert = torch.nn.Linear(4, 4, bias=False)
+    expert_mapping = FusedExpertMapping(
+        "decoder.layers.0.mlp.experts.local_experts.0.linear_fc2.weight",
+        "model.layers.0.mlp.experts.down_proj",
+        transpose_on_export=True,
+    )
+    dense = _fp8_linear()
+    dense_mapping = ColumnParallelMapping(
+        "decoder.layers.0.mlp.shared_expert.linear_fc2.weight",
+        "model.layers.0.mlp.shared_expert.down_proj.weight",
+    )
+
+    plan = modelopt_utils.build_modelopt_export_plan(
+        [
+            _task(expert_mapping, expert, global_name=expert_mapping.megatron_param),
+            _task(dense_mapping, dense, global_name=dense_mapping.megatron_param),
+        ],
+        model=[dense],
+    )
+
+    assert plan.conversion_tasks[0].mapping is expert_mapping
+    assert plan.conversion_tasks[0].export_hook is None
 
 
 def test_custom_quantized_expert_mapping_is_rejected_before_ep_gather():
@@ -413,17 +531,54 @@ def _distributed_topology_worker(rank, world_size, init_file):
                 [
                     HFWeightTuple(
                         f"expert.{rank}.weight",
-                        torch.tensor([rank], dtype=torch.int64),
-                    )
+                        torch.tensor([rank], dtype=torch.uint8),
+                    ),
+                    HFWeightTuple(
+                        f"expert.{rank}.weight_scale",
+                        torch.tensor([rank + 0.5], dtype=torch.float32),
+                    ),
                 ],
                 torch.distributed.group.WORLD,
             )
         )
         assert [name for name, _ in gathered] == [
             "expert.0.weight",
+            "expert.0.weight_scale",
             "expert.1.weight",
+            "expert.1.weight_scale",
         ]
-        assert [tensor.item() for _, tensor in gathered] == [0, 1]
+        assert [tensor.item() for _, tensor in gathered] == [0, 0.5, 1, 1.5]
+
+        local_groups = [torch.distributed.new_group([member]) for member in range(world_size)]
+        local_group = local_groups[rank]
+        module = _GroupedWeights(num_gemms=1)
+        module.tensor_model_parallel = True
+        module.partition_dim = 1
+        module.pg_collection = SimpleNamespace(
+            pp=local_group,
+            ep=torch.distributed.group.WORLD,
+            tp=local_group,
+            expt_tp=local_group,
+        )
+        global_name = f"decoder.layers.0.mlp.experts.linear_fc2.weight{rank}"
+        mapping = FusedExpertMapping(
+            global_name,
+            "model.layers.0.mlp.experts.down_proj.weight",
+        )
+        mapping.set_process_groups_from_pg_collection(module.pg_collection)
+        task = _task(mapping, module, global_name=global_name, weight_name="weight0")
+
+        plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+        export_task = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+        mapped = export_task.mapping.megatron_to_hf(module.weight0, module)
+        exported = {
+            name: value
+            for hf_name, weight in mapped.items()
+            for name, value in export_task.export_hook(hf_name, weight)
+        }
+        expected_weights = {f"model.layers.0.mlp.experts.{expert}.down_proj.weight" for expert in range(world_size)}
+        assert expected_weights.issubset(exported)
+        assert {f"{name.removesuffix('.weight')}.weight_scale" for name in expected_weights}.issubset(exported)
     finally:
         torch.distributed.destroy_process_group()
 
