@@ -131,6 +131,24 @@ def test_weight_verification_broadcasts_rank_zero_mismatch(monkeypatch: pytest.M
     assert tensor_calls == [(False, torch.int32, 3)]
 
 
+def test_weight_verification_recreates_bridge_synthesized_hf_state(monkeypatch: pytest.MonkeyPatch):
+    module = _load_roundtrip_module(monkeypatch)
+    expected = torch.zeros(2)
+    calls = []
+
+    class FakeBridge:
+        hf_pretrained = SimpleNamespace(state={"router.weight": torch.ones(2)})
+
+        def maybe_modify_loaded_hf_weight(self, name, state):
+            calls.append((name, state))
+            return expected
+
+    bridge = FakeBridge()
+
+    assert module._get_original_hf_weight(bridge, "router.bias") is expected
+    assert calls == [("router.bias", bridge.hf_pretrained.state)]
+
+
 def test_roundtrip_synchronizes_result_and_saves_before_reporting_summary(
     monkeypatch: pytest.MonkeyPatch,
 ):

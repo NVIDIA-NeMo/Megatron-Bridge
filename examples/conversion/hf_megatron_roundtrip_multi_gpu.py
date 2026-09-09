@@ -50,6 +50,7 @@ Usage:
 import argparse
 import os
 import sys
+from typing import Any
 
 import torch
 from rich.console import Console
@@ -113,6 +114,14 @@ def _synchronize_weight_verification(all_match: bool) -> bool:
     mismatch = torch.tensor(not all_match, dtype=torch.int32, device=torch.cuda.current_device())
     torch.distributed.broadcast(mismatch, src=0)
     return bool(mismatch.item())
+
+
+def _get_original_hf_weight(bridge: Any, name: str) -> torch.Tensor:
+    """Load original or bridge-synthesized HF state for round-trip verification."""
+    try:
+        return bridge.hf_pretrained.state[name]
+    except KeyError:
+        return bridge.maybe_modify_loaded_hf_weight(name, bridge.hf_pretrained.state)
 
 
 def _print_verification_results(
@@ -259,7 +268,7 @@ def main(
     fp8_skip_samples: list[str] = []
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
         if is_rank_0:
-            original_param = bridge.hf_pretrained.state[name]
+            original_param = _get_original_hf_weight(bridge, name)
             compare_param = param
             compare_original = original_param
 
