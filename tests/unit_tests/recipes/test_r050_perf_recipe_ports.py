@@ -18,9 +18,13 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v3_pretrain_256gpu_b200_nvfp4_config,
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_b300_nvfp4_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.qwen import (
@@ -137,6 +141,43 @@ def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
     cfg = deepseek_v3_pretrain_256gpu_b300_fp8mx_config()
 
     _assert_full_iteration_hybridep_mxfp8(cfg)
+
+
+@pytest.mark.parametrize(
+    ("recipe", "expected_hybridep_ranks", "expected_nvlink_domain_size"),
+    [
+        (deepseek_v3_pretrain_256gpu_b200_nvfp4_config, 8, 8),
+        (deepseek_v3_pretrain_256gpu_b300_nvfp4_config, 8, 8),
+        (deepseek_v3_pretrain_256gpu_gb200_nvfp4_config, 64, 72),
+    ],
+)
+def test_deepseek_v3_nvfp4_recipes_enable_full_iteration(
+    recipe, expected_hybridep_ranks, expected_nvlink_domain_size
+) -> None:
+    cfg = recipe()
+
+    _assert_full_iteration_hybridep_mxfp8(cfg)
+    assert cfg.mixed_precision.fp4 == "e2m1"
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.pipeline_model_parallel_layout == "Et*5|(t*4|)*14mL"
+    assert cfg.model.mla_down_proj_fusion is True
+    assert cfg.model.recompute_modules == []
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_hybridep_ranks
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == expected_nvlink_domain_size
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["NVTE_DPA_FP8_RECIPE"] == "MXFP8BlockScaling"
+    assert cfg.env_vars["NVTE_DPA_FP8_FORMAT"] == "E4M3"
+    assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
+
+
+def test_deepseek_v3_vr200_nvfp4_remains_outside_full_iteration() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+
+    assert cfg.mixed_precision.fp4 == "e2m1"
+    assert cfg.model.cuda_graph_impl != "full_iteration"
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert "graph_capture_record_stream_reuse:True" not in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
 
 
 def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:

@@ -76,6 +76,13 @@ def _enable_deepseek_full_iteration_mxfp8(
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
 
+def _enable_deepseek_full_iteration_nvfp4(cfg: ConfigContainer) -> None:
+    """Apply the DeepSeek V3 HybridEP full-iteration NVFP4 settings."""
+    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
+    cfg.model.mla_down_proj_fusion = True
+    cfg.model.recompute_modules = []
+
+
 def _enable_deepseek_transformer_engine_graph(cfg: ConfigContainer) -> None:
     """Apply legacy DeepSeek V3 Transformer Engine graph capture settings."""
     cfg.model.cuda_graph_impl = "transformer_engine"
