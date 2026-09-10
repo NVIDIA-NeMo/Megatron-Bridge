@@ -425,8 +425,15 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
-        provider.o_groups = hf_config.o_groups  # 8
-        provider.o_lora_rank = hf_config.o_lora_rank  # 1024
+        # MCore renamed the grouped output-projection fields on dev. Populate the
+        # names supported by the selected ref so the HF geometry is not replaced
+        # by TransformerConfig defaults on main.
+        if hasattr(provider, "output_projection_groups"):
+            provider.output_projection_groups = hf_config.o_groups  # 8
+            provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
+        else:
+            provider.o_groups = hf_config.o_groups  # 8
+            provider.o_lora_rank = hf_config.o_lora_rank  # 1024
 
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
@@ -549,6 +556,12 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             0, num_hidden_layers - num_hash_layers
         )
         hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
+        hf_cfg["o_groups"] = getattr(
+            provider, "output_projection_groups", getattr(provider, "o_groups", 8)
+        )
+        hf_cfg["o_lora_rank"] = getattr(
+            provider, "output_projection_lora_rank", getattr(provider, "o_lora_rank", 1024)
+        )
 
         compress_ratios = getattr(provider, "csa_compress_ratios", None)
         if compress_ratios is not None:

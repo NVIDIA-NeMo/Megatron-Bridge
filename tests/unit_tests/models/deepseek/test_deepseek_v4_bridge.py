@@ -94,6 +94,59 @@ def _deepseek_v4_hf_config():
     )
 
 
+class TestDeepSeekV4OutputProjectionConfig:
+    """HF grouped-output geometry must reach either supported MCore field name."""
+
+    @pytest.mark.parametrize(
+        ("provider_fields", "expected_fields"),
+        [
+            (
+                {"output_projection_groups": 8, "output_projection_lora_rank": 1024},
+                {"output_projection_groups": 4, "output_projection_lora_rank": 256},
+            ),
+            (
+                {"o_groups": 8, "o_lora_rank": 1024},
+                {"o_groups": 4, "o_lora_rank": 256},
+            ),
+        ],
+    )
+    def test_provider_bridge_sets_ref_specific_fields(self, provider_fields, expected_fields):
+        bridge = DeepSeekV4Bridge()
+        provider = SimpleNamespace(**provider_fields)
+        hf_config = _deepseek_v4_hf_config()
+        hf_config.o_groups = 4
+        hf_config.o_lora_rank = 256
+        hf_pretrained = SimpleNamespace(config=hf_config)
+
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_blackwell_fused_kernels",
+                return_value=False,
+            ),
+        ):
+            bridge.provider_bridge(hf_pretrained)
+
+        for field, expected in expected_fields.items():
+            assert getattr(provider, field) == expected
+
+    @pytest.mark.parametrize(
+        "provider_fields",
+        [
+            {"output_projection_groups": 4, "output_projection_lora_rank": 256},
+            {"o_groups": 4, "o_lora_rank": 256},
+        ],
+    )
+    def test_megatron_to_hf_config_reads_ref_specific_fields(self, provider_fields):
+        provider = SimpleNamespace(**provider_fields)
+
+        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value={}):
+            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["o_groups"] == 4
+        assert hf_config["o_lora_rank"] == 256
+
+
 class TestNativeDeepSeekV4ConfigTranslation:
     """Native Transformers DSv4 config fields must map back to MCore fields."""
 
