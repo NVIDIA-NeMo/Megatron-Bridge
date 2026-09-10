@@ -202,7 +202,6 @@ class TestDiTSelfAttentionInit:
         k_call_kwargs = mock_build.call_args_list[1].kwargs
         assert k_call_kwargs["hidden_size"] == 16
 
-
     @patch("megatron.bridge.diffusion.models.common.dit_attention.SelfAttention.__init__", return_value=None)
     def test_mtp_flag_is_forwarded_to_mcore(self, mock_super_init):
         config = _make_config()
