@@ -32,6 +32,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.modelopt_utils import ModelOptExportPlan
+    from megatron.bridge.models.conversion.param_mapping import LocalHFParam
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -708,6 +709,22 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(model, list):
             model = [model]
         return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
+
+    def iter_local_hf_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalHFParam"]:
+        """Yield local unquantized BF16 parameters as canonical HF views.
+
+        Args:
+            tasks: Reusable tasks from :meth:`get_conversion_tasks` in the
+                deterministic order they should be exported.
+
+        Returns:
+            An iterator over live local parameter views and their shard metadata.
+
+        Raises:
+            ValueError: If a locally owned task is quantized, is not BF16, or
+                cannot be represented without Bridge conversion collectives.
+        """
+        return self._model_bridge.iter_local_hf_params(tasks)
 
     def export_hf_weights(
         self,
