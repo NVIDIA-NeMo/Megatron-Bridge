@@ -186,10 +186,13 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with MLA and dense-MLP recompute."""
+    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with optimizer CUDA graph."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
+    cfg.model.cuda_graph_use_single_mempool = True
+    cfg.optimizer.optimizer_cuda_graph = True
+    cfg.optimizer.store_param_remainders = False
     cfg.model.mla_down_proj_fusion = True
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]

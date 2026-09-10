@@ -178,6 +178,16 @@ def test_deepseek_v3_nvfp4_reuses_allocations_during_cuda_graph_capture(recipe) 
 def test_deepseek_v3_gb200_nvfp4_memory_mitigations() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb200_nvfp4_config()
 
+    assert cfg.optimizer.optimizer_cuda_graph is True
+    assert cfg.model.cuda_graph_use_single_mempool is True
+    assert cfg.optimizer.store_param_remainders is False
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.optimizer_cpu_offload is False
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
+    assert cfg.checkpoint.save is None
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     assert cfg.model.recompute_modules == ["mla_up_proj", "mlp"]
