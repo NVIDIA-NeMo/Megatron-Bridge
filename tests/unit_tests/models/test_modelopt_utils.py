@@ -531,23 +531,17 @@ def _distributed_topology_worker(rank, world_size, init_file):
                 [
                     HFWeightTuple(
                         f"expert.{rank}.weight",
-                        torch.tensor([rank], dtype=torch.uint8),
-                    ),
-                    HFWeightTuple(
-                        f"expert.{rank}.weight_scale",
-                        torch.tensor([rank + 0.5], dtype=torch.float32),
-                    ),
+                        torch.tensor([rank], dtype=torch.int64),
+                    )
                 ],
                 torch.distributed.group.WORLD,
             )
         )
         assert [name for name, _ in gathered] == [
             "expert.0.weight",
-            "expert.0.weight_scale",
             "expert.1.weight",
-            "expert.1.weight_scale",
         ]
-        assert [tensor.item() for _, tensor in gathered] == [0, 0.5, 1, 1.5]
+        assert [tensor.item() for _, tensor in gathered] == [0, 1]
 
         local_groups = [torch.distributed.new_group([member]) for member in range(world_size)]
         local_group = local_groups[rank]

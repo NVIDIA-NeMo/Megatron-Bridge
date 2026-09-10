@@ -530,29 +530,22 @@ def _gather_expert_outputs(
     outputs: Iterable[HFWeightTuple],
     group: Any,
 ) -> Iterable[HFWeightTuple]:
-    world_size = get_pg_size(group)
     error = None
-    # Materialize and pack inside the error envelope so every EP rank reaches
-    # the same metadata gather even when one local exporter fails.
+    # Materialize inside the error envelope so every EP rank reaches the same
+    # metadata gather even when one local exporter fails.
     try:
         outputs = tuple(outputs)
         metadata = tuple((name, tuple(tensor.shape), tensor.dtype) for name, tensor in outputs)
-        if world_size > 1:
-            staged = tuple(_stage_tensor_for_collective(tensor.contiguous(), group) for _, tensor in outputs)
-            packed = torch.cat([tensor.reshape(-1).view(torch.uint8) for tensor in staged]) if staged else None
-        else:
-            packed = None
     except Exception as exception:
         outputs = ()
         metadata = ()
-        packed = None
         error = f"{type(exception).__name__}: {exception}"
     gathered = _all_gather_objects((metadata, error), group)
     errors = [rank_error for _, rank_error in gathered if rank_error is not None]
     if errors:
         raise RuntimeError("ModelOpt expert export failed: " + "; ".join(dict.fromkeys(errors)))
     gathered_metadata = [rank_metadata for rank_metadata, _ in gathered]
-    if world_size == 1:
+    if len(gathered_metadata) == 1:
         yield from outputs
         return
 
@@ -563,18 +556,14 @@ def _gather_expert_outputs(
     ):
         raise RuntimeError("Inconsistent ModelOpt expert output tensors across EP")
 
-    assert packed is not None
-    gathered_buffers = [torch.empty_like(packed) for _ in gathered_metadata]
-    torch.distributed.all_gather(gathered_buffers, packed, group=group)
-    for rank_metadata, buffer in zip(gathered_metadata, gathered_buffers, strict=True):
-        offset = 0
-        for name, shape, dtype in rank_metadata:
-            num_bytes = torch.empty((), dtype=dtype).element_size()
-            for size in shape:
-                num_bytes *= size
-            value = buffer[offset : offset + num_bytes].clone().view(dtype).reshape(shape)
-            offset += num_bytes
-            yield HFWeightTuple(name, value)
+    for index, (_, tensor) in enumerate(outputs):
+        tensor = _stage_tensor_for_collective(tensor.contiguous(), group)
+        local_bytes = tensor.reshape(-1).view(torch.uint8)
+        gathered = [torch.empty_like(local_bytes) for _ in gathered_metadata]
+        torch.distributed.all_gather(gathered, local_bytes, group=group)
+        for rank_metadata, value in zip(gathered_metadata, gathered, strict=True):
+            name, shape, dtype = rank_metadata[index]
+            yield HFWeightTuple(name, value.view(dtype).reshape(shape))
 
 
 def _compose_export_hooks(
