@@ -40,7 +40,9 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config,
     qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config,
+    qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config,
@@ -55,18 +57,25 @@ from megatron.bridge.perf_recipes.qwen import (
 
 
 @pytest.mark.parametrize(
-    "recipe_func",
+    ("recipe_func", "expected_data_parallel_size", "expected_hybridep_domain_size"),
     [
-        qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config,
-        qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config,
-        qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config,
-        qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config,
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config, 8, 8),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config, 32, 32),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config, 32, 32),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config, 32, 32),
+        (qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config, 32, 32),
     ],
 )
-def test_qwen3_235b_64gpu_gb200_topology_is_valid(recipe_func):
+def test_qwen3_235b_64gpu_blackwell_topology_is_valid(
+    recipe_func, expected_data_parallel_size, expected_hybridep_domain_size
+):
     cfg = recipe_func()
 
-    assert data_parallel_size(num_gpus=64, topology=topology_from_config(cfg.model)) == 8
+    assert data_parallel_size(num_gpus=64, topology=topology_from_config(cfg.model)) == expected_data_parallel_size
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_hybridep_domain_size
 
 
 @pytest.mark.parametrize(
