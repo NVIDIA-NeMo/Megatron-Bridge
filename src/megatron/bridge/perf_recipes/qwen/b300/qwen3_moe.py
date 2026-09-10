@@ -622,9 +622,7 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config() -> ConfigContainer:
-    """Compatibility alias for the canonical 256× B300 NVFP4 recipe."""
-    return qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config()
+qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_full_iteration_config = qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config
 
 
 def qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
