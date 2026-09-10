@@ -105,7 +105,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
@@ -159,7 +159,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 3
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
