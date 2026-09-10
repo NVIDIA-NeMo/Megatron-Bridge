@@ -177,8 +177,9 @@ for name, weight in bridge.export_hf_weights_modelopt(
 
 Plan construction and export-stream iteration perform WORLD and model-parallel collectives. Every distributed rank
 must therefore build the plan and fully consume each export stream in the same task order, without rank-local early
-termination. The current streaming API supports canonical per-expert Hugging Face MoE layouts; canonical grouped-
-expert Hugging Face tensors are rejected until ModelOpt provides a state-stacking operation.
+termination. The streaming API supports canonical per-expert layouts and grouped expert mappings that expose local
+expert specifications. Grouped mappings are resolved to per-expert gate, up, and down tensors before ModelOpt packing
+and EP collection. Unsupported custom grouped mappings fail explicitly.
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Dimension-permuting mappings are also rejected by the streaming API. This API requires a ModelOpt release
