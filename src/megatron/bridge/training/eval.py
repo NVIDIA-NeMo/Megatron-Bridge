@@ -325,7 +325,10 @@ def evaluate(
                 torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
                 done = done_cuda.item()
                 if done:
+                    timers("evaluate").stop()
                     rerun_state_machine.set_mode(rerun_mode)
+                    for model_module in model:
+                        model_module.train()
                     print_rank_0("Exiting during evaluation, timelimit reached")
                     return None, None, True
 
