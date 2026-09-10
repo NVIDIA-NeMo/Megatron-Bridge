@@ -131,6 +131,12 @@ from megatron.bridge.models.ministral3 import (
 from megatron.bridge.models.mistral import (
     MistralModelProvider,
 )
+from megatron.bridge.models.muse_glimmer import (
+    MuseGlimmerBridge,
+    MuseGlimmerModel,
+    MuseGlimmerModelBuilder,
+    MuseGlimmerModelConfig,
+)
 from megatron.bridge.models.nemotron import (
     NemotronBridge,
 )
@@ -257,6 +263,11 @@ __all__ = [
     "MiniMaxM3Bridge",
     "MiniMaxM3VLModel",
     "MiniMaxM3VLModelProvider",
+    # Muse Glimmer
+    "MuseGlimmerBridge",
+    "MuseGlimmerModel",
+    "MuseGlimmerModelBuilder",
+    "MuseGlimmerModelConfig",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",

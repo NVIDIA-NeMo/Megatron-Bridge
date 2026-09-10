@@ -3,6 +3,7 @@
 
 from dataclasses import dataclass
 
+import pytest
 import torch
 
 from megatron.bridge.data.base import DatasetBuildContext
@@ -58,7 +59,7 @@ def test_build_datasets_happy_path(monkeypatch):
         del path, name, trust_remote_code, data_files
         calls.load_dataset += 1
         if split == "validation":
-            raise ValueError("missing split")
+            raise ValueError("Unknown split \"validation\". Should be one of ['train', 'test'].")
         return [{"text": "hello", "image": "image_0.jpg"}]
 
     class _AutoImageProcessor:
@@ -93,6 +94,21 @@ def test_build_datasets_happy_path(monkeypatch):
     assert calls.auto_tokenizer == 1
     assert calls.load_dataset == 3
     assert calls.is_safe_repo >= 3
+
+
+def test_build_datasets_propagates_non_split_value_error(monkeypatch):
+    def fake_load_dataset(path, name=None, split=None, trust_remote_code=None, data_files=None):
+        del path, name, split, trust_remote_code, data_files
+        raise ValueError("Empty 'data_files': '[]'. It should be either non-empty or None (default).")
+
+    provider = _make_provider()
+    monkeypatch.setattr(provider, "_load_processors", lambda: {})
+    monkeypatch.setattr(provider, "_load_tokenizer", lambda: DummyTokenizer())
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.load_dataset", fake_load_dataset)
+
+    context = DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0)
+    with pytest.raises(ValueError, match="Empty 'data_files'"):
+        provider.build_datasets(context)
 
 
 def test_get_collate_fn_returns_partial():
