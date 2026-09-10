@@ -61,7 +61,7 @@ from megatron.bridge.peft.multi_lora_layers import (
     load_adapter,
     set_tokens_per_adapter_slot,
 )
-from megatron.bridge.peft.utils import AdapterAttributes
+from megatron.bridge.peft.utils import AdapterAttributes, ParallelLinearAdapter
 
 
 # ======================================================================
@@ -434,6 +434,30 @@ class TestMultiLoRALinearSlots:
         layer.reset_adapter(1)
 
         assert torch.all(layer.adapters[1].linear_out.weight == 0)
+
+    def test_reset_adapter_preserves_full_fan_xavier_initialization(self) -> None:
+        """A reused TP-sharded slot must match construction-time initialization."""
+        in_features = 4096
+        rank = 32
+        tensor_parallel_size = 4
+        layer = _build_multi_lora_linear(in_features=in_features, dim=rank)
+        adapter = layer.adapters[0]
+        adapter.linear_in.weight = nn.Parameter(torch.empty(rank, in_features // tensor_parallel_size))
+
+        expected = torch.empty_like(adapter.linear_in.weight)
+        full_fan_xavier = ParallelLinearAdapter._get_init_fn(
+            None,
+            "xavier",
+            fan_in=in_features,
+            fan_out=rank,
+        )
+        torch.manual_seed(1234)
+        full_fan_xavier(expected)
+
+        torch.manual_seed(1234)
+        layer.reset_adapter(0)
+
+        torch.testing.assert_close(adapter.linear_in.weight, expected)
 
     def test_state_dict_contains_base_and_all_adapter_slots(self) -> None:
         layer = _build_multi_lora_linear(n_adapters=2, dim=8)

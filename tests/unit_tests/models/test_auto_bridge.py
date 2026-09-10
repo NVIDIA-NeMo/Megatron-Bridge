@@ -1205,6 +1205,21 @@ class TestAutoBridge:
                 mock_hf_model, mock_megatron_model, allowed_mismatched_params=None
             )
 
+    def test_iter_local_hf_params_uses_public_auto_bridge_api(self):
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock(spec=PretrainedConfig)
+        mock_model_bridge = Mock()
+        tasks = [Mock()]
+        expected_params = [Mock()]
+        mock_model_bridge.iter_local_hf_params.return_value = iter(expected_params)
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            params = list(bridge.iter_local_hf_params(tasks))
+
+        assert params == expected_params
+        mock_model_bridge.iter_local_hf_params.assert_called_once_with(tasks)
+
     def test_load_hf_weights_with_allowed_mismatched_params(self):
         """Test loading weights with allowed_mismatched_params."""
         # Setup mocks
@@ -1705,6 +1720,7 @@ class TestAutoBridge:
                         show_progress=False,
                         exclude_adapter_base_prefixes=None,
                         expand_shared_outer=False,
+                        stack_3d_moe=False,
                     )
 
     def test_export_adapter_weights_forwards_expand_shared_outer(self):
@@ -2334,6 +2350,23 @@ class TestAutoBridge:
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
                 # Should use the latest iteration (iter_0000020)
+                assert mock_load_megatron_model.call_args.args[0].endswith("iter_0000020")
+
+    def test_load_megatron_model_root_uses_published_tracker(self, tmp_path):
+        """A checkpoint root must not select an unpublished newer iteration directory."""
+        durable_checkpoint = tmp_path / "iter_0000010"
+        durable_checkpoint.mkdir()
+        (durable_checkpoint / "run_config.yaml").touch()
+        (tmp_path / "iter_0000020").mkdir()
+        (tmp_path / "latest_checkpointed_iteration.txt").write_text("10")
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.trust_remote_code = False
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model", return_value=[]) as load_model:
+            bridge.load_megatron_model(tmp_path)
+
+        assert load_model.call_args.args[0] == str(durable_checkpoint)
 
     def test_load_megatron_model_with_mp_overrides(self):
         """Test load_megatron_model with model-parallel overrides argument."""
@@ -2386,6 +2419,29 @@ class TestAutoBridge:
                         # Check other expected arguments
                         assert call_args.args[0] == "checkpoint_path"  # path argument
                         assert "skip_temp_dist_context" in call_args.kwargs
+
+    def test_load_megatron_model_honors_cpu_initialization(self):
+        """Test explicit CPU initialization reaches the checkpoint loader."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = Mock(spec=PreTrainedCausalLM)
+        bridge.trust_remote_code = False
+
+        with (
+            patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model,
+            patch("torch.distributed.is_initialized", return_value=False),
+            patch.object(Path, "iterdir", return_value=[]),
+        ):
+            mock_model = Mock()
+            mock_load_megatron_model.return_value = mock_model
+
+            result = bridge.load_megatron_model(
+                "checkpoint_path",
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+            )
+
+        assert result == [mock_model]
+        assert mock_load_megatron_model.call_args.kwargs["use_cpu_init"] is True
 
     def test_load_megatron_model_registers_prefix_when_trust_remote_code(self):
         """Test that load_megatron_model registers transformers_modules prefix when trust_remote_code=True."""

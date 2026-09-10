@@ -1574,6 +1574,9 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
         global_state._comet_logger.end()
 
     _delete_cuda_graphs(None)
+    if global_state._signal_handler is not None:
+        global_state._signal_handler.release()
+        global_state._signal_handler = None
     destroy_global_state()
 
 
