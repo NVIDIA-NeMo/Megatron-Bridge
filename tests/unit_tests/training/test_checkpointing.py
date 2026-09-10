@@ -3097,7 +3097,7 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
-    def test_load_model_weights_single_model_success(
+    def test_load_model_weights_single_model_with_strictness_diagnostics(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
@@ -3111,11 +3111,11 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_full_state_dict,
         mock_metadata,
     ):
-        """Test successful loading of weights for a single model."""
+        """Test loading a model when strictness also returns diagnostics."""
         # Setup mocks
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
-        mock_dist_ckpt.load.return_value = mock_full_state_dict
+        mock_dist_ckpt.load.return_value = (mock_full_state_dict, set(), set())
         mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
@@ -3137,7 +3137,7 @@ class TestLoadModelWeightsFromCheckpoint:
                 checkpoint_path="/test/checkpoint",
                 model=mock_model,
                 fully_parallel_load=False,
-                dist_ckpt_strictness="assume_ok_unexpected",
+                dist_ckpt_strictness="return_all",
                 strict=True,
             )
 
@@ -4655,6 +4655,32 @@ class TestCheckpointPathOverride:
         mock_dist_ckpt.load.assert_called_once()
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
+
+    @pytest.mark.parametrize("strictness", ["return_unexpected", "return_all"])
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_unwraps_strictness_result(self, mock_dist_ckpt, mock_strategy_cls, strictness):
+        """Strictness diagnostics must not replace the loaded state dictionary."""
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        loaded_state_dict = {"checkpoint_version": 3.0, "model": {}}
+        mock_strategy_cls.return_value = Mock()
+        mock_dist_ckpt.load.return_value = (loaded_state_dict, set(), set())
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+
+        state_dict, _, _, _ = _load_global_dist_base_checkpoint(
+            load_dir="/checkpoints",
+            ckpt_cfg=CheckpointConfig(dist_ckpt_strictness=strictness),
+            rank0=False,
+            sharded_state_dict={"model": {}},
+            iteration=1000,
+            release=False,
+            pg_collection=mock_pg,
+        )
+
+        assert state_dict.get("checkpoint_version") == 3.0
+        assert mock_dist_ckpt.load.call_args.kwargs["strict"] == strictness
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_load_fsdp_dtensor_uses_override_rank0(self):
