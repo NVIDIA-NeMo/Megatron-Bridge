@@ -646,11 +646,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
                     f"Please set checkpoint.load to the base checkpoint directory."
                 )
 
-        if self.dist_ckpt_optim_fully_reshardable:
-            assert not self.distrib_optim_fully_reshardable_mem_efficient, (
-                "distrib_optim_fully_reshardable_mem_efficient requires use_gloo_process_groups"
-            )
-
 
 @dataclass(kw_only=True)
 class LoggerConfig(MTrainLoggerConfig):
@@ -1600,6 +1595,11 @@ class ConfigContainer(Container):
                 assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
                     "Legacy checkpointing requires ckpt_format='torch_dist' or 'fsdp_dtensor'"
                 )
+
+        if self.checkpoint.dist_ckpt_optim_fully_reshardable:
+            assert (
+                not self.checkpoint.distrib_optim_fully_reshardable_mem_efficient or self.dist.use_gloo_process_groups
+            ), "distrib_optim_fully_reshardable_mem_efficient requires dist.use_gloo_process_groups=True"
 
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()

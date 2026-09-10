@@ -259,6 +259,13 @@ def _cleanup_after_pretrain_failure(state: GlobalState, should_destroy_process_g
         logger.exception("Failed to abort async checkpointing after pretrain failure")
 
     try:
+        if state._signal_handler is not None:
+            state._signal_handler.release()
+            state._signal_handler = None
+    except Exception:
+        logger.exception("Failed to release the signal handler after pretrain failure")
+
+    try:
         destroy_global_state()
     except Exception:
         logger.exception("Failed to destroy Megatron global state after pretrain failure")

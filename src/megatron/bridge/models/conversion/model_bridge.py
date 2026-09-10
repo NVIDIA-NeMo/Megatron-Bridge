@@ -2620,6 +2620,7 @@ def stream_adapter_weights_megatron_to_hf(
     show_progress: bool = True,
     exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
     expand_shared_outer: bool = False,
+    stack_3d_moe: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge only adapter weights from Megatron to HuggingFace format."""
     ...
@@ -2713,6 +2714,7 @@ def register_bridge_implementation(
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
         expand_shared_outer: bool = False,
+        stack_3d_moe: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_adapter_weights_megatron_to_hf(
@@ -2721,6 +2723,7 @@ def register_bridge_implementation(
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
+            stack_3d_moe=stack_3d_moe,
         )
 
     # Set meaningful names for debugging
