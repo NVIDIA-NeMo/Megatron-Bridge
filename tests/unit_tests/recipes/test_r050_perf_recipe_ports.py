@@ -175,11 +175,12 @@ def test_deepseek_v3_nvfp4_reuses_allocations_during_cuda_graph_capture(recipe) 
     )
 
 
-def test_deepseek_v3_gb200_nvfp4_limits_cuda_paged_stash_headroom() -> None:
+def test_deepseek_v3_gb200_nvfp4_memory_mitigations() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb200_nvfp4_config()
 
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.1
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert cfg.model.recompute_modules == ["mla_up_proj", "mlp"]
 
 
 def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:

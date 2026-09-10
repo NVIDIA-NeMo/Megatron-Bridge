@@ -186,13 +186,13 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, NVFP4 (same layout as BF16, mlp recompute)."""
+    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with MLA and dense-MLP recompute."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=False)
     cfg.model.mla_down_proj_fusion = True
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
-    cfg.model.recompute_modules = ["mlp"]
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
