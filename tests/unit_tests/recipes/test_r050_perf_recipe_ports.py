@@ -21,6 +21,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.qwen import (
@@ -131,6 +132,15 @@ def test_deepseek_v3_gb300_large_scale_matches_final_r050_config() -> None:
     assert cfg.model.fp8_output_proj is True
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+
+
+def test_deepseek_v3_gb300_nvfp4_reuses_allocations_during_cuda_graph_capture() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
+
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
+        "expandable_segments:True,graph_capture_record_stream_reuse:True"
+    )
 
 
 def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:
