@@ -194,7 +194,7 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.optimizer.optimizer_cuda_graph = True
     cfg.optimizer.store_param_remainders = False
     cfg.model.mla_down_proj_fusion = True
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

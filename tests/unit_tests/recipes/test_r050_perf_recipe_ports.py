@@ -188,7 +188,7 @@ def test_deepseek_v3_gb200_nvfp4_memory_mitigations() -> None:
     assert cfg.optimizer.optimizer_cpu_offload is False
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.checkpoint.save is None
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.0
+    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.1
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     assert cfg.model.recompute_modules == ["mla_up_proj", "mlp"]
 
