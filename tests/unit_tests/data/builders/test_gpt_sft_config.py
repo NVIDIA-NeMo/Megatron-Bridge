@@ -673,6 +673,50 @@ def test_hf_source_materializes_requested_jsonl_splits(monkeypatch, tmp_path):
     assert not (tmp_path / "test.jsonl").exists()
 
 
+@pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])
+def test_write_hf_examples_tolerates_shared_fs_mkdir_race(tmp_path, monkeypatch, mkdir_error):
+    root = tmp_path / "output"
+    root.mkdir()
+
+    def raise_mkdir(self, parents=False, exist_ok=False):
+        assert self == root
+        assert parents is True
+        assert exist_ok is True
+        raise mkdir_error("stale shared filesystem state")
+
+    monkeypatch.setattr(type(root), "mkdir", raise_mkdir)
+
+    builder_mod._write_hf_examples(root, "training", [{"prompt": "question", "completion": "answer"}])
+
+    assert json.loads((root / "training.jsonl").read_text()) == {"prompt": "question", "completion": "answer"}
+
+
+def test_hf_output_root_restats_before_propagating_mkdir_race(monkeypatch, tmp_path):
+    root = tmp_path / "output"
+    is_dir_results = iter((False, True))
+    sleep_delays = []
+    mkdir_mock = MagicMock(side_effect=FileExistsError("stale shared filesystem state"))
+
+    monkeypatch.setattr(type(root), "mkdir", mkdir_mock)
+    monkeypatch.setattr(type(root), "is_dir", lambda _self: next(is_dir_results))
+    monkeypatch.setattr(builder_mod.time, "sleep", sleep_delays.append)
+
+    builder_mod._ensure_hf_output_root(root)
+
+    assert sleep_delays == [builder_mod._SHARED_FS_DIRECTORY_RESTAT_DELAY_S]
+
+
+def test_hf_output_root_propagates_mkdir_error_for_missing_directory(monkeypatch, tmp_path):
+    root = tmp_path / "output"
+    mkdir_mock = MagicMock(side_effect=FileExistsError("not a directory"))
+
+    monkeypatch.setattr(type(root), "mkdir", mkdir_mock)
+    monkeypatch.setattr(builder_mod.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(FileExistsError):
+        builder_mod._ensure_hf_output_root(root)
+
+
 def test_hf_source_can_split_validation_from_training(monkeypatch, tmp_path):
     def _fake_load(source):
         source = resolve_hf_dataset_source(source)
@@ -815,6 +859,20 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
     assert dataset_calls[0][1]["dataset_kwargs"]["chat_loss_mode"] == "assistant"
     assert all(call[1]["enable_in_batch_packing"] is True for call in dataset_calls)
     assert all(call[1]["in_batch_packing_pad_to_multiple_of"] == 8 for call in dataset_calls)
+
+
+def test_builder_synchronizes_before_and_after_rank_zero_preparation(monkeypatch, tmp_path):
+    builder = GPTSFTDatasetBuilder(config=_hf_config(tmp_path), tokenizer=object())
+    events = []
+
+    monkeypatch.setattr(builder_mod, "get_rank_safe", lambda: 0)
+    monkeypatch.setattr(builder_mod.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(builder_mod.torch.distributed, "barrier", lambda: events.append("barrier"))
+    monkeypatch.setattr(builder, "prepare_data", lambda: events.append("prepare"))
+    monkeypatch.setattr(builder, "_build_datasets", lambda: events.append("build") or [None, None, None])
+
+    assert builder.build() == [None, None, None]
+    assert events == ["barrier", "prepare", "barrier", "build"]
 
 
 def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch, tmp_path):
