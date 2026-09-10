@@ -196,9 +196,7 @@ class TestDeepSeekV4RouterExpertBias:
 
     @staticmethod
     def _mapping(bridge):
-        return _by_megatron(bridge.mapping_registry())[
-            "decoder.layers.*.mlp.router.expert_bias"
-        ]
+        return _by_megatron(bridge.mapping_registry())["decoder.layers.*.mlp.router.expert_bias"]
 
     def test_mapping_allows_missing_hf_bias_after_wildcard_resolution(self, bridge_without_mtp):
         mapping = self._mapping(bridge_without_mtp)
@@ -220,9 +218,7 @@ class TestDeepSeekV4RouterExpertBias:
         bridge = DeepSeekV4Bridge()
         bias = torch.arange(8, dtype=torch.float32)
 
-        result = bridge.maybe_modify_loaded_hf_weight(
-            "layers.0.ffn.gate.bias", {"layers.0.ffn.gate.bias": bias}
-        )
+        result = bridge.maybe_modify_loaded_hf_weight("layers.0.ffn.gate.bias", {"layers.0.ffn.gate.bias": bias})
 
         assert result is bias
 
@@ -230,9 +226,7 @@ class TestDeepSeekV4RouterExpertBias:
         bridge = DeepSeekV4Bridge()
         bias = torch.zeros(8)
 
-        result = bridge.maybe_modify_converted_hf_weight(
-            _dummy_task(), {"layers.0.ffn.gate.bias": bias}, {}
-        )
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {"layers.0.ffn.gate.bias": bias}, {})
 
         assert result == {}
 
