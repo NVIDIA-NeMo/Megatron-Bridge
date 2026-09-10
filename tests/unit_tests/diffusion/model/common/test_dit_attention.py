@@ -129,12 +129,19 @@ class TestDiTCrossAttentionSubmodules:
 class TestDiTSelfAttentionInit:
     """Tests for DiTSelfAttention __init__ (layernorm overrides)."""
 
-    def _run_init(self, config, submodules, mock_super_init):
+    def _run_init(self, config, submodules, mock_super_init, *, is_mtp_layer=False):
         """Construct a DiTSelfAttention, mocking the parent __init__ to set up nn.Module."""
         attn = DiTSelfAttention.__new__(DiTSelfAttention)
         _init_module_and_attrs(attn, config)
         mock_super_init.side_effect = lambda *a, **kw: None
-        DiTSelfAttention.__init__(attn, config, submodules, layer_number=1, attn_mask_type=AttnMaskType.no_mask)
+        DiTSelfAttention.__init__(
+            attn,
+            config,
+            submodules,
+            layer_number=1,
+            attn_mask_type=AttnMaskType.no_mask,
+            is_mtp_layer=is_mtp_layer,
+        )
         return attn
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.SelfAttention.__init__", return_value=None)
@@ -194,6 +201,16 @@ class TestDiTSelfAttentionInit:
         assert q_call_kwargs["hidden_size"] == 16  # hidden_size_per_attention_head
         k_call_kwargs = mock_build.call_args_list[1].kwargs
         assert k_call_kwargs["hidden_size"] == 16
+
+
+    @patch("megatron.bridge.diffusion.models.common.dit_attention.SelfAttention.__init__", return_value=None)
+    def test_mtp_flag_is_forwarded_to_mcore(self, mock_super_init):
+        config = _make_config()
+        submodules = _make_self_attn_submodules(q_layernorm=None, k_layernorm=None)
+
+        self._run_init(config, submodules, mock_super_init, is_mtp_layer=True)
+
+        assert mock_super_init.call_args.kwargs["is_mtp_layer"] is True
 
 
 class TestDiTSelfAttentionGetQKV:
@@ -298,12 +315,19 @@ class TestDiTSelfAttentionGetQKV:
 class TestDiTCrossAttentionInit:
     """Tests for DiTCrossAttention __init__ (layernorm + linear_kv overrides)."""
 
-    def _run_init(self, config, submodules, mock_super_init):
+    def _run_init(self, config, submodules, mock_super_init, *, is_mtp_layer=False):
         """Construct a DiTCrossAttention, mocking the parent __init__ to set up nn.Module."""
         attn = DiTCrossAttention.__new__(DiTCrossAttention)
         _init_module_and_attrs(attn, config)
         mock_super_init.side_effect = lambda *a, **kw: None
-        DiTCrossAttention.__init__(attn, config, submodules, layer_number=1, attn_mask_type=AttnMaskType.no_mask)
+        DiTCrossAttention.__init__(
+            attn,
+            config,
+            submodules,
+            layer_number=1,
+            attn_mask_type=AttnMaskType.no_mask,
+            is_mtp_layer=is_mtp_layer,
+        )
         return attn
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.__init__", return_value=None)
@@ -367,6 +391,19 @@ class TestDiTCrossAttentionInit:
 
         call_args = mock_build.call_args_list[0]
         assert call_args[0][1] == 64  # config.hidden_size used as fallback
+
+    @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.__init__", return_value=None)
+    @patch(
+        "megatron.bridge.diffusion.models.common.dit_attention.build_module",
+        side_effect=lambda *a, **kw: nn.Identity(),
+    )
+    def test_mtp_flag_is_forwarded_to_mcore(self, mock_build, mock_super_init):
+        config = _make_config()
+        submodules = DiTCrossAttentionSubmodules(q_layernorm=None, k_layernorm=None, linear_kv=MagicMock())
+
+        self._run_init(config, submodules, mock_super_init, is_mtp_layer=True)
+
+        assert mock_super_init.call_args.kwargs["is_mtp_layer"] is True
 
 
 class TestDiTCrossAttentionGetQKV:

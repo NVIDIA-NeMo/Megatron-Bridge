@@ -138,6 +138,52 @@ class TestNativeDeepSeekV4ConfigTranslation:
             _dsv4_num_hash_layers(hf_config)
 
 
+class TestDeepSeekV4RouterExpertBias:
+    """DSv4 checkpoints may omit their runtime router-bias buffers."""
+
+    @staticmethod
+    def _mapping(bridge):
+        return _by_megatron(bridge.mapping_registry())[
+            "decoder.layers.*.mlp.router.expert_bias"
+        ]
+
+    def test_mapping_allows_missing_hf_bias_after_wildcard_resolution(self, bridge_without_mtp):
+        mapping = self._mapping(bridge_without_mtp)
+
+        assert isinstance(mapping, AutoMapping)
+        assert mapping.allow_hf_name_mismatch
+        assert mapping.resolve(("0",)).allow_hf_name_mismatch
+
+    def test_import_synthesizes_zero_bias_when_hf_checkpoint_omits_it(self):
+        bridge = DeepSeekV4Bridge()
+        bridge.hf_config = SimpleNamespace(n_routed_experts=8)
+
+        result = bridge.maybe_modify_loaded_hf_weight("layers.0.ffn.gate.bias", {})
+
+        assert result.dtype == torch.float32
+        assert torch.equal(result, torch.zeros(8))
+
+    def test_import_preserves_hf_bias_when_present(self):
+        bridge = DeepSeekV4Bridge()
+        bias = torch.arange(8, dtype=torch.float32)
+
+        result = bridge.maybe_modify_loaded_hf_weight(
+            "layers.0.ffn.gate.bias", {"layers.0.ffn.gate.bias": bias}
+        )
+
+        assert result is bias
+
+    def test_export_omits_bias_absent_from_source_checkpoint(self):
+        bridge = DeepSeekV4Bridge()
+        bias = torch.zeros(8)
+
+        result = bridge.maybe_modify_converted_hf_weight(
+            _dummy_task(), {"layers.0.ffn.gate.bias": bias}, {}
+        )
+
+        assert result == {}
+
+
 class TestDeepSeekV4QuantizedExport:
     """DSv4 export must regenerate quantized weights and scale tensors."""
 

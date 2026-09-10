@@ -341,6 +341,14 @@ class _ReplicatedOptional(ReplicatedMapping):
         self.allow_hf_name_mismatch = True
 
 
+class _AutoOptional(AutoMapping):
+    """AutoMapping for weights synthesized when absent from an HF checkpoint."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.allow_hf_name_mismatch = True
+
+
 # ---------------------------------------------------------------------------
 # Bridge registration
 # ---------------------------------------------------------------------------
@@ -585,6 +593,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         Optional CSA indexer weights may use the legacy flat name or the native
         Transformers scorer submodule name.
         """
+        if (
+            isinstance(hf_param, str)
+            and hf_param.endswith(".ffn.gate.bias")
+            and hf_param not in hf_state_dict
+        ):
+            return torch.zeros(self.hf_config.n_routed_experts, dtype=torch.float32)
+
         if isinstance(hf_param, str) and hf_param not in hf_state_dict:
             legacy_param = hf_param.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
             if legacy_param in hf_state_dict:
@@ -709,7 +724,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "decoder.layers.*.mlp.router.weight",
                 "layers.*.ffn.gate.weight",
             ),
-            AutoMapping(
+            _AutoOptional(
                 "decoder.layers.*.mlp.router.expert_bias",
                 "layers.*.ffn.gate.bias",
             ),
@@ -942,12 +957,23 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
+        """Restore the DSv4 source checkpoint's keys and quantized weight layout.
 
-        Legacy indexer scorer names are restored before selecting the export dtype.
-        When ``task.weight_dtype`` is set, skip requantization and return the weights
-        unchanged — the generic export path casts the dtype.
+        Expert-bias buffers synthesized during import are omitted when the source
+        checkpoint did not contain them. Legacy indexer scorer names are restored
+        before selecting the export dtype. When ``task.weight_dtype`` is set, skip
+        requantization and return the weights unchanged — the generic export path
+        casts the dtype.
         """
+        omitted_expert_biases = {
+            key
+            for key in converted_weights_dict
+            if key.endswith(".ffn.gate.bias") and key not in hf_state_dict
+        }
+        if omitted_expert_biases:
+            converted_weights_dict = {
+                key: value for key, value in converted_weights_dict.items() if key not in omitted_expert_biases
+            }
         native_scorer_key = next(
             (
                 key
@@ -963,6 +989,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         if task.weight_dtype is not None:
             return converted_weights_dict
+
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,
