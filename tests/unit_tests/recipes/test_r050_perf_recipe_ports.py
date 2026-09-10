@@ -20,6 +20,7 @@ import torch
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
     deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
@@ -158,8 +159,15 @@ def test_deepseek_v3_gb300_large_scale_matches_final_r050_config() -> None:
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
 
 
-def test_deepseek_v3_gb300_nvfp4_reuses_allocations_during_cuda_graph_capture() -> None:
-    cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
+        deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
+    ],
+)
+def test_deepseek_v3_nvfp4_reuses_allocations_during_cuda_graph_capture(recipe) -> None:
+    cfg = recipe()
 
     assert cfg.model.cuda_graph_impl == "full_iteration"
     assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == (
