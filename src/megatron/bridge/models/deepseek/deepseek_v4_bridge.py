@@ -965,11 +965,15 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         requantization and return the weights unchanged — the generic export path
         casts the dtype.
         """
-        converted_weights_dict = {
-            key: value
-            for key, value in converted_weights_dict.items()
-            if not (key.endswith(".ffn.gate.bias") and key not in hf_state_dict)
+        omitted_expert_biases = {
+            key
+            for key in converted_weights_dict
+            if key.endswith(".ffn.gate.bias") and key not in hf_state_dict
         }
+        if omitted_expert_biases:
+            converted_weights_dict = {
+                key: value for key, value in converted_weights_dict.items() if key not in omitted_expert_biases
+            }
         native_scorer_key = next(
             (
                 key
@@ -985,6 +989,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         if task.weight_dtype is not None:
             return converted_weights_dict
+
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,
