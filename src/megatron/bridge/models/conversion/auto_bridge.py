@@ -31,7 +31,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.conversion.param_mapping import LocalMXFP8Param
+    from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -719,6 +719,22 @@ class AutoBridge(Generic[MegatronModelT]):
         """Yield local native MXFP8 projections through the public bridge API."""
         return self._model_bridge.iter_local_mxfp8_params(tasks)
 
+    def iter_local_hf_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalHFParam"]:
+        """Yield local unquantized BF16 parameters as canonical HF views.
+
+        Args:
+            tasks: Reusable tasks from :meth:`get_conversion_tasks` in the
+                deterministic order they should be exported.
+
+        Returns:
+            An iterator over live local parameter views and their shard metadata.
+
+        Raises:
+            ValueError: If a locally owned task is quantized, is not BF16, or
+                cannot be represented without Bridge conversion collectives.
+        """
+        return self._model_bridge.iter_local_hf_params(tasks)
+
     def export_hf_weights(
         self,
         model: list[MegatronModelT],
@@ -877,6 +893,7 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        stack_3d_moe: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -892,6 +909,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 skip before resolving HuggingFace parameter mappings.
             expand_shared_outer: Replicate the shared factor across experts under per-expert
                 names (vLLM 2D ``pack_moe``) instead of a shared ``[1, ...]`` tensor (SGLang).
+                Default ``False``; no effect for non-shared-outer adapters.
+            stack_3d_moe: Emit shared-outer routed-expert LoRA as the two stacked 3D
+                tensors vLLM's 3D-MoE consumer (``FusedMoE3DWithLoRA``) looks up
+                (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
+                down_proj), instead of the per-expert 2D ``pack_moe`` layout.
                 Default ``False``; no effect for non-shared-outer adapters.
 
         Yields:
@@ -910,6 +932,7 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
+            stack_3d_moe=stack_3d_moe,
         )
 
     def save_hf_adapter(
