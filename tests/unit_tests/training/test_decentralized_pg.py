@@ -21,6 +21,7 @@ groups are obtained from the pg_collection object rather than the global
 megatron.core.parallel_state module.
 """
 
+import inspect
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -485,7 +486,7 @@ class TestInitializeDistributedBranching:
     @patch("megatron.bridge.training.initialize.ProcessGroupCollection")
     @patch("megatron.bridge.training.initialize._create_pg_collection")
     @patch("megatron.bridge.training.initialize.parallel_state")
-    @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
+    @patch("megatron.bridge.training.initialize.is_gtp_remat_active", return_value=False)
     @patch("torch.cuda.device_count", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
@@ -494,6 +495,7 @@ class TestInitializeDistributedBranching:
         mock_get_rank,
         mock_is_init,
         mock_device_count,
+        mock_is_gtp_remat_active,
         mock_parallel_state,
         mock_create_pg_collection,
         mock_pg_collection_class,
@@ -526,6 +528,12 @@ class TestInitializeDistributedBranching:
         mock_dist_config.sharp_enabled_group = None
 
         mock_parallel_state.model_parallel_is_initialized.return_value = False
+        mock_parallel_state.initialize_model_parallel.__signature__ = inspect.Signature(
+            parameters=[
+                inspect.Parameter("gtp_remat_size", inspect.Parameter.KEYWORD_ONLY),
+                inspect.Parameter("expert_gtp_remat_size", inspect.Parameter.KEYWORD_ONLY),
+            ]
+        )
         mock_pg_collection = MagicMock()
         mock_pg_collection_class.use_mpu_process_groups.return_value = mock_pg_collection
 

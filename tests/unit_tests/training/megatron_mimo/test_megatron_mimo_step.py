@@ -97,6 +97,7 @@ class TestForwardStep:
         # Create mock state
         mock_state = MagicMock()
         mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
 
         # Create mock model with role=None (indicates last stage)
         mock_model = MagicMock()
@@ -125,6 +126,7 @@ class TestForwardStep:
 
         mock_state = MagicMock()
         mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
         mock_model = MagicMock()
         # Configure role to indicate intermediate stage (not last stage)
         mock_role = MagicMock()
@@ -153,6 +155,7 @@ class TestForwardStep:
 
         mock_state = MagicMock()
         mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
         mock_model = MagicMock()
         mock_role = MagicMock()
         mock_role.has_language_module = True
@@ -191,6 +194,7 @@ class TestForwardStep:
 
         mock_state = MagicMock()
         mock_state.cfg.dataset.enable_in_batch_packing = False
+        mock_state.cfg.dataset.megatron_mimo_scalable_dp = False
         mock_model = MagicMock()
         mock_model.role = None  # role=None means is_last_stage=True
         # Return dict (incorrect for last stage)
@@ -255,6 +259,122 @@ class TestForwardStep:
         assert call_kwargs["packing_kwargs"]["cu_seqlens_q"].tolist() == [0, 3, 5]
         assert call_kwargs["position_ids"].tolist() == [[0, 1, 2, 0, 1]]
         assert call_kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_scalable_dp_skips_batch_slicing(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """megatron_mimo_scalable_dp: the sampler already delivered this rank's shard, so the
+        batch must reach the model unsliced."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 2)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": None,
+            "labels": torch.arange(16).reshape(4, 4),
+            "loss_mask": torch.ones(4, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        # Slicing with dp=2 would have kept only rows 0-1 ([2, 4]); the shard must stay [4, 4].
+        assert mock_model.call_args.kwargs["input_ids"].shape[0] == 4
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_default_still_slices_batch(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """Without megatron_mimo_scalable_dp the full-batch read must still be sliced."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=False,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 2)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": None,
+            "labels": torch.arange(16).reshape(4, 4),
+            "loss_mask": torch.ones(4, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        # dp rank 0 of 2 keeps rows 0-1 of the full 4-row read.
+        assert mock_model.call_args.kwargs["input_ids"].shape[0] == 2
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_scalable_dp_binds_to_real_dataset_config_field(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """The step's getattr key must match the real DirectHFSFTDatasetConfig field name."""
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = DirectHFSFTDatasetConfig(
+            seq_length=16,
+            source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 2)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": None,
+            "labels": torch.arange(16).reshape(4, 4),
+            "loss_mask": torch.ones(4, 4),
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        # A one-sided field rename would silently revert to slicing ([2, 4]).
+        assert mock_model.call_args.kwargs["input_ids"].shape[0] == 4
 
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")

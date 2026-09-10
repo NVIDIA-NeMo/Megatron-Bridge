@@ -660,6 +660,36 @@ class TestParallelLinearAdapter:
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
 
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_scales_bottleneck_before_output_projection(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """LoRA scaling should not allocate an expanded output-sized temporary."""
+        mock_linear_in = Mock()
+        mock_linear_in.side_effect = lambda x: (x[..., :2], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (torch.cat((x, x, x, x), dim=-1), None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        adapter = ParallelLinearAdapter(
+            in_features=4,
+            out_features=8,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            alpha=1,
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        x = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+
+        output = adapter(x)
+
+        bottleneck = x[..., :2]
+        scale = adapter.alpha / adapter.dim
+        torch.testing.assert_close(mock_linear_out.call_args.args[0], bottleneck * scale)
+        torch.testing.assert_close(output, torch.cat((bottleneck, bottleneck, bottleneck, bottleneck), dim=-1) * scale)
+
     @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")

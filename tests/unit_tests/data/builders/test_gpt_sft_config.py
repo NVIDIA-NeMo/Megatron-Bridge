@@ -2,6 +2,7 @@
 
 import json
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from megatron.training.config.instantiate_utils import instantiate
@@ -44,6 +45,17 @@ def _hf_config(tmp_path, **source_overrides):
         seed=5678,
         do_test=False,
     )
+
+
+def _write_per_split_data_source_manifest(tmp_path, *, train=None, valid=None, test=None):
+    data = {"train": train or [str(tmp_path / "train.jsonl")]}
+    if valid is not None:
+        data["valid"] = valid
+    if test is not None:
+        data["test"] = test
+    path = tmp_path / "per_split_data_sources.json"
+    path.write_text(json.dumps(data))
+    return path
 
 
 def test_config_round_trip_is_declarative_and_serializable(tmp_path):
@@ -175,17 +187,113 @@ def test_packed_specs_reject_invalid_max_single_sequence_length(max_single_seque
 
 
 @pytest.mark.parametrize(
-    ("dataset_root", "hf_dataset"),
+    ("dataset_root", "per_split_data_source_manifest_path", "hf_dataset"),
     [
-        (None, None),
-        ("/tmp/local", HFDatasetSourceConfig(path_or_dataset="mock/squad", schema_adapter="squad")),
+        (None, None, None),
+        (
+            "/tmp/local",
+            None,
+            HFDatasetSourceConfig(path_or_dataset="mock/squad", schema_adapter="squad"),
+        ),
+        ("/tmp/local", "/tmp/blend.json", None),
+        (
+            None,
+            "/tmp/blend.json",
+            HFDatasetSourceConfig(path_or_dataset="mock/squad", schema_adapter="squad"),
+        ),
     ],
 )
-def test_config_requires_exactly_one_source(dataset_root, hf_dataset):
-    config = GPTSFTDatasetConfig(seq_length=128, dataset_root=dataset_root, hf_dataset=hf_dataset)
+def test_config_requires_exactly_one_source(dataset_root, per_split_data_source_manifest_path, hf_dataset):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        dataset_root=dataset_root,
+        per_split_data_source_manifest_path=per_split_data_source_manifest_path,
+        hf_dataset=hf_dataset,
+    )
 
     with pytest.raises(ValueError, match="Exactly one text-only SFT source"):
         config.validate()
+
+
+def test_blend_config_round_trip_is_declarative_and_serializable(tmp_path):
+    args_path = _write_per_split_data_source_manifest(
+        tmp_path,
+        train=["0.75", str(tmp_path / "a.jsonl"), "0.25", str(tmp_path / "b.jsonl")],
+    )
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        per_split_data_source_manifest_path=args_path,
+        do_validation=False,
+        do_test=False,
+    )
+
+    serialized = ConfigContainer._convert_value_to_dict(config)
+    restored = instantiate(serialized)
+
+    assert isinstance(restored, GPTSFTDatasetConfig)
+    assert str(restored.per_split_data_source_manifest_path) == str(args_path)
+
+
+def test_builder_parses_mlm_style_per_split_jsonl_blends(tmp_path, monkeypatch):
+    monkeypatch.setattr("megatron.bridge.data.builders.gpt_sft.get_dataset_root", lambda name: tmp_path / name)
+    train_a = tmp_path / "train-a.jsonl"
+    train_b = tmp_path / "train-b.jsonl"
+    valid = tmp_path / "valid.jsonl"
+    for path in (train_a, train_b, valid):
+        path.write_text("{}\n")
+    args_path = _write_per_split_data_source_manifest(
+        tmp_path,
+        train=["3", str(train_a), "1", str(train_b)],
+        valid=str(valid),
+    )
+    builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            seq_length=128,
+            per_split_data_source_manifest_path=args_path,
+            do_test=False,
+        ),
+        tokenizer=MagicMock(),
+    )
+
+    assert builder.train_path.paths == (str(train_a), str(train_b))
+    assert builder.train_path.weights == (3.0, 1.0)
+    assert builder.validation_path.paths == (str(valid),)
+    assert builder.validation_path.weights is None
+
+
+def test_per_split_data_source_manifest_requires_every_enabled_split(tmp_path, monkeypatch):
+    monkeypatch.setattr("megatron.bridge.data.builders.gpt_sft.get_dataset_root", lambda name: tmp_path / name)
+    args_path = _write_per_split_data_source_manifest(tmp_path)
+
+    with pytest.raises(ValueError, match="missing enabled SFT splits: valid, test"):
+        GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(seq_length=128, per_split_data_source_manifest_path=args_path),
+            tokenizer=MagicMock(),
+        )
+
+
+@pytest.mark.parametrize(
+    "train",
+    [
+        ["0.5", "/tmp/a.jsonl", "/tmp/not-a-weight", "/tmp/b.jsonl"],
+        ["0", "/tmp/a.jsonl", "1", "/tmp/b.jsonl"],
+        ["1", "/tmp/a.parquet", "1", "/tmp/b.jsonl"],
+    ],
+)
+def test_per_split_data_source_manifest_rejects_invalid_blends(tmp_path, train, monkeypatch):
+    monkeypatch.setattr("megatron.bridge.data.builders.gpt_sft.get_dataset_root", lambda name: tmp_path / name)
+    args_path = _write_per_split_data_source_manifest(tmp_path, train=train)
+
+    with pytest.raises((ValueError, TypeError)):
+        GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                seq_length=128,
+                per_split_data_source_manifest_path=args_path,
+                do_validation=False,
+                do_test=False,
+            ),
+            tokenizer=MagicMock(),
+        )
 
 
 def test_config_rejects_max_num_samples_in_dataset_kwargs(tmp_path):
@@ -565,6 +673,50 @@ def test_hf_source_materializes_requested_jsonl_splits(monkeypatch, tmp_path):
     assert not (tmp_path / "test.jsonl").exists()
 
 
+@pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])
+def test_write_hf_examples_tolerates_shared_fs_mkdir_race(tmp_path, monkeypatch, mkdir_error):
+    root = tmp_path / "output"
+    root.mkdir()
+
+    def raise_mkdir(self, parents=False, exist_ok=False):
+        assert self == root
+        assert parents is True
+        assert exist_ok is True
+        raise mkdir_error("stale shared filesystem state")
+
+    monkeypatch.setattr(type(root), "mkdir", raise_mkdir)
+
+    builder_mod._write_hf_examples(root, "training", [{"prompt": "question", "completion": "answer"}])
+
+    assert json.loads((root / "training.jsonl").read_text()) == {"prompt": "question", "completion": "answer"}
+
+
+def test_hf_output_root_restats_before_propagating_mkdir_race(monkeypatch, tmp_path):
+    root = tmp_path / "output"
+    is_dir_results = iter((False, True))
+    sleep_delays = []
+    mkdir_mock = MagicMock(side_effect=FileExistsError("stale shared filesystem state"))
+
+    monkeypatch.setattr(type(root), "mkdir", mkdir_mock)
+    monkeypatch.setattr(type(root), "is_dir", lambda _self: next(is_dir_results))
+    monkeypatch.setattr(builder_mod.time, "sleep", sleep_delays.append)
+
+    builder_mod._ensure_hf_output_root(root)
+
+    assert sleep_delays == [builder_mod._SHARED_FS_DIRECTORY_RESTAT_DELAY_S]
+
+
+def test_hf_output_root_propagates_mkdir_error_for_missing_directory(monkeypatch, tmp_path):
+    root = tmp_path / "output"
+    mkdir_mock = MagicMock(side_effect=FileExistsError("not a directory"))
+
+    monkeypatch.setattr(type(root), "mkdir", mkdir_mock)
+    monkeypatch.setattr(builder_mod.time, "sleep", lambda _delay: None)
+
+    with pytest.raises(FileExistsError):
+        builder_mod._ensure_hf_output_root(root)
+
+
 def test_hf_source_can_split_validation_from_training(monkeypatch, tmp_path):
     def _fake_load(source):
         source = resolve_hf_dataset_source(source)
@@ -707,6 +859,20 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
     assert dataset_calls[0][1]["dataset_kwargs"]["chat_loss_mode"] == "assistant"
     assert all(call[1]["enable_in_batch_packing"] is True for call in dataset_calls)
     assert all(call[1]["in_batch_packing_pad_to_multiple_of"] == 8 for call in dataset_calls)
+
+
+def test_builder_synchronizes_before_and_after_rank_zero_preparation(monkeypatch, tmp_path):
+    builder = GPTSFTDatasetBuilder(config=_hf_config(tmp_path), tokenizer=object())
+    events = []
+
+    monkeypatch.setattr(builder_mod, "get_rank_safe", lambda: 0)
+    monkeypatch.setattr(builder_mod.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(builder_mod.torch.distributed, "barrier", lambda: events.append("barrier"))
+    monkeypatch.setattr(builder, "prepare_data", lambda: events.append("prepare"))
+    monkeypatch.setattr(builder, "_build_datasets", lambda: events.append("build") or [None, None, None])
+
+    assert builder.build() == [None, None, None]
+    assert events == ["barrier", "prepare", "barrier", "build"]
 
 
 def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch, tmp_path):

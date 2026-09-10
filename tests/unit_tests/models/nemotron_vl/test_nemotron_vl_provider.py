@@ -12,11 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from unittest.mock import Mock, patch
 
-from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
-
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
 
 
 def test_provider_keeps_runtime_process_groups_out_of_nested_configs():
@@ -29,7 +38,7 @@ def test_provider_keeps_runtime_process_groups_out_of_nested_configs():
     provider._pg_collection = pg_collection
 
     def create_model(**kwargs):
-        copied_config = AttentionLayerConfig.from_config(kwargs["language_transformer_config"])
+        copied_config = _copy_attention_config(kwargs["language_transformer_config"])
         assert copied_config._pg_collection is None
         return Mock()
 

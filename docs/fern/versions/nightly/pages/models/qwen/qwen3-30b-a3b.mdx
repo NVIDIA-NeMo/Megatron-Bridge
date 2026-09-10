@@ -321,30 +321,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>FP8 MX</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-25</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.41293</dd>
+            <dd>10.70991</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>6.183484</dd>
+            <dd>6.046449</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>12,362.340 ms</dd>
+            <dd>15,807.670 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>487.880 TFLOP/s/GPU</dd>
+            <dd>357.220 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>21,205.047 tokens/s/GPU</dd>
+            <dd>16,583.342 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -355,12 +355,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01&quot;],null]&#x27; dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01&quot;],null]&#x27; dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 8x GB200, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural routing, HybridEP, Transformer Engine CUDA graphs for moe_router and moe_preprocess, communication overlap, functional safety checks, and MXFP8 parameter all-gather remain active. Loss is finite from 12.41293 to 6.183484 with no skipped or NaN iterations, all five metrics are recorded, and complete eight-shard iter_0000050 and iter_0000100 checkpoints are saved. Timing and throughput are support sanity checks, not cross-model convergence or tuned performance claims.
+        <p>On 8x GB200, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural routing, HybridEP, Transformer Engine CUDA graphs for moe_router and moe_preprocess, selective MoE activation recompute, communication overlap, functional safety checks, and MXFP8 parameter all-gather remain active. Loss is finite from 10.70991 to 6.046449 with no skipped or NaN iterations, all five metrics are recorded, and complete eight-shard iter_0000050 and iter_0000100 checkpoints are saved. Timing and throughput are support sanity checks, not cross-model convergence or tuned performance claims.
 </p>
       </section>
     </article>

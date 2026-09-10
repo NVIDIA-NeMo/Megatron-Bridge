@@ -547,6 +547,18 @@ def train(
             )
         if should_exit:
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
+            if (
+                prof_config is not None
+                and global_state.train_state.step < prof_config.profile_step_end
+                and (prof is not None or nsys_nvtx_context is not None)
+            ):
+                handle_profiling_stop(
+                    prof_config,
+                    prof_config.profile_step_end,
+                    torch.distributed.get_rank(),
+                    prof,
+                    nsys_nvtx_context,
+                )
             break
 
         # Enable forward pre-hooks after first set of forward and backward passes.
@@ -1474,7 +1486,7 @@ def checkpoint_and_decide_exit(
             callback_manager=callback_manager,
             module_name=module_name,
         )
-        saved_checkpoint = True
+        saved_checkpoint = state.cfg.checkpoint.non_persistent_ckpt_type == "global"
 
     # Exit based on duration.
     if state.cfg.train.exit_duration_in_mins:
@@ -1562,6 +1574,9 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
         global_state._comet_logger.end()
 
     _delete_cuda_graphs(None)
+    if global_state._signal_handler is not None:
+        global_state._signal_handler.release()
+        global_state._signal_handler = None
     destroy_global_state()
 
 

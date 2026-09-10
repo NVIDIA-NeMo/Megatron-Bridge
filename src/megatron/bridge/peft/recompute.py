@@ -17,7 +17,8 @@
 from __future__ import annotations
 
 from functools import wraps
-from typing import Iterable, Set
+from typing import Iterable, MutableSet
+from weakref import WeakSet
 
 import torch
 from megatron.core.utils import unwrap_model
@@ -25,7 +26,7 @@ from megatron.core.utils import unwrap_model
 from megatron.bridge.utils.common_utils import print_rank_0
 
 
-PEFT_RECOMPUTE_PATCHED: Set[int] = set()
+PEFT_RECOMPUTE_PATCHED: WeakSet[torch.nn.Module] = WeakSet()
 
 
 def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
@@ -40,7 +41,9 @@ def _iter_unwrapped_models(model) -> Iterable[torch.nn.Module]:
             yield unwrapped
 
 
-def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: Set[int] | None = None) -> Set[int]:
+def maybe_enable_recompute_inputs_grad(
+    model, peft_recompute_patched: MutableSet[torch.nn.Module] | None = None
+) -> MutableSet[torch.nn.Module]:
     """Enable grad on recompute-block inputs when only adapters are trainable.
 
     Root cause analysis:
@@ -67,7 +70,7 @@ def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: Set[int] |
 
     recompute_block_types = (TransformerBlock, HybridStack)
 
-    patched_registry = peft_recompute_patched or PEFT_RECOMPUTE_PATCHED
+    patched_registry = PEFT_RECOMPUTE_PATCHED if peft_recompute_patched is None else peft_recompute_patched
 
     try:
         for unwrapped_model in _iter_unwrapped_models(model):
@@ -75,13 +78,17 @@ def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: Set[int] |
             if cfg is None or getattr(cfg, "recompute_method", None) is None:
                 continue
 
-            if id(unwrapped_model) in patched_registry:
+            if unwrapped_model in patched_registry:
                 continue
 
             params = list(unwrapped_model.named_parameters())
-            trainable_adapter = any(p.requires_grad and ".adapter." in n.lower() for n, p in params)
+            trainable_adapter = any(
+                p.requires_grad and (".adapter." in n.lower() or ".adapters." in n.lower()) for n, p in params
+            )
             trainable_base = any(
-                p.requires_grad and (".to_wrap." not in n.lower() and ".adapter." not in n.lower()) for n, p in params
+                p.requires_grad
+                and (".to_wrap." not in n.lower() and ".adapter." not in n.lower() and ".adapters." not in n.lower())
+                for n, p in params
             )
 
             if not (trainable_adapter and not trainable_base):
@@ -111,7 +118,7 @@ def maybe_enable_recompute_inputs_grad(model, peft_recompute_patched: Set[int] |
                 if _patch_recompute_block(module):
                     patched = True
             if patched:
-                patched_registry.add(id(unwrapped_model))
+                patched_registry.add(unwrapped_model)
                 print_rank_0(
                     "[PEFT+Recompute] Patched recompute-block forward to enable grad on "
                     "hidden_states input. This ensures checkpoint backward is called when "

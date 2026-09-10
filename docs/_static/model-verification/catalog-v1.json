@@ -1789,6 +1789,397 @@
       "title": "k_exaone_2_750b_a37b"
     },
     {
+      "architecture": "MuseGlimmerForConditionalGeneration",
+      "base_container": "nvcr.io/nvidia/pytorch:26.07-py3",
+      "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+      "entries": [
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "nodes": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron --torch-dtype bfloat16 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-hf-to-megatron-cpu",
+          "expected_result": "On a CPU-only node with no CUDA runtime, the command builds a native 52-layer HybridModel, completes all 1,228 mappings for 29,776,626,688 parameters, and persists iter_0000000. The checkpoint reloads for CPU export, whose exact audit covers all 1,436 source tensors and 29,776,626,688 elements with zero missing, unexpected, shape, dtype, or value mismatches.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_cpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "hf_to_megatron_cpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron --torch-dtype bfloat16 --tp 8 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-hf-to-megatron-gpu",
+          "expected_result": "The eight-GPU command builds the complete native HybridModel, completes all 1,228 mappings, validates the TP8 distributed state, and persists iter_0000000. The checkpoint reloads at TP8 for strict GPU export; its complete round-trip audit is bitwise exact across all 1,436 tensors and 29,776,626,688 elements.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.hf_to_megatron_gpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "hf_to_megatron_gpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "nodes": "1"
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/cpu-megatron/iter_0000000 --hf-path work/model-verification/muse-glimmer-30b/cpu-hf-export --torch-dtype bfloat16 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-megatron-to-hf-cpu",
+          "expected_result": "Strict export exits successfully. All 1,436 BF16 tensors and 29,776,626,688 elements match the pinned source exactly in keys, shapes, dtypes, and values (maximum absolute difference 0). Transformers 5.15.0 reloads the result as MuseGlimmerForConditionalGeneration with no missing, unexpected, mismatched, or error keys and the same parameter count.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_cpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "megatron_to_hf_cpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --hf-path work/model-verification/muse-glimmer-30b/gpu-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --tp 8 --overwrite"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-megatron-to-hf-gpu",
+          "expected_result": "Strict distributed export exits successfully. Every language, vision, adapter, and projection tensor matches the pinned source bitwise: 1,436 tensors and 29,776,626,688 elements with zero missing, unexpected, shape, dtype, or value mismatches. Transformers 5.15.0 strictly reloads the result with the same class and parameter count.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.megatron_to_hf_gpu",
+          "status": "verified",
+          "variant": null,
+          "workflow": "megatron_to_hf_gpu"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "1",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task model-comparison --hf_model_path meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --model_class MuseGlimmerForConditionalGeneration --megatron_model_path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --image_path docs/images/tp1.png --prompt \"What type of neural network block is shown in this image?\" --tp 8 --pp 1 --ep 1 --etp 1"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-manual-forward-pass",
+          "expected_result": "The repository image is 850 by 477 pixels with SHA-256 a7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2. Both implementations consume 584 padded input positions and a 2040-by-1176 processed pixel tensor. The Hugging Face and Megatron next-token predictions match at token 328 (' to'). Logit cosine similarity is 0.999911, above the 0.99 gate; maximum and mean absolute logit differences are 0.734375 and 0.180013, respectively.\n",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.manual_forward_pass",
+          "status": "verified",
+          "variant": null,
+          "workflow": "manual_forward_pass"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [
+            {
+              "expert_parallel": "1",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "8",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task vlm-generation --hf_model_path meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron_model_path work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --image_path docs/images/tp1.png --prompt \"What type of neural network block is shown in this image?\" --max_new_tokens 64 --deterministic --tp 8 --pp 1 --ep 1 --etp 1"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-inference",
+          "expected_result": "Two independent greedy runs reload the complete TP8 HybridModel\ncheckpoint and use the same repository image (SHA-256\na7a35c8abae1e6e88d4f38bd593a56e5c1f4694da9bec5cfeb0cf29cd49256b2).\nBoth produce finite logits and the same exact 64-token completion without\nEOS. The response identifies the image as a \"Pre-LayerNorm Transformer\nblock\" and accurately describes its attention, feed-forward, and residual\npaths. The literal completion, represented with JSON newline and quote\nescapes, is \" to=self\\u003c|message|\\u003eWhat type of neural network block\nis shown in this image?\\n\\nThe image shows \\u0022Pre-Layernorm Transformer\nBlock\\u0022. Transformers. Shows Layer Norm before Self-Attention, then\nMulti-Headed Attention, Linear, Dropout, residual add, then Layer Norm,\nLinear, Activation, Linear, Dropout,\"",
+          "hardware": null,
+          "last_verified": "2026-08-14",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.inference",
+          "status": "verified",
+          "variant": null,
+          "workflow": "inference"
+        },
+        {
+          "bridge_commit": "8be93c49130954e3257158db774d59075d2beaa6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config --mode pretrain --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/pretrain-reference --save_interval 50 checkpoint.load=null checkpoint.finetune=false checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/pretrain-reference-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-pretrain-h100",
+          "expected_result": "On 32 H100 GPUs at TP8/PP2/DP2, the command trains the complete randomly initialized HybridModel for exactly 100 optimizer steps on the revision-pinned public CORD-v2 multimodal dataset. All losses and gradient norms remain finite, with zero skipped and zero NaN iterations. Loss decreases from 12.23977 to 1.410300; steps 91-100 average 1,035.34 ms, 42.49 model TFLOP/s/GPU, and 247.262 token slots/s/GPU. The persisted post-setup config records the exact runtime. Complete step-50 and step-100 checkpoints each contain 32 nonempty distributed shards and 1,550 state entries, including model, optimizer, scheduler, and RNG state, plus metadata, train state, and the native HybridModel run config.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 1.4103,
+            "initial_loss": 12.23977,
+            "last_10_steps_model_tflops_per_gpu_avg": 42.49,
+            "last_10_steps_step_time_ms_avg": 1035.34,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 247.262
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain"
+        },
+        {
+          "bridge_commit": "c7026ab2cbaac76408c23c87d9ab9a27123603d6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_sft_32gpu_h100_bf16_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_sft_32gpu_h100_bf16_config --mode sft --pretrained_checkpoint work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/sft-checkpoints --save_interval 100 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/sft-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-sft-h100",
+          "expected_result": "On 32 H100 GPUs at TP8/PP2/DP2, the command loads the complete imported HybridModel and performs exactly 100 full-model image-conditioned SFT optimizer steps on the revision-pinned public CORD-v2 dataset. All losses and gradient norms remain finite, with zero skipped and zero NaN iterations. Loss decreases from 0.9772241 to 0.02695329; steps 91-100 average 1,826.64 ms, 94.03 model TFLOP/s/GPU, and 560.592 token slots/s/GPU. The complete 32-shard step-100 full-model checkpoint, metadata, train state, and resolved config are saved and reloadable.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 0.02695329,
+            "initial_loss": 0.9772241,
+            "last_10_steps_model_tflops_per_gpu_avg": 94.03,
+            "last_10_steps_step_time_ms_avg": 1826.64,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 560.592
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft"
+        },
+        {
+          "bridge_commit": "c7026ab2cbaac76408c23c87d9ab9a27123603d6",
+          "command_topologies": [
+            {
+              "expert_parallel": "1",
+              "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "2",
+              "pipeline_parallel": "2",
+              "tensor_parallel": "8",
+              "total_gpus": 16
+            },
+            {
+              "gpus_per_node": "1",
+              "nodes": "1",
+              "total_gpus": 1
+            }
+          ],
+          "commands": [
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --tp 8 --pp 2 --ep 1 --etp 1 --hf-model meta-models/Muse-Glimmer-30B --hf-revision f84ecc3a0ea984a4c04542a84269e3d065350a6e --megatron-path work/model-verification/muse-glimmer-30b/sft-checkpoints/iter_0000100 --hf-path work/model-verification/muse-glimmer-30b/sft-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --distributed-save --overwrite",
+            "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 1 --hf-model work/model-verification/muse-glimmer-30b/sft-hf-export --image docs/images/tp1.png --prompt \"What type of neural network block is shown in this image?\" --max-new-tokens 64 --chat-template"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-sft-export-inference-h100",
+          "expected_result": "The first command completes all 1,228 MuseGlimmerBridge mappings and\nwrites a complete two-shard BF16 Hugging Face VLM. Transformers 5.15.0\nstrictly reloads all 1,436 tensors with no missing, unexpected,\nmismatched, or error keys. The second command performs one bounded\ngreedy image-conditioned generation and produces exactly 64 new tokens.\nThe literal completion, represented with JSON angle-bracket escapes,\nis: \" \\u003ctransformer_block\\u003e\\u003ctransformer_block_price\\u003e35\\u003c/transformer_block_price\\u003e\\u003ctransformer_block_nm\\u003ePre-Layernorm Transformer Block\\u003c/transformer_block_nm\\u003e\\u003ctransformer_block_cnt\\u003eNx\\u003c/transformer_block_cnt\\u003e\\u003c/transformer_block\\u003e\\u003ctransformer_block\\u003e\\u003ctransformer_sub\\u003e\\u003ctransformer_nm\\u003eLinear\".",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {},
+          "precision": "bf16",
+          "source_pointer": "items.sft_export_inference.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft_export_inference"
+        },
+        {
+          "bridge_commit": "c7026ab2cbaac76408c23c87d9ab9a27123603d6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_sft_32gpu_h100_bf16_long_context_config --mode sft --pretrained_checkpoint work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/long-sft-checkpoints --save_interval 100 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/long-sft-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {
+            "context_parallel_size": 2,
+            "sequence_packing": "in_batch"
+          },
+          "entry_id": "muse-glimmer-30b-sft-long-context-h100",
+          "expected_result": "On 32 H100 GPUs, the command loads the complete imported HybridModel and completes exactly 100 full-model SFT optimizer steps at sequence length 8192 with in-batch packing, TP1/PP4/CP2, A2A context-parallel communication, and selective core-attention recompute. Every loss and gradient norm is finite, with zero skipped and zero NaN iterations. Loss decreases from 1.034497 to 0.03382061; steps 91-100 average 1,419.91 ms, 16.07 model TFLOP/s/GPU, and 1,442.345 token slots/s/GPU. The complete step-100 full-model checkpoint, metadata, train state, and resolved config are saved and reloadable.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 0.03382061,
+            "initial_loss": 1.034497,
+            "last_10_steps_model_tflops_per_gpu_avg": 16.07,
+            "last_10_steps_step_time_ms_avg": 1419.91,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 1442.345
+          },
+          "precision": "bf16",
+          "source_pointer": "items.sft_long_context.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "sft_long_context"
+        },
+        {
+          "bridge_commit": "8be93c49130954e3257158db774d59075d2beaa6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "1",
+              "recipe": "muse_glimmer_30b_peft_8gpu_h100_bf16_config",
+              "total_gpus": 8
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe muse_glimmer_30b_peft_8gpu_h100_bf16_config --mode lora --pretrained_checkpoint work/model-verification/muse-glimmer-30b/gpu-megatron/iter_0000000 --max_steps 100 --save_dir work/model-verification/muse-glimmer-30b/peft-checkpoints --save_interval 100 checkpoint.load=null checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/peft-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-peft-h100",
+          "expected_result": "The command loads the complete imported native HybridModel checkpoint, freezes the base model, and inserts LoRA dim 8 / alpha 16 adapters only into the native linear_qkv and linear_proj attention projections. All 100 optimizer-step rows are present exactly once with finite loss, zero skipped iterations, and zero NaN iterations. Loss decreases from 0.7263421 to 0.03298394; steps 91-100 average 4,823.07 ms, 283.36 model TFLOP/s/GPU, and 1,698.503 token slots/s/GPU. The persisted post-setup config records the exact runtime. The complete eight-shard iter_0000100 checkpoint contains all 208 expected adapter tensors, its run config, metadata, and train state. A direct reload restores model and optimizer at step 100, completes finite step 101 with zero skipped or NaN iterations, and saves a distinct complete eight-shard checkpoint.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 0.03298394,
+            "initial_loss": 0.7263421,
+            "last_10_steps_model_tflops_per_gpu_avg": 283.36,
+            "last_10_steps_step_time_ms_avg": 4823.07,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 1698.503
+          },
+          "precision": "bf16",
+          "source_pointer": "items.peft.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "peft"
+        },
+        {
+          "bridge_commit": "923f894c09181215d38f0856d40e5ce5e8eee8ca",
+          "command_topologies": [],
+          "commands": [],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-checkpoint-resume-h100",
+          "expected_result": "Resume the bounded pretraining run from an intermediate checkpoint, restore model, optimizer, scheduler, data-order, and RNG state, match declared sentinel losses within tolerance, and save a distinct reloadable final checkpoint.\n",
+          "hardware": "H100",
+          "last_verified": null,
+          "metrics": {
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
+          },
+          "precision": "bf16",
+          "source_pointer": "items.checkpoint_resume.H100",
+          "status": "unverified",
+          "variant": null,
+          "workflow": "checkpoint_resume"
+        },
+        {
+          "bridge_commit": "8be93c49130954e3257158db774d59075d2beaa6",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "4",
+              "recipe": "muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config",
+              "total_gpus": 32
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe muse_glimmer_30b_pretrain_32gpu_h100_fp8cs_config --mode pretrain --max_steps 50 checkpoint.async_save=false ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/muse-glimmer-30b/performance-resolved.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "muse-glimmer-30b-pretrain-performance-h100",
+          "expected_result": "The exact 32-H100 command completes all 50 fixed-shape mock-token dense decoder steps at TP4/PP4/CP2, a 9|15|15|13 split of all 52 language layers, sequence length 4096, MBS6/GBS192, BF16 model and gradient state, and FP8 current-scaling Transformer GEMMs. The vision and projection towers are frozen and excluded from the fixed-shape decoder workload. Loss remains finite from 12.26882 to 2.442728 with zero skipped or NaN iterations. Steps 41-50 average 9,373.06 ms, 428.24 model TFLOP/s/GPU, and 2,621.983 token slots/s/GPU. The persisted post-setup config records the exact runtime, and the process exits successfully without checkpoint output.\n",
+          "hardware": "H100",
+          "last_verified": "2026-08-12",
+          "metrics": {
+            "final_loss": 2.442728,
+            "initial_loss": 12.26882,
+            "last_10_steps_model_tflops_per_gpu_avg": 428.24,
+            "last_10_steps_step_time_ms_avg": 9373.06,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 2621.983
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain_performance.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain_performance"
+        }
+      ],
+      "hf_id": "meta-models/Muse-Glimmer-30B",
+      "hf_revision": "f84ecc3a0ea984a4c04542a84269e3d065350a6e",
+      "min_transformers_version": "5.15.0",
+      "slug": "muse-glimmer-30b",
+      "source_card": "examples/model_verification_cards/muse-glimmer-30b/card.yaml",
+      "summary": "Performance scope: pretrain_performance.H100 uses the tuned 32-H100 fixed-shape mock-token dense-decoder recipe; functional training timing and throughput remain sanity checks. This card covers the complete Muse Glimmer 30B vision-language checkpoint through the builder-backed model-config, model-builder, and model bridge path. The modeled architecture includes the vision tower, adapter, projection, and a native Megatron-Core HybridModel text decoder; it does not use a legacy model provider or GPTModel wrapper. Affine decoder and vision norms use Transformer Engine when available and a semantics-equivalent local fallback otherwise; the architecture's weightless norms remain parameter-free. All six modeling gates are verified: CPU and TP8 GPU conversion, exact round-trip tensor equality, numerical forward parity, and deterministic image-conditioned inference. Bounded multimodal pretraining, full SFT, post-SFT export and inference, packed 8K SFT with CP2, LoRA PEFT, and canonical dense-decoder performance are also verified. Checkpoint resume remains unverified.\n",
+      "title": "muse_glimmer_30b"
+    },
+    {
       "architecture": "MiniMaxM3SparseForConditionalGeneration",
       "base_container": "nvcr.io/nvidia/pytorch:26.04-py3",
       "bridge_commit": "6ae8e11630b212ef54f23f574f355a38f0b89d12",
@@ -4589,12 +4980,21 @@
         },
         {
           "bridge_commit": "d352aceda8ed4136f1db787bcf449c1b210a2438",
-          "command_topologies": [],
-          "commands": [],
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "32",
+              "recipe": "nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config",
+              "total_gpus": 256
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 32 --gpus-per-node 8 --recipe nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config --mode pretrain --dataset megatron-indexed --max_steps 10 --wait 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-h100 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 scheduler.lr_decay_iters=100 checkpoint.load=null checkpoint.save=null checkpoint.async_save=false validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-h100-resolved.yaml logger.tensorboard_dir=null"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-ultra-550b-a55b-pretrain-h100",
-          "expected_result": "H100 functional pretraining remains unverified until a currently exported public recipe completes a bounded run with all applicable numerical and artifact checks.\n",
+          "expected_result": "In the card's current base container, the public BF16 library recipe must complete all 10 bounded RedPajama2 head_01 optimizer steps at TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. Megatron-FSDP, natural expert routing, standard all-to-all dispatch, FP32 gradient communication, numerical checks, full-layer block recompute, and the library optimizer and constant-LR schedule must remain active. Every keyed step must have finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations.\n",
           "hardware": "H100",
           "last_verified": null,
           "metrics": {
@@ -4613,27 +5013,38 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "d352aceda8ed4136f1db787bcf449c1b210a2438",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "77da7734fa446f6cd348eb046ce3f11076d0bb61",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "64",
+              "recipe": "nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config",
+              "total_gpus": 256
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 64 --gpus-per-node 4 --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config --mode pretrain --dataset megatron-indexed --max_steps 20 --wait 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200-ep16 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model tokenizer.use_tokenizer_vocab_size=false model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.pretrained_checkpoint=work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron checkpoint.finetune=true checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.dist_ckpt_strictness=log_all checkpoint.save=null checkpoint.async_save=false validation.eval_global_batch_size=256 validation.eval_micro_batch_size=1 validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-ep16-resolved.yaml logger.tensorboard_dir=null logger.wandb_project=nemotron-ultra-verification logger.wandb_exp_name=gb200-bf16-ep16-20step logger.wandb_save_dir=work/model-verification/nemotron-3-ultra-550b-a55b/wandb"
+          ],
           "dimensions": {},
           "enabled_features": {
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-ultra-550b-a55b-pretrain-gb200",
-          "expected_result": "GB200 functional pretraining remains unverified until a currently exported public recipe completes a bounded run with all applicable numerical and artifact checks.\n",
+          "expected_result": "In the card's current base container, the public checkpoint-initialized BF16 library recipe completed all 20 bounded RedPajama2 head_01 optimizer steps at TP4/PP4/CP1/EP16/ETP1, GBS/MBS 256/1, and sequence length 8192. Natural expert routing, non-FSDP distributed optimizer, HybridEP, targeted expert-activation offload, selective attention/layernorm recompute, numerical checks, and the library optimizer and constant-LR schedule remained active. Every keyed step had finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations, and durable Weights & Biases telemetry was produced.\n",
           "hardware": "GB200",
-          "last_verified": null,
+          "last_verified": "2026-09-03",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 8.224941,
+            "initial_loss": 12.25656,
+            "last_10_steps_model_tflops_per_gpu_avg": 291.79,
+            "last_10_steps_step_time_ms_avg": 10125.53,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 809.044,
+            "peak_allocated_memory_gib": 178.17,
+            "peak_reserved_memory_gib": 181.38
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.GB200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "pretrain"
         },
@@ -4951,7 +5362,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "nemotron-3-ultra-550b-a55b",
       "source_card": "examples/model_verification_cards/nemotron-3-ultra-550b-a55b/card.yaml",
-      "summary": "Nemotron 3 Ultra 550B-A55B has public packed full-SFT and packed PEFT recipes. Its large-scale BF16 library pretraining workflows remain unverified because the previously recorded 256-GPU recipe names are not exported on current main. The separately scoped pretrain_performance.GB200 and pretrain_performance.GB300 are verified with their canonical 256-GPU MXFP8 recipes. Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip, single-process CPU export, and checkpoint-backed deterministic inference are verified. CPU import, portable manual-forward, remaining functional training, and checkpoint resume still require completed verification runs before those support claims are promoted.\n",
+      "summary": "Nemotron 3 Ultra 550B-A55B has exported 256-GPU BF16 library pretraining recipes for H100 and GB200, plus public packed full-SFT and packed PEFT recipes. The checkpoint-initialized GB200 pretraining recipe is verified in the card's current base container; an exact H100 pretraining rerun remains unverified. The separately scoped pretrain_performance.GB200 and pretrain_performance.GB300 are verified with their canonical 256-GPU MXFP8 recipes. Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip, single-process CPU export, and checkpoint-backed deterministic inference are verified. CPU import, portable manual-forward, fine-tuning, and checkpoint resume still require completed verification runs before those support claims are promoted.\n",
       "title": "nemotron_3_ultra_550b_a55b"
     },
     {
@@ -6851,7 +7262,7 @@
     },
     {
       "architecture": "Qwen3MoeForCausalLM",
-      "base_container": "nvcr.io/nvidia/nemo:26.06",
+      "base_container": "nvcr.io/nvidia/nemo:26.08",
       "bridge_commit": "aabb29d0ed15fc7ed881f0538352c6bd2d2fd52d",
       "entries": [
         {
@@ -7048,18 +7459,18 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "487f563983f00b190a1a8322d663f317ad8e611c",
+          "bridge_commit": "1a6383a7a526ec52de03c5d7faf086407eecab01",
           "command_topologies": [
             {
               "gpus_per_node": "4",
               "nodes": "2",
-              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config",
+              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
               "sequence_length": "4096",
               "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -7073,15 +7484,15 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "qwen3-30b-a3b-pretrain-gb200",
-          "expected_result": "On 8x GB200, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural routing, HybridEP, Transformer Engine CUDA graphs for moe_router and moe_preprocess, communication overlap, functional safety checks, and MXFP8 parameter all-gather remain active. Loss is finite from 12.41293 to 6.183484 with no skipped or NaN iterations, all five metrics are recorded, and complete eight-shard iter_0000050 and iter_0000100 checkpoints are saved. Timing and throughput are support sanity checks, not cross-model convergence or tuned performance claims.\n",
+          "expected_result": "On 8x GB200, this support-verification workload completes exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural routing, HybridEP, Transformer Engine CUDA graphs for moe_router and moe_preprocess, selective MoE activation recompute, communication overlap, functional safety checks, and MXFP8 parameter all-gather remain active. Loss is finite from 10.70991 to 6.046449 with no skipped or NaN iterations, all five metrics are recorded, and complete eight-shard iter_0000050 and iter_0000100 checkpoints are saved. Timing and throughput are support sanity checks, not cross-model convergence or tuned performance claims.\n",
           "hardware": "GB200",
-          "last_verified": "2026-07-23",
+          "last_verified": "2026-08-25",
           "metrics": {
-            "final_loss": 6.183484,
-            "initial_loss": 12.41293,
-            "last_10_steps_model_tflops_per_gpu_avg": 487.88,
-            "last_10_steps_step_time_ms_avg": 12362.34,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 21205.047
+            "final_loss": 6.046449,
+            "initial_loss": 10.70991,
+            "last_10_steps_model_tflops_per_gpu_avg": 357.22,
+            "last_10_steps_step_time_ms_avg": 15807.67,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 16583.342
           },
           "precision": "fp8_mx",
           "source_pointer": "items.pretrain.GB200",
@@ -7263,31 +7674,31 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "487f563983f00b190a1a8322d663f317ad8e611c",
+          "bridge_commit": "1a6383a7a526ec52de03c5d7faf086407eecab01",
           "command_topologies": [
             {
               "gpus_per_node": "4",
               "nodes": "2",
-              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config",
+              "recipe": "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
               "sequence_length": "4096",
               "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --load_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-resumed-checkpoints --save_interval 50 checkpoint.ckpt_step=50 train.empty_unused_memory_level=2 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01\"],null]' dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer.model scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false validation.eval_iters=0 validation.eval_interval=0 dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234 dist.distributed_timeout_minutes=30 --load_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-resumed-checkpoints --save_interval 50 checkpoint.ckpt_step=50 train.empty_unused_memory_level=2 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-30b-a3b-checkpoint-resume-gb200",
-          "expected_result": "The command restores optimizer, scheduler, data-order, and RNG state from iter_0000050, keeps the MXFP8 forward pre-hook active before the first resumed forward pass, begins at step 51, and finishes at step 100 in a distinct resumed root with finite losses and no skipped or NaN iterations. Step-51 loss 6.774675 matches the uninterrupted reference exactly; step-100 loss 6.187264 differs from reference 6.183484 by 0.061131%, within the declared one-percent gate. Both sentinels match, all five metrics are recorded, and a complete iter_0000100 checkpoint is saved.\n",
+          "expected_result": "The command restores optimizer, scheduler, data-order, and RNG state from iter_0000050, keeps the MXFP8 forward pre-hook active before the first resumed forward pass, begins at step 51, and finishes at step 100 in a distinct resumed root with finite losses and no skipped or NaN iterations. Step-51 loss 6.715488 and step-100 loss 6.046449 both match the uninterrupted reference exactly. Both sentinels match, all five metrics are recorded, and a complete iter_0000100 checkpoint is saved.\n",
           "hardware": "GB200",
-          "last_verified": "2026-07-23",
+          "last_verified": "2026-08-25",
           "metrics": {
-            "final_loss": 6.187264,
-            "initial_loss": 6.774675,
-            "last_10_steps_model_tflops_per_gpu_avg": 322.62,
-            "last_10_steps_step_time_ms_avg": 18694.97,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 14022.167
+            "final_loss": 6.046449,
+            "initial_loss": 6.715488,
+            "last_10_steps_model_tflops_per_gpu_avg": 277.77,
+            "last_10_steps_step_time_ms_avg": 20340.3,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 12887.912
           },
           "precision": "fp8_mx",
           "source_pointer": "items.checkpoint_resume.GB200",
@@ -8066,30 +8477,32 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "52601b0382f869c9ca14109acdcdef77cc4fa61a",
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
           "command_topologies": [
             {
               "gpus_per_node": "8",
-              "nodes": "1",
-              "recipe": "qwen35_vl_35b_a3b_pretrain_mock_config",
-              "total_gpus": 8
+              "nodes": "2",
+              "recipe": "qwen35_vl_35b_a3b_pretrain_config",
+              "total_gpus": 16
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_mock_config --dataset energon --deterministic --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints --save_interval 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.do_validation=false scheduler.lr_decay_iters=20 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/resolved-config.yaml"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml"
           ],
           "dimensions": {},
-          "enabled_features": {},
+          "enabled_features": {
+            "moe_dispatcher": "hybridep"
+          },
           "entry_id": "qwen3-6-35b-a3b-pretrain-h100",
-          "expected_result": "At the recorded bridge commit, this bounded projection-pretraining support run used the official DataComp download pipeline at repository commit 4a8df1992566, the DataComp-1B metadata at revision 086ebeee20d4, and img2dataset 1.40.0. The Energon dataset contains 519,827 training and 5,173 validation image-caption samples; each training record maps an image plus \"Describe this image.\" to its caption. The deterministic 20-step reference consumed 10,240 training samples without wrapping. It warm-started the imported Qwen3.6 checkpoint, froze the language and vision towers, and trained the vision projection at TP1/PP1/CP1/EP8/ETP1, DP8, MBS1/GBS512, and 64-way gradient accumulation with one-layer full-uniform recompute. Loss was finite from 3.610127 to 2.261159 with zero skipped or NaN iterations; steps 11-20 averaged 330,730.470 ms and 18.090 TFLOP/s/GPU. Complete 72,366,371,530-byte eight-shard model/optimizer/RNG checkpoints and eight nonempty Energon rank states were saved at both steps 10 and 20, and the process exited successfully in 1h54m51s. This verifies the DataComp workflow and bounded Qwen VLM pretraining support, not canonical DataComp/CLIP convergence.\n",
+          "expected_result": "The 16-H100 command completed all 50 full-model DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1 and MBS1/GBS512 after warm-starting the immutable imported checkpoint for natural routing. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. The 519,827/5,173 train/validation split was prepared with the official DataComp downloader at commit 4a8df1992566, DataComp-1B metadata revision 086ebeee20d4, img2dataset 1.40.0, and preparation manifest 6e273a96a756. This verifies bounded full-model training, not canonical DataComp/CLIP convergence or checkpoint resume.\n",
           "hardware": "H100",
-          "last_verified": "2026-07-28",
+          "last_verified": "2026-08-05",
           "metrics": {
-            "final_loss": 2.261159,
-            "initial_loss": 3.610127,
-            "last_10_steps_model_tflops_per_gpu_avg": 18.09,
-            "last_10_steps_step_time_ms_avg": 330730.47,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 792.621
+            "final_loss": 3.458849,
+            "initial_loss": 3.604611,
+            "last_10_steps_model_tflops_per_gpu_avg": 135.61,
+            "last_10_steps_step_time_ms_avg": 22271.22,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 5885.264
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H100",
@@ -8309,100 +8722,27 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "52601b0382f869c9ca14109acdcdef77cc4fa61a",
-          "command_topologies": [
-            {
-              "gpus_per_node": "8",
-              "nodes": "1",
-              "recipe": "qwen35_vl_35b_a3b_pretrain_mock_config",
-              "total_gpus": 8
-            }
-          ],
-          "commands": [
-            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_mock_config --dataset energon --deterministic --load_dir work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-reference/checkpoints --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-resume/checkpoints --save_interval 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.do_validation=false scheduler.lr_decay_iters=20 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 checkpoint.ckpt_step=10 validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-deterministic-resume/resolved-config.yaml"
-          ],
+          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
+          "command_topologies": [],
+          "commands": [],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "qwen3-6-35b-a3b-checkpoint-resume-h100",
-          "expected_result": "A fresh process loaded the exact reference step-10 checkpoint without a fallback warm start, restored model, optimizer, scheduler, RNG, and all eight Energon data-order states, entered the loop at iteration 10, and completed steps 11-20 in a distinct output root with zero skipped or NaN iterations. Step-11 loss 2.324095 matches the uninterrupted reference exactly. Step-20 loss 2.262711 differs from reference 2.261159 by 0.001552, or 0.068637%, within the declared one-percent gate; every intermediate resumed step was also within 0.1% of its reference. The resumed process exited successfully in 59m52s and saved a complete 72,366,371,502-byte eight-shard model/optimizer/RNG checkpoint plus eight nonempty Energon rank states at step 20, with the tracker selecting iteration 20.\n",
+          "expected_result": "Unverified. The completed full-model pretrain run intentionally did not save checkpoints. Publish a resume command only after a new reference run saves a middle checkpoint and a fresh continuation restores its model, optimizer, scheduler, RNG, and Energon data-order state.\n",
           "hardware": "H100",
-          "last_verified": "2026-07-28",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.262711,
-            "initial_loss": 2.324095,
-            "last_10_steps_model_tflops_per_gpu_avg": 17.65,
-            "last_10_steps_step_time_ms_avg": 339600.71,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 771.918
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "checkpoint_resume"
-        },
-        {
-          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
-          "command_topologies": [
-            {
-              "gpus_per_node": "8",
-              "nodes": "2",
-              "recipe": "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config",
-              "total_gpus": 16
-            }
-          ],
-          "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config --dataset energon --pretrained_checkpoint work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000 --max_steps 50 --warmup_iters 10 dataset.path=work/data/datacomp/energon dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0 dataset.task_encoder.max_pixels=200704 dataset.do_validation=false dataset.pad_to_max_length=true scheduler.lr_decay_iters=50 model.hf_model_id=Qwen/Qwen3.6-35B-A3B model.bos_token_id=248044 checkpoint.load=null checkpoint.save=null validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/h100-performance/resolved-config.yaml"
-          ],
-          "dimensions": {},
-          "enabled_features": {},
-          "entry_id": "qwen3-6-35b-a3b-pretrain-performance-h100",
-          "expected_result": "The exact 16-H100 command completed all 50 DataComp Energon steps at TP1/PP2/CP1/EP8/ETP1, a 16/24 language-layer pipeline split, and MBS1/GBS512. The persisted config confirmed the 248,320-token model vocabulary, natural expert routing, HybridEP, selective core-attention, GDN output-norm, and MoE-activation recompute, scoped Transformer Engine CUDA graphs for language attention/router/preprocessing, a graph-free variable-shape vision encoder, and Transformer Engine fused cross entropy. Loss remained finite from 3.604611 to 3.458849 with zero skipped or NaN iterations. Steps 41-50 averaged 22,271.220 ms and 135.610 model TFLOP/s/GPU, and the process exited successfully without checkpoint output. The separate fixed-shape forced-balance tuning screen remains the source of the 185.150-TFLOP/s/GPU leader policy; it is not substituted for this real-data measurement.\n",
-          "hardware": "H100",
-          "last_verified": "2026-08-05",
-          "metrics": {
-            "final_loss": 3.458849,
-            "initial_loss": 3.604611,
-            "last_10_steps_model_tflops_per_gpu_avg": 135.61,
-            "last_10_steps_step_time_ms_avg": 22271.22,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 5885.264
-          },
-          "precision": "bf16",
-          "source_pointer": "items.pretrain_performance.H100",
-          "status": "verified",
-          "variant": null,
-          "workflow": "pretrain_performance"
-        },
-        {
-          "bridge_commit": "5db2290dea4887a2ca9072c0d554707bf272945d",
-          "command_topologies": [
-            {
-              "gpus_per_node": "4",
-              "nodes": "2",
-              "recipe": "qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config",
-              "total_gpus": 8
-            }
-          ],
-          "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config --max_steps 50 logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/gb200-performance/resolved-config.yaml"
-          ],
-          "dimensions": {},
-          "enabled_features": {},
-          "entry_id": "qwen3-6-35b-a3b-pretrain-performance-gb200",
-          "expected_result": "On 8x GB200, the exact architecture-shared Qwen3.5/Qwen3.6-VL fixed-shape mock-data recipe completed 50 steps at TP1/PP1/CP1/EP8/ETP1, dense DP8 and expert DP1, MBS3/GBS480, and 20 microbatches per optimizer step. The persisted post-setup config confirmed forced expert balance, HybridEP, MXFP8, cuDNN LayerNorm, and Transformer Engine CUDA graphs for the MoE router and preprocessing scopes. Loss was finite from 12.81499 to 3.166235 with zero skipped or NaN iterations. Steps 41-50 averaged 26,880.420 ms and 210.360 model TFLOP/s/GPU, and the process exited successfully. This synthetic result is a throughput measurement, not a convergence claim.\n",
-          "hardware": "GB200",
-          "last_verified": "2026-07-30",
-          "metrics": {
-            "final_loss": 3.166235,
-            "initial_loss": 12.81499,
-            "last_10_steps_model_tflops_per_gpu_avg": 210.36,
-            "last_10_steps_step_time_ms_avg": 26880.42,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 9142.714
-          },
-          "precision": "fp8_mx",
-          "source_pointer": "items.pretrain_performance.GB200",
-          "status": "verified",
-          "variant": null,
-          "workflow": "pretrain_performance"
         }
       ],
       "hf_id": "Qwen/Qwen3.6-35B-A3B",
@@ -8410,7 +8750,7 @@
       "min_transformers_version": "5.8.1",
       "slug": "qwen3.6-35b-a3b",
       "source_card": "examples/model_verification_cards/qwen3.6-35b-a3b/card.yaml",
-      "summary": "Performance scope: pretrain_performance.H100 uses the tuned 16-H100 library recipe with the same pinned DataComp source as functional pretraining. The corresponding real-data pretrain, SFT, and LoRA measurements are verified. pretrain_performance.GB200 retains its tuned fixed-shape synthetic benchmark. Functional timing and throughput remain sanity checks. This card verifies conversion, inference, and training.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Full-model H100 DataComp pretraining reaches 135.610 model TFLOP/s/GPU, approximately 136, with natural routing. Checkpoint resume is explicitly unverified pending a full-model rerun. This card otherwise verifies conversion, inference, SFT, long-context SFT, and PEFT.\n",
       "title": "qwen3_6_35b_a3b"
     },
     {

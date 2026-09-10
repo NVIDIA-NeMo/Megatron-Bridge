@@ -14,6 +14,7 @@
 
 """Tests for train module utility functions."""
 
+import signal
 import time
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -22,6 +23,7 @@ import pytest
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
 from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
     _dummy_train_step,
@@ -99,6 +101,7 @@ class TestCheckpointManagerLifecycle:
             tensorboard_logger=None,
             wandb_logger=None,
             _comet_logger=None,
+            _signal_handler=None,
         )
         pg_collection = SimpleNamespace(
             pp=SimpleNamespace(size=Mock(return_value=1)),
@@ -134,6 +137,36 @@ class TestCheckpointManagerLifecycle:
             _finish_train(state, checkpoint_manager)
 
         assert checkpoint_manager.finalize_calls == [(True, False), (True, True)]
+
+    def test_natural_completion_restores_original_signal_handler(self):
+        """Terminal training cleanup should restore the caller's signal handler."""
+        original_handler = signal.getsignal(signal.SIGTERM)
+
+        def caller_handler(_signum, _frame):
+            pass
+
+        signal.signal(signal.SIGTERM, caller_handler)
+        state = GlobalState()
+        state.cfg = SimpleNamespace(
+            train=SimpleNamespace(exit_signal_handler=True, exit_signal=signal.SIGTERM),
+            nvrx_straggler=None,
+            logger=SimpleNamespace(wandb_project=None),
+        )
+
+        try:
+            with (
+                patch("megatron.bridge.training.train.safe_shutdown_nvrx_straggler_manager"),
+                patch("megatron.bridge.training.train.fault_tolerance"),
+                patch("megatron.bridge.training.train._delete_cuda_graphs"),
+                patch("megatron.bridge.training.train.destroy_global_state"),
+            ):
+                _finish_train(state, Mock())
+
+            assert signal.getsignal(signal.SIGTERM) is caller_handler
+        finally:
+            if state._signal_handler is not None:
+                state._signal_handler.release()
+            signal.signal(signal.SIGTERM, original_handler)
 
 
 class TestTrainStepAttentionLogitMonitoring:
@@ -1234,6 +1267,31 @@ class TestCheckpointAndDecideExit:
         mock_save_checkpoint.assert_called_once()
         save_call_args = mock_save_checkpoint.call_args
         assert save_call_args[1]["non_persistent_ckpt"] is True
+
+    @patch("megatron.bridge.training.train.save_checkpoint_and_time")
+    @patch("megatron.bridge.training.train.barrier_and_log")
+    @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
+    def test_local_checkpoint_does_not_suppress_persistent_exit_checkpoint(
+        self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
+        """A planned exit must persist state even when a local save is also due."""
+        mock_check_nvrx.return_value = False
+
+        state = self._create_mock_state(
+            checkpoint_save=True,
+            checkpoint_save_interval=100,
+            exit_interval=10,
+            step=10,
+        )
+        state.cfg.checkpoint.non_persistent_save_interval = 10
+        state.cfg.checkpoint.non_persistent_ckpt_type = "local"
+
+        result = checkpoint_and_decide_exit(state, **self._create_mock_args())
+
+        assert result is True
+        assert mock_save_checkpoint.call_count == 2
+        assert mock_save_checkpoint.call_args_list[0].kwargs["non_persistent_ckpt"] is True
+        assert mock_save_checkpoint.call_args_list[1].kwargs.get("non_persistent_ckpt", False) is False
 
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
     @patch("megatron.bridge.training.train.barrier_and_log")
