@@ -142,8 +142,9 @@ integrations that consume Hugging Face weight names directly, such as inference-
 
 Build one export plan after ModelOpt calibration and pass its `quantization_config` unchanged to the consumer. The
 plan retains only stable topology and format metadata, so it can be reused for every weight stream. Mutable quantizer
-state is captured as each weight is streamed. ModelOpt owns the emitted tensor names and formats; unquantized
-parameters retain their regular Hugging Face names.
+state is captured as each weight is streamed. Megatron-Bridge supplies canonical Hugging Face weight names; ModelOpt
+owns packed values, relative sidecar names, and formats. Unquantized parameters retain their regular Hugging Face
+names.
 
 ```python
 from safetensors.torch import save_file
@@ -182,8 +183,9 @@ expert specifications. Grouped mappings are resolved to per-expert gate, up, and
 and EP collection. Unsupported custom grouped mappings fail explicitly.
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
-or QAT. Dimension-permuting mappings are also rejected by the streaming API. This API requires a ModelOpt release
-that provides the functional quantized-weight export interface.
+or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
+their ordinary conversion path. This API requires a ModelOpt release that provides the functional quantized-weight
+export interface.
 
 ### Supported Models For PTQ
 
