@@ -556,9 +556,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             0, num_hidden_layers - num_hash_layers
         )
         hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
-        hf_cfg["o_groups"] = getattr(
-            provider, "output_projection_groups", getattr(provider, "o_groups", 8)
-        )
+        hf_cfg["o_groups"] = getattr(provider, "output_projection_groups", getattr(provider, "o_groups", 8))
         hf_cfg["o_lora_rank"] = getattr(
             provider, "output_projection_lora_rank", getattr(provider, "o_lora_rank", 1024)
         )
@@ -606,11 +604,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         Optional CSA indexer weights may use the legacy flat name or the native
         Transformers scorer submodule name.
         """
-        if (
-            isinstance(hf_param, str)
-            and hf_param.endswith(".ffn.gate.bias")
-            and hf_param not in hf_state_dict
-        ):
+        if isinstance(hf_param, str) and hf_param.endswith(".ffn.gate.bias") and hf_param not in hf_state_dict:
             return torch.zeros(self.hf_config.n_routed_experts, dtype=torch.float32)
 
         if isinstance(hf_param, str) and hf_param not in hf_state_dict:
@@ -979,9 +973,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         casts the dtype.
         """
         omitted_expert_biases = {
-            key
-            for key in converted_weights_dict
-            if key.endswith(".ffn.gate.bias") and key not in hf_state_dict
+            key for key in converted_weights_dict if key.endswith(".ffn.gate.bias") and key not in hf_state_dict
         }
         if omitted_expert_biases:
             converted_weights_dict = {
