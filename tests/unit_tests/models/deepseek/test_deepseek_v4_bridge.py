@@ -522,6 +522,7 @@ class TestDeepSeekV4HardwareDefaults:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.apply_dsa_kernel_fusion is expected
+        assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is expected
 
     def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):

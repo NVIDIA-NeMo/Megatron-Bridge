@@ -480,7 +480,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
 
         # ---- Hyper-Connections (mHC) ----
-        provider.enable_hyper_connections = True
+        provider.enable_mhc_connections = True
         provider.use_fused_mhc = use_blackwell_fused_kernels
         provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
