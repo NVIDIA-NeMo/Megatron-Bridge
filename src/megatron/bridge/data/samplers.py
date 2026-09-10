@@ -2,13 +2,33 @@
 
 """Dataloaders."""
 
+import functools
 import multiprocessing
+import os
 import random
 from typing import Any, Callable, Iterator, Optional
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
+
+
+def _close_nvidia_device_fds() -> None:
+    """Close inherited NVIDIA device descriptors in a DataLoader worker."""
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            path = os.readlink(f"/proc/self/fd/{fd}")
+            if path.startswith("/dev/nvidia"):
+                os.close(int(fd))
+        except OSError:
+            pass
+
+
+def _initialize_worker(worker_id: int, *, worker_init_fn: Optional[Callable]) -> None:
+    """Release inherited GPU descriptors, then invoke the caller initializer."""
+    _close_nvidia_device_fds()
+    if worker_init_fn is not None:
+        worker_init_fn(worker_id)
 
 
 def build_pretraining_data_loader(
@@ -111,6 +131,10 @@ def build_pretraining_data_loader(
     else:
         raise Exception("{} dataloader type is not supported.".format(dataloader_type))
 
+    maybe_worker_init_fn = None
+    if num_workers > 0:
+        maybe_worker_init_fn = functools.partial(_initialize_worker, worker_init_fn=worker_init_fn)
+
     # Torch dataloader.
     return DataLoader(
         dataset,
@@ -119,7 +143,7 @@ def build_pretraining_data_loader(
         pin_memory=pin_memory,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers,
-        worker_init_fn=worker_init_fn,
+        worker_init_fn=maybe_worker_init_fn,
     )
 
 

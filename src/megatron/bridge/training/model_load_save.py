@@ -120,11 +120,11 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     Useful for operations that require Megatron's parallel state but should run
     standalone (e.g., loading distributed checkpoints).
 
-    Uses an in-process store for the rendezvous: this context is intentionally
-    single-process (world_size=1, rank=0), so no host TCP port is needed. A TCP
-    rendezvous would either race on a dynamically picked port (the socket is
-    closed before init binds it) or silently inherit the caller's
-    MASTER_ADDR/MASTER_PORT settings.
+    Uses an in-process store for rendezvous: this context is intentionally
+    single-process (world_size=1, rank=0), so it does not need a TCPStore
+    endpoint. A TCPStore rendezvous would either race on a dynamically picked
+    port (the socket is closed before init binds it) or silently inherit the
+    caller's MASTER_ADDR/MASTER_PORT settings.
 
     Args:
         backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
@@ -155,6 +155,27 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     finally:
         parallel_state.destroy_model_parallel()
         dist.destroy_process_group()
+
+
+def _get_or_initialize_pg_collection(
+    model_cfg: TransformerConfig | ModelConfig,
+) -> ProcessGroupCollection:
+    """Return MPU process groups, initializing model-parallel state when needed."""
+    if not parallel_state.is_initialized():
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=model_cfg.tensor_model_parallel_size,
+            pipeline_model_parallel_size=model_cfg.pipeline_model_parallel_size,
+            virtual_pipeline_model_parallel_size=model_cfg.virtual_pipeline_model_parallel_size,
+            context_parallel_size=model_cfg.context_parallel_size or 1,
+            expert_model_parallel_size=model_cfg.expert_model_parallel_size or 1,
+            expert_tensor_parallel_size=model_cfg.expert_tensor_parallel_size,
+        )
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+            model_parallel_cuda_manual_seed(0)
+
+    return ProcessGroupCollection.use_mpu_process_groups()
 
 
 def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
@@ -351,13 +372,18 @@ def build_and_load_model(
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
-        if isinstance(model_cfg, ModelProviderMixin):
+        if isinstance(model_cfg, (ModelProviderMixin, ModelConfig)):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
-            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
-        elif isinstance(model_cfg, ModelConfig):
-            if hasattr(model_cfg, "finalize"):
-                model_cfg.finalize()
+            pg_collection = _get_or_initialize_pg_collection(model_cfg)
+
+            if isinstance(model_cfg, ModelProviderMixin):
+                return model_cfg.provide_distributed_model(
+                    wrap_with_ddp=False,
+                    use_cpu_initialization=use_cpu_init,
+                    pg_collection=pg_collection,
+                )
+
             builder_cls = model_cfg.get_builder_cls()
             builder = builder_cls(model_cfg)
             # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
@@ -367,9 +393,7 @@ def build_and_load_model(
             # the flag on the config object. This is intentional — we do not want
             # to duplicate TransformerConfig fields like `use_cpu_initialization`
             # as kwargs on `build_distributed_models`.
-            return builder.build_distributed_models(
-                ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
-            )
+            return builder.build_distributed_models(pg_collection, wrap_with_ddp=False)
         else:
             assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
