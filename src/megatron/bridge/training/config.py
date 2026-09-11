@@ -1192,8 +1192,6 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
         if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP8 or FP4.")
-        if self.model.cuda_graph_impl != "none" or self.ddp.megatron_fsdp_cuda_graph_mode:
-            raise ValueError("MFSDP V2 does not support CUDA graphs.")
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False

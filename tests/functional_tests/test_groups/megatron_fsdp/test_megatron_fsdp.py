@@ -433,6 +433,9 @@ class TestMegatronFSDP:
         )
         cfg.model = create_dense_hybrid_smoke_model_config()
         cfg.ddp.megatron_fsdp_version = 2
+        # Full-iteration graphs over a dense model: Megatron-LM #7075 made these work
+        # under MFSDP v2. MoE stays out, its dispatch shapes are not capturable.
+        cfg.model.cuda_graph_impl = "full_iteration"
         # Capturable TE FusedAdam requires the main-gradient and main-weight dtypes
         # to match (https://github.com/NVIDIA/TransformerEngine/issues/3358).
         cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
