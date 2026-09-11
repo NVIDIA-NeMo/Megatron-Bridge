@@ -152,6 +152,8 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, MXFP8 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
     cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.expert_model_parallel_size = 16
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -164,7 +166,7 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -180,6 +182,8 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
 def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, NVFP4 with full-iteration CUDA graph."""
     cfg = nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config()
+    cfg.model.expert_model_parallel_size = 16
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -192,7 +196,7 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
