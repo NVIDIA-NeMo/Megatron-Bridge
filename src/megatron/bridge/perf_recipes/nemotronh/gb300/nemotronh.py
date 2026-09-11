@@ -132,7 +132,7 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -186,7 +186,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
