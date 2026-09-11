@@ -61,6 +61,7 @@ Megatron-Core prerequisites:
   - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
+import inspect
 from typing import Dict, Mapping
 
 import torch
@@ -114,12 +115,18 @@ def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
 def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     """Return whether DSv4 fused DSA kernels can be enabled."""
     try:
-        from cudnn import DSA  # noqa: F401
+        from cudnn import DSA
         from flash_mla import flash_mla_sparse_fwd  # noqa: F401
     except ImportError:
         return False
 
-    return True
+    compact_wrapper = getattr(DSA, "indexer_forward_top_k_wrapper", None)
+    if not callable(compact_wrapper):
+        return False
+    try:
+        return "deterministic" in inspect.signature(compact_wrapper).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
@@ -398,8 +405,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+        provider_field_names = getattr(type(provider), "__dataclass_fields__", {})
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
-        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
+        use_dsa_kernel_fusion = (
+            use_blackwell_fused_kernels
+            and "apply_dsa_kernel_fusion" in provider_field_names
+            and deepseek_v4_supports_fused_dsa_kernels()
+        )
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -484,12 +496,18 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
-        provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
+        provider.dsa_kernel_backend = "cudnn" if use_dsa_kernel_fusion else "none"
+        if "apply_dsa_kernel_fusion" in provider_field_names:
+            provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
 
         # ---- Hyper-Connections (mHC) ----
-        provider.enable_hyper_connections = True
+        if "enable_hyper_connections" in provider_field_names:
+            provider.enable_hyper_connections = True
+            provider.num_residual_streams = hf_config.hc_mult  # 4
+        else:
+            provider.enable_mhc_connections = True
+            provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
         provider.use_fused_mhc = use_blackwell_fused_kernels
-        provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
 
         # ---- MoE ----
