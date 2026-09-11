@@ -194,9 +194,9 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = False
     cfg.mixed_precision.fp8_dot_product_attention = True
-    # cfg.model.cuda_graph_use_single_mempool = True
-    # cfg.optimizer.optimizer_cuda_graph = True
-    # cfg.optimizer.store_param_remainders = False
+    cfg.model.cuda_graph_use_single_mempool = True
+    cfg.optimizer.optimizer_cuda_graph = True
+    cfg.optimizer.store_param_remainders = False
     cfg.model.mla_down_proj_fusion = True
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
