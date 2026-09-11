@@ -564,12 +564,6 @@ def main(
     # Disable PCT binding for certain models on specific hardware/precision combos
     if (
         (
-            model_family_name == "nemotronh"
-            and model_recipe_name == "nemotron_3_super"
-            and compute_dtype == "bf16"
-            and gpu == "b300"
-        )
-        or (
             model_family_name == "deepseek"
             and model_recipe_name == "deepseek_v3"
             and gpu == "b300"
