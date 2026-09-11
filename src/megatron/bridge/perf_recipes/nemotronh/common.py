@@ -121,8 +121,8 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     _benchmark_common(cfg)
 
 
-def _enable_nemotron_3_super_full_iteration_nvfp4(cfg: ConfigContainer) -> None:
-    """Enable the HybridEP full-iteration stack for Nemotron 3 Super NVFP4."""
+def _enable_nemotron_3_super_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable the HybridEP full-iteration stack for Nemotron 3 Super."""
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_hybridep_num_sms = 32
@@ -149,7 +149,6 @@ def _enable_nemotron_3_super_full_iteration_nvfp4(cfg: ConfigContainer) -> None:
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
 
-    cfg.mixed_precision.fp8_dot_product_attention = False
     # Nemotron 3 Super uses two MTP layers. MCore only supports expert-parallel
     # A2A overlap and delayed wgrad with at most one MTP layer.
     cfg.comm_overlap = None

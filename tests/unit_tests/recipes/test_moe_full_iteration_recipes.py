@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration checks for NVFP4 full-iteration performance recipes."""
+"""Configuration checks for MoE full-iteration performance recipes."""
 
 from collections.abc import Callable
 
@@ -20,8 +20,11 @@ import pytest
 
 from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_256gpu_vr200_nvfp4_config
 from megatron.bridge.perf_recipes.nemotronh import (
+    nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
+    nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
+    nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.qwen import qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config
@@ -60,7 +63,6 @@ def _assert_full_iteration_hybridep(cfg: ConfigContainer) -> None:
 
     assert cfg.env_vars["NCCL_GRAPH_REGISTER"] == 0
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
 
 
@@ -114,6 +116,43 @@ def test_deepseek_v3_256gpu_vr200_nvfp4_uses_full_iteration_stack() -> None:
 @pytest.mark.parametrize(
     ("recipe", "expected_tp"),
     [
+        (nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config, 2),
+        (nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config, 1),
+        (nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config, 1),
+    ],
+)
+def test_nemotron_3_super_mxfp8_uses_full_iteration_stack(
+    recipe: Callable[[], ConfigContainer], expected_tp: int
+) -> None:
+    cfg = recipe()
+
+    _assert_full_iteration_hybridep(cfg)
+    assert cfg.mixed_precision.fp8 == "e4m3"
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+    assert cfg.mixed_precision.fp8_param_gather is True
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.model.moe_router_padding_for_quantization is True
+    assert cfg.model.high_priority_a2a_comm_stream is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.offload_modules == []
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.delay_wgrad_compute is False
+    assert cfg.comm_overlap is None
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert (
+        cfg.model.tensor_model_parallel_size,
+        cfg.model.pipeline_model_parallel_size,
+        cfg.model.virtual_pipeline_model_parallel_size,
+        cfg.model.expert_model_parallel_size,
+    ) == (expected_tp, 1, None, 32)
+
+
+@pytest.mark.parametrize(
+    ("recipe", "expected_tp"),
+    [
         (nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config, 2),
         (nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config, 1),
         (nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config, 1),
@@ -139,10 +178,11 @@ def test_nemotron_3_super_nvfp4_uses_full_iteration_stack(
     assert cfg.model.delay_wgrad_compute is False
     assert cfg.comm_overlap is None
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
     assert (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
         cfg.model.virtual_pipeline_model_parallel_size,
         cfg.model.expert_model_parallel_size,
-    ) == (expected_tp, 1, None, 64)
+    ) == (expected_tp, 1, None, 32)
