@@ -72,6 +72,59 @@ class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # 
     text_len: int = 512
     text_dim: int = 4096
 
+    def _get_num_floating_point_operations_with_runtime_stats(
+        self,
+        *,
+        batch_size: int,
+        seqlen_sum: int | None,
+        seqlen_squared_sum: int | None,
+        cross_seqlen_sum: int | None,
+        cross_seqlen_product_sum: int | None,
+    ) -> int:
+        """Estimate WAN training FLOPs from the executed latent and context lengths."""
+        if batch_size <= 0:
+            return 0
+        if any(
+            value is None for value in (seqlen_sum, seqlen_squared_sum, cross_seqlen_sum, cross_seqlen_product_sum)
+        ):
+            raise ValueError("WAN FLOP accounting requires runtime self- and cross-attention sequence metadata")
+
+        query_tokens = int(seqlen_sum)
+        query_tokens_squared = int(seqlen_squared_sum)
+        context_tokens = int(cross_seqlen_sum)
+        query_context_tokens = int(cross_seqlen_product_sum)
+
+        hidden_size = self.hidden_size
+        kv_channels = self.kv_channels or hidden_size // self.num_attention_heads
+        num_query_groups = self.num_attention_heads if self.num_query_groups is None else self.num_query_groups
+        query_projection_size = kv_channels * self.num_attention_heads
+        kv_projection_size = kv_channels * num_query_groups
+
+        self_attention_flops = (
+            2 * query_tokens * hidden_size * (query_projection_size + 2 * kv_projection_size)
+            + 4 * query_tokens_squared * query_projection_size
+            + 2 * query_tokens * query_projection_size * hidden_size
+        )
+        cross_attention_flops = (
+            2 * query_tokens * hidden_size * query_projection_size
+            + 4 * context_tokens * self.crossattn_emb_size * kv_projection_size
+            + 4 * query_context_tokens * query_projection_size
+            + 2 * query_tokens * query_projection_size * hidden_size
+        )
+        mlp_projection_factor = 6 if self.gated_linear_unit else 4
+        mlp_flops = mlp_projection_factor * query_tokens * hidden_size * self.ffn_hidden_size
+        transformer_flops = self.num_layers * (self_attention_flops + cross_attention_flops + mlp_flops)
+
+        patch_volume = self.patch_temporal * self.patch_spatial**2
+        patch_embedding_flops = 2 * query_tokens * self.in_channels * patch_volume * hidden_size
+        text_embedding_flops = (
+            2 * context_tokens * (self.text_dim * self.crossattn_emb_size + self.crossattn_emb_size**2)
+        )
+        output_head_flops = 2 * query_tokens * hidden_size * self.out_channels * patch_volume
+
+        # Backward costs approximately twice the forward matrix-multiplication work.
+        return 3 * (transformer_flops + patch_embedding_flops + text_embedding_flops + output_head_flops)
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> WanModel:
         vp_size = self.virtual_pipeline_model_parallel_size
         if vp_size:

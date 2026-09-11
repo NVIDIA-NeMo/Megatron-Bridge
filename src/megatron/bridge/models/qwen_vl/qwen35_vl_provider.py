@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-Qwen3.5 VL Model Provider configurations for Megatron-Core.
+Qwen3.5 and Qwen3.6 VL model-provider configurations for Megatron-Core.
 
-Qwen3.5 is a family of vision-language models that combine:
+Qwen3.5 and Qwen3.6 share a vision-language architecture that combines:
 - A hybrid Gated DeltaNet (GDN) + Gated Attention language model (like Qwen3-Next)
 - A vision encoder (similar to Qwen3-VL)
 - Dense MLP or Mixture of Experts (MoE) with shared experts
@@ -27,8 +27,9 @@ This module provides three model providers:
 
 - ``Qwen35TokenClassificationModelProvider``: Dense token-classification variant
 
-- ``Qwen35VLMoEModelProvider``: MoE variant (e.g., Qwen3.5-397B-A17B)
+- ``Qwen35VLMoEModelProvider``: Qwen3.5/Qwen3.6 MoE variants
   Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+  Reference: https://huggingface.co/Qwen/Qwen3.6-35B-A3B
 """
 
 from __future__ import annotations
@@ -104,7 +105,8 @@ def _check_qwen3_5_moe_available() -> None:
     """Raise a clear error if transformers doesn't have qwen3_5_moe support."""
     if not _TRANSFORMERS_HAS_QWEN3_5_MOE:
         raise ImportError(
-            f"Qwen3.5 VL (MoE) requires transformers >= 5.2.0, but found {transformers.__version__}. "
+            f"Qwen3.5/3.6 VL (MoE) requires transformers with qwen3_5_moe support, "
+            f"but found {transformers.__version__}. "
             "Please upgrade: pip install --upgrade transformers"
         )
 
@@ -139,7 +141,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
     )
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
-    experimental_attention_variant: str = "gated_delta_net"
+    experimental_attention_variant: str = "gdn"
     linear_attention_freq: int | list[int] = 4
 
     # --- Gated DeltaNet (GDN) parameters ---
@@ -305,10 +307,16 @@ class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
             The Megatron Qwen3.5 VL token-classification model for this stage.
 
         Raises:
-            ValueError: If ``num_labels`` is not a positive integer.
+            ValueError: If ``num_labels`` is not positive or ``logit_dtype`` is configured.
         """
         if self.num_labels is None or self.num_labels <= 0:
             raise ValueError(f"num_labels must be a positive integer, got {self.num_labels!r}.")
+        if self.logit_dtype is not None:
+            raise ValueError(
+                "Qwen3.5 token classification replaces the language-model output layer with a replicated "
+                "classification head, which does not support true mixed-precision output GEMMs. "
+                "Set logit_dtype=None."
+            )
 
         model = cast(
             Qwen3VLForTokenClassification,
@@ -332,13 +340,15 @@ class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
 @dataclass
 class Qwen35VLMoEModelProvider(GPTModelProvider):
     """
-    Model provider for Qwen 3.5 VL (Vision-Language) Models.
+    Model provider for Qwen3.5 and Qwen3.6 VL MoE models.
 
-    Qwen 3.5 combines a hybrid GDN (Gated DeltaNet) + Gated Attention language model
-    architecture (like Qwen3-Next) with a vision encoder (similar to Qwen3-VL) and
-    Mixture of Experts (MoE) with shared experts.
+    Qwen3.5 and Qwen3.6 combine a hybrid GDN (Gated DeltaNet) + Gated
+    Attention language architecture (like Qwen3-Next) with a vision encoder
+    (similar to Qwen3-VL) and Mixture of Experts (MoE) with shared experts.
+    Model-specific dimensions and MoE geometry are populated from the
+    Hugging Face config.
 
-    Key Architecture Details (397B-A17B):
+    Default Architecture Details (Qwen3.5-397B-A17B):
     - 60 layers: 15 groups × (3 GDN-MoE + 1 Attention-MoE)
     - Hidden dim: 4096, Token Embedding: 248320
     - GDN: 16 QK heads, 64 V heads, head_dim=128
@@ -361,7 +371,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     )
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
-    experimental_attention_variant: str = "gated_delta_net"
+    experimental_attention_variant: str = "gdn"
     linear_attention_freq: int | list[int] = 4  # 1 standard attention per 4 layers
 
     # --- Gated DeltaNet (GDN) parameters ---
@@ -408,9 +418,9 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
     vision_config: Any = field(default=None)
 
-    # Position embedding: Qwen3.5 uses multimodal rope (mRoPE)
+    # Position embedding: Qwen3.5/3.6 use multimodal rope (mRoPE).
     position_embedding_type: str = "mrope"
-    # Qwen3.5 mRoPE section is [11, 11, 10] (different from Qwen3-VL's [24, 20, 20])
+    # Qwen3.5/3.6 mRoPE is [11, 11, 10] (Qwen3-VL uses [24, 20, 20]).
     # because partial_rotary_factor=0.25, so RoPE dim = 256*0.25 = 64, with sections [11,11,10]
     # for [temporal, height, width] summing to 32 (half of 64 rotary dim).
     mrope_section: List[int] = field(default_factory=lambda: [11, 11, 10])
@@ -445,6 +455,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+
+    # Vision encoder CUDA graph settings
+    vision_cuda_graph_impl: str = "none"
+    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    max_vision_cuda_graph_seq_length: Optional[int] = None
 
     # Heterogeneous dist checkpoint (needed for hybrid architecture)
     hetereogenous_dist_checkpoint: bool = True
@@ -486,7 +501,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
-        """Provide a Qwen3.5 VL model instance with vision and language components."""
+        """Provide a Qwen3.5 or Qwen3.6 VL model with vision and language components."""
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
@@ -557,6 +572,7 @@ def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optio
             "vocab_size": provider.vocab_size,
             "max_sequence_length": provider.language_max_sequence_length,
             "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
+            "logit_dtype": provider.logit_dtype,
             "parallel_output": True,
             "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
             "position_embedding_type": "mrope",

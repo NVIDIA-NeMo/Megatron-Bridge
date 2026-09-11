@@ -583,6 +583,66 @@ def test_merge_canonical_adapter_from_weights(monkeypatch):
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.v_proj.weight"], 3 * torch.ones(1, 2))
 
 
+def test_merge_partial_canonical_adapter_preserves_unselected_projection():
+    bridge = DummyBridge()
+    converted = {
+        "model.layers.0.self_attn.q_proj.weight": torch.zeros(2, 2),
+        "model.layers.0.self_attn.k_proj.weight": torch.zeros(1, 2),
+        "model.layers.0.self_attn.v_proj.weight": torch.full((1, 2), 9.0),
+    }
+    adapter_q = AdapterWeight(
+        global_base_prefix="decoder.layers.0.self_attention.linear_qkv",
+        adapter_key="adapter_q",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_q", torch.tensor([[1.0, 2.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_q", torch.ones(2, 1), vp_stage=0),
+    )
+    adapter_k = AdapterWeight(
+        global_base_prefix="decoder.layers.0.self_attention.linear_qkv",
+        adapter_key="adapter_k",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_k", torch.tensor([[1.0, 2.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_k", 2 * torch.ones(1, 1), vp_stage=0),
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_q, adapter_k],
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.self_attn.q_proj.weight"], torch.tensor([[1.0, 2.0]] * 2))
+    torch.testing.assert_close(updated["model.layers.0.self_attn.k_proj.weight"], torch.tensor([[2.0, 4.0]]))
+    torch.testing.assert_close(updated["model.layers.0.self_attn.v_proj.weight"], torch.full((1, 2), 9.0))
+
+
+def test_merge_single_canonical_adapter_preserves_unselected_projection():
+    bridge = DummyBridge()
+    converted = {
+        "model.layers.0.mlp.gate_proj.weight": torch.full((2, 2), 7.0),
+        "model.layers.0.mlp.up_proj.weight": torch.zeros(2, 2),
+    }
+    adapter_up = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key="adapter_up",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_up", torch.tensor([[1.0, 2.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_up", torch.ones(2, 1), vp_stage=0),
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_up],
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.mlp.gate_proj.weight"], torch.full((2, 2), 7.0))
+    torch.testing.assert_close(updated["model.layers.0.mlp.up_proj.weight"], torch.tensor([[1.0, 2.0]] * 2))
+
+
 def test_column_parallel_mapping_gathers_3d_expert_adapter_along_tp(monkeypatch):
     mapping = ColumnParallelMapping(
         "decoder.layers.0.mlp.experts.linear_fc1.adapter.linear_out.weight",
@@ -2476,6 +2536,111 @@ def test_stream_weights_megatron_to_hf_merges_router_adapters(monkeypatch):
     assert len(weights) == 1
     assert weights[0].param_name == "model.language_model.layers.0.mlp.gate.weight"
     torch.testing.assert_close(weights[0].weight, expected)
+
+
+def test_stream_weights_megatron_to_hf_merges_lora_before_quantization(monkeypatch):
+    """LoRA delta must be merged into the bf16 base *before* ``maybe_modify`` quantizes.
+
+    If quantization runs first, the packed weight's shape no longer matches the LoRA
+    delta and the merge is silently skipped, so vLLM receives un-merged weights.
+    This test installs a ``maybe_modify`` that "quantizes" by recording the shape it
+    received and padding a sentinel column, then asserts the recorded shape is the
+    merged (base + delta) shape, not the raw base shape.
+    """
+    bridge = DummyBridge()
+
+    base_weight = torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+
+    class QuantizingMapping:
+        def megatron_to_hf(self, weight, module):
+            return {"model.layers.0.mlp.fc1.weight": base_weight.clone()}
+
+    task = WeightConversionTask(
+        param_name="language_model.decoder.layers.0.mlp.fc1.to_wrap.weight",
+        global_param_name="language_model.decoder.layers.0.mlp.fc1.to_wrap.weight",
+        mapping=QuantizingMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=torch.ones(1),
+    )
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="language_model.decoder.layers.0.mlp.fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="language_model.decoder.layers.0.mlp.fc1.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="language_model.decoder.layers.0.mlp.fc1.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+    # delta = (alpha/dim=1) * linear_out @ linear_in = eye(2) @ in = in
+    # merged = base + in = [[2,4,6],[8,10,12]]
+    adapter_weight = AdapterWeight(
+        global_base_prefix="language_model.decoder.layers.0.mlp.fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        linear_in_weight=MegatronWeightTuple("in", torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", torch.eye(2), vp_stage=0),
+    )
+
+    # Record what maybe_modify receives: if merge ran first, the weight is the
+    # merged tensor (base + delta); if quantize ran first, it's the raw base.
+    seen_by_maybe_modify: dict[str, torch.Tensor] = {}
+
+    def fake_maybe_modify(self, task, converted_weights_dict, hf_state_dict):
+        for name, tensor in converted_weights_dict.items():
+            seen_by_maybe_modify[name] = tensor.clone()
+        # Simulate "quantization" by tagging the tensor so we can tell it passed through.
+        return {name: t.clone() for name, t in converted_weights_dict.items()}
+
+    monkeypatch.setattr(DummyBridge, "maybe_modify_converted_hf_weight", fake_maybe_modify)
+    monkeypatch.setattr(
+        DummyBridge,
+        "_with_progress_tracking",
+        lambda self, tasks, *_args, **_kwargs: tasks,
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "_share_embeddings_and_output_weights",
+        lambda self, *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "build_adapter_conversion_tasks",
+        lambda *_args, **_kwargs: {"language_model.decoder.layers.0.mlp.fc1": [adapter_task]},
+    )
+    monkeypatch.setattr(DummyBridge, "materialize_adapter_weights", lambda *_args, **_kwargs: [adapter_weight])
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        lambda *_args, **_kwargs: [SimpleNamespace(config=SimpleNamespace(num_moe_experts=1))],
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=False,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=True,
+        )
+    )
+
+    # maybe_modify must have received the MERGED weight (base + delta), not the raw base.
+    merged_expected = base_weight + torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
+    received = seen_by_maybe_modify["model.layers.0.mlp.fc1.weight"]
+    torch.testing.assert_close(received, merged_expected)
+    # And the final exported weight carries the merged values through the fake quantize.
+    torch.testing.assert_close(weights[0].weight, merged_expected)
 
 
 def test_column_parallel_mapping_skips_ep_gather_for_adapters(monkeypatch):

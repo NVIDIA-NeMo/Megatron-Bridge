@@ -19,8 +19,8 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
-    nemotron_3_5_nano_pretrain_config,
-    nemotron_3_5_nano_sft_openmathinstruct2_packed_config,
+    nemotron_3_5_lightning_pretrain_config,
+    nemotron_3_5_lightning_sft_openmathinstruct2_packed_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -157,9 +157,9 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8k_config() -> ConfigContainer:
-    """Return the Nemotron 3.5 Nano BF16 8K pretraining config."""
-    cfg = nemotron_3_5_nano_pretrain_config()
+def nemotron_3_5_lightning_pretrain_8k_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Lightning BF16 8K pretraining config."""
+    cfg = nemotron_3_5_lightning_pretrain_config()
 
     # Keep the H100 convergence contract intact and change only GB200
     # execution/performance settings.
@@ -180,9 +180,9 @@ def nemotron_3_5_nano_pretrain_8k_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8k_fsdp_config() -> ConfigContainer:
-    """Return the Nemotron 3.5 Nano BF16 8K Megatron FSDP config."""
-    cfg = nemotron_3_5_nano_pretrain_8k_config()
+def nemotron_3_5_lightning_pretrain_8k_fsdp_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Lightning BF16 8K Megatron FSDP config."""
+    cfg = nemotron_3_5_lightning_pretrain_8k_config()
 
     # Megatron FSDP module hooks are incompatible with Transformer Engine CUDA
     # graph capture. Keep all convergence settings inherited from the BF16
@@ -205,9 +205,9 @@ def nemotron_3_5_nano_pretrain_8k_fsdp_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config() -> ConfigContainer:
+def nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config() -> ConfigContainer:
     """Return the optimized TP1 4K packed OpenMathInstruct-2 SFT config."""
-    cfg = nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
+    cfg = nemotron_3_5_lightning_sft_openmathinstruct2_packed_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.sequence_parallel = False
@@ -245,9 +245,9 @@ nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16
 
 
 __all__ = [
-    "nemotron_3_5_nano_pretrain_8k_config",
-    "nemotron_3_5_nano_pretrain_8k_fsdp_config",
-    "nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config",
+    "nemotron_3_5_lightning_pretrain_8k_config",
+    "nemotron_3_5_lightning_pretrain_8k_fsdp_config",
+    "nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
 ]

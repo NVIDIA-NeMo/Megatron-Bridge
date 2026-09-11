@@ -1,5 +1,5 @@
 title: moe_vlm_training
-validated_on: "2026-04-01"
+validated_on: "2026-08-25"
 summary: >
   Training strategies for MoE vision-language models (VLMs), comparing FSDP
   vs 3D Parallel approaches. Backed by empirical data from Qwen3-VL 235B
@@ -23,10 +23,11 @@ training_dimensions:
       FSDP is slightly faster out of the box. 3D Parallel approaches FSDP
       with MBS tuning but requires more configuration.
   memory:
-    effect: "FSDP shards more aggressively; 3D Parallel needs recompute"
+    effect: "FSDP shards more aggressively; 3D Parallel often needs recompute"
     confidence: medium
     rationale: >
-      3D Parallel with real vision data needs full recompute to fit in memory.
+      3D Parallel with real vision data often needs full recompute for initial
+      fit, then should be retested with supported selective modules.
   scale:
     effect: "Both approaches tested at 64–128 GPUs"
     confidence: medium
@@ -90,6 +91,12 @@ key_findings:
     finding: "MBS=4 nearly doubles 3D Parallel throughput vs MBS=1"
   - name: fsdp_simpler_setup
     finding: "FSDP reaches near-best performance with fewer tuning knobs"
+  - name: minimize_tp_after_fit
+    finding: "Prefer recompute for activation pressure, then reduce TP and increase MBS as memory permits"
+  - name: maximize_useful_ep
+    finding: "EP8 on 8 GPUs and EP32 on 32 GPUs are useful MoE starting points when expert divisibility and rank topology permit"
+  - name: qwen35_gdn_recompute_scope
+    finding: "Qwen3.5/Qwen3.6 supports targeted gdn_norm_out recompute, not selective checkpointing of the complete GDN recurrence"
 
 evidence:
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-VL"
@@ -100,3 +107,4 @@ known_limitations:
   - Long context (CP) not tested for VLM MoE
   - 3D Parallel results are with specific mcore_encoder; different encoder may differ
   - Only Qwen3-VL and Qwen3.5 architectures tested
+  - HybridEP versus AllToAll can be close within one 8-GPU NVLink domain in BF16; measure the target topology

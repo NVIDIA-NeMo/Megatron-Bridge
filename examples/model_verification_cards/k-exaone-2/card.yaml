@@ -1,0 +1,266 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: k_exaone_2_750b_a37b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining,
+  full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export,
+  training, export-after-SFT, long-context SFT, and checkpoint resume remain
+  unverified. A complete 750B GPU import from a clean commit persisted and
+  reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A
+  2-GPU structural MoE/MTP proxy also completed three
+  finite optimizer steps and saved checkpoints, but does not substitute for a
+  full-model training item. A memory-bounded reference forward processed all
+  78 Hugging Face decoder layers for a Korean prompt; Megatron matched its
+  next token with 0.999993 cosine similarity. Complete-model deterministic
+  inference generated and independently confirmed exactly 16 new tokens. The
+  implementation fixes are committed; GPU export remains unverified pending
+  its own clean-commit rerun and exact audit.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - manual_forward_pass
+      - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
+  hf_revision: 4bb394fd12f57be7174be7c80c30cc05472bf9e1  # pragma: allowlist secret
+  architecture: ExaoneMoeForCausalLM
+  min_transformers_version: "5.9.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: 766f7106e6502f71f799706a1dd874644eadb9ef  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No CPU Hugging Face-to-Megatron conversion result is claimed. Future
+      verification must import the complete immutable-revision checkpoint,
+      persist iter_0000000, reload it, and audit all mapped keys, shapes,
+      dtypes, and values.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 6 --gpus-per-node 8
+      --hf-model LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
+      --hf-revision 4bb394fd12f57be7174be7c80c30cc05472bf9e1
+      --megatron-path work/model-verification/k-exaone-2/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 3 --ep 16 --etp 1
+      --distributed-timeout-minutes 180 --low-memory-save
+    last_verified: 2026-08-24
+    expected_result: >
+      The pinned 59,396-tensor BF16 checkpoint imported and persisted
+      iter_0000000 on 48 H100 GPUs, and that artifact subsequently reloaded
+      for a full distributed GPU re-export audit. The audit compared all
+      59,396 tensors and 1,498,715,010,176 payload bytes with zero missing,
+      unexpected, duplicate, shape, dtype, or value mismatches.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No CPU Megatron-to-Hugging-Face conversion result is claimed. Future
+      verification depends on a complete CPU import and must export, strictly
+      reload, and compare all lossless tensors against the pinned source
+      revision.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 6 --gpus-per-node 8
+      --hf-model LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
+      --hf-revision 4bb394fd12f57be7174be7c80c30cc05472bf9e1
+      --megatron-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
+      --hf-path work/model-verification/k-exaone-2/hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 3 --ep 16 --etp 1
+      --distributed-timeout-minutes 180 --distributed-save
+      --save-every-n-ranks 1 --no-progress
+    last_verified: null
+    expected_result: >
+      A complete distributed export produced 59,396 indexed keys in 17
+      safetensors shards. Every exported tensor matches the pinned source
+      bitwise across 1,498,715,008,512 payload bytes, and the corrected
+      config/tokenizer reload successfully. The run exposed and fixed
+      preservation of one physical repeated MTP layer across four speculative
+      steps. The config fix is committed; this item remains unverified until
+      the clean-commit export and exact audit rerun complete.
+
+  manual_forward_pass:
+    status: verified
+    precision: bf16
+    bridge_commit: 68d7e875d3bcfad5cd0e7e7d18770cc7e5630034  # pragma: allowlist secret
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=48
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
+      --hf-revision 4bb394fd12f57be7174be7c80c30cc05472bf9e1
+      --megatron_model_path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
+      --hf-logits-path work/model-verification/k-exaone-2/full-forward/hf_logits_korean.pt
+      --model_class ExaoneMoeForCausalLM --prompt "대한민국의 수도는"
+      --tp 1 --pp 3 --ep 16 --etp 1
+    last_verified: 2026-07-31
+    expected_result: >
+      The memory-bounded Hugging Face reference processed all 78 decoder
+      layers for the shared Korean prompt. Hugging Face and Megatron processed
+      identical input IDs; the next-token matches at token 392 (literal "?").
+      Cosine similarity is 0.999993; maximum and mean absolute logit
+      differences are 7.500000 and 1.621717.
+
+  inference:
+    status: verified
+    precision: bf16
+    bridge_commit: bd56432512613a88ceae9ecb05654b63955f6dcb  # pragma: allowlist secret
+    command: >
+      uv run python scripts/inference/text_generation.py
+      --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B
+      --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000
+      --prompt "대한민국의 수도는" --max_new_tokens 16 --temperature 0
+      --top_k 1 --termination-id -1 --tp 1 --pp 3 --ep 16 --etp 1
+      --dtype bf16 --max_seq_length 128 --max_batch_size 1
+      --use-coordinator --inference-moe-token-dispatcher-type nccl
+      --distributed-timeout-minutes 180
+    last_verified: 2026-07-31
+    expected_result: |-
+      Generates an exact 16-token result. Literal completion: '?
+
+      Answer: Seoul
+
+      What is the most pop song in the world?
+
+      Answer: "'
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        moe_dispatcher: deepep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The exported 512-GPU H100 recipe must complete a bounded public-data
+        pretraining run at TP4/PP16/EP32 with natural routing, finite loss, no
+        skipped or NaN iterations, all five required metrics, and reloadable
+        middle and final checkpoints.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The exported 512-GPU H100 full-SFT recipe must load the pinned
+        checkpoint and complete a bounded immutable-dataset run at
+        TP4/PP16/EP32 with finite loss, no skipped or NaN iterations, all four
+        required metrics, and a reloadable final full-model checkpoint.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        This item depends on verified full SFT. Its final checkpoint must
+        export synchronously to Hugging Face, strictly reload, and complete
+        deterministic greedy inference with an exact new-token count and a
+        recorded literal completion.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        No long-context SFT result is claimed. Future verification must first
+        resolve a supported long-context topology, then verify sequence
+        packing and context parallelism together with finite loss, no skipped
+        or NaN iterations, and all five required metrics.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The exported 128-GPU H100 PEFT recipe must load the pinned checkpoint,
+        verify that LoRA targets the model-native attention projections, and
+        complete a bounded immutable-dataset run at TP4/PP8/EP16 with finite
+        loss, no skipped or NaN iterations, all five required metrics, and a
+        reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Future verification must resume directly from the pretraining middle
+        checkpoint into a distinct output root, restore optimizer and RNG
+        state, match the declared sentinel losses within tolerance, complete
+        with finite metrics, and save a reloadable final checkpoint.

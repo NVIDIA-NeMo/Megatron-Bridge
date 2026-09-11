@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import math
+import warnings
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any, TypeVar, Union
@@ -98,11 +99,11 @@ def inference_num_image_tiles(
 ) -> torch.Tensor:
     """Build image-placeholder replacement counts for pipeline inference.
 
-    The first pipeline stage can derive these counts from vision encoder
-    outputs, but the last stage needs the same row-major metadata to expand
-    input positions. Dynamic images contribute their post-pixel-shuffle token
-    count per compact placeholder. Temporal tubelets contribute one tile each;
-    ``LLaVAModel.img_seq_len`` supplies their fixed embedding width.
+    Dynamic images contribute their post-pixel-shuffle feature count per tile.
+    Temporal tubelets contribute one logical count each; canonical inference
+    applies the fixed tubelet width through
+    :func:`inference_expanded_image_token_counts`. The deprecated LLaVA path
+    instead applies that width inside the model.
 
     Args:
         imgs_sizes: Per-image or per-frame ``(height, width)`` metadata.
@@ -140,6 +141,66 @@ def inference_num_image_tiles(
     return (grid_sizes.prod(dim=1) // (pixel_shuffle_factor**2)).to(dtype=torch.int)
 
 
+def inference_expanded_image_token_counts(
+    tile_feature_counts: torch.Tensor,
+    tiles_per_media: int | Sequence[int] | torch.Tensor,
+    *,
+    feature_multiplier: int = 1,
+) -> torch.Tensor:
+    """Aggregate projected feature counts for canonical inference prompts.
+
+    Dynamic image processors can split one source image into multiple RADIO
+    tiles, while each ``<img>...</img>`` region belongs to the source image.
+    The canonical model needs one ``<image>`` placeholder per projected
+    feature, so per-tile counts must be summed back to one count per region.
+    Temporal inference uses one logical tile per tubelet and a fixed feature
+    multiplier for the post-pixel-shuffle tubelet width.
+
+    Args:
+        tile_feature_counts: Number of projected feature rows produced by each
+            RADIO tile or temporal tubelet.
+        tiles_per_media: Number of entries in ``tile_feature_counts`` owned by
+            each ``<img>...</img>`` region.
+        feature_multiplier: Additional projected width per count. Use one for
+            dynamic images and the tubelet feature width for temporal video.
+
+    Returns:
+        One expanded placeholder count per ``<img>...</img>`` region.
+
+    Raises:
+        ValueError: If counts are non-positive or do not account for every
+            tile/tubelet.
+    """
+    flat_feature_counts = tile_feature_counts.reshape(-1)
+    if torch.any(flat_feature_counts <= 0):
+        raise ValueError("tile_feature_counts entries must be greater than 0.")
+    if feature_multiplier <= 0:
+        raise ValueError("feature_multiplier must be greater than 0.")
+
+    if isinstance(tiles_per_media, int):
+        media_tile_counts = [tiles_per_media]
+    elif isinstance(tiles_per_media, torch.Tensor):
+        media_tile_counts = [int(count) for count in tiles_per_media.detach().cpu().reshape(-1).tolist()]
+    else:
+        media_tile_counts = [int(count) for count in tiles_per_media]
+    if not media_tile_counts or any(count <= 0 for count in media_tile_counts):
+        raise ValueError("tiles_per_media entries must be greater than 0.")
+    if sum(media_tile_counts) != flat_feature_counts.numel():
+        raise ValueError(
+            "tiles_per_media must account for every tile feature count; "
+            f"got {sum(media_tile_counts)} tiles for {flat_feature_counts.numel()} counts."
+        )
+
+    offset = 0
+    expanded_counts = []
+    for tile_count in media_tile_counts:
+        expanded_counts.append(
+            int(flat_feature_counts[offset : offset + tile_count].sum().item()) * feature_multiplier
+        )
+        offset += tile_count
+    return torch.tensor(expanded_counts, dtype=torch.int, device=tile_feature_counts.device)
+
+
 def inference_merged_sequence_length(
     input_ids: torch.Tensor,
     *,
@@ -147,7 +208,10 @@ def inference_merged_sequence_length(
     num_image_tiles: torch.Tensor | None,
     image_seq_len: int,
 ) -> int:
-    """Return the unpadded sequence length after vision-token replacement.
+    """Return the legacy unpadded length after model-owned vision expansion.
+
+    This helper is deprecated because the canonical model consumes an already
+    expanded sequence; its merged length is simply ``input_ids.shape[1]``.
 
     Args:
         input_ids: One inference prompt row, including generated tokens so far.
@@ -158,6 +222,12 @@ def inference_merged_sequence_length(
     Returns:
         The real merged sequence length before pipeline padding.
     """
+    warnings.warn(
+        "inference_merged_sequence_length is deprecated with the Nemotron Omni LLaVA collapse/expand path; "
+        "canonical expanded-sequence inference uses input_ids.shape[1].",
+        FutureWarning,
+        stacklevel=2,
+    )
     if input_ids.ndim != 2 or input_ids.shape[0] != 1:
         raise ValueError(f"input_ids must have shape [1, S], got {tuple(input_ids.shape)}.")
     if image_seq_len <= 0:
@@ -227,6 +297,80 @@ def _parakeet_feature_extractor(num_mel_bins: int, sampling_rate: int) -> Any:
     )
 
 
+def valid_audio_feature_lengths(attention_mask: torch.Tensor, *, num_frames: int) -> torch.Tensor:
+    """Convert Parakeet feature masks to contiguous-prefix frame lengths.
+
+    Parakeet retains a padded boundary frame in ``input_features`` while its
+    feature-level attention mask records the semantic frame count. Bridge's
+    sound encoder accepts that mask in compressed form as ``sound_length``.
+
+    Args:
+        attention_mask: Binary mask with shape ``(batch, frames)``.
+        num_frames: Physical frame width of the corresponding feature tensor.
+
+    Returns:
+        Long tensor containing one valid frame length per batch item.
+
+    Raises:
+        ValueError: If the mask is empty, non-binary, has the wrong shape, or
+            is not a non-empty contiguous prefix for every batch item.
+    """
+    mask = torch.as_tensor(attention_mask)
+    if mask.ndim != 2:
+        raise ValueError(f"Parakeet feature attention_mask must be 2-D, got shape {tuple(mask.shape)}.")
+    if num_frames < 1 or mask.shape[1] != num_frames:
+        raise ValueError(
+            "Parakeet feature attention_mask width must match the physical feature width; "
+            f"got mask shape {tuple(mask.shape)} and num_frames={num_frames}."
+        )
+    if not bool(torch.all((mask == 0) | (mask == 1))):
+        raise ValueError("Parakeet feature attention_mask must contain only binary values.")
+
+    prefix_mask = mask.to(dtype=torch.bool)
+    lengths = prefix_mask.sum(dim=1, dtype=torch.long)
+    if bool(torch.any(lengths == 0)):
+        raise ValueError("Parakeet feature attention_mask must contain at least one valid frame per sample.")
+    expected_mask = torch.arange(num_frames, device=mask.device)[None, :] < lengths[:, None]
+    if not torch.equal(prefix_mask, expected_mask):
+        raise ValueError("Parakeet feature attention_mask must contain one contiguous valid prefix per sample.")
+    return lengths
+
+
+def compute_mel_features_with_length(
+    waveform: Union[np.ndarray, list],
+    sampling_rate: int = 16000,
+    num_mel_bins: int = 128,
+) -> tuple[torch.Tensor, int]:
+    """Convert one waveform to physical mel features and its valid frame length.
+
+    Args:
+        waveform: 1-D float32 numpy array (or list) of the mono waveform.
+        sampling_rate: Sampling rate of *waveform* (must match the extractor).
+        num_mel_bins: Number of mel frequency bins.
+
+    Returns:
+        A ``(mel, valid_length)`` pair. ``mel`` has physical shape
+        ``(frames, num_mel_bins)`` and may include padded boundary rows;
+        ``valid_length`` is derived from Parakeet's feature attention mask.
+    """
+    extractor = _parakeet_feature_extractor(num_mel_bins, sampling_rate)
+    features = extractor(
+        waveform,
+        sampling_rate=sampling_rate,
+        return_tensors="pt",
+        return_attention_mask=True,
+    )
+    input_features = torch.as_tensor(features["input_features"])
+    if input_features.ndim != 3 or input_features.shape[0] != 1:
+        raise ValueError(
+            "compute_mel_features_with_length expects one waveform and Parakeet features with shape "
+            f"(1, frames, mel_bins), got {tuple(input_features.shape)}."
+        )
+    mel = input_features.squeeze(0)
+    lengths = valid_audio_feature_lengths(features["attention_mask"], num_frames=mel.shape[0])
+    return mel, int(lengths[0].item())
+
+
 def compute_mel_features(
     waveform: Union[np.ndarray, list],
     sampling_rate: int = 16000,
@@ -245,14 +389,15 @@ def compute_mel_features(
     Returns:
         Float tensor of shape ``(frames, num_mel_bins)`` -- a single clip
         ready to be batched and passed as ``sound_clips`` to the model.
+
+        Call :func:`compute_mel_features_with_length` when the corresponding
+        semantic frame length is also required.
     """
-    extractor = _parakeet_feature_extractor(num_mel_bins, sampling_rate)
-    features = extractor(
+    mel, _ = compute_mel_features_with_length(
         waveform,
         sampling_rate=sampling_rate,
-        return_tensors="pt",
+        num_mel_bins=num_mel_bins,
     )
-    mel = features["input_features"].squeeze(0)
     return mel
 
 

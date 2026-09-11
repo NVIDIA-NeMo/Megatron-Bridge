@@ -21,6 +21,7 @@ import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion import quant_bridge as quant_bridge_module
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -203,6 +204,53 @@ def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
     assert seen_configs == [model_config]
 
 
+def test_quantized_stream_accumulates_grouped_experts(monkeypatch):
+    class GroupedQuantMapping:
+        is_grouped_export = True
+        ep_size = 1
+
+        def megatron_to_hf_quant(self, weight, *_args):
+            return {
+                "model.layers.0.mlp.experts.down_proj": weight,
+                "model.layers.0.mlp.experts.down_proj_scale_inv": weight + 10,
+            }
+
+    model = types.SimpleNamespace(config=types.SimpleNamespace(num_moe_experts=2))
+    bridge = MegatronModelBridge()
+    monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda _config: False)
+    monkeypatch.setattr(bridge, "_with_progress_tracking", lambda tasks, *_args: tasks)
+    monkeypatch.setattr(quant_bridge_module, "unwrap_model", lambda _models: [model])
+
+    tasks = [
+        WeightConversionTask(
+            param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
+            global_param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
+            mapping=GroupedQuantMapping(),
+            megatron_module=types.SimpleNamespace(),
+            param_weight=torch.tensor([[float(expert + 1)]]),
+        )
+        for expert in range(2)
+    ]
+
+    exported = list(
+        bridge.stream_weights_megatron_to_hf_quant(
+            model,
+            types.SimpleNamespace(),
+            quantization_checker=lambda _name: True,
+            quant_fn=lambda weight, _block_size: (weight, weight + 10),
+            conversion_tasks=tasks,
+            show_progress=False,
+        )
+    )
+
+    assert [weight.param_name for weight in exported] == [
+        "model.layers.0.mlp.experts.down_proj",
+        "model.layers.0.mlp.experts.down_proj_scale_inv",
+    ]
+    torch.testing.assert_close(exported[0].weight, torch.tensor([[[1.0]], [[2.0]]]))
+    torch.testing.assert_close(exported[1].weight, torch.tensor([[[11.0]], [[12.0]]]))
+
+
 class TestColumnParallelMappingQuant:
     @pytest.mark.parametrize("tp_rank", [0, 1])
     def test_megatron_to_hf_quant(self, mock_distributed_env, tp_rank):
@@ -370,3 +418,32 @@ class TestGatedMLPMappingQuant:
         assert torch.equal(result["up.weight"], q_up)
         assert torch.equal(result["gate.weight_scale_inv"], scale_gate)
         assert torch.equal(result["up.weight_scale_inv"], scale_up)
+
+    def test_megatron_to_hf_quant_skips_missing_singleton_ep_group(self, mock_distributed_env):
+        """Logical EP=1 must not fall through to the default WORLD group."""
+        _, mock_dist = mock_distributed_env()
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight",
+            gate="model.layers.0.mlp.experts.0.gate_proj.weight",
+            up="model.layers.0.mlp.experts.0.up_proj.weight",
+        )
+        mapping.pp_group = None
+        mapping.ep_group = None
+        mapping._tp_group = None
+        mapping._etp_group = None
+        merged_weight = torch.randn(16, 4)
+        megatron_module = MockModule(types.SimpleNamespace(num_moe_experts=1), weight_shape=(16, 4))
+
+        result = mapping.megatron_to_hf_quant(
+            merged_weight,
+            megatron_module,
+            quantization_checker=dummy_quantization_checker,
+            quant_fn=scaled_fp8_blockwise,
+            quant_block_size=(2, 2),
+        )
+
+        assert result["model.layers.0.mlp.experts.0.gate_proj.weight"].shape == (8, 4)
+        assert result["model.layers.0.mlp.experts.0.up_proj.weight"].shape == (8, 4)
+        assert result["model.layers.0.mlp.experts.0.gate_proj.weight_scale_inv"].shape == (4, 2, 1)
+        assert result["model.layers.0.mlp.experts.0.up_proj.weight_scale_inv"].shape == (4, 2, 1)
+        mock_dist.all_gather.assert_not_called()

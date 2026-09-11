@@ -20,21 +20,6 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # Qwen3.5-0.8B, Qwen3.5-2B, Qwen3.5-4B, Qwen3.5-9B, Qwen3.5-27B, Qwen3.5-35B-A3B, Qwen3.5-122B-A10B, Qwen3.5-397B-A17B
 MODEL_NAME=Qwen3.5-35B-A3B
 
-if [ "${MODEL_NAME}" = "Qwen3.5-0.8B" ] || [ "${MODEL_NAME}" = "Qwen3.5-2B" ] || [ "${MODEL_NAME}" = "Qwen3.5-4B" ] || [ "${MODEL_NAME}" = "Qwen3.5-9B" ] || [ "${MODEL_NAME}" = "Qwen3.5-27B" ]; then
-    HF_MODEL_CLASS="Qwen3_5ForConditionalGeneration"
-    EP=1
-    PP=8
-    TP=1
-elif [ "${MODEL_NAME}" = "Qwen3.5-35B-A3B" ] || [ "${MODEL_NAME}" = "Qwen3.5-122B-A10B" ] || [ "${MODEL_NAME}" = "Qwen3.5-397B-A17B" ]; then
-    HF_MODEL_CLASS="Qwen3_5MoeForConditionalGeneration"
-    EP=8
-    PP=1
-    TP=1
-else
-    echo "Unsupported model variant: ${MODEL_NAME}"
-    exit 1
-fi
-
 # Make sure to upgrade to transformers >= 5.2.0
 # uv add transformers>=5.2.0
 
@@ -44,26 +29,8 @@ fi
     --megatron-path ${WORKSPACE}/${MODEL_NAME} \
     --torch-dtype bfloat16
 
-# HF and Megatron models logits comparison validation
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/compare_hf_and_megatron/compare.py \
-    --hf_model_path Qwen/${MODEL_NAME} \
-    --megatron_model_path ${WORKSPACE}/${MODEL_NAME} \
-    --model_class "${HF_MODEL_CLASS}" \
-    --image_path "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg" \
-    --prompt "Describe this image." \
-    --tp ${TP} --pp ${PP} --ep ${EP}
-
 # Export Megatron → HF
 ./scripts/conversion/convert.sh export \
     --hf-model Qwen/${MODEL_NAME} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME}/iter_0000000 \
     --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export
-
-# Round-trip validation
-./scripts/conversion/convert.sh roundtrip \
-    --executor local \
-    --device gpu \
-    --gpus-per-node 8 \
-    --hf-model-id Qwen/${MODEL_NAME} \
-    --tp ${TP} --pp ${PP} --ep ${EP} \
-    --trust-remote-code

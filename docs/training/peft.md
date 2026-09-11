@@ -127,6 +127,26 @@ lora_config = LoRA(
 )
 ```
 
+#### LoRA+
+
+[LoRA+](https://arxiv.org/abs/2402.12354) trains the B matrix (`linear_out`) at a higher learning rate than A (`linear_in`) by a fixed ratio `lr_B = lora_plus_ratio * lr_A` (paper default 16). The ratio is set on the optimizer, not the `LoRA` adapter: when it differs from `1.0`, `get_lora_plus_config_overrides` (`megatron.bridge.peft.lora`) builds Megatron-Core per-group overrides giving the `*.linear_out.weight` group `max_lr`/`min_lr` scaled by the ratio. Pass `1.0` (or skip the call) to keep a single learning rate.
+
+```python
+from megatron.bridge.peft.lora import get_lora_plus_config_overrides
+from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
+
+opt_config = OptimizerConfig(optimizer="adam", lr=1e-4, bf16=True)
+
+# LoRA+ LR split: lr_B = lora_plus_ratio * lr_A; pass 1.0 (or skip) to disable.
+lora_plus_ratio = 16
+config_overrides = get_lora_plus_config_overrides(opt_config, lora_plus_ratio)
+optimizer = get_megatron_optimizer(
+    config=opt_config,
+    model_chunks=model_chunks,
+    config_overrides=config_overrides,
+)
+```
+
 ### Canonical LoRA: Performant vs Canonical Variants
 
 There are two variants of LoRA implemented in Megatron Bridge: "performant LoRA" (`LoRA`) and "canonical LoRA" (`CanonicalLoRA`).

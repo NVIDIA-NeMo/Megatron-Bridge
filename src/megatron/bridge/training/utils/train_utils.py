@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 import torch.nn as nn
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
@@ -594,6 +595,47 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _track_moe_metrics_supports_num_moe_layers() -> bool:
+    """Return whether the active MCore accepts explicit MoE layer counts."""
+    return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
+
+
+def _get_num_moe_layers(model_config: Any) -> int:
+    """Count MoE aux-loss contributors for MCore metric averaging."""
+    num_layers = model_config.num_layers
+    mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
+    repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
+
+    if getattr(model_config, "is_hybrid_model", False):
+        pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
+        main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
+        mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
+        mtp_depth = pattern.mtp_num_depths
+    else:
+        moe_layer_freq = getattr(model_config, "moe_layer_freq", None)
+        if moe_layer_freq is None:
+            main_moe_layers = num_layers
+            last_layer_is_moe = True
+        elif isinstance(moe_layer_freq, int):
+            main_moe_layers = sum(i % moe_layer_freq == 0 for i in range(num_layers))
+            last_layer_is_moe = (num_layers - 1) % moe_layer_freq == 0
+        elif isinstance(moe_layer_freq, list):
+            main_moe_layers = sum(moe_layer_freq)
+            last_layer_is_moe = bool(moe_layer_freq[-1])
+        else:
+            raise ValueError(f"Invalid moe_layer_freq: {moe_layer_freq}")
+
+        # Non-hybrid MTP copies the final main layer's dense/MoE layout.
+        mtp_moe_layers = int(last_layer_is_moe and mtp_num_layers > 0)
+        mtp_depth = mtp_num_layers
+
+    # A reused MTP block contributes once; distinct blocks contribute at each depth.
+    if not repeated_mtp:
+        mtp_moe_layers *= mtp_depth
+
+    return main_moe_layers + mtp_moe_layers
+
+
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
@@ -986,28 +1028,26 @@ def training_log(
         if getattr(config.model, "moe_z_loss_coeff", None) is not None:
             track_names.append("z_loss")
 
-        if getattr(config.model, "is_hybrid_model", False):
-            layers = getattr(config.model, "hybrid_layer_pattern", "").count("E")
-        else:
-            layers = getattr(config.model, "num_layers", None)
-
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
         # No-op when neither logger is configured: the original writer is returned as-is.
         moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
-        track_moe_metrics(
-            loss_scale=moe_loss_scale,
-            iteration=iteration,
-            writer=moe_metric_writer,
-            wandb_writer=wandb_writer,
-            total_loss_dict=total_loss_dict,
-            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
-            force_initialize=True,
-            track_names=track_names,
-            num_layers=layers,
-            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
-            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
-            pg_collection=pg_collection,
-        )
+        track_moe_metrics_kwargs = {
+            "loss_scale": moe_loss_scale,
+            "iteration": iteration,
+            "writer": moe_metric_writer,
+            "wandb_writer": wandb_writer,
+            "total_loss_dict": total_loss_dict,
+            "per_layer_logging": getattr(config.model, "moe_per_layer_logging", False),
+            "force_initialize": True,
+            "track_names": track_names,
+            "num_layers": config.model.num_layers,
+            "moe_layer_freq": getattr(config.model, "moe_layer_freq", None),
+            "mtp_num_layers": getattr(config.model, "mtp_num_layers", None),
+            "pg_collection": pg_collection,
+        }
+        if _track_moe_metrics_supports_num_moe_layers():
+            track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
+        track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)

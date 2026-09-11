@@ -16,7 +16,6 @@
 
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
 )
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
@@ -30,6 +29,7 @@ from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 
 
 def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
@@ -45,7 +45,7 @@ def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
 
 
 def _qwen35_vl_common(cfg: ConfigContainer) -> None:
-    """Apply VLM-specific performance benchmark settings for Qwen3.5-VL.
+    """Apply VLM benchmark settings shared by Qwen3.5/Qwen3.6-VL.
 
     Must be called before ``_benchmark_common`` and after setting precision.
     """
@@ -72,25 +72,19 @@ def _qwen35_vl_common(cfg: ConfigContainer) -> None:
 def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
-    Qwen3.5-VL disables RoPE fusion and CUDA graphs for VLM variable-length
-    inputs; these override the perf defaults that ``_benchmark_common`` sets.
+    Qwen3.5/Qwen3.6-VL disable RoPE fusion and CUDA graphs for variable-length
+    VLM inputs; these override the perf defaults that ``_benchmark_common`` sets.
     """
     cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
+    clear_cuda_graph_modules(cfg.model)
     cfg.optimizer.overlap_param_gather = False
 
 
-def _qwen35_vl_post_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3.5-VL post-overrides and optimizer-step param-gather overlap."""
-    _qwen35_vl_post(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
-
-
-def _qwen35_vl_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3.5-VL post-overrides, clear graph scope, and enable overlap."""
+def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:
+    """Apply Qwen3.5/Qwen3.6-VL post-overrides and clear graph scope."""
     _qwen35_vl_post(cfg)
     cfg.model.cuda_graph_scope = []
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
 
 
 def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
@@ -111,21 +105,9 @@ def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_grad_reduce = False
 
 
-def _finalize_qwen3_vl_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3-VL perf defaults with optimizer-step param-gather overlap."""
-    _finalize_qwen3_vl(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
-
-
 def _finalize_qwen3_vl_with_moe_a2a_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults with MoE A2A overlap enabled."""
     _finalize_qwen3_vl(cfg)
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     cfg.comm_overlap.delay_wgrad_compute = True
     cfg.model.moe_shared_expert_overlap = False
-
-
-def _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3-VL perf defaults with MoE A2A and optimizer-step overlap."""
-    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)

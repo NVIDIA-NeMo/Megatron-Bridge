@@ -240,7 +240,7 @@ def _wrap_iter(loader_iter, vision_dtype: torch.dtype = torch.bfloat16):
         yield batch
 
 
-def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
+def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None, valid_samples=0):
     """Build data iterators compatible with pretrain_megatron_mimo's build_data_iterators_fn.
 
     Accepts an optional ``train_state`` so consumed-sample offsets from a restored
@@ -254,12 +254,12 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
         train_state = TrainState()
     train_samples = cfg.train.train_iters * cfg.train.global_batch_size
 
-    train_loader, _, _ = build_megatron_mimo_data_loaders(
+    train_loader, valid_loader, _ = build_megatron_mimo_data_loaders(
         cfg=cfg,
         train_state=train_state,
         megatron_mimo_provider=cfg.dataset,
         train_samples=max(train_samples, 100),
-        valid_samples=0,
+        valid_samples=valid_samples,
         test_samples=0,
     )
 
@@ -269,7 +269,17 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
     )
     vision_dtype = torch.bfloat16 if vision_cfg.bf16 else torch.float32
     train_iter = _wrap_iter(train_loader, vision_dtype=vision_dtype) if train_loader is not None else None
-    return train_iter, None
+    valid_iter = _wrap_iter(valid_loader, vision_dtype=vision_dtype) if valid_loader is not None else None
+    return train_iter, valid_iter
+
+
+def _build_data_iterators_with_validation(cfg, megatron_mimo_infra, *, train_state=None):
+    return _build_data_iterators(
+        cfg,
+        megatron_mimo_infra,
+        train_state=train_state,
+        valid_samples=1,
+    )
 
 
 # ── Config builder ───────────────────────────────────────────────────────────
@@ -498,6 +508,54 @@ class TestMegatronMIMOTraining:
         torchrun --nproc_per_node=2 -m pytest -v -s -x \\
             tests/functional_tests/test_groups/megatron_mimo/test_pretrain_megatron_mimo.py
     """
+
+    @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_interval_validation(self):
+        """MegatronMIMO should run interval validation with its canonical provider config."""
+        from megatron.bridge.training.state import GlobalState
+
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=1,
+                ),
+            },
+        )
+
+        cfg = _build_config(par_cfg, train_iters=1)
+        cfg.validation.eval_interval = 1
+        cfg.validation.eval_iters = 1
+        cfg.validation.eval_global_batch_size = 1
+        cfg.validation.eval_micro_batch_size = 1
+
+        state = GlobalState()
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators_with_validation,
+            global_state=state,
+        )
+
+        assert state.train_state.consumed_valid_samples == 1
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("deterministic", [False, True], ids=["default", "deterministic"])

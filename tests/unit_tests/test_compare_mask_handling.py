@@ -77,6 +77,7 @@ try:
         from compare import (  # noqa: E402
             SingleBatchIterator,
             _broadcast_hf_results,
+            _load_hf_reference_logits,
             _maybe_gather_tensor_parallel_logits,
             _run_hf_inference,
             _run_megatron_forward,
@@ -119,19 +120,22 @@ class TestCompareMaskHandling:
         image = object()
 
         with patch.object(compare, "load_image", return_value=image):
-            actual_input_ids, actual_pixels, image_grid_thw, actual_token_type_ids = compare.process_inputs(
-                tokenizer,
-                processor,
-                "/tmp/example.png",
-                "Describe this image.",
-                is_vl_model=True,
-                tp_size=2,
+            actual_input_ids, actual_pixels, image_grid_thw, actual_token_type_ids, actual_mm_token_type_ids = (
+                compare.process_inputs(
+                    tokenizer,
+                    processor,
+                    "/tmp/example.png",
+                    "Describe this image.",
+                    is_vl_model=True,
+                    tp_size=2,
+                )
             )
 
         torch.testing.assert_close(actual_input_ids, torch.tensor([[1, 2, 3, 7]]))
         assert actual_pixels is pixel_values
         assert image_grid_thw is None
         torch.testing.assert_close(actual_token_type_ids, torch.tensor([[0, 1, 0, 0]]))
+        assert actual_mm_token_type_ids is None
         processor.apply_chat_template.assert_called_once_with(
             [
                 {
@@ -147,6 +151,39 @@ class TestCompareMaskHandling:
             return_dict=True,
             return_tensors="pt",
         )
+
+    def test_vlm_inputs_preserve_mm_token_types_and_tp_padding(self):
+        """VLM preprocessing keeps M-RoPE token types under their processor key."""
+        input_ids = torch.tensor([[1, 2, 3]])
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+        pixel_values = torch.randn(3, 8)
+        image_grid_thw = torch.tensor([[1, 2, 2]])
+        processor = MagicMock()
+        processor.apply_chat_template.return_value = {
+            "input_ids": input_ids,
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "mm_token_type_ids": mm_token_type_ids,
+        }
+        tokenizer = SimpleNamespace(pad_token_id=7)
+
+        with patch.object(compare, "load_image", return_value=object()):
+            actual_input_ids, actual_pixels, actual_grid, token_type_ids, actual_mm_token_type_ids = (
+                compare.process_inputs(
+                    tokenizer,
+                    processor,
+                    "/tmp/example.png",
+                    "Describe this image.",
+                    is_vl_model=True,
+                    tp_size=2,
+                )
+            )
+
+        torch.testing.assert_close(actual_input_ids, torch.tensor([[1, 2, 3, 7]]))
+        assert actual_pixels is pixel_values
+        assert actual_grid is image_grid_thw
+        assert token_type_ids is None
+        torch.testing.assert_close(actual_mm_token_type_ids, torch.tensor([[0, 1, 0, 0]]))
 
     def test_single_batch_iterator_stores_none_attention_mask(self):
         """Test that SingleBatchIterator preserves None attention_mask in batch dict."""
@@ -179,6 +216,21 @@ class TestCompareMaskHandling:
         assert "inference_context" not in call_kwargs
         assert "runtime_gather_output" not in call_kwargs
 
+    def test_vlm_forward_step_passes_mm_token_type_ids(self):
+        """Megatron receives processor-produced M-RoPE token types unchanged."""
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+        iterator = SingleBatchIterator(
+            torch.tensor([[1, 2, 3]]),
+            torch.arange(3).unsqueeze(0),
+            None,
+            mm_token_type_ids=mm_token_type_ids,
+        )
+        mock_model = MagicMock(return_value=torch.randn(1, 3, 100))
+
+        vlm_forward_step(iterator, mock_model)
+
+        assert mock_model.call_args.kwargs["mm_token_type_ids"] is mm_token_type_ids
+
     def test_text_inference_forward_step_passes_static_context(self):
         """Test that the text path receives the cache context and gathered-logit request."""
         inference_context = object()
@@ -208,6 +260,134 @@ class TestCompareMaskHandling:
         mock_context.__enter__.assert_called_once_with()
         mock_context.__exit__.assert_called_once()
         mock_forward.assert_called_once_with(forward_only=True)
+
+    def test_checkpoint_load_uses_builder_config_when_available(self):
+        """Hybrid checkpoints initialize model parallelism without a provider shim."""
+        transformer = SimpleNamespace()
+        model_config = SimpleNamespace(transformer=transformer, finalize=MagicMock())
+        model = MagicMock()
+        bridge = MagicMock()
+        bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+        bridge.get_model_config.return_value = model_config
+        bridge.load_megatron_model.return_value = [model]
+        args = SimpleNamespace(
+            hf_model_path="hf/model",
+            hf_revision="revision",
+            trust_remote_code=False,
+            megatron_model_path="/checkpoint",
+            tp=8,
+            pp=1,
+            ep=1,
+            etp=1,
+            enable_debug_hooks=False,
+        )
+
+        with (
+            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
+            patch.object(compare, "is_safe_repo", return_value=False),
+            patch.object(compare, "disable_mtp_for_inference"),
+        ):
+            compare._load_megatron_model(args)
+
+        assert transformer.tensor_model_parallel_size == 8
+        assert transformer.pipeline_model_parallel_size == 1
+        assert transformer.expert_model_parallel_size == 1
+        assert transformer.expert_tensor_parallel_size == 1
+        assert transformer.pipeline_dtype is torch.bfloat16
+        assert transformer.params_dtype is torch.bfloat16
+        assert not hasattr(model_config, "tensor_model_parallel_size")
+        model_config.finalize.assert_called_once_with()
+        bridge._get_or_initialize_pg_collection.assert_called_once_with(transformer)
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.load_megatron_model.assert_called_once_with(
+            "/checkpoint",
+            mp_overrides={
+                "tensor_model_parallel_size": 8,
+                "pipeline_model_parallel_size": 1,
+                "expert_model_parallel_size": 1,
+                "expert_tensor_parallel_size": 1,
+            },
+            wrap_with_ddp=False,
+        )
+
+    def test_hf_conversion_uses_nested_builder_transformer_config(self):
+        """Hybrid HF conversion passes nested parallel settings to the builder."""
+        transformer = SimpleNamespace()
+        model_config = SimpleNamespace(transformer=transformer)
+        model = MagicMock()
+        bridge = MagicMock()
+        bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+        bridge.get_model_config.return_value = model_config
+        bridge.get_model.return_value = [model]
+        args = SimpleNamespace(
+            hf_model_path="hf/model",
+            hf_revision="revision",
+            trust_remote_code=False,
+            megatron_model_path=None,
+            tp=8,
+            pp=2,
+            ep=1,
+            etp=1,
+            enable_debug_hooks=False,
+        )
+
+        with (
+            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
+            patch.object(compare, "is_safe_repo", return_value=False),
+            patch.object(compare, "disable_mtp_for_inference"),
+        ):
+            compare._load_megatron_model(args)
+
+        assert transformer.tensor_model_parallel_size == 8
+        assert transformer.pipeline_model_parallel_size == 2
+        assert transformer.expert_model_parallel_size == 1
+        assert transformer.expert_tensor_parallel_size == 1
+        assert transformer.pipeline_dtype is torch.bfloat16
+        assert transformer.params_dtype is torch.bfloat16
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.get_model.assert_called_once_with(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+
+    def test_hf_conversion_keeps_legacy_provider_path(self):
+        """A legacy bridge with a generic ModelConfig still converts through its provider."""
+        model = MagicMock()
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = [model]
+        bridge = MagicMock()
+        bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
+        bridge.to_megatron_provider.return_value = provider
+        args = SimpleNamespace(
+            hf_model_path="hf/model",
+            hf_revision="revision",
+            trust_remote_code=False,
+            megatron_model_path=None,
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            enable_debug_hooks=False,
+        )
+
+        with (
+            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
+            patch.object(compare, "is_safe_repo", return_value=False),
+            patch.object(compare, "disable_mtp_for_inference"),
+        ):
+            compare._load_megatron_model(args)
+
+        bridge.get_model_config.assert_not_called()
+        bridge.get_model.assert_not_called()
+        bridge.to_megatron_provider.assert_called_once_with(load_weights=True)
+        assert provider.tensor_model_parallel_size == 2
+        assert provider.pipeline_model_parallel_size == 1
+        assert provider.expert_model_parallel_size == 1
+        assert provider.expert_tensor_parallel_size == 1
+        assert provider.pipeline_dtype is torch.bfloat16
+        provider.finalize.assert_called_once_with()
+        provider.provide_distributed_model.assert_called_once_with(wrap_with_ddp=False)
 
     def test_tp_logits_skip_gather_when_runtime_output_is_already_full(self):
         """Test that runtime-gathered text logits are not gathered a second time."""
@@ -268,6 +448,16 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
+    def test_hf_text_only_path_selects_composite_language_backbone(self):
+        """Text-only comparisons bypass a composite model's media-required forward."""
+        composite_model = MagicMock()
+        language_model = torch.nn.Linear(3, 3)
+        composite_model.language_model = language_model
+
+        with patch.object(compare, "print_rank_0"):
+            assert compare._get_hf_forward_model(composite_model, pixel_values=None) is language_model
+            assert compare._get_hf_forward_model(composite_model, pixel_values=torch.ones(1)) is composite_model
+
     def test_hf_path_receives_multimodal_token_type_ids(self):
         """Gemma 3 token types reach HF so its image attention mask matches Megatron."""
         mock_hf_model = MagicMock()
@@ -294,6 +484,32 @@ class TestCompareMaskHandling:
 
         assert mock_hf_model.call_args.kwargs["token_type_ids"] is token_type_ids
 
+    def test_hf_path_receives_mm_token_type_ids(self):
+        """Qwen M-RoPE token types reach HF under the exact processor key."""
+        mock_hf_model = MagicMock()
+        mock_output = MagicMock()
+        mock_output.logits = torch.randn(1, 3, 100)
+        mock_hf_model.return_value = mock_output
+        input_ids = torch.tensor([[1, 2, 3]])
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.decode.return_value = "test"
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "print_rank_0"),
+        ):
+            _run_hf_inference(
+                mock_hf_model,
+                input_ids,
+                pixel_values=torch.randn(3, 8),
+                image_grid_thw=torch.tensor([[1, 2, 2]]),
+                tokenizer=mock_tokenizer,
+                mm_token_type_ids=mm_token_type_ids,
+            )
+
+        assert mock_hf_model.call_args.kwargs["mm_token_type_ids"] is mm_token_type_ids
+
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
         broadcast_shapes = []
@@ -313,6 +529,26 @@ class TestCompareMaskHandling:
         assert hf_logits.dtype == torch.float32
         assert hf_next_token.shape == (1,)
         assert broadcast_shapes == [(1,), (1,), (163840,)]
+
+    def test_memory_bounded_hf_reference_logits_validate_input_ids(self, tmp_path):
+        """Test that saved HF logits are accepted only for the exact tokenized input."""
+        path = tmp_path / "hf_logits.pt"
+        input_ids = torch.tensor([[1, 2, 3]])
+        logits = torch.tensor([[0.1, 0.7, 0.2]])
+        torch.save({"input_ids": input_ids, "logits": logits}, path)
+        tokenizer = MagicMock()
+        tokenizer.decode.return_value = "token"
+
+        with patch.object(compare, "_is_rank_0", return_value=True), patch.object(compare, "print_rank_0"):
+            loaded, next_token, *_ = _load_hf_reference_logits(path, input_ids, tokenizer)
+
+        assert torch.equal(loaded, logits.reshape(-1))
+        assert next_token.item() == 1
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            pytest.raises(ValueError, match="different input token IDs"),
+        ):
+            _load_hf_reference_logits(path, torch.tensor([[9]]), tokenizer)
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):
@@ -346,3 +582,36 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
+
+    def test_hf_loader_uses_one_device_without_hf_tensor_parallelism(self):
+        """Load the HF reference on one device without a Transformers TP plan."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+            ]
+        )
+        loaded_model = MagicMock()
+        model_class = MagicMock()
+        model_class.__name__ = "MockModel"
+        model_class.from_pretrained.return_value = loaded_model
+        loaded_model.to.return_value = loaded_model
+        loaded_model.eval.return_value = loaded_model
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "get_model_class", return_value=model_class),
+            patch.object(compare, "is_safe_repo", return_value=True),
+            patch.object(compare, "print_rank_0"),
+        ):
+            result = compare._load_hf_model(args, is_vl_model=False)
+
+        assert result is loaded_model
+        model_class.from_pretrained.assert_called_once()
+        load_kwargs = model_class.from_pretrained.call_args.kwargs
+        assert "device_map" not in load_kwargs
+        assert "tp_plan" not in load_kwargs
+        assert "tp_size" not in load_kwargs
+        loaded_model.to.assert_called_once_with("cuda")

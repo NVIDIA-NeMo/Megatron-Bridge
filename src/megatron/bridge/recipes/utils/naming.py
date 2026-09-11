@@ -18,10 +18,11 @@ from __future__ import annotations
 
 
 # Precision shorthand used in flat recipe names:
-# cs = FP8 current scaling, mx = MXFP8, sc = FP8 subchannel.
+# cs = FP8 current scaling, ds = FP8 delayed scaling, mx = MXFP8, sc = FP8 subchannel.
 PRECISION_NAME_MAP = {
     "bf16": "bf16",
     "fp8_cs": "fp8cs",
+    "fp8_ds": "fp8ds",
     "fp8_mx": "fp8mx",
     "fp8_sc": "fp8sc",
     "nvfp4": "nvfp4",

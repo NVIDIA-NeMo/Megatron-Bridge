@@ -76,6 +76,9 @@ NEMOTRON_3_SUPER_PRETRAIN_RECIPES = [
             "mtp_num_layers": 2,
             "mtp_hybrid_override_pattern": "*E",
             "moe_router_topk": 2,
+            # The production recipe uses HybridEP across 64 GPUs. Keep this
+            # two-GPU functional smoke on the topology-agnostic dispatcher.
+            "moe_token_dispatcher_type": "alltoall",
             # Keep this tiny MTP smoke out of MCore's MoE metric tracker path:
             # decoder and MTP routers initialize different layer-count views.
             "moe_aux_loss_coeff": 0.0,

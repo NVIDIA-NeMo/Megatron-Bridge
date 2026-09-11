@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import torch
+from megatron.core.models.gpt import experimental_attention_variant_module_specs
 from megatron.core.models.hybrid.hybrid_layer_allocation import (
     Symbols,
     get_hybrid_layer_counts,
@@ -29,6 +33,49 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+_mcore_is_gated_delta_net_variant = cast(
+    Callable[[str | None], bool] | None,
+    getattr(experimental_attention_variant_module_specs, "is_gated_delta_net_variant", None),
+)
+
+
+def _is_gated_delta_net_variant(experimental_attention_variant: str | None) -> bool:
+    """Recognize GDN variants across current main and older MCore dev branches."""
+    if experimental_attention_variant == "gdn2":
+        return True
+    if _mcore_is_gated_delta_net_variant is not None:
+        return _mcore_is_gated_delta_net_variant(experimental_attention_variant)
+    return experimental_attention_variant in {"gated_delta_net", "gdn"}
+
+
+@dataclass(frozen=True)
+class GlobalFlopsRuntimeStats:
+    """Data-parallel-global FLOPS statistics collected during one training step.
+
+    Attributes:
+        seqlen_sum: Total padded language tokens, or ``None`` when unavailable.
+        seqlen_squared_sum: Sum of squared language subsequence lengths.
+        num_vision_patches: Legacy aggregate vision-patch count.
+        vision_patch_sum: Exact sum of independent vision patch counts.
+        vision_patch_squared_sum: Exact sum of squared independent patch counts.
+        vision_merged_token_sum: Exact sum of post-merger vision tokens.
+        cross_seqlen_sum: Total cross-attention key/value length.
+        cross_seqlen_product_sum: Sum of query/key-value length products.
+    """
+
+    seqlen_sum: int | None
+    seqlen_squared_sum: int | None
+    num_vision_patches: int = 0
+    vision_patch_sum: int = 0
+    vision_patch_squared_sum: int = 0
+    vision_merged_token_sum: int = 0
+    cross_seqlen_sum: int | None = None
+    cross_seqlen_product_sum: int | None = None
+
+    @property
+    def has_exact_vision_stats(self) -> bool:
+        """Return whether exact additive vision-patch statistics were collected."""
+        return self.vision_patch_sum > 0
 
 
 def _packed_data_exists(path: str | None) -> bool:
@@ -85,19 +132,23 @@ def _accumulator_to_int(value) -> int:
     return 0
 
 
-def resolve_global_flops_seqlen_stats(
+def resolve_global_flops_runtime_stats(
     state,
     *,
     data_parallel_size: int,
     vp_size: int | None = None,
     dp_group=None,
-) -> tuple[int | None, int | None, int]:
-    """Resolve data-parallel-global FLOPS sequence stats from per-rank accumulators.
+    include_vision_patch_stats: bool = False,
+    include_cross_attention_stats: bool = False,
+) -> GlobalFlopsRuntimeStats:
+    """Resolve all data-parallel-global FLOPS statistics used by training.
 
-    Reads the three accumulators populated by the forward step
+    Reads the accumulators populated by the forward step
     (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
-    over real sub-sequences, ``_flops_vision_patches``) and reduces them to
-    global totals across the data-parallel group.
+    over real sub-sequences, ``_flops_vision_patches``, optional exact additive
+    ViT patch statistics, and optional cross-attention key/value and query-key
+    products) and reduces them to global totals across the
+    data-parallel group.
 
     Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
     differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
@@ -116,16 +167,27 @@ def resolve_global_flops_seqlen_stats(
         dp_group: Data-parallel process group to SUM-reduce over. Must be the
             pure DP group (excluding CP) matching ``data_parallel_size`` — CP
             ranks share the same ``cu_seqlens`` and would double-count.
+        include_vision_patch_stats: Whether the collective includes the three
+            exact additive ViT values. This must be uniform across every rank
+            in ``dp_group``.
+        include_cross_attention_stats: Whether the collective includes the two
+            optional cross-attention values. This must be uniform across every
+            rank in ``dp_group``; callers should derive it from model capability,
+            not local batch contents.
 
     Returns:
-        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches)``. The first two
-        are ``None`` when no accumulation happened, signalling the caller to fall
-        back to a fixed-length estimate. ``num_vision_patches`` is ``0`` when no
-        vision tokens were seen.
+        Global statistics with sequence values set to ``None`` when no
+        corresponding accumulation happened and vision values set to ``0``
+        when no matching metadata was accumulated.
     """
     local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
     local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
     local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
+    local_vision_patch_sum = _accumulator_to_int(getattr(state, "_flops_vision_patch_sum", 0))
+    local_vision_patch_sq_sum = _accumulator_to_int(getattr(state, "_flops_vision_patch_sq_sum", 0))
+    local_vision_merged_token_sum = _accumulator_to_int(getattr(state, "_flops_vision_merged_token_sum", 0))
+    local_cross_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_sum", 0))
+    local_cross_seqlen_product_sum = _accumulator_to_int(getattr(state, "_flops_cross_seqlen_product_sum", 0))
     _ = vp_size
 
     use_all_reduce = (
@@ -137,22 +199,83 @@ def resolve_global_flops_seqlen_stats(
     )
     if use_all_reduce:
         device = torch.cuda.current_device() if torch.cuda.is_available() else None
-        stats = torch.tensor(
-            [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches],
-            dtype=torch.long,
-            device=device,
-        )
+        stats_values = [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches]
+        if include_vision_patch_stats:
+            stats_values.extend(
+                [
+                    local_vision_patch_sum,
+                    local_vision_patch_sq_sum,
+                    local_vision_merged_token_sum,
+                ]
+            )
+        if include_cross_attention_stats:
+            stats_values.extend([local_cross_seqlen_sum, local_cross_seqlen_product_sum])
+        stats = torch.tensor(stats_values, dtype=torch.long, device=device)
         torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM, group=dp_group)
-        seqlen_sum, seqlen_squared_sum, num_vision_patches = (int(x) for x in stats.tolist())
+        reduced_stats = [int(x) for x in stats.tolist()]
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = reduced_stats[:3]
+        offset = 3
+        if include_vision_patch_stats:
+            vision_patch_sum, vision_patch_squared_sum, vision_merged_token_sum = reduced_stats[offset : offset + 3]
+            offset += 3
+        else:
+            vision_patch_sum = 0
+            vision_patch_squared_sum = 0
+            vision_merged_token_sum = 0
+        if include_cross_attention_stats:
+            cross_seqlen_sum, cross_seqlen_product_sum = reduced_stats[offset : offset + 2]
+        else:
+            cross_seqlen_sum = 0
+            cross_seqlen_product_sum = 0
     else:
         # No process group: extrapolate from the local rank (approximation).
         seqlen_sum = local_seqlen_sum * data_parallel_size
         seqlen_squared_sum = local_seqlen_sq_sum * data_parallel_size
         num_vision_patches = local_vision_patches * data_parallel_size
+        vision_patch_sum = local_vision_patch_sum * data_parallel_size
+        vision_patch_squared_sum = local_vision_patch_sq_sum * data_parallel_size
+        vision_merged_token_sum = local_vision_merged_token_sum * data_parallel_size
+        cross_seqlen_sum = local_cross_seqlen_sum * data_parallel_size
+        cross_seqlen_product_sum = local_cross_seqlen_product_sum * data_parallel_size
 
     if seqlen_sum <= 0:
-        return None, None, max(num_vision_patches, 0)
-    return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
+        seqlen_sum = None
+        seqlen_squared_sum = None
+    if cross_seqlen_sum <= 0:
+        cross_seqlen_sum = None
+        cross_seqlen_product_sum = None
+    return GlobalFlopsRuntimeStats(
+        seqlen_sum=seqlen_sum,
+        seqlen_squared_sum=seqlen_squared_sum,
+        num_vision_patches=max(num_vision_patches, 0),
+        vision_patch_sum=max(vision_patch_sum, 0),
+        vision_patch_squared_sum=max(vision_patch_squared_sum, 0),
+        vision_merged_token_sum=max(vision_merged_token_sum, 0),
+        cross_seqlen_sum=cross_seqlen_sum,
+        cross_seqlen_product_sum=cross_seqlen_product_sum,
+    )
+
+
+def resolve_global_flops_seqlen_stats(
+    state,
+    *,
+    data_parallel_size: int,
+    vp_size: int | None = None,
+    dp_group=None,
+) -> tuple[int | None, int | None, int]:
+    """Resolve sequence statistics and the legacy total vision-patch count.
+
+    This compatibility wrapper preserves the established three-value return
+    contract and its three-integer collective.
+    """
+    stats = resolve_global_flops_runtime_stats(
+        state,
+        data_parallel_size=data_parallel_size,
+        vp_size=vp_size,
+        dp_group=dp_group,
+        include_cross_attention_stats=False,
+    )
+    return stats.seqlen_sum, stats.seqlen_squared_sum, stats.num_vision_patches
 
 
 def _add_flops_accumulator(state, name: str, delta) -> None:
@@ -221,7 +344,10 @@ def accumulate_flops_metadata(
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
     cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+    cross_cu_seqlens: torch.Tensor | None = None,
+    cross_cu_seqlens_unpadded: torch.Tensor | None = None,
     num_vision_patches: int | torch.Tensor | None = None,
+    vision_patch_stats: tuple[int | torch.Tensor, int | torch.Tensor, int | torch.Tensor] | None = None,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
 
@@ -230,7 +356,7 @@ def accumulate_flops_metadata(
     0 contributes metadata so model chunking does not multiply the full-model
     FLOPS estimate. ``None`` and ``0`` both represent the primary/only chunk.
 
-    Writes three accumulators consumed by ``train.py`` at end of step:
+    Writes accumulators consumed by ``train.py`` at end of step:
 
     - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
       this microbatch contributes), or ``mbs * config_seq_len`` for dense
@@ -246,13 +372,21 @@ def accumulate_flops_metadata(
       ``mbs * dense_seq_len²`` is accumulated instead (bit-exact with the
       pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
       otherwise ``tokens.shape[1]``.
-    - ``_flops_vision_patches``: running total of ``num_vision_patches``.
+    - ``_flops_vision_patches``: legacy total patch-count approximation.
+    - ``_flops_vision_patch_sum``, ``_flops_vision_patch_sq_sum``, and
+      ``_flops_vision_merged_token_sum``: exact additive ViT statistics that
+      preserve independent media/frame attention boundaries.
+    - ``_flops_cross_seqlen_sum`` and ``_flops_cross_seqlen_product_sum``:
+      optional cross-attention Σᵢ kᵢ and Σᵢ qᵢkᵢ terms for model-specific
+      estimators such as WAN.
 
-    ``num_vision_patches`` is the precomputed number of vision patches in this
-    microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
-    caller — which knows its own encoder's layout — computes the count and passes
-    a scalar (e.g. Qwen-VL sums ``grid_thw.prod(-1)`` over images and videos). May
-    be an ``int`` or a scalar ``Tensor`` (a device tensor avoids a host sync here).
+    ``num_vision_patches`` remains supported for model callers that only expose a
+    total patch count. ``vision_patch_stats`` is the exact ``(Σp, Σp²,
+    Σmerged_tokens)`` tuple computed by a caller that knows the encoder's
+    attention boundaries. Each element may be an ``int`` or scalar ``Tensor``;
+    device tensors avoid a host sync here. This argument also opts into a
+    conditional DP collective: if one rank supplies it, every rank in that pure
+    DP group must supply a tuple, using ``(0, 0, 0)`` on ranks with no media.
 
     For THD packed training (offline packed LLM SFT or VLM in-batch packing),
     treating the whole pack as one length-``seq_len`` sequence over-counts
@@ -283,8 +417,171 @@ def accumulate_flops_metadata(
         _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
 
+    cross_sub_seq_lens = _real_subseq_lengths(
+        cross_cu_seqlens,
+        cu_seqlens_unpadded=cross_cu_seqlens_unpadded,
+    )
+    if cross_sub_seq_lens is not None and cross_sub_seq_lens.numel() > 0:
+        if sub_seq_lens is None or sub_seq_lens.numel() != cross_sub_seq_lens.numel():
+            raise ValueError("Cross-attention FLOP metadata requires matching query and key/value sequences")
+        setattr(state, "_flops_requires_global_reduce", True)
+        cross_padded_sub_seq_lens = _real_subseq_lengths(cross_cu_seqlens)
+        if cross_padded_sub_seq_lens is None or cross_padded_sub_seq_lens.numel() == 0:
+            cross_padded_sub_seq_lens = cross_sub_seq_lens
+        _add_flops_accumulator(
+            state,
+            "_flops_cross_seqlen_sum",
+            _scalar_sum_for_accumulator(cross_padded_sub_seq_lens),
+        )
+        _add_flops_accumulator(
+            state,
+            "_flops_cross_seqlen_product_sum",
+            _scalar_sum_for_accumulator(sub_seq_lens * cross_sub_seq_lens),
+        )
+
     if num_vision_patches is not None:
         _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
+
+    if vision_patch_stats is not None:
+        if len(vision_patch_stats) != 3:
+            raise ValueError("vision_patch_stats must contain (patch_sum, patch_squared_sum, merged_token_sum).")
+        for name, value in zip(
+            (
+                "_flops_vision_patch_sum",
+                "_flops_vision_patch_sq_sum",
+                "_flops_vision_merged_token_sum",
+            ),
+            vision_patch_stats,
+            strict=True,
+        ):
+            _add_flops_accumulator(state, name, value)
+        # Image/video grids and resolutions may differ across DP ranks even for
+        # dense text batches, so exact grid statistics require a global SUM.
+        setattr(state, "_flops_requires_global_reduce", True)
+
+
+def _get_vision_config(cfg: ConfigContainer):
+    """Return a direct or thinker-nested vision config when available."""
+    vision_config = getattr(cfg.model, "vision_config", None)
+    if vision_config is not None:
+        return vision_config
+    thinker_config = getattr(cfg.model, "thinker_config", None)
+    return getattr(thinker_config, "vision_config", None)
+
+
+def vit_flops_from_patch_stats(
+    cfg: ConfigContainer,
+    *,
+    patch_sum: int | torch.Tensor,
+    patch_squared_sum: int | torch.Tensor,
+    merged_token_sum: int | torch.Tensor,
+) -> int | torch.Tensor:
+    """Calculate ViT FLOPS from additive per-attention-sequence statistics."""
+    vision_config = _get_vision_config(cfg)
+    if vision_config is None:
+        return 0
+    depth = getattr(vision_config, "depth", 0)
+    hidden_size = getattr(vision_config, "hidden_size", 0)
+    intermediate_size = getattr(vision_config, "intermediate_size", 0)
+    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
+    out_hidden_size = getattr(vision_config, "out_hidden_size", cfg.model.hidden_size)
+    deepstack_visual_indexes = getattr(vision_config, "deepstack_visual_indexes", None)
+    if deepstack_visual_indexes is None:
+        deepstack_visual_indexes = getattr(cfg.model, "deepstack_visual_indexes", None)
+    if deepstack_visual_indexes is None:
+        deepstack_visual_indexes = getattr(getattr(cfg.model, "thinker_config", None), "deepstack_visual_indexes", ())
+
+    # ViT transformer layers. Projection and MLP terms are linear in the total
+    # patch count, while the full-attention core is quadratic within each
+    # independent attention sequence.
+    transformer_flops_val = depth * (
+        (8 * hidden_size**2 + 4 * hidden_size * intermediate_size) * patch_sum + 4 * hidden_size * patch_squared_sum
+    )
+
+    # Patch merger: spatial merge followed by the two projection matmuls.
+    merge_unit = spatial_merge_size**2
+    merged_hidden = hidden_size * merge_unit
+    merger_count = 1 + len(deepstack_visual_indexes or ())
+    merger_flops_val = (
+        merger_count * merged_token_sum * (2 * merged_hidden * merged_hidden + 2 * merged_hidden * out_hidden_size)
+    )
+
+    return (transformer_flops_val + merger_flops_val) * 3  # 3x for training (fwd + bwd)
+
+
+def vision_patch_stats_from_grid_thw(
+    grid_thw: torch.Tensor,
+    *,
+    spatial_merge_size: int,
+) -> tuple[int | torch.Tensor, int | torch.Tensor, int | torch.Tensor]:
+    """Build additive Qwen ViT patch statistics without a device-to-host sync.
+
+    Args:
+        grid_thw: Integer tensor shaped ``[..., 3]`` with temporal, height,
+            and width patch-grid dimensions.
+        spatial_merge_size: Vision encoder's spatial merge size.
+
+    Returns:
+        ``(patch_sum, patch_squared_sum, merged_token_sum)``. CUDA inputs
+        produce scalar CUDA tensors; CPU inputs produce Python integers.
+
+    Raises:
+        ValueError: If the grid shape or spatial merge size is invalid.
+    """
+    if grid_thw.dim() < 1 or grid_thw.size(-1) != 3:
+        raise ValueError(f"grid_thw must have shape [..., 3], got {tuple(grid_thw.shape)}")
+    if spatial_merge_size < 1:
+        raise ValueError("spatial_merge_size must be >= 1.")
+    if grid_thw.numel() == 0:
+        return 0, 0, 0
+
+    grid = grid_thw.reshape(-1, 3).to(dtype=torch.int64)
+    temporal, height, width = grid.unbind(dim=-1)
+    spatial_patches = height * width
+    total_patches = temporal * spatial_patches
+    merge_unit = spatial_merge_size**2
+    return (
+        _scalar_sum_for_accumulator(total_patches),
+        _scalar_sum_for_accumulator(temporal * spatial_patches.square()),
+        _scalar_sum_for_accumulator(torch.div(total_patches, merge_unit, rounding_mode="floor")),
+    )
+
+
+def vit_flops_from_grid_thw(cfg: ConfigContainer, grid_thw: torch.Tensor) -> int | torch.Tensor:
+    """Calculate exact ViT FLOPS for Qwen-style temporal-height-width grids.
+
+    Qwen vision attention treats every temporal frame as an independent THD
+    sequence. For a grid row ``[t, h, w]``, linear ViT work therefore sees
+    ``t*h*w`` patches while full-attention work sees ``t*(h*w)^2`` rather than
+    ``(t*h*w)^2``. Computing the additive statistics directly avoids expanding
+    frame lengths with ``repeat_interleave`` and keeps the microbatch path free
+    of device-to-host synchronization.
+
+    Args:
+        cfg: Configuration container with a direct or thinker-nested vision config.
+        grid_thw: Integer tensor shaped ``[..., 3]``. Each row contains
+            temporal frames, patch-grid height, and patch-grid width.
+
+    Returns:
+        Scalar ViT training FLOPS on the same device as ``grid_thw``. Returns
+        ``0`` if no vision config or no media rows are present.
+
+    Raises:
+        ValueError: If ``grid_thw`` is not shaped ``[..., 3]``.
+    """
+    vision_config = _get_vision_config(cfg)
+    if vision_config is None:
+        return 0
+    patch_sum, patch_squared_sum, merged_token_sum = vision_patch_stats_from_grid_thw(
+        grid_thw,
+        spatial_merge_size=getattr(vision_config, "spatial_merge_size", 2),
+    )
+    return vit_flops_from_patch_stats(
+        cfg,
+        patch_sum=patch_sum,
+        patch_squared_sum=patch_squared_sum,
+        merged_token_sum=merged_token_sum,
+    )
 
 
 def vit_flops(
@@ -299,8 +596,8 @@ def vit_flops(
     - Patch merger (spatial merge + MLP projection to LLM hidden size)
 
     Args:
-        cfg: Configuration container. ViT hyper-parameters are read from
-            ``cfg.model.vision_config`` (``depth``, ``hidden_size``,
+        cfg: Configuration container. ViT hyper-parameters are read from the
+            direct or thinker-nested vision config (``depth``, ``hidden_size``,
             ``num_heads``, ``intermediate_size``, ``spatial_merge_size``,
             ``out_hidden_size``). Passing the whole config keeps the public
             signature stable as the list of required ViT attributes grows.
@@ -315,40 +612,19 @@ def vit_flops(
         Total training FLOPs (forward * 3 for fwd+bwd). Returns 0 when
         no ``vision_config`` is attached or ``num_patches`` is non-positive.
     """
-    vision_config = getattr(cfg.model, "vision_config", None)
+    vision_config = _get_vision_config(cfg)
     if vision_config is None or num_patches <= 0:
         return 0
 
-    depth = getattr(vision_config, "depth", 0)
-    hidden_size = getattr(vision_config, "hidden_size", 0)
-    intermediate_size = getattr(vision_config, "intermediate_size", 0)
     spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
-    out_hidden_size = getattr(vision_config, "out_hidden_size", cfg.model.hidden_size)
-
-    # ViT Transformer layers (bidirectional attention)
-    per_token_per_layer = (
-        # QKV + O projections: 4 matmuls of h x h => 4 * 2 * h^2 FMA = 8h^2
-        # but standard counting: Q,K,V each h->h (3 * 2h^2) + O h->h (2h^2) = 8h^2
-        8 * hidden_size**2
-        # Attention core (full bidirectional, not causal): QK^T + attn*V
-        # = 2 * 2 * h * num_patches = 4 * h * num_patches
-        + 4 * hidden_size * num_patches
-        # MLP (GELU, 2 matmuls): fc1 h->intermediate + fc2 intermediate->h
-        # = 2 * 2 * h * intermediate = 4 * h * intermediate
-        + 4 * hidden_size * intermediate_size
-    )
-    transformer_flops_val = per_token_per_layer * num_patches * depth
-
-    # Patch Merger: spatial merge (2x2) + MLP projection
     merge_unit = spatial_merge_size**2
-    merged_hidden = hidden_size * merge_unit  # concatenated hidden dim
-    num_merged_tokens = num_patches // merge_unit if merge_unit > 0 else num_patches
-    merger_flops_val = num_merged_tokens * (
-        2 * merged_hidden * merged_hidden  # fc1: merged_hidden -> merged_hidden
-        + 2 * merged_hidden * out_hidden_size  # fc2: merged_hidden -> out_hidden_size
+    merged_tokens_per_image = num_patches // merge_unit if merge_unit > 0 else num_patches
+    return vit_flops_from_patch_stats(
+        cfg,
+        patch_sum=batch_size * num_patches,
+        patch_squared_sum=batch_size * num_patches**2,
+        merged_token_sum=batch_size * merged_tokens_per_image,
     )
-
-    return (transformer_flops_val + merger_flops_val) * batch_size * 3  # 3x for training (fwd + bwd)
 
 
 def num_floating_point_operations(
@@ -357,6 +633,8 @@ def num_floating_point_operations(
     seqlen_sum: int | None = None,
     seqlen_squared_sum: int | None = None,
     num_vision_patches: int = 0,
+    cross_seqlen_sum: int | None = None,
+    cross_seqlen_product_sum: int | None = None,
 ):
     """Return the number of floating point operations.
 
@@ -374,7 +652,21 @@ def num_floating_point_operations(
             result matches the legacy constant-length estimate.
         num_vision_patches: Total number of vision patches in the batch
             (before spatial merge). Used to compute ViT encoder FLOPS.
+        cross_seqlen_sum: Sum of cross-attention key/value sequence lengths.
+        cross_seqlen_product_sum: Sum of per-sample query and key/value length products.
     """
+    peft = getattr(cfg, "peft", None)
+    is_lora = isinstance(peft, LoRA)
+    runtime_flops_estimator = getattr(cfg.model, "_get_num_floating_point_operations_with_runtime_stats", None)
+    if runtime_flops_estimator is not None and not is_lora:
+        return runtime_flops_estimator(
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+            cross_seqlen_sum=cross_seqlen_sum,
+            cross_seqlen_product_sum=cross_seqlen_product_sum,
+        )
+
     # Compute effective sequence length from actual values or fall back to config.
     if seqlen_sum is not None and batch_size > 0:
         effective_seq_length = seqlen_sum / batch_size
@@ -392,11 +684,11 @@ def num_floating_point_operations(
     # the result matches the legacy constant-length estimate.
     if seqlen_squared_sum is not None and seqlen_sum > 0:
         core_attn_seq_factor = seqlen_squared_sum / seqlen_sum
+        effective_seqlen_squared_sum = seqlen_squared_sum
     else:
         core_attn_seq_factor = effective_seq_length
+        effective_seqlen_squared_sum = seqlen_sum * effective_seq_length
 
-    peft = getattr(cfg, "peft", None)
-    is_lora = isinstance(peft, LoRA)
     # If the model provider has a custom TFLOPS calculation method, use it (non-LoRA only).
     if not is_lora and hasattr(cfg.model, "_get_num_floating_point_operations"):
         return cfg.model._get_num_floating_point_operations(batch_size)
@@ -775,6 +1067,7 @@ def num_floating_point_operations(
         ffn_expansion_factor = 3 if cfg.model.gated_linear_unit is True else 2
 
         experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
+        dsv4_hybrid_core_attn_term = 0
 
         if cfg.model.multi_latent_attention:
             """
@@ -843,10 +1136,9 @@ def num_floating_point_operations(
                 window = getattr(cfg.model, "csa_window_size", 128)
 
                 sparse_attn_r0 = n_layers_r0 * cfg.model.num_attention_heads * window * v_head_dim * 2
-                avg_comp_128 = (core_attn_seq_factor // 128) / 2
-                sparse_attn_r128 = (
-                    n_layers_r128 * cfg.model.num_attention_heads * (window + avg_comp_128) * v_head_dim * 2
-                )
+                # Window work is token-linear; compressed-KV attention scales with sum_i(sequence_length_i^2).
+                sparse_attn_r128 = n_layers_r128 * cfg.model.num_attention_heads * window * v_head_dim * 2
+                sparse_attn_r128_core = n_layers_r128 * cfg.model.num_attention_heads * v_head_dim / 128
 
                 main_compressor_term = (
                     n_layers_r4 * cfg.model.hidden_size * (2 * v_head_dim) * 2
@@ -864,8 +1156,9 @@ def num_floating_point_operations(
                     if idx_topk is None:
                         raise ValueError("dsa_indexer_topk must be set for dsv4_hybrid ratio==4 layers")
 
-                    effective_topk_4 = min(idx_topk, core_attn_seq_factor // 4)
-                    avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * core_attn_seq_factor))
+                    # Match MCore's nominal ratio-4 selection estimate, which uses the configured sequence length.
+                    effective_topk_4 = min(idx_topk, cfg.model.seq_length // 4)
+                    avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * cfg.model.seq_length))
                     sparse_attn_r4 = (
                         n_layers_r4 * cfg.model.num_attention_heads * (window + avg_comp_4) * v_head_dim * 2
                     )
@@ -873,14 +1166,152 @@ def num_floating_point_operations(
                         n_layers_r4 * cfg.model.hidden_size * (2 * idx_head_dim) * 2
                         + n_layers_r4 * q_lora_rank * idx_n_heads * idx_head_dim
                         + n_layers_r4 * cfg.model.hidden_size * idx_n_heads
-                        + n_layers_r4 * idx_n_heads * idx_head_dim * (core_attn_seq_factor // 4)
                     )
+                    # Dense indexer scoring is quadratic and therefore uses the runtime squared-length sum below.
+                    indexer_scoring_core = n_layers_r4 * idx_n_heads * idx_head_dim / 4
                 else:
                     sparse_attn_r4 = 0
                     indexer_term = 0
+                    indexer_scoring_core = 0
 
                 sparse_attn_term = sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128
                 self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
+                dsv4_hybrid_core_attn_term = 3 * 2 * (sparse_attn_r128_core + indexer_scoring_core)
+            elif experimental_attention_variant == "dsa":
+                # DSA replaces dense MLA core attention with top-k attention while retaining a
+                # dense lightning indexer. The attention/indexer geometry follows equations 1-2
+                # of the official report: https://arxiv.org/abs/2512.02556. MCore implements the
+                # MLA path with matrix absorption: QK operates over kv_lora_rank + RoPE channels
+                # and AV over kv_lora_rank channels (experimental_attention_variant/absorbed_mla.py).
+                qk_head_dim = getattr(cfg.model, "qk_head_dim", 64)
+                qk_pos_emb_head_dim = getattr(cfg.model, "qk_pos_emb_head_dim", 0)
+                v_head_dim = getattr(cfg.model, "v_head_dim", 64)
+                kv_lora_rank = getattr(cfg.model, "kv_lora_rank", 0)
+                if kv_lora_rank <= 0:
+                    raise ValueError("kv_lora_rank must be positive for dsa FLOPs calculation")
+
+                idx_n_heads = getattr(cfg.model, "dsa_indexer_n_heads", None)
+                idx_head_dim = getattr(cfg.model, "dsa_indexer_head_dim", None)
+                idx_topk = getattr(cfg.model, "dsa_indexer_topk", None)
+                if idx_n_heads is None or idx_n_heads <= 0:
+                    raise ValueError("dsa_indexer_n_heads must be positive for dsa FLOPs calculation")
+                if idx_head_dim is None or idx_head_dim <= 0:
+                    raise ValueError("dsa_indexer_head_dim must be positive for dsa FLOPs calculation")
+                if idx_topk is None or idx_topk <= 0:
+                    raise ValueError("dsa_indexer_topk must be positive for dsa FLOPs calculation")
+
+                idx_topk_freq = getattr(cfg.model, "dsa_indexer_topk_freq", 1)
+                idx_skip_topk_offset = getattr(cfg.model, "dsa_indexer_skip_topk_offset", 0)
+                if not isinstance(idx_topk_freq, int) or idx_topk_freq <= 0:
+                    raise ValueError("dsa_indexer_topk_freq must be a positive integer")
+                if not isinstance(idx_skip_topk_offset, int) or idx_skip_topk_offset < 0:
+                    raise ValueError("dsa_indexer_skip_topk_offset must be a non-negative integer")
+
+                def count_indexer_layers(layer_count: int) -> int:
+                    """Count layers that compute rather than reuse DSA top-k indices."""
+                    sharing_offset = max(idx_skip_topk_offset, 1)
+                    return sum(
+                        max(layer_number - sharing_offset, 0) % idx_topk_freq == 0
+                        for layer_number in range(1, layer_count + 1)
+                    )
+
+                # MCore gives MTP layers their own 1-based numbering, so their sharing cadence
+                # restarts independently of the decoder. GLM-5.2 has MTP1, which computes one
+                # fresh index. See transformer/multi_token_prediction.py in Megatron-Core.
+                num_indexer_layers = count_indexer_layers(cfg.model.num_layers) + count_indexer_layers(mtp_num_layers)
+
+                # Average valid causal pairs per token. The top-k expression is exact for a
+                # fixed-length batch. Packed metadata supplies only sum(s) and sum(s^2), so for
+                # mixed sequences crossing top-k we use the token-weighted effective length
+                # (core_attn_seq_factor); it remains exact when every subsequence is <= top-k.
+                dense_causal_context = (core_attn_seq_factor + 1) / 2
+                if core_attn_seq_factor <= idx_topk:
+                    sparse_causal_context = dense_causal_context
+                else:
+                    sparse_causal_context = idx_topk - idx_topk * (idx_topk - 1) / (2 * core_attn_seq_factor)
+
+                if cfg.model.q_lora_rank is None:
+                    q_term = (
+                        cfg.model.hidden_size * cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim)
+                    )
+                    indexer_q_input_size = cfg.model.hidden_size
+                else:
+                    q_term = cfg.model.q_lora_rank * (
+                        cfg.model.hidden_size
+                        + cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim)
+                        + 1  # q norm
+                    )
+                    indexer_q_input_size = cfg.model.q_lora_rank
+
+                kv_term = (
+                    kv_lora_rank
+                    * (
+                        cfg.model.hidden_size
+                        + cfg.model.num_attention_heads * (qk_head_dim + v_head_dim)
+                        + 1  # kv norm
+                    )
+                    + cfg.model.hidden_size * qk_pos_emb_head_dim
+                )
+                output_term = cfg.model.num_attention_heads * v_head_dim * cfg.model.hidden_size
+                mla_projection_term = 3 * 2 * num_layers * (q_term + kv_term + output_term)
+
+                absorbed_qk_dim = kv_lora_rank + qk_pos_emb_head_dim
+                absorbed_v_dim = kv_lora_rank
+                sparse_mla_core_term = (
+                    3
+                    * 2
+                    * num_layers
+                    * sparse_causal_context
+                    * cfg.model.num_attention_heads
+                    * (absorbed_qk_dim + absorbed_v_dim)
+                )
+
+                indexer_projection_size = (
+                    indexer_q_input_size * idx_n_heads * idx_head_dim
+                    + cfg.model.hidden_size * idx_head_dim
+                    + cfg.model.hidden_size * idx_n_heads
+                )
+                indexer_loss_coeff = getattr(cfg.model, "dsa_indexer_loss_coeff", 0.0) or 0.0
+                trains_indexer = indexer_loss_coeff > 0
+
+                # MCore detaches x and q_resid before the indexer. With the auxiliary loss
+                # enabled, each projection therefore executes forward+wgrad (2x forward), not
+                # forward+dgrad+wgrad (3x). Without the loss, top-k is computed under no_grad.
+                indexer_projection_multiplier = 4 if trains_indexer else 2
+                indexer_projection_term = indexer_projection_multiplier * num_indexer_layers * indexer_projection_size
+
+                # Equation 1 computes H_i dense q_i.k_i dot products and a weighted head
+                # reduction. Top-k selection needs every causal score, so the forward is
+                # always dense. The backward only covers score entries the KL loss touches:
+                # every causal pair for the dense loss, but only the selected top-k pairs for
+                # the sparse loss (no gradient flows through the discrete top-k selection;
+                # MCore's indexer_backward_wrapper consumes the selected payload only).
+                # ReLU, normalization, and top-k comparisons are not floating-point matmuls and
+                # are intentionally outside this model-FLOPs numerator.
+                use_sparse_indexer_loss = getattr(cfg.model, "dsa_indexer_use_sparse_loss", False)
+                index_score_unit = idx_n_heads * (idx_head_dim + 1)
+                index_score_term = 2 * num_indexer_layers * dense_causal_context * index_score_unit
+                if trains_indexer:
+                    score_grad_context = sparse_causal_context if use_sparse_indexer_loss else dense_causal_context
+                    index_score_term += 4 * num_indexer_layers * score_grad_context * index_score_unit
+
+                # GLM recipes enable MCore's sparse indexer KL loss. Its attention target uses
+                # detached main-model Q/K, hence forward-only QK work. Dense-loss configurations
+                # use the full causal context instead of the selected context.
+                indexer_teacher_term = 0
+                if trains_indexer:
+                    teacher_context = sparse_causal_context if use_sparse_indexer_loss else dense_causal_context
+                    indexer_teacher_term = (
+                        2 * num_indexer_layers * teacher_context * cfg.model.num_attention_heads * absorbed_qk_dim
+                    )
+
+                self_attn_term = (
+                    mla_projection_term
+                    + sparse_mla_core_term
+                    + indexer_projection_term
+                    + index_score_term
+                    + indexer_teacher_term
+                )
             else:
                 ## MLA
                 if not hasattr(cfg.model, "q_lora_rank") or cfg.model.q_lora_rank is None:
@@ -989,17 +1420,13 @@ def num_floating_point_operations(
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
                 self_attn_term = 3 * 2 * num_layers * (proj_per_layer + full_core)
 
-        # Handle GDN (Gated DeltaNet) hybrid attention variant.
-        # When experimental_attention_variant is "gated_delta_net", a fraction of the
-        # layers use GDN instead of standard attention. Override self_attn_term with a
-        # weighted sum of GDN and standard-attention per-layer costs.
-        if experimental_attention_variant == "gated_delta_net":
+        # Handle GDN (Gated DeltaNet) hybrid attention variants. MCore normalizes
+        # the deprecated "gated_delta_net" alias to "gdn" during config finalization.
+        if _is_gated_delta_net_variant(experimental_attention_variant):
             linear_attention_freq = cfg.model.linear_attention_freq
             decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
-                raise ValueError(
-                    "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
-                )
+                raise ValueError("linear_attention_freq must be set for gated delta net attention variants")
             if isinstance(linear_attention_freq, int):
                 linear_attention_pattern = [
                     0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(decoder_num_layers)
@@ -1033,12 +1460,18 @@ def num_floating_point_operations(
 
             qk_dim = qk_head_dim * num_qk_heads
             v_dim = v_head_dim * num_v_heads
+            if experimental_attention_variant == "gdn2":
+                # GDN2 in_proj: q, k, v, z, f, b, w.
+                in_proj_dim = 4 * qk_dim + 3 * v_dim
+            else:
+                # GDN in_proj: q, k, v, z, beta, alpha.
+                in_proj_dim = 2 * qk_dim + 2 * v_dim + 2 * num_v_heads
 
             gdn_self_attn_per_layer = (
                 3
                 * 2
                 * (
-                    cfg.model.hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                    cfg.model.hidden_size * in_proj_dim
                     + conv_kernel_dim * (2 * qk_dim + v_dim)
                     + num_v_heads * (v_head_dim**2) * 4
                     + cfg.model.hidden_size * v_dim
@@ -1147,6 +1580,7 @@ def num_floating_point_operations(
             # Logit.
             + 3 * 2 * cfg.model.hidden_size * padded_vocab_size * (mtp_num_layers + 1)
         )
+        total_floating_point_operations += effective_seqlen_squared_sum * dsv4_hybrid_core_attn_term
         return total_floating_point_operations + _compute_vit_flops()
 
     def _compute_vit_flops():
@@ -1162,6 +1596,14 @@ def num_floating_point_operations(
             return 0
         patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
         return vit_flops(cfg, batch_size, patches_per_image)
+
+    # A Hybrid attention symbol normally describes only the attention work for
+    # FLOPs accounting. Some native HybridModel stacks, such as Muse Glimmer,
+    # use that symbol for a complete Transformer layer containing both attention
+    # and its MLP. The standard Transformer path already accounts for that full
+    # layer plus GQA, output gates, sliding attention, logits, and vision work.
+    if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
+        return transformer_flops()
 
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.

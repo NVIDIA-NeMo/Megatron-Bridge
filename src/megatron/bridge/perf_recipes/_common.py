@@ -22,12 +22,16 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
+    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_mxfp8_mixed,
     bf16_with_nvfp4_mixed,
 )
 
 
-def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> None:
+def _benchmark_common(
+    cfg: ConfigContainer,
+    cross_entropy_impl: str = "te",
+) -> None:
     """Apply benchmark-mode defaults that prioritize throughput measurement over convergence.
 
     Intended for performance benchmark recipes only. Sets short training runs,
@@ -63,6 +67,9 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.scheduler.lr_decay_iters = cfg.train.train_iters
     cfg.scheduler.lr_warmup_iters = 10
 
+    if getattr(cfg.model, "num_moe_experts", None):
+        cfg.model.moe_router_force_load_balancing = True
+
     if hasattr(cfg.model, "use_transformer_engine_op_fuser") and cfg.model.use_transformer_engine_op_fuser:
         cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.apply_rope_fusion = True
@@ -88,13 +95,6 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
         cfg.model.moe_hybridep_num_sms = 32
 
 
-def _enable_overlap_param_gather_with_optimizer_step(cfg: ConfigContainer) -> None:
-    """Enable optimizer-step parameter gather overlap on optimizer and comm-overlap configs."""
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = True
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.overlap_param_gather_with_optimizer_step = True
-
-
 def _perf_precision(compute_dtype: str):
     """Return mixed-precision config tuned for perf benchmarks.
 
@@ -108,6 +108,9 @@ def _perf_precision(compute_dtype: str):
         cfg = bf16_mixed()
     elif compute_dtype == "fp8_cs":
         cfg = bf16_with_fp8_current_scaling_mixed()
+        cfg.first_last_layers_bf16 = False
+    elif compute_dtype == "fp8_ds":
+        cfg = bf16_with_fp8_delayed_scaling_mixed()
         cfg.first_last_layers_bf16 = False
     elif compute_dtype == "fp8_mx":
         cfg = bf16_with_mxfp8_mixed()

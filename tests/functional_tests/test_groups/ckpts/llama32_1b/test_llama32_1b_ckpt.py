@@ -17,6 +17,7 @@
 import os
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 from torch.distributed.run import main as torchrun_main
@@ -78,7 +79,7 @@ class TestLlama32Ckpt:
             [
                 "torchrun",
                 "--nproc-per-node=2",
-                "/opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_gpt.py",
+                str(Path(__file__).resolve().parents[5] / "3rdparty/Megatron-LM/pretrain_gpt.py"),
                 "--load",
                 "/workspace/test_ckpts/llama32_1b_mbridge",
                 "--save",

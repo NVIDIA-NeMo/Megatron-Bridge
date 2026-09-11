@@ -269,9 +269,9 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--trust-remote-code", action="store_true", help="Allow custom model code execution")
     parser.add_argument(
         "--ckpt-format",
-        choices=["torch_dist", "fsdp_dtensor"],
+        choices=["fsdp_dtensor"],
         default="fsdp_dtensor",
-        help="Megatron checkpoint format to load/save (default: fsdp_dtensor for Megatron-FSDP)",
+        help="Megatron-FSDP checkpoint format (only fsdp_dtensor is supported)",
     )
 
 

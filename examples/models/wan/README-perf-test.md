@@ -1,6 +1,6 @@
 ## WAN Model Setup and Usage (for Perf Test)
 
-This guide provides concise steps to set up the environment and run WAN pretraining and inference. It pins repo commits and shows explicit commands for the 1.3B and 14B configurations.
+This guide provides concise steps to set up the environment and run WAN pretraining and inference. It requires an explicitly trusted, immutable Megatron-Bridge commit, pins the other repository commits, and shows explicit commands for the 1.3B and 14B configurations.
 
 ## Container Launch
 
@@ -21,7 +21,7 @@ srun -t 02:00:00 \
 
 ## Setup Inside the Container
 
-Setup DFM, Megatron-Bridge, Megatron-LM with specific commits, and other dependencies.
+Set `MBRIDGE_COMMIT` to a trusted 40-character commit SHA that contains the integrity-locked WAN installer, then pin DFM and Megatron-LM and install the other dependencies.
 
 ```bash
 cd /opt/
@@ -31,10 +31,15 @@ git clone --no-checkout https://github.com/NVIDIA-NeMo/DFM.git
 git -C DFM checkout 174bb7b34de002ebbbcae1ba8e2b12363c7dee01
 export DFM_PATH=/opt/DFM
 
-# Megatron-Bridge (pinned)
+# Megatron-Bridge (trusted immutable commit)
+: "${MBRIDGE_COMMIT:?Set MBRIDGE_COMMIT to a trusted 40-character commit SHA}"
+printf '%s' "${MBRIDGE_COMMIT}" | grep -Eq '^[0-9a-f]{40}$'
 rm -rf /opt/Megatron-Bridge
-git clone --no-checkout https://github.com/huvunvidia/Megatron-Bridge.git
-git -C Megatron-Bridge checkout 713ab548e4bfee307eb94a7bb3f57c17dbb31b50
+git init /opt/Megatron-Bridge
+git -C /opt/Megatron-Bridge remote add origin https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+git -C /opt/Megatron-Bridge fetch --depth 1 origin "${MBRIDGE_COMMIT}"
+git -C /opt/Megatron-Bridge checkout --detach FETCH_HEAD
+test "$(git -C /opt/Megatron-Bridge rev-parse HEAD)" = "${MBRIDGE_COMMIT}"
 
 # Megatron-LM (pinned)
 rm -rf /opt/Megatron-LM
@@ -46,7 +51,7 @@ export PYTHONPATH="${DFM_PATH}/.:/opt/Megatron-Bridge/.:/opt/Megatron-LM"
 
 # Python deps
 python3 -m pip install --upgrade diffusers==0.35.1
-pip install easydict imageio imageio-ffmpeg
+bash /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
 ```
 
 ## Pretraining

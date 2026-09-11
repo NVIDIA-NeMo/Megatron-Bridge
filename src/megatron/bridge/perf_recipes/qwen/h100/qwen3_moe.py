@@ -20,7 +20,6 @@ from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -91,6 +90,9 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_a2a_overlap = False
 
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
@@ -113,7 +115,20 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
     }
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_16gpu_h100_fp8ds_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 16× H100, FP8 delayed-scaling, EP=16.
+
+    Same layout as the fp8cs recipe (TE partial CUDA graph + cuDNN LayerNorm),
+    with FP8 delayed scaling instead of current scaling.
+    """
+    cfg = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("fp8_ds")
     return cfg
 
 
@@ -151,7 +166,6 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -204,7 +218,6 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

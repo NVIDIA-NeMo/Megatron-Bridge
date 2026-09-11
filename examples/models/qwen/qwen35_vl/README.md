@@ -1,8 +1,11 @@
-# Qwen3.5-VL Examples
+# Qwen3.5/3.6-VL Examples
 
-This directory contains example scripts for Qwen3.5-VL vision-language models.
+This directory contains conversion and inference examples for Qwen3.5 and
+Qwen3.6 vision-language models. Both use the same Bridge architecture; replace
+the Qwen3.5 model ID with `Qwen/Qwen3.6-35B-A3B` to run those paths for
+Qwen3.6.
 
-For model introduction and architecture details, see the [Qwen3.5-VL documentation](../../../../docs/models/qwen/qwen35-vl.md).
+For model introduction and architecture details, see the [Qwen3.5/3.6-VL documentation](../../../../docs/models/qwen/qwen35-vl.md).
 
 ## Workspace Configuration
 
@@ -34,25 +37,12 @@ To import the HF VL model to your desired Megatron path:
   --hf-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B-hf-export
 ```
 
-### Multi-GPU Round-Trip Validation
-
-Use the shared launcher to verify the in-memory Hugging Face → Megatron →
-Hugging Face weight round trip:
-
-```bash
-./scripts/conversion/convert.sh roundtrip \
-  --executor local \
-  --device gpu \
-  --gpus-per-node 8 \
-  --hf-model-id Qwen/Qwen3.5-35B-A3B \
-  --tp 1 --pp 1 --ep 8 \
-  --trust-remote-code
-```
-
-See the [conversion.sh](conversion.sh) script for the parallelism selected for
-each supported model variant.
-
 ## Inference
+
+Keep numerical comparison in the inference workload. Use
+`scripts/inference/infer.sh --task model-comparison` for HF/Megatron logit
+correlation; [conversion.sh](conversion.sh) performs checkpoint import and
+export only.
 
 ### Run Inference on Converted Checkpoint
 
@@ -80,7 +70,11 @@ For multi-node distributed inference—required for the largest 397B model—see
 
 ## Finetune Recipes
 
-- Available recipes:
+The available presets below are checkpoint-specific Qwen3.5 recipes. They must
+not be relabeled as Qwen3.6 recipes even though both model versions share the
+same Bridge implementation.
+
+- Available Qwen3.5 recipes:
   - `qwen35_vl_800m_sft_config` / `qwen35_vl_800m_peft_config`: 0.8B dense model
   - `qwen35_vl_2b_sft_config` / `qwen35_vl_2b_peft_config`: 2B dense model
   - `qwen35_vl_4b_sft_config` / `qwen35_vl_4b_peft_config`: 4B dense model
@@ -98,11 +92,24 @@ Before training, ensure the following environment variables are set:
 
 ### Pretrain
 
-Pretraining is not verified for this model.
+Canonical pretraining convergence remains unverified for Qwen3.5 and Qwen3.6.
+The [Qwen3.6 35B-A3B verification card](../../../model_verification_cards/qwen3.6-35b-a3b/card.yaml)
+separately verifies a bounded, frozen-tower DataComp projection-pretraining and
+checkpoint-resume workflow; it does not claim canonical DataComp/CLIP
+convergence.
 
 ### Supervised Fine-Tuning (SFT)
 
 See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning with configurable model sizes.
+
+Text-only chat rows may provide official Qwen template controls under `chat_template_kwargs`. For example,
+`{"enable_thinking": true, "truncate_history_thinking": false}` preserves historical reasoning on Qwen3.6 by
+translating the canonical history option to the template-native `preserve_thinking=true`. The Qwen3.5 template does
+not expose that control and continues to omit reasoning before the latest user query.
+
+Tool definitions remain in the top-level `tools` field. OpenAI JSON-string `function.arguments` are normalized to
+objects before rendering. Assistant headers, system/user turns, and tool responses are masked from loss; assistant
+thinking boundaries, retained reasoning, tool calls, answers, and `<|im_end|>` are supervised.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 

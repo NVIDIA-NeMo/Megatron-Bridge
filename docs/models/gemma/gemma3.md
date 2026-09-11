@@ -109,13 +109,11 @@ See: [bridge.recipes.gemma](../../apidocs/bridge/bridge.recipes.gemma.md)
 ```python
 from megatron.bridge.recipes.gemma import gemma3_1b_pretrain_config
 
-config = gemma3_1b_pretrain_config(
-    name="gemma3_1b_pretrain",
-    data_paths=["path/to/data"],
-    train_iters=100000,
-    global_batch_size=256,
-    # Uses TP=1, PP=1 (8 GPUs) automatically
-)
+config = gemma3_1b_pretrain_config()
+config.dataset.blend = [["path/to/data"], None]
+config.train.train_iters = 100000
+config.train.global_batch_size = 256
+# Uses TP=1, PP=1; additional GPUs become data parallel
 ```
 
 ### Finetuning Examples
@@ -125,14 +123,13 @@ config = gemma3_1b_pretrain_config(
 ```python
 from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
 
-config = gemma3_1b_sft_config(
-    name="gemma3_1b_full_finetune",
-    pretrained_checkpoint="/models/gemma-3-1b-it",
-    train_iters=1000,
-    global_batch_size=64,
-    finetune_lr=5e-6,
-    # Uses TP=1, PP=1 (8 GPUs) automatically
-)
+config = gemma3_1b_sft_config()
+config.checkpoint.pretrained_checkpoint = "/models/gemma-3-1b-it"
+config.train.train_iters = 1000
+config.train.global_batch_size = 64
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 5e-6
+# Uses TP=1, PP=1; additional GPUs become data parallel
 ```
 
 #### LoRA Finetuning
@@ -140,15 +137,13 @@ config = gemma3_1b_sft_config(
 ```python
 from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
 
-config = gemma3_1b_peft_config(
-    name="gemma3_1b_lora_finetune",
-    pretrained_checkpoint="/models/gemma-3-1b-it",
-    peft_scheme="lora",  # or "dora"
-    train_iters=1000,
-    global_batch_size=128,
-    finetune_lr=1e-4,
-    # Uses TP=1, PP=1 (8 GPUs) automatically
-)
+config = gemma3_1b_peft_config(peft_scheme="lora")  # or "dora"
+config.checkpoint.pretrained_checkpoint = "/models/gemma-3-1b-it"
+config.train.train_iters = 1000
+config.train.global_batch_size = 128
+config.scheduler.lr_decay_iters = 1000
+config.optimizer.lr = 1e-4
+# Uses TP=1, PP=1; additional GPUs become data parallel
 ```
 
 ### Command-Line Training

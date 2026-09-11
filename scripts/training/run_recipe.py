@@ -81,6 +81,7 @@ logger = logging.getLogger(__name__)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parents[1]
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
@@ -129,6 +130,9 @@ if TYPE_CHECKING:
 
 PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
+
+
+IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1"})
 
 
 COMMON_OVERRIDE_FIELDS = (
@@ -419,6 +423,12 @@ def _selected_recipe_name(args: argparse.Namespace) -> str:
     return args.recipe or f"{args.model}_{recipe_task(args.mode)}_config"
 
 
+def _requires_recipe_environment_bootstrap(recipe: ConfigContainer) -> bool:
+    """Return whether a recipe declares an unset import-time environment variable."""
+    recipe_env = getattr(recipe, "env_vars", None) or {}
+    return any(name in recipe_env and name not in os.environ for name in IMPORT_TIME_RECIPE_ENV_VARS)
+
+
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
     """Load the requested recipe by its complete name or model-derived library name."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
@@ -453,6 +463,10 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 def main(argv: list[str] | None = None) -> None:
     """Load, configure, and execute one library or benchmark recipe."""
+    # NeMo-Run executes container tasks from its private /nemo_run/code
+    # directory. Resolve user-facing relative dataset, checkpoint, cache, and
+    # logger paths from the mounted Bridge checkout instead.
+    os.chdir(REPO_ROOT)
     logging.basicConfig(level=logging.INFO)
     args, cli_overrides = parse_args(argv)
 
@@ -491,17 +505,19 @@ def main(argv: list[str] | None = None) -> None:
             world_size=benchmark_world_size,
         )
     configuration_mode = _train_mode(args.mode)
-
-    if benchmark_metadata is not None:
+    if benchmark_metadata is not None or _requires_recipe_environment_bootstrap(recipe):
         recipe = bootstrap_recipe_environment(
             recipe,
             script_path=str(Path(__file__).resolve()),
             argv=list(argv) if argv is not None else sys.argv[1:],
         )
+    else:
+        recipe = apply_runtime_environment(recipe)
+
+    if benchmark_metadata is not None:
         execution_mode = "pretrain"
         step_mode = benchmark_metadata.task
     else:
-        recipe = apply_runtime_environment(recipe)
         execution_mode = configuration_mode
         step_mode = configuration_mode
 
@@ -509,7 +525,11 @@ def main(argv: list[str] | None = None) -> None:
     recipe = sync_offline_packing_alignment(recipe)
     recipe = sync_model_dataset_sequence_length(recipe)
 
-    step_func_name = args.step_func or recipe_step(recipe_name)
+    native_energon_packing = getattr(getattr(recipe, "dataset", None), "packing_buffer_size", None) is not None
+    step_func_name = args.step_func or recipe_step(
+        recipe_name,
+        native_energon_packing=native_energon_packing,
+    )
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,

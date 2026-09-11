@@ -27,8 +27,15 @@ import os
 import tempfile
 
 import pytest
+import torch
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_peft_16gpu_h100_bf16_config,
+    nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_peft_config,
     nemotron_3_super_pretrain_config,
@@ -53,35 +60,47 @@ class TestNemotron3SuperPretrain:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 4
-        assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is True
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 2
+        assert config.model.sequence_parallel is False
 
         # Check expert parallelism defaults
         assert config.model.expert_tensor_parallel_size == 1
-        assert config.model.expert_model_parallel_size == 8
+        assert config.model.expert_model_parallel_size == 32
 
         # Check training configuration
-        assert config.train.train_iters == 39735
-        assert config.train.global_batch_size == 3072
+        assert config.train.train_iters == 100
+        assert config.train.global_batch_size == 1280
         assert config.train.micro_batch_size == 1
 
         # Check dataset configuration
-        assert config.dataset.seq_length == 8192
+        assert config.dataset.seq_length == 4096
 
         # Check tokenizer (HuggingFace for this recipe)
         assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
         # Check precision
-        assert config.mixed_precision == "nemotron_3_super_bf16_with_nvfp4_mixed"
+        assert config.mixed_precision.bf16 is True
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.optimizer.main_grads_dtype == torch.bfloat16
+        assert config.optimizer.optimizer_cpu_offload is False
+        assert config.optimizer.optimizer_offload_fraction == 0.0
+        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+        assert config.model.apply_rope_fusion is True
+        assert config.tokenizer.use_tokenizer_vocab_size is False
 
     def test_pretrain_config_moe_settings(self):
         """Test MoE settings for pretrain config."""
         config = nemotron_3_super_pretrain_config()
 
         # Verify MoE settings
-        assert config.model.moe_token_dispatcher_type == "alltoall"
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+        assert config.model.moe_expert_capacity_factor == 1.10
+        assert config.model.moe_pad_expert_input_to_capacity is True
+        assert config.model.moe_router_force_load_balancing is False
         assert config.model.moe_shared_expert_overlap is False
         assert config.model.moe_grouped_gemm is True
         assert config.model.moe_permute_fusion is True
@@ -109,7 +128,7 @@ class TestNemotron3SuperPretrain:
         assert config.optimizer.lr == 4.5e-4
         assert config.optimizer.weight_decay == 0.1
         assert config.optimizer.min_lr == 4.5e-6
-        assert config.scheduler.lr_warmup_iters == 333
+        assert config.scheduler.lr_warmup_iters == 40
 
     def test_pretrain_config_checkpoint_settings(self):
         """Test checkpoint settings for pretrain config."""
@@ -133,12 +152,12 @@ class TestNemotron3SuperSft:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check parallelism for full SFT
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
 
-        # Check expert parallelism (EP=8 for full SFT)
-        assert config.model.expert_model_parallel_size == 8
+        # Check expert parallelism (EP=16 for full SFT)
+        assert config.model.expert_model_parallel_size == 16
 
         # No PEFT config for full SFT
         assert config.peft is None
@@ -151,7 +170,8 @@ class TestNemotron3SuperSft:
         assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
         # Check precision
-        assert config.mixed_precision == "bf16_mixed"
+        assert config.mixed_precision.bf16 is True
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
 
     def test_sft_config_custom_parallelism(self):
         """Test SFT config with custom parallelism applied after creation."""
@@ -297,20 +317,20 @@ class TestNemotron3SuperCommon:
         assert config.mixed_precision is not None
 
     @pytest.mark.parametrize(
-        "recipe_fn",
+        ("recipe_fn", "overlap_grad_reduce", "overlap_param_gather"),
         [
-            nemotron_3_super_pretrain_config,
-            nemotron_3_super_sft_config,
-            nemotron_3_super_peft_config,
+            (nemotron_3_super_pretrain_config, False, False),
+            (nemotron_3_super_sft_config, False, False),
+            (nemotron_3_super_peft_config, True, True),
         ],
     )
-    def test_ddp_configuration(self, recipe_fn):
+    def test_ddp_configuration(self, recipe_fn, overlap_grad_reduce, overlap_param_gather):
         """Test distributed data parallel configuration."""
         config = recipe_fn()
 
         assert config.ddp.check_for_nan_in_grad is True
-        assert config.ddp.overlap_grad_reduce is True
-        assert config.ddp.overlap_param_gather is True
+        assert config.ddp.overlap_grad_reduce is overlap_grad_reduce
+        assert config.ddp.overlap_param_gather is overlap_param_gather
         assert config.ddp.use_distributed_optimizer is True
 
     @pytest.mark.parametrize(
@@ -332,3 +352,75 @@ class TestNemotron3SuperCommon:
         assert config.model.moe_router_topk == 22
         assert config.model.moe_router_topk_scaling_factor == 5.0
         assert config.model.moe_latent_size == 1024
+
+
+@pytest.mark.unit
+class TestNemotron3Super16GpuH100:
+    """Test the 16-H100 support-verification recipes."""
+
+    @pytest.mark.parametrize(
+        ("recipe_fn", "expected_global_batch_size"),
+        [
+            # Bounded cohort batch sizes shared with the other H100 verification
+            # recipes: pretrain GBS 1024, full SFT GBS 32.
+            (nemotron_3_super_pretrain_16gpu_h100_bf16_config, 1024),
+            (nemotron_3_super_sft_16gpu_h100_bf16_config, 32),
+            (nemotron_3_super_peft_16gpu_h100_bf16_config, 16),
+        ],
+    )
+    def test_parallelism_batch_size_and_checkpoint_safe_ddp(self, recipe_fn, expected_global_batch_size):
+        """The verification recipes own their 16-GPU layout and checkpoint-safe DDP settings."""
+        config = recipe_fn()
+
+        assert config.model.tensor_model_parallel_size == 8
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 16
+        assert config.train.global_batch_size == expected_global_batch_size
+        assert config.train.micro_batch_size == 1
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
+
+    @pytest.mark.parametrize(
+        "recipe_fn",
+        [
+            nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+        ],
+    )
+    def test_low_memory_optimizer_precision(self, recipe_fn):
+        """Full-model recipes use the explicit reduced-memory optimizer state."""
+        config = recipe_fn()
+
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.ddp.grad_reduce_in_fp32 is False
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
+        assert config.optimizer.use_precision_aware_optimizer is True
+        assert config.optimizer.main_params_dtype == torch.float16
+        assert config.optimizer.exp_avg_dtype == torch.bfloat16
+        assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
+
+    def test_long_context_parallelism_batch_size_and_sequence_length(self):
+        """The 32K recipe owns its memory-bounded layout and batch size."""
+        config = nemotron_3_super_sft_16gpu_h100_bf16_32k_config()
+
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 8
+        assert config.model.num_layers_in_last_pipeline_stage == 4
+        assert config.model.context_parallel_size == 2
+        assert config.model.expert_model_parallel_size == 2
+        assert config.model.sequence_parallel is True
+        assert config.model.cp_comm_type == "a2a"
+        assert config.model.seq_length == 32768
+        assert config.model.cross_entropy_loss_fusion is False
+        assert config.model.calculate_per_token_loss is True
+        assert config.dataset.seq_length == 32768
+        assert config.train.global_batch_size == 2
+        assert config.train.micro_batch_size == 1
+        assert config.comm_overlap.tp_comm_overlap is False
+        assert config.comm_overlap.batch_p2p_comm is False
+        assert config.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
+        assert config.ddp.average_in_collective is False
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False

@@ -26,6 +26,41 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _HF_PATH = "LGAI-EXAONE/K-EXAONE-236B-A23B"
+_HF_PATH_2_0 = "LGAI-EXAONE/K-EXAONE-2.0-750B-A37B"
+_K_EXAONE_2_0_NUM_LAYERS = 78
+_K_EXAONE_2_0_MTP_NUM_LAYERS = 4
+
+
+def get_k_exaone_2_0_pipeline_layout(pp_size: int, vp_size: int | None) -> list[list[str]] | None:
+    """Build a balanced pipeline layout for K-EXAONE 2.0."""
+    effective_vp_size = 1 if vp_size is None else vp_size
+    total_stages = pp_size * effective_vp_size
+    if total_stages == 1:
+        return None
+    if total_stages < 2:
+        raise ValueError("K-EXAONE 2.0 pipeline parallelism requires at least two stages.")
+
+    total_compute_layers = _K_EXAONE_2_0_NUM_LAYERS + _K_EXAONE_2_0_MTP_NUM_LAYERS
+    target_layers_per_stage = (total_compute_layers + total_stages - 1) // total_stages
+    last_stage_decoder_layers = max(target_layers_per_stage - _K_EXAONE_2_0_MTP_NUM_LAYERS, 0)
+    remaining_decoder_layers = _K_EXAONE_2_0_NUM_LAYERS - last_stage_decoder_layers
+    if remaining_decoder_layers < total_stages - 1:
+        raise ValueError(
+            f"K-EXAONE 2.0 cannot distribute {_K_EXAONE_2_0_NUM_LAYERS} decoder layers over "
+            f"{total_stages} PP/VPP stages."
+        )
+
+    layers_per_stage, extra_layers = divmod(remaining_decoder_layers, total_stages - 1)
+    layout = []
+    for stage_idx in range(total_stages - 1):
+        num_layers = layers_per_stage + int(stage_idx < extra_layers)
+        stage = ["decoder"] * num_layers
+        if stage_idx == 0:
+            stage = ["embedding"] + stage
+        layout.append(stage)
+
+    layout.append(["decoder"] * last_stage_decoder_layers + ["mtp"] * _K_EXAONE_2_0_MTP_NUM_LAYERS + ["loss"])
+    return layout
 
 
 def _set_optimizer_precision(cfg: ConfigContainer) -> None:
@@ -36,9 +71,9 @@ def _set_optimizer_precision(cfg: ConfigContainer) -> None:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
 
-def _apply_exaone_moe_common(cfg: ConfigContainer) -> None:
-    cfg.model = AutoBridge.from_hf_pretrained(_HF_PATH).to_megatron_provider(load_weights=False)
-    cfg.tokenizer.tokenizer_model = _HF_PATH
+def _apply_exaone_moe_common(cfg: ConfigContainer, *, hf_path: str = _HF_PATH) -> None:
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = hf_path
 
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -83,6 +118,120 @@ def _apply_exaone_moe_common(cfg: ConfigContainer) -> None:
     cfg.mixed_precision = bf16_mixed()
 
     _set_optimizer_precision(cfg)
+
+
+def _apply_k_exaone_2_0_topology(
+    cfg: ConfigContainer,
+    *,
+    pipeline_model_parallel_size: int,
+    expert_model_parallel_size: int,
+) -> None:
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model._pipeline_model_parallel_layout_builder = get_k_exaone_2_0_pipeline_layout
+    cfg.model.pipeline_model_parallel_layout = get_k_exaone_2_0_pipeline_layout(
+        pipeline_model_parallel_size,
+        cfg.model.virtual_pipeline_model_parallel_size,
+    )
+
+
+def exaone_moe_2_0_750b_a37_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for K-EXAONE 2.0 750B-A37B MoE."""
+    cfg = _pretrain_common()
+    _apply_exaone_moe_common(cfg, hf_path=_HF_PATH_2_0)
+    _apply_k_exaone_2_0_topology(
+        cfg,
+        pipeline_model_parallel_size=16,
+        expert_model_parallel_size=32,
+    )
+
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.num_workers = 8
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def exaone_moe_2_0_750b_a37_sft_512gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a full SFT config for K-EXAONE 2.0 750B-A37B MoE."""
+    cfg = _sft_common()
+    _apply_exaone_moe_common(cfg, hf_path=_HF_PATH_2_0)
+    _apply_k_exaone_2_0_topology(
+        cfg,
+        pipeline_model_parallel_size=16,
+        expert_model_parallel_size=32,
+    )
+
+    cfg.model.seq_length = 2048
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 32
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.checkpoint.save_interval = 100
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def exaone_moe_2_0_750b_a37_peft_128gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return a PEFT config for K-EXAONE 2.0 750B-A37B MoE."""
+    cfg = _peft_common()
+    _apply_exaone_moe_common(cfg, hf_path=_HF_PATH_2_0)
+    _apply_k_exaone_2_0_topology(
+        cfg,
+        pipeline_model_parallel_size=8,
+        expert_model_parallel_size=16,
+    )
+
+    cfg.model.seq_length = 2048
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = ["core_attn", "moe", "shared_experts"]
+
+    peft_cfg = default_peft_config(peft_scheme)
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        peft_cfg.dim = 8
+        peft_cfg.alpha = 16
+        peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
+    cfg.peft = peft_cfg
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 32
+    cfg.train.train_iters = 100
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 10
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.checkpoint.save_interval = 100
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
 
 
 def exaone_moe_236b_a23b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
@@ -168,6 +317,9 @@ def exaone_moe_236b_a23b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "
 
 
 __all__ = [
+    "exaone_moe_2_0_750b_a37_peft_128gpu_h100_bf16_config",
+    "exaone_moe_2_0_750b_a37_pretrain_512gpu_h100_bf16_config",
+    "exaone_moe_2_0_750b_a37_sft_512gpu_h100_bf16_config",
     "exaone_moe_236b_a23b_peft_16gpu_h100_bf16_config",
     "exaone_moe_236b_a23b_pretrain_64gpu_h100_bf16_config",
     "exaone_moe_236b_a23b_sft_64gpu_h100_bf16_config",

@@ -54,8 +54,11 @@ class _FakeModelCfg:
         # Set default attributes that recipes might set
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
+        self.pipeline_model_parallel_layout = None
         self.pipeline_dtype = None
         self.virtual_pipeline_model_parallel_size = None
+        self.num_layers_in_first_pipeline_stage = None
+        self.num_layers_in_last_pipeline_stage = None
         self.context_parallel_size = 1
         self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = None
@@ -101,6 +104,23 @@ class _FakeBridge:
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+class _RealDepthFakeBridge(_FakeBridge):
+    """Fake AutoBridge that preserves the selected GLM-4.5 model depth."""
+
+    def __init__(self, num_layers: int):
+        self.num_layers = num_layers
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        model = _FakeModelCfg()
+        model.num_layers = self.num_layers
+        return model
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        num_layers = 46 if hf_path.endswith("Air") else 92
+        return _RealDepthFakeBridge(num_layers)
 
 
 class _FakeTokenizer:
@@ -437,6 +457,35 @@ def test_glm45_air_106b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert hasattr(cfg.model, "moe_permute_fusion")
     assert hasattr(cfg.model, "mtp_num_layers")
     assert hasattr(cfg.model, "mtp_loss_scaling_factor")
+
+
+@pytest.mark.parametrize(
+    "recipe_name,num_layers",
+    [
+        ("glm45_355b_pretrain_config", 92),
+        ("glm45_355b_sft_config", 92),
+        ("glm45_air_106b_pretrain_config", 46),
+        ("glm45_air_106b_sft_config", 46),
+    ],
+)
+def test_glm45_pipeline_partition_covers_real_model_depth(
+    recipe_name: str,
+    num_layers: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """GLM-4.5 recipe defaults should partition every real decoder layer."""
+    from megatron.core.transformer.transformer_block import get_num_layers_to_build
+
+    recipe_func = getattr(_glm_module, recipe_name)
+    patch_recipe_module_global(monkeypatch, recipe_func, "AutoBridge", _RealDepthFakeBridge)
+
+    cfg = recipe_func()
+    layers_per_stage = [
+        get_num_layers_to_build(cfg.model, pp_rank=pp_rank)
+        for pp_rank in range(cfg.model.pipeline_model_parallel_size)
+    ]
+
+    assert sum(layers_per_stage) == num_layers
 
 
 def test_glm45_sft_offline_packing_is_disabled(monkeypatch: pytest.MonkeyPatch):

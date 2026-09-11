@@ -22,7 +22,6 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -72,7 +71,7 @@ def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     # Tokenizer — NullTokenizer for mock pre-training; override for real data
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
 
     # Dataset — mock data by default; override dataset.blend for real data
     cfg.dataset.blend = None

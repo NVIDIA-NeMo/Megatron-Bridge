@@ -41,11 +41,23 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.transformer.spec_utils import import_module
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_hybrid_stack_spec(spec: object) -> None:
+    """Validate an MLM ``--spec`` module/object pair before importing it."""
+    if not isinstance(spec, (list, tuple)) or len(spec) != 2 or not all(isinstance(item, str) for item in spec):
+        raise ValueError(
+            "args.spec must be the two-element [module_path, object_name] value produced by Megatron-LM --spec"
+        )
+
+    module_path, object_name = spec
+    _validate_target_prefix(target=f"{module_path}.{object_name}", full_key="args.spec")
 
 
 def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitchen: bool) -> ModuleSpec:
@@ -134,6 +146,7 @@ def _gpt_provider(
         pre_process=pre_process,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
+        **logit_dtype_kwarg(GPTModel, getattr(args, "logit_dtype", None)),
         parallel_output=True,
         share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
         position_embedding_type=args.position_embedding_type,
@@ -160,7 +173,7 @@ def _hybrid_provider(
         config = _transformer_config_from_args(args)
 
     assert args.spec is not None, "You must provide a valid Hybrid layer spec!"
-    _validate_target_prefix(target=args.spec, full_key="args.spec")
+    _validate_hybrid_stack_spec(args.spec)
     hybrid_stack_spec = import_module(args.spec)
 
     # Migrate deprecated hybrid_override_pattern → hybrid_layer_pattern
@@ -216,6 +229,7 @@ def _hybrid_provider(
         hybrid_layer_pattern=args.hybrid_layer_pattern,
         post_process=post_process,
         fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
+        **logit_dtype_kwarg(HybridModel, getattr(args, "logit_dtype", None)),
         parallel_output=True,
         share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
         position_embedding_type=args.position_embedding_type,

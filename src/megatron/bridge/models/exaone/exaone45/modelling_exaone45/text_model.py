@@ -17,6 +17,7 @@
 
 from typing import Literal, Optional
 
+import torch
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -28,6 +29,7 @@ from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.rope import Exaone45MultimodalRotaryEmbedding
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -43,6 +45,7 @@ class Exaone45GPTModel(GPTModel):
         pre_process: bool = True,
         post_process: bool = True,
         fp16_lm_cross_entropy: bool = False,
+        logit_dtype: torch.dtype | None = None,
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
         position_embedding_type: Literal["learned_absolute", "rope", "mrope", "none"] = "learned_absolute",
@@ -64,6 +67,7 @@ class Exaone45GPTModel(GPTModel):
             pre_process=pre_process,
             post_process=post_process,
             fp16_lm_cross_entropy=fp16_lm_cross_entropy,
+            **logit_dtype_kwarg(GPTModel, logit_dtype),
             parallel_output=parallel_output,
             share_embeddings_and_output_weights=share_embeddings_and_output_weights,
             position_embedding_type=position_embedding_type,

@@ -49,6 +49,8 @@ git switch <branch>
 ```
 Example: If using 26.04 container, then execute- `git switch r0.4.0`
 
+> **DeepSeek V4:** The 26.08 DeepSeek V4 recipes are an exception to this release-branch guidance: they require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
+
 ### Step 2. Run instructions
 
 #### <ins>Examples</ins>

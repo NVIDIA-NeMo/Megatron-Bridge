@@ -16,32 +16,51 @@ those examples are batched conventionally, many tokens in each batch are just
 padding. Packed sequences reduce that waste by building longer packs from
 multiple examples and carrying boundary metadata into the attention path.
 
-In Bridge today, there are two distinct packing paths plus long-context
+In Bridge today, there are three distinct packing paths plus long-context
 enablement through context parallelism:
 
 | Path | Use case | Key config |
 |---|---|---|
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
-| Direct-HF/VLM in-batch packing | Direct Hugging Face and supported VLM finetuning | `enable_in_batch_packing=True` |
+| Runtime in-batch packing | GPT-SFT JSONL, Direct Hugging Face, and supported VLM finetuning | `enable_in_batch_packing=True` |
+| Energon online packing | Qwen-VL data using the model-owned Energon collator | `packing_buffer_size=<candidate samples per worker>` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
 These are related but they are not the same knob. Offline packed SFT and
-Direct-HF/VLM in-batch packing solve padding waste; long-context training
+runtime in-batch packing solve padding waste; long-context training
 primarily addresses activation memory and communication tradeoffs at larger
 sequence lengths.
 
 The shared implementation lives under `megatron.bridge.data.packing`: offline
 GPT SFT materialization, packed Parquet runtime datasets, bin-packing
-algorithms, and collate-time THD packing each have separate modules. Ordinary
+algorithms, and collate-time THD packing each have separate modules. Energon
+online packing uses the task encoder's native `select_samples_to_pack` and
+`pack_selected_samples` API while reusing the same canonical THD batch builder. Ordinary
 non-packed padding remains in `megatron.bridge.data.collators`. Use
 `scripts/training/prepare_gpt_sft_packed_data.py` when packed GPT SFT artifacts
 should be prepared before launching training.
+
+For `GPTSFTDatasetConfig`, in-batch packing works with both local mmap JSONL
+schemas: prompt/completion (`GPTSFTDataset`) and chat
+(`GPTSFTChatDataset`). Tokenization remains lazy: workers mmap the JSONL and
+read, parse, and tokenize only the rows selected for the current logical
+microbatch. Collation then concatenates those rows into one physical THD batch
+row; it does not materialize an offline dataset or load the full source into
+RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
+in-batch packing does not support the global-batch `batch` dataloader.
+
+Local GPT-SFT data can also use `per_split_data_source_manifest_path` with MLM-style
+alternating ratios and JSONL paths. Offline packing resolves the weighted raw
+row stream first and writes one packed Parquet cache for the blended split.
+The input JSONL files remain memory-mapped; blending does not concatenate them
+into another raw file or load them all into host memory. A one-path split keeps
+the established single-file behavior.
 
 ## When to Use It
 
 Packed sequences are a good fit when all of the following are true:
 
-- you are doing SFT, PEFT, or supported VLM finetuning using one of the two
+- you are doing SFT, PEFT, or supported VLM finetuning using one of the three
   packing paths above
 - your examples have variable lengths and padding waste is significant
 - you can tolerate the micro-batch constraints of packed training
@@ -100,32 +119,74 @@ when using CUDA graphs. CUDA graphs additionally require
 `pad_cu_seqlens=true` and packing metadata. Ordinary eager offline packing
 does not universally require fixed-width padding.
 
+## Choosing Runtime In-Batch Packing
+
+Use GPT-SFT in-batch packing when retaining the original JSONL is preferable
+to generating packed Parquet artifacts. Enable it directly on the dataset
+config and use a logical micro-batch larger than one:
+
+```text
+dataset.enable_in_batch_packing=true
+dataset.dataloader_type=single
+train.micro_batch_size=4
+```
+
+The collator preserves each sample's prompt/completion or chat loss mask and
+emits current MCore packed metadata (`cu_seqlens_q`, `cu_seqlens_kv`, and the
+corresponding padded boundaries when CP/SP alignment is required). The model
+sees one physical THD row. `enable_in_batch_packing` and
+`enable_offline_packing` are mutually exclusive. The `batch` dataloader is not
+supported for GPT-SFT in-batch packing; use `single` or `cyclic`.
+
 ## Stable Constraints
 
 The durable constraints for packed sequences in Bridge are:
 
 - offline packed SFT requires configured `micro_batch_size == 1`
-- Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
+- GPT-SFT/Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
   collation flattens those input rows into one physical THD batch row
+- GPT-SFT in-batch packing requires `dataloader_type="single"` or `"cyclic"`;
+  the global-batch `"batch"` dataloader is not supported
+- Energon online packing currently supports the eager Qwen-VL collator path,
+  requires physical `micro_batch_size == 1`, the generic `vlm_step`, per-token loss, and
+  `ddp.average_in_collective=False`
+- standard eager `alltoall` expert parallelism has functional coverage for
+  Qwen3.6-35B-A3B at TP1/PP1/EP8 with EP communication overlap disabled; this
+  is not a performance claim; other EP dispatchers are accepted with fixed-width
+  native packs but do not yet have equivalent runtime evidence; THD boundaries
+  produce a padding mask that excludes fixed-width gaps from MoE auxiliary-loss,
+  z-loss, and expert-bias statistics
+- current MCore may still dispatch those padded positions; expert-capacity/token-
+  dropping configurations do not yet have native-packing runtime coverage
+- `packing_buffer_size` counts candidate samples independently in every Energon
+  worker; it is not a byte cache or a packed-sequence length
+- Energon native packing and collator-owned `enable_in_batch_packing=True` are
+  mutually exclusive
+- Energon native packing does not currently support MTP, CUDA graphs, Qwen3-VL
+  DistTrain, or pipeline parallelism; requested MoE expert-parallel communication
+  overlap is disabled with a warning so training uses the non-overlapped path
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
-- Direct-HF sequence length must also satisfy the LCM of the training and
+- GPT-SFT and Direct-HF sequence length must also satisfy the LCM of the training and
   evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter
-- HybridEP users whose local dispatch token counts differ across ranks must
-  explicitly set `model.moe_hybridep_pad_uneven_dispatch_inputs=True`; this
-  pads only to the group-wide aligned maximum before dispatch and trims the
-  padding after combine
+- combined recipes using offline, in-batch, or Energon native packing
+  automatically enable safe uneven-input padding for eager HybridEP; unpacked
+  BSHD recipes preserve their configured setting
+- the THD safety path pads only to the group-wide aligned maximum before
+  dispatch and trims the padding after combine
 - CUDA-graph-friendly packed metadata requires additional padding constraints
 
 Model-family support is not universal. Some families and recipe paths explicitly
 opt out of packed sequences or related packing modes.
 
-The HybridEP option is not enabled automatically by in-batch packing. Some
-packed datasets already produce equal dispatcher sizes, while variable-sized
-inputs can also occur without sequence packing. Keeping the option explicit
-avoids an unnecessary synchronization and padding cost for equal-sized inputs.
+HybridEP CUDA-graph configs preserve their explicit uneven-input setting because
+the safety path performs a host scalar synchronization that is not capture-safe.
+They must provide equal per-rank dispatch shapes. Disable CUDA graphs when packed
+THD token counts can differ so the recipe can enable safe padding. Direct model-
+provider callers must explicitly enable the setting when they supply uneven THD
+inputs because no combined recipe is available to infer their layout.
 
 ## Relationship to Long-Sequence Training
 
@@ -155,11 +216,20 @@ The most stable caveats to remember are:
    real-data recipe; validation sharding and batch math must use the eval DP.
 4. Packed sequences improve efficiency primarily by reducing padding waste, not
    by replacing long-context parallelism or memory-planning techniques.
+5. An Energon checkpoint restores the loader's buffered samples and selected
+   pack groups, but exact resumption still requires the same dataset, processor,
+   topology, sequence length, and packing-buffer configuration.
+6. `progress.txt` `Tokens` and the `time/tokens` runtime metric currently report
+   configured token capacity (`consumed_train_samples * model.seq_length`), not
+   exact packed-token utilization. Finite partial Energon packs can therefore
+   make those values larger than the physical token slots executed, and neither
+   metric excludes alignment padding to represent useful source tokens.
 
 ## Related Docs
 
 - [docs/training/multi-token-prediction.md](multi-token-prediction.md)
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/hierarchical-context-parallel.md](hierarchical-context-parallel.md)
+- [tutorials/data/energon/README.md](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md)
 - [skills/nemo-mbridge-perf-sequence-packing/SKILL.md](../skills/nemo-mbridge-perf-sequence-packing/SKILL.md)
 - [skills/nemo-mbridge-perf-sequence-packing/card.yaml](../skills/nemo-mbridge-perf-sequence-packing/card.yaml)

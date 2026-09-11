@@ -15,6 +15,11 @@
 
 set -euo pipefail
 
+if [[ -n "${ENABLE_IN_BATCH_PACKING+x}" ]]; then
+  echo "ENABLE_IN_BATCH_PACKING is no longer accepted by this example; use PACKING_BUFFER_SIZE for Energon-native packing." >&2
+  exit 2
+fi
+
 # Prepare ENERGON_PATH with tutorials/data/energon/README.md or the Mantis
 # converter before launching this example.
 : "${ENERGON_PATH:?Set ENERGON_PATH to an indexed Energon dataset root}"
@@ -26,10 +31,10 @@ NUM_GPUS=${NUM_GPUS:-1}
 SEQ_LENGTH=${SEQ_LENGTH:-4096}
 TRAIN_ITERS=${TRAIN_ITERS:-100}
 GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-2}
-MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-2}
+MICRO_BATCH_SIZE=${MICRO_BATCH_SIZE:-1}
 EVAL_ITERS=${EVAL_ITERS:-1}
 EVAL_INTERVAL=${EVAL_INTERVAL:-20}
-ENABLE_IN_BATCH_PACKING=${ENABLE_IN_BATCH_PACKING:-False}
+PACKING_BUFFER_SIZE=${PACKING_BUFFER_SIZE:-16}
 
 # Set WANDB_API_KEY to log online, or keep the default disabled mode.
 export WANDB_MODE=${WANDB_MODE:-disabled}
@@ -37,7 +42,7 @@ export WANDB_MODE=${WANDB_MODE:-disabled}
 uv run python -m torch.distributed.run --standalone --nproc_per_node="${NUM_GPUS}" \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_energon_config \
-  --step_func qwen3_vl_step \
+  --step_func vlm_step \
   --mode lora \
   checkpoint.pretrained_checkpoint="${PRETRAINED_CHECKPOINT}" \
   checkpoint.load=null \
@@ -52,5 +57,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node="${NUM_GPUS
   dataset.path="${ENERGON_PATH}" \
   dataset.seq_length="${SEQ_LENGTH}" \
   dataset.micro_batch_size="${MICRO_BATCH_SIZE}" \
-  dataset.enable_in_batch_packing="${ENABLE_IN_BATCH_PACKING}" \
+  dataset.packing_buffer_size="${PACKING_BUFFER_SIZE}" \
+  model.calculate_per_token_loss=True \
+  ddp.average_in_collective=False \
   logger.log_interval=1

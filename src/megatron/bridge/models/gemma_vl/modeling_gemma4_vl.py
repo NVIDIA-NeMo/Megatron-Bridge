@@ -371,6 +371,8 @@ class Gemma4VLModel(MegatronModule):
         causal_mask = torch.tril(
             torch.ones((batch_size, 1, seq_len, seq_len), dtype=torch.bool, device=input_ids.device)
         )
+        if getattr(self.config.text_config, "use_bidirectional_attention", None) != "vision":
+            return ~causal_mask
 
         def _bidirectional_block_mask(token_mask: torch.Tensor) -> torch.Tensor:
             padded = F.pad(token_mask, (1, 0), value=0)

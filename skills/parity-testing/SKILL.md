@@ -112,6 +112,15 @@ Keep stricter cosine or absolute-difference thresholds as optional diagnostic
 targets when investigating arithmetic differences. Do not use them to downgrade
 a model-support card after the correlation gate passes.
 
+### Transformer Engine normalization
+
+Using Transformer Engine LayerNorm/RMSNorm can change floating-point operation ordering relative to
+the HF or PyTorch reference. Treat that as a forward-correlation question, not a weight-conversion
+failure: state-dict round-trip must remain exact, while forward parity uses the cosine and next-token
+gates above. Do not replace an available TE affine norm solely to reduce a report-only absolute logit
+difference. Conversely, do not add affine parameters to weightless reference norms just to use TE;
+that changes the architecture and invalidates exact mapping coverage.
+
 ## Comparison Utilities
 
 These functions are useful when writing custom verification scripts or

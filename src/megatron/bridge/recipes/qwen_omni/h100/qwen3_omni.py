@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 import torch
@@ -34,6 +35,11 @@ if TYPE_CHECKING:
 _QWEN3_OMNI_HF_PATH = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
 
+def _qwen3_omni_hf_path() -> str:
+    """Resolve an explicit local checkpoint before falling back to the public id."""
+    return os.environ.get("QWEN3_OMNI_HF_PATH", _QWEN3_OMNI_HF_PATH)
+
+
 def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     """Return an 8-GPU thinker-only SFT config for Qwen3-Omni 30B-A3B.
 
@@ -42,7 +48,8 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
 
     cfg = _sft_common_vlm()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_QWEN3_OMNI_HF_PATH).to_megatron_provider(load_weights=False)
+    hf_model_path = _qwen3_omni_hf_path()
+    cfg.model = AutoBridge.from_hf_pretrained(hf_model_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -78,7 +85,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     cfg.scheduler = scheduler_cfg
 
     cfg.dataset.seq_length = 4096
-    cfg.dataset.hf_processor_path = _QWEN3_OMNI_HF_PATH
+    cfg.dataset.hf_processor_path = hf_model_path
     cfg.dataset.enable_in_batch_packing = False
     cfg.dataset.skip_getting_attention_mask_from_dataset = False
 
@@ -105,7 +112,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=cfg.model.seq_length,
         preprocessing=ChatSFTPreprocessingConfig(),
-        hf_processor_path=_QWEN3_OMNI_HF_PATH,
+        hf_processor_path=_qwen3_omni_hf_path(),
         source=HFDatasetSourceConfig(
             path_or_dataset="json",
             split="train",

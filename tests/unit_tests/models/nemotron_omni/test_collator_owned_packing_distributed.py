@@ -70,6 +70,10 @@ def test_collator_owned_thd_tensors_use_one_real_cp_partition_index() -> None:
         position_ids = torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]], device="cuda")
         labels = input_ids.clone()
         loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]], device="cuda")
+        padding_mask = torch.tensor(
+            [[False, False, False, True, False, False, False, True]],
+            device="cuda",
+        )
         cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32, device="cuda")
         cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
         packed_seq_params = PackedSeqParams(
@@ -90,6 +94,7 @@ def test_collator_owned_thd_tensors_use_one_real_cp_partition_index() -> None:
             local_attention_mask,
             local_labels,
             local_loss_mask,
+            local_padding_mask,
             loss_mask_was_sliced,
         ) = model._apply_context_parallel_sharding(
             input_ids=input_ids,
@@ -98,6 +103,7 @@ def test_collator_owned_thd_tensors_use_one_real_cp_partition_index() -> None:
             attention_mask=None,
             labels=labels,
             loss_mask=loss_mask,
+            padding_mask=padding_mask,
             packed_seq_params=packed_seq_params,
         )
 
@@ -111,6 +117,7 @@ def test_collator_owned_thd_tensors_use_one_real_cp_partition_index() -> None:
         assert torch.equal(local_position_ids, position_ids.index_select(1, expected_index))
         assert torch.equal(local_labels, labels.index_select(1, expected_index))
         assert torch.equal(local_loss_mask, loss_mask.index_select(1, expected_index))
+        assert torch.equal(local_padding_mask, padding_mask.index_select(1, expected_index))
         assert local_attention_mask is None
         assert loss_mask_was_sliced is True
         assert packed_seq_params.cu_seqlens_q is cu_seqlens

@@ -545,8 +545,7 @@ class MegatronMIMOBridge(AutoBridge):
             wrapped = make_route_local_bridge(self._model_bridge, route)
             with _bridged_parallel_state(pg_collection), component_pg_context(submodule, pg_collection):
                 for task in wrapped.build_conversion_tasks(hf_pretrained, [submodule]):
-                    if task is not None:
-                        tasks.append(MIMOConversionTask(route=route, task=task))
+                    tasks.append(MIMOConversionTask(route=route, task=task))
         return tasks
 
     def save_hf_pretrained(

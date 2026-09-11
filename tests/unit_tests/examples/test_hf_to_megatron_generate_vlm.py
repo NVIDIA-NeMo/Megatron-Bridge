@@ -15,6 +15,7 @@
 import runpy
 import sys
 import types
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -44,6 +45,7 @@ _import_stubs["megatron.core.pipeline_parallel.schedules"].get_forward_backward_
 _import_stubs["megatron.bridge"].AutoBridge = MagicMock()
 _import_stubs["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].get_last_rank = MagicMock()
+_import_stubs["megatron.bridge.utils.common_utils"].maybe_initialize_distributed = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_0 = MagicMock()
 _import_stubs["megatron.bridge.utils.common_utils"].print_rank_last = MagicMock()
 for name in ("AutoConfig", "AutoProcessor", "AutoTokenizer", "GenerationConfig"):
@@ -60,12 +62,54 @@ for name in (
 
 with patch.dict(sys.modules, _import_stubs):
     _SCRIPT_GLOBALS = runpy.run_path(_SCRIPT)
+_gather_last_token_logits = _SCRIPT_GLOBALS["_gather_last_token_logits"]
 _main = _SCRIPT_GLOBALS["main"]
 
 
 @pytest.mark.unit
-def test_generation_stops_on_any_configured_eos_token() -> None:
-    """An alternate EOS from generation_config must end the greedy loop."""
+def test_checkpoint_inference_aligns_parameter_dtype_with_pipeline_dtype() -> None:
+    """Checkpoint inference must not mix bf16 pipeline inputs with fp32 parameters."""
+    args = SimpleNamespace(
+        ep=1,
+        etp=1,
+        hf_model_path="org/gemma4-vl",
+        hf_revision="revision",
+        megatron_model_path="/checkpoint",
+        pp=2,
+        pp_layout=None,
+        tp=1,
+        trust_remote_code=False,
+    )
+
+    class StopAfterCheckpointLoad(Exception):
+        pass
+
+    provider = MagicMock()
+    bridge = MagicMock()
+    bridge.to_megatron_provider.return_value = provider
+    bridge.load_megatron_model.side_effect = StopAfterCheckpointLoad
+
+    script_globals = {
+        "AutoBridge": SimpleNamespace(from_hf_pretrained=MagicMock(return_value=bridge)),
+        "AutoConfig": SimpleNamespace(from_pretrained=MagicMock(return_value=SimpleNamespace(model_type="gemma4"))),
+        "is_safe_repo": MagicMock(return_value=False),
+        "maybe_initialize_distributed": MagicMock(),
+        "print_rank_0": MagicMock(),
+    }
+
+    with patch.dict(_main.__globals__, script_globals), pytest.raises(StopAfterCheckpointLoad):
+        _main(args)
+
+    mp_overrides = bridge.load_megatron_model.call_args.kwargs["mp_overrides"]
+    assert mp_overrides["pipeline_dtype"] == torch.bfloat16
+    assert mp_overrides["params_dtype"] == mp_overrides["pipeline_dtype"]
+    assert mp_overrides["bf16"] is True
+    assert mp_overrides["fp16"] is False
+
+
+@pytest.mark.unit
+def test_generation_releases_logits_and_stops_on_any_configured_eos_token() -> None:
+    """Generation must release prior logits and stop on an alternate EOS."""
     args = SimpleNamespace(
         ep=1,
         etp=1,
@@ -73,7 +117,7 @@ def test_generation_stops_on_any_configured_eos_token() -> None:
         hf_revision="revision",
         image_path=None,
         image_paths=None,
-        max_new_tokens=2,
+        max_new_tokens=3,
         megatron_model_path=None,
         pp=1,
         pp_layout=None,
@@ -102,18 +146,23 @@ def test_generation_stops_on_any_configured_eos_token() -> None:
     generation_config_cls.from_pretrained.return_value = generation_config
 
     forward = MagicMock()
+    gathered_refs: list[weakref.ReferenceType[torch.Tensor]] = []
 
     def run_forward(**kwargs):
+        if gathered_refs:
+            assert gathered_refs[-1]() is None
         seq_length = kwargs["seq_length"]
         logits = torch.zeros(1, seq_length, 8)
-        next_token = 2 if forward.call_count == 1 else 1
+        next_token = 3 if forward.call_count == 1 else 2
         logits[0, seq_length - 1, next_token] = 1
         return [logits]
 
     forward.side_effect = run_forward
 
-    def all_gather(outputs, tensor, group):
-        outputs[0].copy_(tensor)
+    def gather_last_token_logits(output, real_seq_len):
+        last_token_logits = output[:, real_seq_len - 1].clone()
+        gathered_refs.append(weakref.ref(last_token_logits))
+        return last_token_logits
 
     script_globals = {
         "AutoBridge": SimpleNamespace(from_hf_pretrained=MagicMock(return_value=bridge)),
@@ -123,6 +172,7 @@ def test_generation_stops_on_any_configured_eos_token() -> None:
         "AutoProcessor": SimpleNamespace(from_pretrained=MagicMock(return_value=MagicMock())),
         "AutoTokenizer": SimpleNamespace(from_pretrained=MagicMock(return_value=tokenizer)),
         "GenerationConfig": generation_config_cls,
+        "_gather_last_token_logits": gather_last_token_logits,
         "get_forward_backward_func": MagicMock(return_value=forward),
         "get_last_rank": MagicMock(return_value=0),
         "is_safe_repo": MagicMock(return_value=False),
@@ -136,12 +186,48 @@ def test_generation_stops_on_any_configured_eos_token() -> None:
     with (
         patch.dict(_main.__globals__, script_globals),
         patch.object(torch.Tensor, "cuda", lambda self: self),
-        patch.object(torch.distributed, "all_gather", side_effect=all_gather),
         patch.object(torch.distributed, "broadcast"),
-        patch.object(_main.__globals__["parallel_state"], "get_tensor_model_parallel_group", return_value=None),
-        patch.object(_main.__globals__["parallel_state"], "get_tensor_model_parallel_world_size", return_value=1),
         patch.object(_main.__globals__["parallel_state"], "is_pipeline_last_stage", return_value=True),
     ):
         _main(args)
 
-    assert forward.call_count == 1
+    assert forward.call_count == 2
+    assert all(ref() is None for ref in gathered_refs)
+
+
+@pytest.mark.unit
+def test_generation_gathers_only_last_token_logits() -> None:
+    """TP gathering must not retain or replicate full-prefix logits between steps."""
+    output = torch.arange(1 * 3 * 4, dtype=torch.float32).view(1, 3, 4)
+    output_ref = weakref.ref(output)
+    gathered_refs: list[weakref.ReferenceType[torch.Tensor]] = []
+    gathered_shapes: list[torch.Size] = []
+
+    def fake_all_gather(gathered, local_logits, group):
+        gathered_shapes.append(local_logits.shape)
+        gathered_refs.extend(weakref.ref(tensor) for tensor in gathered)
+        gathered[0].copy_(local_logits)
+        gathered[1].copy_(local_logits + 100)
+
+    with (
+        patch.object(torch.distributed, "all_gather", new=fake_all_gather),
+        patch.object(
+            _gather_last_token_logits.__globals__["parallel_state"],
+            "get_tensor_model_parallel_group",
+            return_value=None,
+        ),
+        patch.object(
+            _gather_last_token_logits.__globals__["parallel_state"],
+            "get_tensor_model_parallel_world_size",
+            return_value=2,
+        ),
+    ):
+        last_token_logits = _gather_last_token_logits(output, real_seq_len=3)
+
+    assert gathered_shapes == [torch.Size([1, 4])]
+    assert torch.equal(last_token_logits, torch.tensor([[8, 9, 10, 11, 108, 109, 110, 111]]))
+    assert all(ref() is None for ref in gathered_refs)
+
+    del output
+    assert output_ref() is None
+    assert torch.equal(last_token_logits[:, :4], torch.tensor([[8, 9, 10, 11]]))

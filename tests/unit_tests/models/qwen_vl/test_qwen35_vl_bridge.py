@@ -171,7 +171,7 @@ class TestQwen35VLBridgeProviderBridge:
         provider = bridge.provider_bridge(mock_pretrained)
         assert provider.layernorm_zero_centered_gamma is True
         assert provider.attention_output_gate is True
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
 
     def test_provider_bridge_gdn_params(self, bridge, mock_pretrained):
@@ -358,6 +358,13 @@ class TestQwen35TokenClassificationBridge:
         assert model.language_model.output_layer.dropout.p == 0.2
         assert model.language_model.output_layer.output_in_fp32 is False
 
+    def test_provider_rejects_logit_dtype_for_classification_head(self, mock_pretrained):
+        provider = Qwen35TokenClassificationBridge().provider_bridge(mock_pretrained)
+        provider.logit_dtype = torch.float32
+
+        with pytest.raises(ValueError, match="does not support true mixed-precision output GEMMs"):
+            provider.provide(pre_process=False, post_process=True)
+
     def test_mapping_registry_uses_score_and_omits_lm_and_mtp(self, mock_pretrained):
         bridge = Qwen35TokenClassificationBridge()
 
@@ -507,7 +514,7 @@ class TestQwen35VLMoEBridgeProviderBridge:
 
     def test_provider_bridge_hybrid_architecture(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.experimental_attention_variant == "gated_delta_net"
+        assert provider.experimental_attention_variant == "gdn"
         assert provider.linear_attention_freq == 4
         assert provider.layernorm_zero_centered_gamma is True
 
@@ -572,6 +579,25 @@ class TestQwen35VLMoEBridgeMappingRegistry:
     def test_mapping_registry_has_vision_params(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("visual" in n or "vision_model" in n for n in names)
+
+    def test_mapping_registry_detects_qwen36_packed_mtp_experts(self, bridge):
+        source = Mock()
+        source.get_all_keys.return_value = [
+            "model.language_model.layers.0.mlp.experts.gate_up_proj",
+            "mtp.layers.0.mlp.experts.gate_up_proj",
+        ]
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        mappings = bridge.mapping_registry().mappings
+
+        assert any(
+            getattr(mapping, "hf_param", None) == "mtp.layers.*.mlp.experts.gate_up_proj" for mapping in mappings
+        )
+        assert not any(
+            isinstance(getattr(mapping, "hf_param", None), dict)
+            and "mtp.layers.*.mlp.experts.*.gate_proj.weight" in mapping.hf_param.values()
+            for mapping in mappings
+        )
 
 
 @pytest.mark.unit

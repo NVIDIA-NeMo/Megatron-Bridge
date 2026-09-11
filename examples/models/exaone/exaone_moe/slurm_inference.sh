@@ -50,6 +50,10 @@ WORKDIR="${WORKDIR:-/opt/Megatron-Bridge}"
 
 # -- Model / Parallelism -----------------------------------------------------
 HF_MODEL_ID="${HF_MODEL_ID:-LGAI-EXAONE/K-EXAONE-236B-A23B}"
+case "$HF_MODEL_ID" in
+    LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) NUM_EXPERTS="${NUM_EXPERTS:-256}" ;;
+    *) NUM_EXPERTS="${NUM_EXPERTS:-128}" ;;
+esac
 TP="${TP:-1}"
 PP="${PP:-1}"
 EP="${EP:-16}"
@@ -80,8 +84,8 @@ if [[ "$MODEL_PARALLEL_SIZE" -ne "$WORLD_SIZE" ]]; then
     echo "ERROR: TP*PP*EP=$MODEL_PARALLEL_SIZE must equal allocated tasks=$WORLD_SIZE."
     exit 1
 fi
-if ((128 % EP != 0)); then
-    echo "ERROR: EP=$EP must divide K-EXAONE's 128 routed experts."
+if ((NUM_EXPERTS % EP != 0)); then
+    echo "ERROR: EP=$EP must divide K-EXAONE's $NUM_EXPERTS routed experts."
     exit 1
 fi
 

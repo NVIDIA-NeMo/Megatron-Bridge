@@ -59,6 +59,7 @@ class HFEnergonBatch(Batch):
     position_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     visual_inputs: GenericVisualInputs | None = None
     attention_mask: torch.Tensor | None = None
+    padding_mask: torch.Tensor | None = None
     cu_seqlens_q: torch.Tensor | None = None
     cu_seqlens_kv: torch.Tensor | None = None
     cu_seqlens_q_padded: torch.Tensor | None = None
@@ -198,6 +199,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             labels=collated["labels"],
             loss_mask=collated["loss_mask"],
             attention_mask=collated.get("attention_mask"),
+            padding_mask=collated.get("padding_mask"),
             position_ids=collated["position_ids"],
             visual_inputs=collated.get("visual_inputs"),
             cu_seqlens_q=collated.get("cu_seqlens_q"),

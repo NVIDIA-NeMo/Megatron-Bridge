@@ -2,6 +2,11 @@
 
 Scripts for [K-EXAONE-236B-A23B](https://huggingface.co/LGAI-EXAONE/K-EXAONE-236B-A23B), a large BF16 sparse MoE language model from LG AI Research.
 
+The scripts also accept the planned K-EXAONE 2.0 checkpoint through
+`HF_MODEL_ID=LGAI-EXAONE/K-EXAONE-2.0-750B-A37B`. They automatically validate
+expert parallelism against its 256 routed experts. Set `NUM_EXPERTS` explicitly
+when using another compatible checkpoint.
+
 | Property | Value |
 |---|---|
 | HF model ID | `LGAI-EXAONE/K-EXAONE-236B-A23B` |
@@ -24,6 +29,21 @@ Key constraints:
 - `TP * PP * EP` must equal the number of distributed ranks.
 - `EP` must divide 128, the number of routed experts.
 - Increase `EP` to reduce expert-parameter memory per rank.
+
+## K-EXAONE 2.0 Training Recipes
+
+The short model name selects `LGAI-EXAONE/K-EXAONE-2.0-750B-A37B`:
+
+```bash
+uv run python scripts/training/run_recipe.py --model exaone_moe --mode pretrain --dataset mock
+uv run python scripts/training/run_recipe.py --model exaone_moe --mode sft --dataset tulu3
+uv run python scripts/training/run_recipe.py --model exaone_moe --mode lora --dataset tulu3
+```
+
+The default pretraining and SFT topology uses 512 H100 GPUs; the PEFT topology
+uses 128 H100 GPUs. The 750B checkpoint is not expected to fit the single-node
+example defaults. Use `--model exaone_moe_236b_a23b` to select the earlier 236B
+recipes explicitly.
 
 ## Inference (Single Node)
 
@@ -106,6 +126,7 @@ bash examples/models/exaone/exaone_moe/slurm_conversion.sh \
 | Variable | Description |
 |---|---|
 | `HF_MODEL_ID` | Hugging Face model ID; defaults to `LGAI-EXAONE/K-EXAONE-236B-A23B` |
+| `NUM_EXPERTS` | Routed expert count; inferred as 256 for K-EXAONE 2.0 and 128 otherwise |
 | `NPROC_PER_NODE` | Local GPU/rank count for single-node scripts; defaults to 8 |
 | `TP` | Tensor parallelism |
 | `PP` | Pipeline parallelism |

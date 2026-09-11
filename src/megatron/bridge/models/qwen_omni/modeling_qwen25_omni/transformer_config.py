@@ -14,6 +14,7 @@
 
 from dataclasses import dataclass, field
 
+import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 
@@ -31,6 +32,7 @@ class Qwen25OmniTransformerConfig(TransformerConfig):
 
     apply_rotary_pos_emb_in_fp32: bool = False
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 10000

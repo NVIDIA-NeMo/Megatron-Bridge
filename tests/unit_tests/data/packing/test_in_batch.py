@@ -17,7 +17,10 @@
 import pytest
 import torch
 
-from megatron.bridge.data.packing.in_batch import pack_right_padded_sequence_batch_to_mcore_thd
+from megatron.bridge.data.packing.in_batch import (
+    build_mcore_thd_sequence_batch_from_rows,
+    pack_right_padded_sequence_batch_to_mcore_thd,
+)
 
 
 def _pack_padded_sequence_for_test(
@@ -121,6 +124,52 @@ class TestPackBatchSequences:
         # Attention mask should be None for packed sequences
         assert packed_attn is None
 
+    def test_direct_rows_can_pad_final_pack_to_fixed_width(self):
+        """Fixed-width direct packing preserves real and physical boundaries."""
+        rows = [
+            {
+                "input_ids": torch.tensor([1, 2, 3]),
+                "position_ids": torch.tensor([0, 1, 2]),
+                "labels": torch.tensor([2, 3, -100]),
+                "loss_mask": torch.tensor([1.0, 1.0, 0.0]),
+            },
+            {
+                "input_ids": torch.tensor([4, 5]),
+                "position_ids": torch.tensor([0, 1]),
+                "labels": torch.tensor([5, -100]),
+                "loss_mask": torch.tensor([1.0, 0.0]),
+            },
+        ]
+
+        packed = build_mcore_thd_sequence_batch_from_rows(
+            rows,
+            sequence_length=8,
+            pad_to_max_length=True,
+        )
+
+        assert packed["input_ids"].tolist() == [[1, 2, 3, 4, 5, 0, 0, 0]]
+        assert packed["labels"].tolist() == [[2, 3, -100, 5, -100, -100, -100, -100]]
+        assert packed["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0]]
+        assert packed["cu_seqlens_q"].tolist() == [0, 3, 5]
+        assert packed["cu_seqlens_q_padded"].tolist() == [0, 3, 8]
+        assert packed["pad_between_seqs"] is True
+        assert packed["max_seqlen_q"].item() == 5
+        assert packed["total_tokens"] == 8
+
+    def test_fixed_width_direct_rows_reject_aggregate_over_sequence_length(self):
+        """Fixed-width packing rejects rows whose physical aggregate cannot fit."""
+        rows = [
+            {"input_ids": torch.arange(5), "position_ids": torch.arange(5)},
+            {"input_ids": torch.arange(4), "position_ids": torch.arange(4)},
+        ]
+
+        with pytest.raises(ValueError, match="Packed sequence length 9 exceeds configured sequence_length 8"):
+            build_mcore_thd_sequence_batch_from_rows(
+                rows,
+                sequence_length=8,
+                pad_to_max_length=True,
+            )
+
     def test_packing_with_pad_to_multiple_of(self):
         """Test packing with padding to a multiple (for CP compatibility)."""
         batch_size = 2
@@ -161,6 +210,42 @@ class TestPackBatchSequences:
 
         # max_seqlen should be 6 (longest padded sequence)
         assert max_seqlen.item() == 6
+
+    def test_packing_marks_only_physical_alignment_gaps_as_padding(self):
+        """MoE routing can exclude collator-inserted THD alignment gaps."""
+        batch = {
+            "tokens": torch.tensor([[1, 2, 3, 0, 0], [4, 5, 0, 0, 0]]),
+            "labels": torch.tensor([[2, 3, -100, -100, -100], [5, -100, -100, -100, -100]]),
+            "loss_mask": torch.tensor([[1.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0]]),
+            "attention_mask": torch.tensor([[1, 1, 1, 0, 0], [1, 1, 0, 0, 0]]),
+            "position_ids": torch.arange(5).unsqueeze(0).expand(2, -1),
+        }
+
+        pack_right_padded_sequence_batch_to_mcore_thd(
+            batch,
+            pad_token_id=0,
+            pad_to_multiple_of=4,
+            emit_padding_mask=True,
+        )
+
+        assert batch["padding_mask"].dtype == torch.bool
+        assert batch["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+        assert batch["cu_seqlens_q"].tolist() == [0, 3, 5]
+        assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+        assert batch["pad_between_seqs"] is True
+
+    def test_packing_removes_stale_padding_mask_when_not_emitted(self):
+        """Packing without mask emission removes an incompatible input mask."""
+        batch = {
+            "tokens": torch.tensor([[1, 2, 3, 0], [4, 5, 0, 0]]),
+            "position_ids": torch.arange(4).unsqueeze(0).expand(2, -1),
+            "padding_mask": torch.tensor([[False, False, False, True], [False, False, True, True]]),
+        }
+
+        pack_right_padded_sequence_batch_to_mcore_thd(batch, pad_token_id=0)
+
+        assert batch["tokens"].shape == (1, 5)
+        assert "padding_mask" not in batch
 
     def test_packing_with_larger_multiple(self):
         """Test packing with larger pad_to_multiple_of (e.g., for CP=4)."""

@@ -17,6 +17,7 @@
 import os
 import shutil
 import sys
+from pathlib import Path
 
 import pytest
 from torch.distributed.run import main as torchrun_main
@@ -51,6 +52,7 @@ class TestQwen3Ckpt:
         config.checkpoint.save = MBRIDGE_CKPT
         config.checkpoint.load = MCORE_CKPT if os.path.exists(MCORE_CKPT) else None
         config.checkpoint.load_optim = False
+        config.checkpoint.save_optim = False
 
         config.train.train_iters = 10 if config.checkpoint.load else 5
         config.train.eval_iters = 5
@@ -82,7 +84,7 @@ class TestQwen3Ckpt:
             [
                 "torchrun",
                 "--nproc_per_node=2",
-                "/opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_gpt.py",
+                str(Path(__file__).resolve().parents[5] / "3rdparty/Megatron-LM/pretrain_gpt.py"),
                 "--init-method-std",
                 "0.014",
                 "--disable-bias-linear",
@@ -162,6 +164,7 @@ class TestQwen3Ckpt:
                 "1",
                 "--log-throughput",
                 "--no-load-optim",
+                "--no-save-optim",
                 "--no-load-rng",
             ],
         )

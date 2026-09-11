@@ -225,6 +225,7 @@ class TestDeepSeekV4Conversion:
     def test_deepseek_v4_roundtrip_ep(self, deepseek_v4_toy_model_path, tmp_path):
         test_output_dir = tmp_path / "deepseek_v4_ep"
         test_output_dir.mkdir(exist_ok=True)
+        megatron_checkpoint_dir = test_output_dir / "megatron"
 
         cmd = [
             "python",
@@ -235,8 +236,8 @@ class TestDeepSeekV4Conversion:
             "-m",
             "coverage",
             "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
+            f"--data-file={Path(__file__).resolve().parents[5] / '.coverage'}",
+            f"--source={Path(__file__).resolve().parents[5]}",
             "--parallel-mode",
             "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
             "--hf-model-id",
@@ -249,6 +250,8 @@ class TestDeepSeekV4Conversion:
             "1",
             "--ep",
             "2",
+            "--megatron-save-path",
+            str(megatron_checkpoint_dir),
         ]
 
         result = subprocess.run(
@@ -259,6 +262,21 @@ class TestDeepSeekV4Conversion:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
         assert result.returncode == 0, f"DeepSeek V4 conversion failed with {result.returncode}"
+
+        reload_cmd = [
+            *cmd,
+            "--megatron-load-path",
+            str(megatron_checkpoint_dir),
+            "--skip-save",
+        ]
+        reload_result = subprocess.run(
+            reload_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+        )
+
+        assert reload_result.returncode == 0, (
+            f"DeepSeek V4 checkpoint reload conversion failed with {reload_result.returncode}\n"
+            f"STDOUT:\n{reload_result.stdout}\nSTDERR:\n{reload_result.stderr}"
+        )
 
         converted_dir = test_output_dir / Path(deepseek_v4_toy_model_path).name
         assert (converted_dir / "config.json").exists()

@@ -5,6 +5,7 @@ This directory contains example scripts for Nemotron 3 language models:
 | Model | Parameters | Active Parameters | Subdirectory |
 |-------|-----------|-------------------|--------------|
 | Nemotron 3 Nano | 30B | A3B | [nano/](nano/) |
+| Nemotron 3.5 Lightning | 30B | A3B | [lightning/](lightning/) |
 | Nemotron 3 Super | 120B | A12B | [super/](super/) |
 | Nemotron 3 Ultra | 550B | A55B | [ultra/](ultra/) |
 

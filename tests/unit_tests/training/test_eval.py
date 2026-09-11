@@ -69,7 +69,7 @@ def _make_evaluate_state(*, eval_iters, exit_duration_in_mins=None):
             dist=SimpleNamespace(use_decentralized_pg=True),
             optimizer=SimpleNamespace(reuse_grad_buf_for_mxfp8_param_ag=False),
             ddp=SimpleNamespace(overlap_param_gather=False),
-            dataset=SimpleNamespace(dataloader_type="single"),
+            dataset=SimpleNamespace(dataloader_type="single", seq_length=1),
             train=SimpleNamespace(
                 empty_unused_memory_level=0,
                 exit_duration_in_mins=exit_duration_in_mins,
@@ -306,3 +306,38 @@ def test_evaluate_preserves_multimodule_data_parallel_accounting():
         )
 
     assert forward_backward_func.call_args.kwargs["num_microbatches"] == 2
+
+
+def test_evaluate_runs_non_loss_collection_on_every_pipeline_rank():
+    state = _make_evaluate_state(eval_iters=0)
+    model = _ModeTrackingModel()
+    forward_backward_func = MagicMock(return_value=[])
+    rerun_state_machine = MagicMock()
+    pg_collection = SimpleNamespace(
+        pp=SimpleNamespace(size=lambda: 2),
+        dp=SimpleNamespace(size=lambda: 1),
+        dp_cp=object(),
+    )
+
+    with (
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=rerun_state_machine),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch("megatron.bridge.training.eval.get_forward_backward_func", return_value=forward_backward_func),
+        patch("megatron.bridge.training.eval.is_last_rank", return_value=False),
+    ):
+        result = evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=object(),
+            model=[model],
+            process_non_loss_data_func=MagicMock(),
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MagicMock(),
+            pg_collection=pg_collection,
+        )
+
+    assert result == ({}, [], False)
+    forward_backward_func.assert_called_once()
+    assert forward_backward_func.call_args.kwargs["collect_non_loss_data"] is True

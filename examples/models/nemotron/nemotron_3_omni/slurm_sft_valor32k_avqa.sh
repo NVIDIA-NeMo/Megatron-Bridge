@@ -129,6 +129,7 @@ CLI_OVERRIDES="\
     logger.tensorboard_dir=$OUTPUT_DIR/tb_logs \
     dataset.path=$ENERGON_PATH \
     dataset.seq_length=$SEQ_LENGTH \
+    dataset.micro_batch_size=$MICRO_BATCH_SIZE \
     dataset.enable_in_batch_packing=$PACKED_SEQ \
     model.seq_length=$SEQ_LENGTH \
     model.tensor_model_parallel_size=$TP \

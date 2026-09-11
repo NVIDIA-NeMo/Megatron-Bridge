@@ -85,6 +85,7 @@ def _packed_pipeline_batch():
         "input_ids": tokens,
         "labels": tokens.clone(),
         "loss_mask": torch.ones_like(tokens, dtype=torch.float32),
+        "padding_mask": torch.zeros_like(tokens, dtype=torch.bool),
         "position_ids": torch.arange(4).unsqueeze(0),
         "attention_mask": None,
         "visual_inputs": SimpleNamespace(pixel_values=torch.ones(1, 4, 8)),
@@ -135,6 +136,7 @@ def test_middle_pipeline_stage_preserves_only_packed_attention_metadata(monkeypa
     assert result[0] is None
     assert result[7]["cu_seqlens_q"].tolist() == [0, 2, 4]
     assert result[7]["total_tokens"] == 4
+    assert result[14].tolist() == [[False, False, False, False]]
 
 
 def test_middle_unpacked_pipeline_stage_does_not_consume_iterator(monkeypatch):
@@ -144,7 +146,7 @@ def test_middle_unpacked_pipeline_stage_does_not_consume_iterator(monkeypatch):
 
     result = get_batch(data_iterator, _pipeline_cfg(packed=False), pg_collection=SimpleNamespace(pp=object()))
 
-    assert result == (None,) * 14
+    assert result == (None,) * 15
     assert next(data_iterator)["input_ids"].tolist() == [[18, 1, 18, 2]]
 
 
@@ -166,6 +168,7 @@ def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypa
     assert moved["sound_clips"] is None
     assert moved["imgs_sizes"] is None
     assert moved["cu_seqlens_q"] is batch["cu_seqlens_q"]
+    assert moved["padding_mask"] is batch["padding_mask"]
 
 
 def test_packed_middle_pipeline_forward_uses_boundaries_without_input_tensors(monkeypatch):
@@ -220,6 +223,7 @@ def test_packed_middle_pipeline_forward_uses_boundaries_without_input_tensors(mo
     assert model.kwargs["images"] is None
     assert model.kwargs["input_ids"] is None
     assert model.kwargs["packed_seq_params"].cu_seqlens_q.tolist() == [0, 2, 4]
+    assert model.kwargs["padding_mask"].tolist() == [[False, False, False, False]]
 
 
 def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
@@ -259,6 +263,7 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
             torch.ones(1, 2),
             None,
             torch.arange(2).unsqueeze(0),
+            None,
             None,
             None,
             None,

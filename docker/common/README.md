@@ -110,17 +110,22 @@ Starting with the 26.04 (r0.4.0) release, the following Python packages are **no
 
 These packages are suppressed via `sys_platform == 'never'` overrides in `/opt/Megatron-Bridge/pyproject.toml` (for `av`) and `/opt/NeMo-FW/pyproject.toml` (for all three). The override propagates to transitive consumers such as `qwen-vl-utils` and `decord[av-decode]`, so `uv sync` and `uv pip install <pkg>` will silently skip them.
 
-If your workflow needs any of these at runtime (for example, video decoding in multimodal data pipelines), install them directly with `pip`, which does not consult uv's override list:
+If your workflow needs `av`, `imageio`, and `imageio-ffmpeg` for WAN diffusion tests or inference, use the repository's integrity-locked installer:
 
 ```bash
-# install any combination you need
-pip install --no-deps av
+bash /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
+```
+
+For the unrelated `decord` and `opencv-python-headless` packages, install only the package your workflow requires:
+
+```bash
 pip install --no-deps decord
 pip install --no-deps opencv-python-headless
 ```
 
 Notes:
 
-- `--no-deps` keeps the install from re-resolving torch or other framework packages, preserving the container's pinned versions.
+- The WAN installer pins package versions and accepted artifact hashes while using `--no-deps` to preserve the container's dependency set.
+- `--no-deps` on the remaining packages keeps the install from re-resolving torch or other framework packages.
 - You accept the CVE risk in each package's vendored native libraries by reinstalling it. Restrict this to workloads where you control the input media.
 - The install is not persistent — rebuild it into your own image (or your job's startup script) if you need it across container restarts.

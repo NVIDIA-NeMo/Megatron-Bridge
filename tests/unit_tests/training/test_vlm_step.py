@@ -354,6 +354,23 @@ def test_forward_step_preserves_supported_mm_token_type_ids(monkeypatch):
     assert inner_model.received_kwargs["mm_token_type_ids"] is not None
 
 
+def test_forward_step_preserves_independent_image_flops_boundaries(monkeypatch):
+    inner_model = _Gemma4LikeForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+    state = _make_forward_step_state()
+    state.cfg.model.vision_config = type("Vision", (), {"spatial_merge_size": 2})()
+    batch = _make_visual_forward_batch()
+    batch["visual_inputs"].image_grid_thw = torch.tensor([[1, 10, 10], [1, 10, 10]])
+
+    forward_step(state, _Iterator(batch), model)
+
+    assert state._flops_vision_patch_sum == 200
+    assert state._flops_vision_patch_sq_sum == 20_000
+    assert state._flops_vision_merged_token_sum == 50
+    assert state._flops_requires_global_reduce is True
+
+
 def test_forward_step_rejects_deferred_in_batch_packing(monkeypatch):
     inner_model = _PackedForwardModel()
     model = _ForwardWrapper(inner_model)

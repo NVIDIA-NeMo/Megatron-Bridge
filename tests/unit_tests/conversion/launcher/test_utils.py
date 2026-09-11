@@ -63,6 +63,16 @@ def test_resolve_hf_commit_revision_resolves_named_ref_without_downloading(monke
     assert calls == [{"repo_id": "hf/model", "revision": "release-tag"}]
 
 
+def test_resolve_hf_commit_revision_preserves_immutable_sha_without_network(monkeypatch):
+    revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.model_info",
+        lambda *_args, **_kwargs: pytest.fail("an immutable commit SHA must not require Hub metadata"),
+    )
+
+    assert resolve_hf_commit_revision("hf/model", revision) == revision
+
+
 @pytest.mark.parametrize("resolver", [resolve_hf_commit_revision, resolve_hf_model_revision])
 def test_hf_revision_resolvers_reject_local_path(tmp_path, resolver):
     with pytest.raises(ValueError, match="only to Hugging Face Hub model IDs"):

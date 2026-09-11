@@ -478,3 +478,40 @@ class TestGenerate:
         mock_engine.return_value.generate.assert_called()
         call_args = mock_engine.return_value.generate.call_args
         assert call_args[1]["sampling_params"] == sampling_params
+
+    @pytest.mark.parametrize(
+        "stopping_control",
+        [
+            {"termination_id": 42},
+            {"stop_words": ["<STOP>"]},
+        ],
+        ids=["termination-id", "stop-words"],
+    )
+    @patch("megatron.bridge.inference.vlm.base.VLMEngine")
+    @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
+    def test_generate_rejects_unsupported_legacy_stopping_controls(
+        self,
+        mock_qwen_controller,
+        mock_engine,
+        mock_tokenizer,
+        mock_image_processor,
+        stopping_control,
+    ):
+        from megatron.core.inference.sampling_params import SamplingParams
+
+        mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
+        sampling_params = SamplingParams(num_tokens_to_generate=8, **stopping_control)
+
+        with pytest.raises(ValueError, match="legacy static generation does not support"):
+            generate(
+                wrapped_model=mock_wrapper,
+                tokenizer=mock_tokenizer,
+                image_processor=mock_image_processor,
+                prompts=["test"],
+                images=["image"],
+                processor="processor",
+                sampling_params=sampling_params,
+            )
+
+        mock_qwen_controller.assert_not_called()
+        mock_engine.assert_not_called()

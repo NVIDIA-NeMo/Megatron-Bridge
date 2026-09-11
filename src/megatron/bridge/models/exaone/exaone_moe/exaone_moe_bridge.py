@@ -37,6 +37,22 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 class ExaoneMoeBridge(MegatronModelBridge):
     """Megatron Bridge for Hugging Face EXAONE MoE causal language models."""
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: ExaoneMoeModelProvider) -> dict:
+        """Preserve EXAONE's distinction between physical and repeated MTP layers."""
+        hf_config = super().megatron_to_hf_config(provider)
+        mtp_num_speculative_steps = int(getattr(provider, "mtp_num_layers", 0) or 0)
+        mtp_layer_types = getattr(provider, "mtp_layer_types", None)
+        if mtp_layer_types is not None:
+            physical_mtp_layers = len(mtp_layer_types)
+        elif getattr(provider, "mtp_use_repeated_layer", False) and mtp_num_speculative_steps:
+            physical_mtp_layers = 1
+        else:
+            physical_mtp_layers = mtp_num_speculative_steps
+        hf_config["num_nextn_predict_layers"] = physical_mtp_layers
+        hf_config["mtp_num_speculative_steps"] = mtp_num_speculative_steps
+        return hf_config
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> ExaoneMoeModelProvider:
         hf_config = hf_pretrained.config
         self.hf_config = hf_config
@@ -46,33 +62,138 @@ class ExaoneMoeBridge(MegatronModelBridge):
         rope_scaling_factor = rope_parameters.get("factor")
         rope_scaling = rope_scaling_factor is not None
 
-        is_moe_layer = getattr(hf_config, "is_moe_layer", None)
-        if is_moe_layer is not None:
-            moe_layer_freq = [int(value) for value in is_moe_layer]
+        mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+        if mlp_layer_types is not None:
+            mlp_layer_types = list(mlp_layer_types)
+            invalid_mlp_layer_types = set(mlp_layer_types) - {"dense", "sparse"}
+            if invalid_mlp_layer_types:
+                raise ValueError(f"Unsupported EXAONE MLP layer types: {sorted(invalid_mlp_layer_types)}.")
+            moe_layer_freq = [int(layer_type == "sparse") for layer_type in mlp_layer_types]
         else:
-            mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
-            if mlp_layer_types is not None:
-                moe_layer_freq = [int(layer_type == "sparse") for layer_type in mlp_layer_types]
-            else:
-                first_dense_layer_count = hf_config.first_k_dense_replace
-                moe_layer_freq = [0] * first_dense_layer_count + [1] * (
-                    hf_config.num_hidden_layers - first_dense_layer_count
+            is_moe_layer = getattr(hf_config, "is_moe_layer", None)
+            first_k_dense_replace = getattr(hf_config, "first_k_dense_replace", None)
+            if is_moe_layer is not None:
+                moe_layer_freq = [int(value) for value in is_moe_layer]
+            elif first_k_dense_replace is not None:
+                moe_layer_freq = [0] * first_k_dense_replace + [1] * (
+                    hf_config.num_hidden_layers - first_k_dense_replace
                 )
+            else:
+                raise ValueError("EXAONE config must define mlp_layer_types, is_moe_layer, or first_k_dense_replace.")
+        if len(moe_layer_freq) != hf_config.num_hidden_layers:
+            raise ValueError(
+                "EXAONE MoE layer schedule must contain one entry per decoder layer: "
+                f"got {len(moe_layer_freq)}, expected {hf_config.num_hidden_layers}."
+            )
+
+        layer_types = getattr(hf_config, "layer_types", None)
+        sliding_windows = getattr(hf_config, "sliding_windows", None)
+        if sliding_windows is not None:
+            sliding_windows = [int(value) for value in sliding_windows]
+            if layer_types is None:
+                layer_types = ["full_attention" if value == 0 else "sliding_attention" for value in sliding_windows]
+        else:
+            sliding_window = getattr(hf_config, "sliding_window", None)
+            if sliding_window is None:
+                raise ValueError("EXAONE config must define sliding_windows or sliding_window.")
+            layer_types = (
+                list(layer_types) if layer_types is not None else ["sliding_attention"] * hf_config.num_hidden_layers
+            )
+            sliding_windows = [
+                int(sliding_window) if layer_type == "sliding_attention" else 0 for layer_type in layer_types
+            ]
+
+        layer_types = list(layer_types)
+        if len(layer_types) != hf_config.num_hidden_layers:
+            raise ValueError(
+                "EXAONE attention layer_types must contain one entry per decoder layer: "
+                f"got {len(layer_types)}, expected {hf_config.num_hidden_layers}."
+            )
+        if len(sliding_windows) != hf_config.num_hidden_layers:
+            raise ValueError(
+                "EXAONE sliding_windows must contain one entry per decoder layer: "
+                f"got {len(sliding_windows)}, expected {hf_config.num_hidden_layers}."
+            )
 
         window_attn_skip_freq, no_rope_freq = [], []
-        layer_types = getattr(hf_config, "layer_types", None) or []
-        has_sliding_attention = False
-        for layer_idx in range(hf_config.num_hidden_layers):
-            layer_type = layer_types[layer_idx] if layer_idx < len(layer_types) else "sliding_attention"
+        for layer_idx, (layer_type, layer_window) in enumerate(zip(layer_types, sliding_windows)):
+            if layer_type not in {"full_attention", "sliding_attention"}:
+                raise ValueError(f"Unsupported EXAONE attention layer type: {layer_type!r}.")
+            if layer_window < 0:
+                raise ValueError(f"EXAONE sliding_windows[{layer_idx}] must be non-negative.")
             is_sliding = layer_type == "sliding_attention"
-            has_sliding_attention = has_sliding_attention or is_sliding
+            if not is_sliding and layer_window != 0:
+                raise ValueError(f"EXAONE full-attention layer {layer_idx} must use sliding_windows[{layer_idx}]=0.")
+            if is_sliding and layer_window == 0:
+                raise ValueError(f"EXAONE sliding-attention layer {layer_idx} must use a positive window.")
             no_rope_freq.append(0 if is_sliding else 1)
             window_attn_skip_freq.append(1 if is_sliding else 0)
 
-        sliding_window = getattr(hf_config, "sliding_window", None)
-        window_size = (sliding_window - 1, 0) if has_sliding_attention and sliding_window is not None else None
+        positive_windows = [value for value in sliding_windows or [] if value > 0]
+        if positive_windows:
+            window_size = (positive_windows[0] - 1, 0)
+        else:
+            window_size = None
 
-        model_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        swiglu_limits = getattr(hf_config, "swiglu_limits", None)
+        if swiglu_limits is not None:
+            swiglu_limits = [float(value) for value in swiglu_limits]
+            if len(swiglu_limits) != hf_config.num_hidden_layers:
+                raise ValueError(
+                    "EXAONE swiglu_limits must contain one entry per decoder layer: "
+                    f"got {len(swiglu_limits)}, expected {hf_config.num_hidden_layers}."
+                )
+            if any(value < 0.0 for value in swiglu_limits):
+                raise ValueError("EXAONE swiglu_limits values must be non-negative.")
+
+        mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
+        if mtp_layer_types is not None:
+            mtp_layer_types = list(mtp_layer_types)
+            physical_mtp_layers = len(mtp_layer_types)
+            mtp_sliding_windows = getattr(hf_config, "mtp_sliding_windows", None)
+            if mtp_sliding_windows is None:
+                raise ValueError("EXAONE config with mtp_layer_types must define mtp_sliding_windows.")
+            mtp_sliding_windows = [int(value) for value in mtp_sliding_windows]
+            if len(mtp_sliding_windows) != physical_mtp_layers:
+                raise ValueError(
+                    "EXAONE mtp_sliding_windows must contain one entry per MTP layer: "
+                    f"got {len(mtp_sliding_windows)}, expected {physical_mtp_layers}."
+                )
+        else:
+            physical_mtp_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
+            mtp_layer_types = ["full_attention"] * physical_mtp_layers
+            mtp_sliding_windows = [0] * physical_mtp_layers
+
+        for layer_idx, (layer_type, layer_window) in enumerate(zip(mtp_layer_types, mtp_sliding_windows)):
+            if layer_type not in {"full_attention", "sliding_attention"}:
+                raise ValueError(f"Unsupported EXAONE MTP attention layer type: {layer_type!r}.")
+            if layer_window < 0:
+                raise ValueError(f"EXAONE mtp_sliding_windows[{layer_idx}] must be non-negative.")
+            if layer_type == "full_attention" and layer_window != 0:
+                raise ValueError(f"EXAONE full-attention MTP layer {layer_idx} must use a zero sliding window.")
+            if layer_type == "sliding_attention" and layer_window == 0:
+                raise ValueError(f"EXAONE sliding-attention MTP layer {layer_idx} must use a positive window.")
+
+        mtp_num_speculative_steps = int(getattr(hf_config, "mtp_num_speculative_steps", physical_mtp_layers) or 0)
+        mtp_use_repeated_layer = bool(getattr(hf_config, "mtp_share_layers", False))
+        if mtp_num_speculative_steps > physical_mtp_layers:
+            if physical_mtp_layers != 1:
+                raise ValueError("EXAONE repeated MTP requires exactly one physical next-token-prediction layer.")
+            mtp_use_repeated_layer = True
+        mtp_num_layers = mtp_num_speculative_steps if mtp_use_repeated_layer else physical_mtp_layers
+
+        topk_method = getattr(hf_config, "topk_method", None)
+
+        if hasattr(hf_config, "torch_dtype"):
+            model_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        else:
+            hf_dtype = getattr(hf_config, "dtype", None)
+            if isinstance(hf_dtype, torch.dtype):
+                model_dtype = hf_dtype
+            elif isinstance(hf_dtype, str):
+                model_dtype = self.dtype_from_str(hf_dtype)
+            else:
+                model_dtype = torch.float32
 
         provider = ExaoneMoeModelProvider(
             num_layers=hf_config.num_hidden_layers,
@@ -109,11 +230,19 @@ class ExaoneMoeBridge(MegatronModelBridge):
             window_size=window_size,
             no_rope_freq=no_rope_freq,
             moe_layer_freq=moe_layer_freq,
+            layer_types=list(layer_types) if layer_types else None,
+            sliding_windows=sliding_windows,
+            swiglu_limits=swiglu_limits,
             # MTP
-            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", None),
+            mtp_num_layers=mtp_num_layers or None,
             mtp_loss_scaling_factor=getattr(hf_config, "mtp_loss_scaling_factor", 0.1),
-            mtp_use_repeated_layer=getattr(hf_config, "mtp_share_layers", False),
+            mtp_use_repeated_layer=mtp_use_repeated_layer,
+            mtp_layer_types=mtp_layer_types,
+            mtp_sliding_windows=mtp_sliding_windows,
         )
+        if topk_method == "noaux_tc":
+            provider.moe_router_load_balancing_type = "none"
+            provider.moe_aux_loss_coeff = 0.0
 
         return provider
 
@@ -132,7 +261,11 @@ class ExaoneMoeBridge(MegatronModelBridge):
         output_layer_hf_param = (
             "model.embed_tokens.weight" if share_embeddings_and_output_weights else "lm_head.weight"
         )
-        mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+        mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
+        if mtp_layer_types is not None:
+            mtp_num_layers = len(mtp_layer_types)
+        else:
+            mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
 
         param_mappings = {
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",

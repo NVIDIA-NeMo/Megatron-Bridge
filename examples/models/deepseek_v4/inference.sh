@@ -22,8 +22,13 @@
 #   EP: expert-parallel size (default: 4 for Flash, 8 for Pro)
 #   PP: pipeline-parallel size (default: 1 for Flash, 4 for Pro)
 #   PROMPT: prompt string (default: "Explain hyper-connections in transformer models.")
+#   NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN: optional HybridEP topology override
+#   NVLINK_DOMAIN_SIZE: optional physical NVLink-domain size override
+#   USE_MNNVL: optional HybridEP fabric override (0 or 1)
 #
 # Defaults below are for GB200 (192 GB). For H100 (80 GB) configs, see README.md.
+# HybridEP auto-detects accessible ranks and fabric support when the topology
+# overrides are unset. If set, the values must describe the actual deployment.
 
 set -xeuo pipefail
 
@@ -46,6 +51,7 @@ if [[ -z "${PP:-}" ]]; then
 fi
 TP=1
 
+# DSv4 hybrid attention does not support inference contexts yet, so use full-prefix generation.
 # Inference directly from the HF checkpoint (Bridge dequantises in-flight).
 uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     examples/conversion/hf_to_megatron_generate_text.py \
@@ -53,6 +59,7 @@ uv run python -m torch.distributed.run --nproc_per_node=$((PP * EP)) \
     --prompt "${PROMPT}" \
     --max_new_tokens 100 \
     --tp ${TP} --pp ${PP} --ep ${EP} \
+    --legacy-full-prefix \
     --trust-remote-code
 
 # Inference from a previously-imported Megatron checkpoint (faster cold start).
@@ -65,5 +72,6 @@ if [[ -d "${MEGATRON_DIR}/iter_0000000" ]]; then
         --prompt "${PROMPT}" \
         --max_new_tokens 100 \
         --tp ${TP} --pp ${PP} --ep ${EP} \
+        --legacy-full-prefix \
         --trust-remote-code
 fi

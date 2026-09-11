@@ -101,6 +101,20 @@ For model or conversion changes, verify HF/MCore name mappings, tensor transform
 
 For changes that appear specific to one model or one training feature, check whether neighboring models or features share the same path and could regress. If common infrastructure is modified, examine it carefully and require the change to be necessary, generalizable, and covered by tests or clear reasoning.
 
+### Security And Deserialization
+
+- Treat every use of `torch.load(..., weights_only=False)` as a merge-blocking
+  security bug. Never approve it as a primary path or fallback, including for
+  checkpoints assumed to be trusted.
+- Inspect `torch.load` calls that omit `weights_only`; do not rely on a
+  version-dependent default. Require `weights_only=True` when the payload is
+  representable by tensors and plain containers.
+- When richer state requires custom deserialization, require an explicit,
+  fail-closed allowlist or a non-pickle format. The implementation must not
+  delegate to unrestricted `torch.load` after the restricted path fails.
+- Require both a representative legitimate-state round trip and a malicious
+  `__reduce__` regression proving that rejected input causes no side effect.
+
 ### Integration And Runtime Behavior
 
 Trace how the change is reached in real workflows. Follow call sites across recipes, providers, launch scripts, configs, and downstream adapters. For distributed or performance-sensitive code, check rank behavior, process-group assumptions, collective ordering, recompute/offload/overlap interactions, and GPU-count constraints.

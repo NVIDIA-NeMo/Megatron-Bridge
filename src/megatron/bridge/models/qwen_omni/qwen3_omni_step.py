@@ -28,7 +28,11 @@ from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
+from megatron.bridge.training.utils.flop_utils import (
+    accumulate_flops_metadata,
+    get_model_chunk_vp_stage,
+    vision_patch_stats_from_grid_thw,
+)
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -254,19 +258,29 @@ def forward_step(
     # Accumulate FLOPS metadata across micro-batches. Qwen3-Omni does not pack
     # within a batch, so cu_seqlens is absent and the helper falls back to
     # BSHD math for the attention term. Vision-patch tracking still applies.
-    # Vision-patch count is model-specific (Qwen reports grid_thw = t*h*w per
-    # image/video); compute it here and pass a scalar to the model-agnostic helper.
-    num_vision_patches = None
+    # Qwen vision attention isolates temporal frames. Preserve additive patch
+    # statistics for every media/frame boundary instead of collapsing them into
+    # one quadratic attention sequence.
+    model_cfg = getattr(state.cfg, "model", config)
+    vision_config = getattr(model_cfg, "vision_config", None)
+    if vision_config is None:
+        vision_config = getattr(getattr(model_cfg, "thinker_config", None), "vision_config", None)
+    # Every DP rank using this VLM step must enter the same reduction, including
+    # a rank whose current sample happens to contain no media.
+    vision_patch_stats = (0, 0, 0)
+    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
     if isinstance(multimodal_inputs, dict):
         for grid in (multimodal_inputs.get("image_grid_thw"), multimodal_inputs.get("video_grid_thw")):
             if grid is not None and grid.numel() > 0:
-                patches = grid.prod(dim=-1).sum()
-                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+                grid_stats = vision_patch_stats_from_grid_thw(grid, spatial_merge_size=spatial_merge_size)
+                vision_patch_stats = tuple(
+                    total + delta for total, delta in zip(vision_patch_stats, grid_stats, strict=True)
+                )
     accumulate_flops_metadata(
         state,
         tokens,
         vp_stage=get_model_chunk_vp_stage(model),
-        num_vision_patches=num_vision_patches,
+        vision_patch_stats=vision_patch_stats,
     )
 
     forward_args = {

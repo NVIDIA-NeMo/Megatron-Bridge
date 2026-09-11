@@ -16,19 +16,23 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     ConfigContainer,
+    _perf_precision,
 )
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
 )
 
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, BF16 (alias of GB300)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config()
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -36,7 +40,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -82,7 +86,11 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, NVFP4 (alias of GB300)."""
-    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config()
+    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -90,7 +98,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -137,6 +145,9 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
 def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
     cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+
+    cfg.train.micro_batch_size = 4
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -158,5 +169,30 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 8× VR200, NVFP4 (same layout as GB300).
+
+    NVFP4's fp4_param_gather path is incompatible with TP comm overlap, so it
+    is disabled here.
+    """
+    cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config()
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_USE_FAST_MATH": 1,
     }
     return cfg

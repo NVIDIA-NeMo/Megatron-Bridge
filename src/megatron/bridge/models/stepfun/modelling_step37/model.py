@@ -44,6 +44,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.stepfun.modelling_step37.image_insert_embedding import (
     ImageForInsert,
     ImageInsertEmbedding,
@@ -133,6 +134,7 @@ class Step37Model(MegatronModule):
                 post_process=self.post_process,
                 rotary_base=language_transformer_config.rotary_base,
                 fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(Step37GPTModel, language_transformer_config.logit_dtype),
                 share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
                 mtp_block_spec=mtp_block_spec,

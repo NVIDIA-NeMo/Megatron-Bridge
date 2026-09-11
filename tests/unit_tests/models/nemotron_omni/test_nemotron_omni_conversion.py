@@ -13,16 +13,18 @@
 # limitations under the License.
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
 from megatron.core.activations import squared_relu
+from safetensors.torch import save_file
 from torch import nn
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import get_model_bridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
@@ -38,6 +40,8 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NemotronOmniModelProvider,
 )
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
+from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -117,6 +121,18 @@ def _mock_omni_hf_config():
     )
 
 
+def _mock_legacy_v2_omni_hf_config():
+    """Represent Nano Omni weights exported before the V3 architecture name."""
+
+    hf_config = _mock_omni_hf_config()
+    hf_config.architectures = ["NemotronH_Nano_VL_V2"]
+    hf_config.model_type = "NemotronH_Nano_VL_V2"
+    del hf_config.sound_config
+    del hf_config.sound_context_token_id
+    hf_config.vision_config.args = {"register_multiple": 10}
+    return hf_config
+
+
 def test_public_nemotron_omni_architecture_is_registered():
     hf_config = _mock_omni_hf_config()
 
@@ -126,6 +142,46 @@ def test_public_nemotron_omni_architecture_is_registered():
     hf_config.architectures = ["NemotronH_Super_Omni_Reasoning_V3"]
     assert AutoBridge.supports(hf_config)
     assert isinstance(get_model_bridge("NemotronH_Super_Omni_Reasoning_V3", hf_config=hf_config), NemotronOmniBridge)
+
+
+def test_legacy_v2_moe_checkpoint_routes_to_canonical_nemotron_omni():
+    hf_config = _mock_legacy_v2_omni_hf_config()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
+    provider = bridge.provider_bridge(hf_pretrained)
+    registry = bridge.mapping_registry()
+
+    assert isinstance(bridge, NemotronVLBridge)
+    assert isinstance(provider, NemotronOmniModelProvider)
+    assert provider.nemotron_omni_contract == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
+    assert provider.image_token_index == 18
+    assert provider.img_start_token_id == 19
+    assert provider.img_end_token_id == 20
+    assert provider.has_sound is False
+    assert provider.separate_video_embedder is True
+    assert provider.temporal_patch_dim == 2
+    assert provider.temporal_ckpt_compat is True
+    video_mapping = registry.hf_to_megatron_lookup(
+        "vision_model.radio_model.model.patch_generator.video_embedder.weight"
+    )
+    assert video_mapping.megatron_param == "vision_model.video_embedder.weight"
+    assert all(not mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
+
+
+def test_dense_legacy_v2_checkpoint_keeps_nemotron_vl_path():
+    hf_config = _mock_legacy_v2_omni_hf_config()
+    del hf_config.llm_config.n_routed_experts
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
+    provider = bridge.provider_bridge(hf_pretrained)
+    registry = bridge.mapping_registry()
+
+    assert isinstance(provider, NemotronVLModelProvider)
+    assert any(mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
 
 
 def test_nemotron_omni_provider_bridge_maps_public_config_fields():
@@ -162,6 +218,47 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.temporal_ckpt_compat is True
     serialized = ConfigContainer._convert_value_to_dict(provider)
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
+    assert serialized["has_sound"] is True
+    assert "add_sound_encoder" not in serialized
+
+
+def test_nemotron_omni_provider_bridge_omits_sound_when_config_is_absent():
+    hf_config = _mock_omni_hf_config()
+    del hf_config.sound_config
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    provider = NemotronOmniBridge().provider_bridge(hf_pretrained)
+
+    assert provider.has_sound is False
+    assert provider.sound_config is None
+    assert provider.sound_context_token_id == 0
+
+
+def test_nemotron_omni_hf_config_export_preserves_sound_capability():
+    provider = NemotronOmniModelProvider(
+        has_sound=True,
+        sound_context_token_id=27,
+        sound_config={"hidden_size": 128},
+    )
+
+    hf_config = NemotronOmniBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["sound_config"] == {"hidden_size": 128}
+    assert hf_config["sound_context_token_id"] == 27
+
+
+def test_nemotron_omni_hf_config_export_omits_disabled_sound_capability():
+    provider = NemotronOmniModelProvider(
+        has_sound=False,
+        sound_context_token_id=27,
+        sound_config={"hidden_size": 128},
+    )
+
+    hf_config = NemotronOmniBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["sound_config"] is None
+    assert hf_config["sound_context_token_id"] is None
 
 
 def test_nemotron_omni_provider_rejects_static_resolution():
@@ -181,7 +278,12 @@ def test_nemotron_omni_provider_rejects_nonpositive_image_token_index(image_toke
 
 
 def test_nemotron_omni_provider_rejects_nonpositive_sound_token_index():
-    provider = NemotronOmniModelProvider(image_token_index=18, has_sound=True, sound_context_token_id=0)
+    provider = NemotronOmniModelProvider(
+        image_token_index=18,
+        has_sound=True,
+        sound_context_token_id=0,
+        sound_config={},
+    )
 
     with pytest.raises(ValueError, match="requires a positive sound_context_token_id"):
         provider.finalize()
@@ -198,19 +300,62 @@ def test_canonical_provider_builds_dedicated_model(monkeypatch):
     provider = NemotronOmniModelProvider(
         image_token_index=18,
         nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        transformer_impl="inference_optimized",
     )
     model = SimpleNamespace()
     model_factory = Mock(return_value=model)
     llava_factory = Mock()
+    inference_spec = object()
+    resolve_hybrid_stack_spec = Mock(return_value=inference_spec)
+    projection_submodules = object()
+    get_projection_submodules = Mock(return_value=projection_submodules)
 
+    monkeypatch.setattr(provider, "_resolve_hybrid_stack_spec", resolve_hybrid_stack_spec)
     monkeypatch.setattr(provider_module, "LLaVAModel", llava_factory)
     monkeypatch.setattr(provider_module, "get_vit_layer_with_transformer_engine_spec", Mock(return_value=object()))
-    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", Mock(return_value=object()))
+    monkeypatch.setattr(
+        provider_module,
+        "_get_transformer_engine_projection_submodules",
+        get_projection_submodules,
+    )
     monkeypatch.setattr(provider_module, "NemotronOmniModel", model_factory)
 
     assert provider.provide() is model
     model_factory.assert_called_once()
+    resolve_hybrid_stack_spec.assert_called_once_with()
+    assert model_factory.call_args.kwargs["language_transformer_layer_spec"] is inference_spec
+    assert model_factory.call_args.kwargs["vision_projection_layer_spec"] is projection_submodules
+    get_projection_submodules.assert_called_once_with()
     llava_factory.assert_not_called()
+
+
+def test_nemotron_omni_provider_can_omit_sound_modules():
+    provider = NemotronOmniModelProvider(has_sound=False)
+
+    sound_model, sound_projection = provider._build_sound_modules(None, add_encoder=True)
+
+    assert provider.has_sound is False
+    assert sound_model is None
+    assert sound_projection is None
+
+
+def test_nemotron_omni_provider_builds_sound_modules_when_enabled(monkeypatch):
+    provider = NemotronOmniModelProvider(has_sound=True)
+    expected_sound_model = object()
+    expected_sound_projection = object()
+    monkeypatch.setattr(provider, "_build_sound_encoder", lambda: expected_sound_model)
+    monkeypatch.setattr(provider, "_build_sound_projection_config", lambda _: object())
+    monkeypatch.setattr(
+        provider_module,
+        "_get_transformer_engine_projection_submodules",
+        lambda: object(),
+    )
+    monkeypatch.setattr(provider_module, "MultimodalProjector", lambda **_: expected_sound_projection)
+
+    sound_model, sound_projection = provider._build_sound_modules(None, add_encoder=True)
+
+    assert sound_model is expected_sound_model
+    assert sound_projection is expected_sound_projection
 
 
 def test_nemotron_omni_vision_projection_uses_squared_relu():
@@ -237,6 +382,69 @@ def test_nemotron_omni_mapping_registry_includes_sound_mappings():
     assert any("sound_model.encoder.**" in name for name in names)
     assert any("sound_encoder.encoder.**" in name for name in names)
     assert all(not name.startswith("llava_model.") for name in names)
+
+
+def test_nemotron_omni_export_preserves_source_only_buffers():
+    bridge = NemotronOmniBridge()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    source_tensors = {
+        name: torch.full((2,), index, dtype=torch.float32) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)
+    }
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = [
+        "language_model.weight",
+        *source_tensors,
+    ]
+    hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
+    converted = HFWeightTuple("language_model.weight", torch.ones(1))
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained))
+
+    assert exported[0] == converted
+    exported_buffers = {item.param_name: item.weight for item in exported[1:]}
+    assert exported_buffers.keys() == source_tensors.keys()
+    for name, source_tensor in source_tensors.items():
+        assert torch.equal(exported_buffers[name], source_tensor)
+
+
+def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
+    modeling_path = tmp_path / "modeling.py"
+    modeling_path.write_text("from .configuration import NemotronOmniConfig\n")
+    bridge = NemotronOmniBridge()
+
+    bridge.postprocess_hf_export_artifacts(tmp_path)
+    bridge.postprocess_hf_export_artifacts(tmp_path)
+
+    modeling_source = modeling_path.read_text()
+    assert modeling_source.count("from .configuration_nemotron_h import NemotronHConfig") == 1
+    assert modeling_source.count("from .configuration_radio import RADIOConfig") == 1
+
+
+def test_nemotron_omni_export_requires_modeling_entrypoint(tmp_path):
+    bridge = NemotronOmniBridge()
+
+    with pytest.raises(FileNotFoundError, match="missing required artifact.*modeling.py"):
+        bridge.postprocess_hf_export_artifacts(tmp_path)
+
+
+def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):
+    bridge = NemotronOmniBridge()
+    source_tensors = {
+        name: torch.full((2,), index, dtype=torch.float32) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)
+    }
+    save_file(source_tensors, tmp_path / "model.safetensors")
+    hf_config = PretrainedConfig()
+    hf_config.name_or_path = str(tmp_path)
+    converted = HFWeightTuple("language_model.weight", torch.ones(1))
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_config))
+
+    exported_buffers = {item.param_name: item.weight for item in exported[1:]}
+    assert exported_buffers.keys() == source_tensors.keys()
+    for name, source_tensor in source_tensors.items():
+        assert torch.equal(exported_buffers[name], source_tensor)
 
 
 def test_canonical_bridge_maps_super_mtp_config():
@@ -292,7 +500,8 @@ def test_llava_bridge_retains_legacy_wrapper_namespace():
     hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = _mock_omni_hf_config()
 
-    provider = NemotronOmniLlavaBridge().provider_bridge(hf_pretrained)
+    with pytest.warns(FutureWarning, match="NemotronOmniLlavaBridge is deprecated"):
+        provider = NemotronOmniLlavaBridge().provider_bridge(hf_pretrained)
     registry = NemotronOmniLlavaBridge().mapping_registry()
 
     assert isinstance(provider, NemotronOmniLlavaModelProvider)

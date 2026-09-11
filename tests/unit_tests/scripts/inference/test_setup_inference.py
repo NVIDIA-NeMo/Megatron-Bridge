@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import importlib.util
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -75,6 +77,38 @@ def _launcher_args(*extra_options: str) -> list[str]:
     ]
 
 
+def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
+    fake_uv = tmp_path / "uv"
+    uv_args = tmp_path / "uv-args.txt"
+    fake_uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$UV_ARGS_FILE"\n', encoding="utf-8")
+    fake_uv.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{tmp_path}:{env['PATH']}",
+            "UV_ARGS_FILE": str(uv_args),
+            "VIRTUAL_ENV": str(tmp_path / "active-environment"),
+        }
+    )
+
+    subprocess.run(
+        [str(REPO_ROOT / "scripts" / "inference" / "infer.sh"), "--help"],
+        check=True,
+        env=env,
+    )
+
+    assert uv_args.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--active",
+        "--no-sync",
+        "--with",
+        "nemo-run==0.10.0",
+        "python",
+        str(REPO_ROOT / "scripts" / "inference" / "setup_inference.py"),
+        "--help",
+    ]
+
+
 def test_setup_import_does_not_load_inference_stack(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -124,10 +158,18 @@ def test_parser_forwards_model_checkpoint_prompt_and_engine_args():
     ("task_name", "expected_path"),
     [
         ("text-generation", "/opt/Megatron-Bridge/scripts/inference/text_generation.py"),
+        (
+            "legacy-full-prefix-generation",
+            "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py",
+        ),
         ("vlm-generation", "/opt/Megatron-Bridge/scripts/inference/vlm_generation.py"),
         (
             "model-comparison",
             "/opt/Megatron-Bridge/examples/conversion/compare_hf_and_megatron/compare.py",
+        ),
+        (
+            "hf-inference",
+            "/opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py",
         ),
     ],
 )
@@ -174,6 +216,8 @@ def test_submission_dry_run_aliases_are_consumed(submission_option):
     [
         (("--nodes", "0"), "--nodes"),
         (("--gpus-per-node", "0"), "--gpus-per-node"),
+        (("--gpus-per-node", "4", "--tasks-per-node", "0"), "--tasks-per-node"),
+        (("--gpus-per-node", "4", "--tasks-per-node", "5"), "--tasks-per-node"),
         (("--cpus-per-task", "0"), "--cpus-per-task"),
         (("--srun-arg=",), "--srun-arg"),
     ],
@@ -184,6 +228,20 @@ def test_resource_validation_rejects_invalid_values(options, message):
 
     with pytest.raises(ValueError, match=message):
         module._validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("task_name", "inference_args", "message"),
+    [
+        ("legacy-full-prefix-generation", [], "requires --legacy-full-prefix"),
+        ("text-generation", ["--legacy-full-prefix"], "requires --task legacy-full-prefix-generation"),
+    ],
+)
+def test_task_validation_rejects_inconsistent_legacy_full_prefix_usage(task_name, inference_args, message):
+    module = _load_setup_inference_module()
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_task_args(task_name, inference_args)
 
 
 def test_parse_env_deduplicates_names_and_rejects_values(monkeypatch):
@@ -234,6 +292,8 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
         _launcher_args(
             "--gpus-per-node",
             "4",
+            "--tasks-per-node",
+            "1",
             "--srun-arg=--mpi=pmix",
             "--srun-arg=--container-writable",
         )
@@ -241,7 +301,7 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
 
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
-    assert executor.kwargs["ntasks_per_node"] == 4
+    assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 4
     assert executor.kwargs["exclusive"] is None
     assert "launcher" not in executor.kwargs
@@ -251,6 +311,25 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
     assert executor.kwargs["container_mounts"] == ["/host:/container"]
     assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
     assert executor.env_vars == {}
+
+
+def test_slurm_executor_defaults_to_one_task_per_gpu(tmp_path, monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(_launcher_args("--gpus-per-node", "4"))
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["ntasks_per_node"] == 4
+    assert executor.kwargs["gpus_per_node"] == 4
 
 
 def test_slurm_executor_can_request_exclusive_nodes(tmp_path, monkeypatch):
@@ -305,6 +384,20 @@ def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
         "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
     }
     assert scripts[0].args == ["--prompt", "'benign; echo should-not-run'"]
+
+
+def test_build_task_preserves_legacy_full_prefix_argument():
+    module = _load_setup_inference_module()
+    scripts = []
+    module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
+
+    module._build_task(
+        "legacy-full-prefix-generation",
+        ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"],
+    )
+
+    assert scripts[0].path == "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py"
+    assert scripts[0].args == ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"]
 
 
 @pytest.mark.parametrize(

@@ -32,7 +32,12 @@ from typing import Optional
 
 import torch
 from megatron.core import tensor_parallel
+from megatron.core.fp8_utils import get_fp8_align_size
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.models.multimodal.context_parallel import (
+    gather_from_context_parallel_ranks_dynamic_res,
+    split_to_context_parallel_ranks_dynamic_res,
+)
 from megatron.core.models.multimodal.llava_model import pixel_shuffle
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.radio import RADIOViTModel
@@ -42,6 +47,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
 
@@ -106,6 +112,51 @@ def _pixel_shuffle_dynamic_resolution(
     return shuffled.reshape(batch, (height * width) // 4, hidden * 4)
 
 
+def _pad_patch_grid_to_even(
+    features: torch.Tensor,
+    *,
+    height: int,
+    width: int,
+) -> tuple[torch.Tensor, int, int]:
+    """Zero-pad a patch grid to even extents so pixel shuffle can consume it.
+
+    Only the 1x1 placeholder images that the context-parallel split injects to
+    keep every rank non-empty reach this path; real Omni frames are already a
+    multiple of two in both dimensions.
+    """
+
+    if height % 2 == 0 and width % 2 == 0:
+        return features, height, width
+
+    padded_height = height + height % 2
+    padded_width = width + width % 2
+    grid = features.reshape(height, width, features.shape[-1])
+    grid = torch.nn.functional.pad(grid, (0, 0, 0, padded_width - width, 0, padded_height - height))
+    return grid.reshape(1, padded_height * padded_width, -1), padded_height, padded_width
+
+
+def _project_multimodal_embeddings(
+    projection: torch.nn.Module,
+    embeddings: torch.Tensor,
+) -> torch.Tensor:
+    """Project media rows, padding only the temporary FP8 compute input."""
+    input_shape = embeddings.shape[:-1]
+    flat_embeddings = embeddings.reshape(-1, 1, embeddings.shape[-1])
+    num_embeddings = flat_embeddings.shape[0]
+    projection_config = getattr(projection, "config", None)
+    if getattr(projection_config, "fp8", None):
+        alignment = get_fp8_align_size(projection_config.fp8_recipe)
+        padding = -num_embeddings % alignment
+        if padding:
+            flat_embeddings = torch.cat(
+                (flat_embeddings, flat_embeddings.new_zeros((padding, 1, flat_embeddings.shape[-1]))),
+                dim=0,
+            )
+
+    projected = projection(flat_embeddings)[:num_embeddings]
+    return projected.reshape(*input_shape, projected.shape[-1])
+
+
 class NemotronOmniModel(MegatronModule):
     """Nemotron Omni model whose input sequence is already media-expanded.
 
@@ -114,9 +165,8 @@ class NemotronOmniModel(MegatronModule):
     context parallelism, the model inserts media into the full stream and then
     selects the rank-local CP shard without changing packed metadata.
 
-    Image and text inputs are supported. The sound modules are retained in the
-    model namespace, but sound insertion remains unsupported until its
-    one-feature-per-placeholder contract is implemented and tested.
+    Image, video, sound, and text inputs use the same one-feature-per-placeholder
+    contract.
     """
 
     model_owns_packing = False
@@ -156,6 +206,7 @@ class NemotronOmniModel(MegatronModule):
         temporal_patch_dim: int = 1,
         separate_video_embedder: bool = False,
         temporal_ckpt_compat: bool = False,
+        vision_dp_over_cp: bool = False,
         sound_model: Optional[torch.nn.Module] = None,
         sound_projection: Optional[torch.nn.Module] = None,
         sound_token_index: int = 0,
@@ -168,12 +219,16 @@ class NemotronOmniModel(MegatronModule):
         self.post_process = post_process
         self.add_encoder = add_encoder
         self.add_decoder = add_decoder
+        # Inference controllers inspect the top-level model for the padded
+        # vocabulary size. Keep it consistent with the nested HybridModel.
+        self.vocab_size = language_vocab_size
         self.image_token_index = image_token_index
         self.sound_token_index = sound_token_index
         self.patch_dim = patch_dim
         self.dynamic_resolution = dynamic_resolution
         self.sequence_parallel_lm = language_transformer_config.sequence_parallel
         self.context_parallel_lm = language_transformer_config.context_parallel_size
+        self.vision_dp_over_cp = vision_dp_over_cp and self.context_parallel_lm > 1
         self.share_embeddings_and_output_weights = share_embeddings_and_output_weights
         self.encoder_hidden_state = None
 
@@ -189,6 +244,7 @@ class NemotronOmniModel(MegatronModule):
                 vocab_size=language_vocab_size,
                 max_sequence_length=language_max_sequence_length,
                 parallel_output=parallel_output,
+                **logit_dtype_kwarg(HybridModel, language_transformer_config.logit_dtype),
                 position_embedding_type=language_position_embedding_type,
                 pre_process=pre_process,
                 hybrid_layer_pattern=hybrid_layer_pattern,
@@ -236,8 +292,8 @@ class NemotronOmniModel(MegatronModule):
             self.vision_model.register_load_state_dict_post_hook(_ignore_transformer_engine_extra_state)
             self.vision_projection.register_load_state_dict_post_hook(_ignore_transformer_engine_extra_state)
 
-        # Preserve the top-level sound-module namespace for checkpoint
-        # conversion while expanded-sequence sound insertion is unsupported.
+        # Preserve the top-level sound-module namespace used by checkpoint
+        # conversion while keeping media insertion local to this model.
         self.sound_model = sound_model
         self.sound_projection = sound_projection
 
@@ -288,10 +344,20 @@ class NemotronOmniModel(MegatronModule):
         media_token_id: int,
         attention_mask: Optional[torch.Tensor],
     ) -> torch.Tensor:
-        """Replace each valid media placeholder with exactly one feature row."""
+        """Replace each valid media placeholder with exactly one feature row.
+
+        ``attention_mask`` is a token-validity mask here, not MCore's 4-D
+        causal attention mask.  Requiring an exact shape match prevents a
+        causal mask from broadcasting the placeholder mask to ``[B, 1, S, S]``.
+        """
 
         media_mask = input_ids == media_token_id
         if attention_mask is not None:
+            if attention_mask.shape != input_ids.shape:
+                raise ValueError(
+                    "The media token-validity mask must have the same shape as input_ids: "
+                    f"got mask={tuple(attention_mask.shape)}, input_ids={tuple(input_ids.shape)}."
+                )
             media_mask = media_mask & attention_mask.bool()
 
         expected_features = int(media_mask.sum().item())
@@ -316,6 +382,37 @@ class NemotronOmniModel(MegatronModule):
             merged[media_mask] = media_embeddings.to(dtype=merged.dtype)
         return merged.transpose(0, 1).contiguous()
 
+    def _split_images_across_context_parallel_ranks(
+        self,
+        images: torch.Tensor,
+        imgs_sizes: torch.Tensor,
+        vision_packed_seq_params: PackedSeqParams,
+        *,
+        num_frames: Optional[torch.Tensor],
+        temporal_patch_size: int,
+    ):
+        """Give each CP rank an integer share of the patched images or tubelets."""
+
+        # The MCore splitter resolves the CP group from the global parallel
+        # state, so a divergent process-group collection would silently shard
+        # against the wrong ranks.
+        if self.pg_collection.cp.size() != self.context_parallel_lm:
+            raise ValueError(
+                "Nemotron Omni vision_dp_over_cp does not match its process group: "
+                f"config={self.context_parallel_lm}, group={self.pg_collection.cp.size()}."
+            )
+
+        return split_to_context_parallel_ranks_dynamic_res(
+            images,
+            imgs_sizes,
+            vision_packed_seq_params,
+            patch_dim=self.patch_dim,
+            fp8_enabled=False,
+            fp8_recipe=getattr(self.config, "fp8_recipe", None),
+            num_frames=num_frames,
+            temporal_patch_size=temporal_patch_size,
+        )
+
     def _encode_images(
         self,
         images: torch.Tensor,
@@ -339,10 +436,28 @@ class NemotronOmniModel(MegatronModule):
             if use_temporal and num_frames is None:
                 raise ValueError(
                     "num_frames is required by the configured RADIO encoder; "
-                    "use one entry with value 1 for each image."
+                    "provide one entry per image or video item."
                 )
-            if num_frames is not None and torch.any(num_frames != 1):
-                raise NotImplementedError("Video insertion is not implemented; num_frames must be 1 for image inputs.")
+
+            shard_vision = self.vision_dp_over_cp
+            num_padded_ranks = 0
+            if shard_vision:
+                (
+                    images,
+                    imgs_sizes,
+                    vision_packed_seq_params,
+                    _has_fp8_padding,
+                    num_padded_ranks,
+                    local_num_frames,
+                ) = self._split_images_across_context_parallel_ranks(
+                    images,
+                    imgs_sizes,
+                    vision_packed_seq_params,
+                    num_frames=num_frames,
+                    temporal_patch_size=self.vision_model.temporal_patch_dim if use_temporal else 1,
+                )
+                if local_num_frames is not None:
+                    num_frames = local_num_frames
 
             vision_output = self.vision_model(
                 images,
@@ -365,23 +480,80 @@ class NemotronOmniModel(MegatronModule):
                 dim=0,
             )
             chunks = [chunk[class_tokens:] for chunk in chunks]
-            shuffled = [
-                _pixel_shuffle_dynamic_resolution(
-                    chunk.unsqueeze(0),
-                    height=height // self.patch_dim,
-                    width=width // self.patch_dim,
-                ).squeeze(0)
-                for chunk, (height, width) in zip(chunks, sizes)
-            ]
+            shuffled = []
+            for chunk, (height, width) in zip(chunks, sizes):
+                grid_height = height // self.patch_dim
+                grid_width = width // self.patch_dim
+                features = chunk.unsqueeze(0)
+                if shard_vision:
+                    features, grid_height, grid_width = _pad_patch_grid_to_even(
+                        features, height=grid_height, width=grid_width
+                    )
+                shuffled.append(
+                    _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
+                )
             encoded = torch.cat(shuffled, dim=0)
+
+            if shard_vision:
+                # Project before the gather so the projector stays sharded, then
+                # restore the global feature set every CP rank's media merge needs.
+                projected = _project_multimodal_embeddings(self.vision_projection, encoded)
+                gathered = gather_from_context_parallel_ranks_dynamic_res(projected, num_padded_ranks)
+                return gathered.contiguous()
         else:
             encoded = self.vision_model(images)
             class_tokens = self.vision_model.class_token_len
             encoded = encoded[:, class_tokens:, :]
             encoded = pixel_shuffle(encoded).reshape(-1, encoded.shape[-1] * 4)
 
-        projected = self.vision_projection(encoded.unsqueeze(1))
-        return projected.squeeze(1).contiguous()
+        return _project_multimodal_embeddings(self.vision_projection, encoded).contiguous()
+
+    def _encode_sound(self, sound_clips: torch.Tensor, sound_length: Optional[torch.Tensor]) -> torch.Tensor:
+        """Encode mel features and return valid projected rows in sample order."""
+
+        if self.sound_model is None or self.sound_projection is None:
+            raise RuntimeError("Sound data was provided on a stage without the sound encoder")
+        if sound_length is None:
+            raise ValueError("sound_length is required when sound_clips are provided.")
+        if sound_clips.ndim < 2:
+            raise ValueError(f"sound_clips must include batch and frame dimensions, got {tuple(sound_clips.shape)}.")
+
+        parameter = next(self.sound_model.parameters())
+        sound_clips = sound_clips.to(dtype=parameter.dtype)
+        sound_embeddings, embedding_lengths = self.sound_model(sound_clips, sound_length)
+        if sound_embeddings.ndim != 3:
+            raise ValueError(
+                "The sound encoder must return [batch, sequence, hidden] embeddings, "
+                f"got {tuple(sound_embeddings.shape)}."
+            )
+        if embedding_lengths.numel() != sound_embeddings.shape[0]:
+            raise ValueError(
+                "The sound encoder must return one valid embedding length per sample; "
+                f"got {embedding_lengths.numel()} lengths for batch size {sound_embeddings.shape[0]}."
+            )
+
+        projection_parameter = next(self.sound_projection.parameters(), None)
+        if projection_parameter is not None:
+            sound_embeddings = sound_embeddings.to(dtype=projection_parameter.dtype)
+        projected = _project_multimodal_embeddings(
+            self.sound_projection,
+            sound_embeddings.permute(1, 0, 2).contiguous(),
+        ).contiguous()
+        projected_by_sample = projected.permute(1, 0, 2)
+        if getattr(getattr(self.sound_model, "config", None), "sound_pad_to_clip_duration", False):
+            return projected_by_sample.reshape(-1, projected.shape[-1]).contiguous()
+
+        valid_embeddings = []
+        for sample_embeddings, embedding_length in zip(projected_by_sample, embedding_lengths, strict=True):
+            valid_length = int(embedding_length.item())
+            if valid_length < 0 or valid_length > sample_embeddings.shape[0]:
+                raise ValueError(
+                    f"Sound embedding length {valid_length} is outside encoded width {sample_embeddings.shape[0]}."
+                )
+            valid_embeddings.append(sample_embeddings[:valid_length])
+        if not valid_embeddings:
+            return projected.new_empty((0, projected.shape[-1]))
+        return torch.cat(valid_embeddings, dim=0).contiguous()
 
     def _patchify_dynamic_images(self, images: torch.Tensor, imgs_sizes: torch.Tensor) -> torch.Tensor:
         """Convert padded processor pixels to RADIO's packed patch representation.
@@ -502,8 +674,10 @@ class NemotronOmniModel(MegatronModule):
         attention_mask: Optional[torch.Tensor],
         labels: Optional[torch.Tensor],
         loss_mask: Optional[torch.Tensor],
+        padding_mask: Optional[torch.Tensor],
         packed_seq_params: Optional[PackedSeqParams],
     ) -> tuple[
+        Optional[torch.Tensor],
         Optional[torch.Tensor],
         Optional[torch.Tensor],
         Optional[torch.Tensor],
@@ -520,6 +694,7 @@ class NemotronOmniModel(MegatronModule):
             (position_ids, 1),
             (labels, 1),
             (loss_mask, 1),
+            (padding_mask, 1),
         )
         full_lengths = {tensor.size(dim) for tensor, dim in sequence_tensors if tensor is not None}
         if len(full_lengths) > 1:
@@ -527,7 +702,7 @@ class NemotronOmniModel(MegatronModule):
         if not full_lengths:
             # Intermediate PP stages receive an already CP-local pipeline
             # tensor and only need the unchanged global THD metadata.
-            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, False
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, padding_mask, False
 
         total_tokens = full_lengths.pop()
         if packed_seq_params is not None:
@@ -545,13 +720,14 @@ class NemotronOmniModel(MegatronModule):
             device=device,
         )
         if index is None:
-            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, False
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, padding_mask, False
 
         input_ids = self._select_sequence(input_ids, index, dim=1)
         combined_embeddings = self._select_sequence(combined_embeddings, index, dim=0)
         position_ids = self._select_sequence(position_ids, index, dim=1)
         labels = self._select_sequence(labels, index, dim=1)
         loss_mask = self._select_sequence(loss_mask, index, dim=1)
+        padding_mask = self._select_sequence(padding_mask, index, dim=1)
 
         if attention_mask is not None:
             attention_seq_dim = 1 if attention_mask.dim() == 2 else 2
@@ -564,6 +740,7 @@ class NemotronOmniModel(MegatronModule):
             attention_mask,
             labels,
             loss_mask,
+            padding_mask,
             loss_mask is not None,
         )
 
@@ -574,6 +751,7 @@ class NemotronOmniModel(MegatronModule):
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         loss_mask: Optional[torch.Tensor] = None,
+        padding_mask: Optional[torch.Tensor] = None,
         inference_context=None,
         runtime_gather_output: Optional[bool] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
@@ -585,6 +763,7 @@ class NemotronOmniModel(MegatronModule):
         sound_clips: Optional[torch.Tensor] = None,
         sound_length: Optional[torch.Tensor] = None,
         *,
+        media_token_validity_mask: torch.Tensor | None = None,
         inference_params=None,
         **kwargs,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
@@ -595,13 +774,13 @@ class NemotronOmniModel(MegatronModule):
             applies a context-parallel shard to the supervision tensors.
         """
 
-        del kwargs, sound_length
+        del kwargs
         if images is None:
             images = pixel_values
 
-        has_sound = sound_clips is not None and sound_clips.numel() > 0
-        if has_sound:
-            raise NotImplementedError("Sound insertion is not implemented; use an image or text input.")
+        has_sound_inputs = sound_clips is not None and sound_clips.numel() > 0
+        if has_sound_inputs and sound_clips.shape == torch.Size([1, 1]):
+            has_sound_inputs = sound_clips[0, 0].item() != 0
 
         lm_input_ids = input_ids
         combined_embeddings = None
@@ -618,6 +797,11 @@ class NemotronOmniModel(MegatronModule):
             else:
                 image_embeddings = None
 
+            if has_sound_inputs:
+                sound_embeddings = self._encode_sound(sound_clips, sound_length)
+            else:
+                sound_embeddings = None
+
             # Match LLaVAModel's execution order. Besides keeping the two
             # implementations directly comparable, this ensures that RADIO's
             # first distributed forward sees the same runtime/collective state.
@@ -627,13 +811,43 @@ class NemotronOmniModel(MegatronModule):
             if image_embeddings is None:
                 image_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
 
+            # An explicit mask from the caller wins: padding and attention masks
+            # answer "is this a real token", which is a different question from
+            # "is this a media anchor".  They coincide only while every media
+            # token in a valid position anchors an image.  A caller whose text
+            # legitimately contains the placeholder -- it is an ordinary token in
+            # that vocabulary -- marks those positions here so they keep their
+            # embedding instead of demanding a projected feature.
+            #
+            # Otherwise: MBridge collators use a 2-D attention mask as a
+            # token-validity mask, while NeMo RL's dense Megatron path supplies
+            # MCore's 4-D causal mask (where True means blocked).  Only the
+            # former can filter media placeholders.  Padding masks are
+            # unambiguous and take precedence for collator-owned packed inputs.
+            if media_token_validity_mask is None:
+                if padding_mask is not None:
+                    media_token_validity_mask = ~padding_mask
+                elif attention_mask is not None and attention_mask.dim() == input_ids.dim():
+                    media_token_validity_mask = attention_mask
+
             combined_embeddings = self._merge_projected_media(
                 combined_embeddings,
                 input_ids,
                 image_embeddings,
                 self.image_token_index,
-                attention_mask,
+                media_token_validity_mask,
             )
+
+            if self.sound_token_index > 0:
+                if sound_embeddings is None:
+                    sound_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
+                combined_embeddings = self._merge_projected_media(
+                    combined_embeddings,
+                    input_ids,
+                    sound_embeddings,
+                    self.sound_token_index,
+                    media_token_validity_mask,
+                )
 
         if packed_seq_params is not None:
             # THD tensors and their logical boundaries are final collator
@@ -648,6 +862,7 @@ class NemotronOmniModel(MegatronModule):
             attention_mask,
             labels,
             loss_mask,
+            padding_mask,
             return_sliced_loss_mask,
         ) = self._apply_context_parallel_sharding(
             input_ids=lm_input_ids,
@@ -656,6 +871,7 @@ class NemotronOmniModel(MegatronModule):
             attention_mask=attention_mask,
             labels=labels,
             loss_mask=loss_mask,
+            padding_mask=padding_mask,
             packed_seq_params=packed_seq_params,
         )
 
@@ -679,6 +895,15 @@ class NemotronOmniModel(MegatronModule):
                 combined_embeddings,
                 group=self.pg_collection.tp,
             ).contiguous()
+        if padding_mask is not None and self.sequence_parallel_lm:
+            padding_mask = (
+                tensor_parallel.scatter_to_sequence_parallel_region(
+                    padding_mask.transpose(0, 1).contiguous(),
+                    group=self.pg_collection.tp,
+                )
+                .transpose(0, 1)
+                .contiguous()
+            )
 
         # Match LLaVAModel's external-embedding contract. Once media has been
         # merged into decoder embeddings, the language model must not receive
@@ -690,6 +915,10 @@ class NemotronOmniModel(MegatronModule):
         if combined_embeddings is not None and not mtp_enabled:
             lm_input_ids = None
 
+        # TODO(https://github.com/NVIDIA/Megatron-LM/issues/6111): Forward the
+        # CP/SP-local padding_mask once MCore's expert-bias router supports it.
+        # Until then, packed alignment gaps remain loss-masked but are counted
+        # by MoE router auxiliary statistics.
         output = self.language_model(
             input_ids=lm_input_ids,
             position_ids=position_ids,

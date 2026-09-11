@@ -63,7 +63,7 @@ def is_packed_parquet_spec(spec: str | Path) -> bool:
         return True
 
     # Check for glob patterns containing parquet extension
-    if "*" in spec_str or "?" in spec_str:
+    if glob.has_magic(spec_str):
         # Extract the pattern part after the last glob character
         return ".parquet" in spec_str or ".pq" in spec_str
 
@@ -97,6 +97,17 @@ def _is_parquet_file(path: str) -> bool:
     return name.endswith(".parquet") or name.endswith(".pq")
 
 
+def _is_existing_file(path: str) -> bool:
+    """Check whether a path is an existing file using the active filesystem backend."""
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_obj = msc.Path(path)
+        if hasattr(path_obj, "is_file"):
+            return path_obj.is_file()
+        return path_obj.exists() and not (path_obj.is_dir() if hasattr(path_obj, "is_dir") else False)
+    return Path(path).is_file()
+
+
 def _resolve_parquet_paths(file_path: str) -> list[str]:
     """Resolve a file path specification to a list of actual file paths.
 
@@ -116,8 +127,14 @@ def _resolve_parquet_paths(file_path: str) -> list[str]:
     """
     path_str = str(file_path)
 
+    # Preserve direct-file behavior for literal bracketed filenames. Patterns
+    # can still select such files with the escaping provided by glob.escape().
+    bracket_only_magic = "[" in path_str and "*" not in path_str and "?" not in path_str
+    if bracket_only_magic and _is_parquet_file(path_str) and _is_existing_file(path_str):
+        return [path_str]
+
     # Check if it's a glob pattern
-    if "*" in path_str or "?" in path_str:
+    if glob.has_magic(path_str):
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
             # MSC glob support - normalize to strings immediately

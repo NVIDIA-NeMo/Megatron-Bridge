@@ -35,6 +35,10 @@
 set -euo pipefail
 
 HF_MODEL_ID="${HF_MODEL_ID:-LGAI-EXAONE/K-EXAONE-236B-A23B}"
+case "$HF_MODEL_ID" in
+    LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) NUM_EXPERTS="${NUM_EXPERTS:-256}" ;;
+    *) NUM_EXPERTS="${NUM_EXPERTS:-128}" ;;
+esac
 NPROC_PER_NODE="${NPROC_PER_NODE:-8}"
 TP="${TP:-1}"
 PP="${PP:-1}"
@@ -55,8 +59,8 @@ if [[ "$MODEL_PARALLEL_SIZE" -ne "$NPROC_PER_NODE" ]]; then
     echo "ERROR: TP*PP*EP=$MODEL_PARALLEL_SIZE must equal NPROC_PER_NODE=$NPROC_PER_NODE."
     exit 1
 fi
-if ((128 % EP != 0)); then
-    echo "ERROR: EP=$EP must divide K-EXAONE's 128 routed experts."
+if ((NUM_EXPERTS % EP != 0)); then
+    echo "ERROR: EP=$EP must divide K-EXAONE's $NUM_EXPERTS routed experts."
     exit 1
 fi
 

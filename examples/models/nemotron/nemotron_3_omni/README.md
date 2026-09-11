@@ -9,6 +9,17 @@ dynamic-resolution RADIO vision tower and a Parakeet sound encoder.
 |---|---|---|
 | Nemotron-3-Nano-Omni-30B-A3B-Reasoning | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16` | MoE hybrid LM (Mamba+attn) + RADIO vision + Parakeet audio |
 
+AutoBridge, all shipped recipes, Direct-HF collation, Energon collation, and
+the inference examples use the canonical processor-expanded
+`NemotronOmniModel` path. The collator owns dense padding and complete MCore
+THD packing; the model only inserts media embeddings and applies CP/SP
+sharding.
+
+The historical `NemotronOmniLlavaModel`, `NemotronOmniLlavaModelProvider`,
+`NemotronOmniLlavaBridge`, and `nemotron_omni_llava_collate_fn` collapse/expand
+path remains available only for compatible legacy checkpoints and is
+deprecated. Selecting it emits a `FutureWarning`.
+
 > **Verified hardware:** all conversion, inference, and training flows in
 > this directory have been verified on **NVIDIA H100 80GB** nodes with 8
 > GPUs per node. Other GPU SKUs may work but have not been tested.
@@ -192,10 +203,19 @@ All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
 pretrained checkpoint and enable in-batch sequence packing via
 `dataset.enable_in_batch_packing=True`. Default GPU layout per script:
 
-For the canonical expanded-sequence image path, the collator owns THD packing.
-The model receives the final packed tensors and global boundaries, inserts
-image embeddings without changing sequence length, and then selects its
-rank-local context-parallel shard.
+The canonical expanded-sequence collator owns THD packing for text, image,
+video, and audio rows. The model receives the final packed tensors and global
+boundaries, inserts media without changing sequence length, and applies only
+the rank-local CP/SP shard. Alignment gaps are carried as a padding mask for
+media validation and consistent CP/SP localization, but the mask is not
+forwarded into MCore until
+[Megatron-LM #6111](https://github.com/NVIDIA/Megatron-LM/issues/6111) is fixed.
+The gaps remain loss-masked but currently count toward MoE routing statistics.
+
+Compact variable-length packs do not yet restore the original per-row batch
+dimension for `seq_aux_loss`; that requires follow-up boundary-aware
+unflattening in Megatron-Core. Attention and Mamba sequence boundaries remain
+per row in the current implementation.
 
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs
@@ -237,12 +257,41 @@ Set the four flags below as a matched column — a mismatched set produces incor
 | Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs, 512²) |
 |----------------------------------------------------|-------------------------------------------|--------------------------------------------|
 | `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                                     |
-| `model.temporal_patchrecipe_dim`                         | `1`                                       | `2`                                        |
+| `model.temporal_patch_dim`                         | `1`                                       | `2`                                        |
 | `model.separate_video_embedder`                    | `False`                                   | `True`                                     |
 | `model.temporal_ckpt_compat`                       | `False`                                   | `True`                                     |
 
 Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
 
+### Vision DP Over CP
+
+`model.vision_dp_over_cp` shards the microbatch's images (or
+temporal tubelets) across the language model's context-parallel group, so each
+CP rank encodes `1/CP` of them instead of all of them. This is data parallelism
+over images, not ring attention — RADIO already attends within each image via
+`cu_seqlens`, so nothing is split along the sequence dimension and no
+cross-rank attention communication is introduced. The vision projector runs on
+the rank-local shard, and a single gather afterwards restores the full feature
+set that every rank needs to merge media into the packed text sequence.
+
+The flag defaults to `True` and is a no-op unless
+`model.context_parallel_size > 1`. Both recipes below ship with CP=1, so it only
+takes effect once you raise CP. Set `model.vision_dp_over_cp=False` to
+encode every image redundantly on every CP rank.
+
+Measured on 2 nodes / 16 GPUs (PP=1, DP=2, EP=8, ETP=1, MBS=2, GBS=64, GA=16),
+flipping only this flag:
+
+| Dataset       | TP | CP | Step time      | Peak memory   |
+|---------------|----|----|----------------|---------------|
+| InfoVQA       | 4  | 2  | 13.2 → 12.5 s  | 81 → 73 GB    |
+| Mantis        | 2  | 4  | 12.2 → 11.6 s  | 81 → 77 GB    |
+| llava_video   | 4  | 2  | 13.6 → 13.0 s  | 84 → 75 GB    |
+
+Images are split by count, with the remainder assigned to the last rank.
+Multi-image data whose per-sample image count varies (Mantis at CP=4) therefore
+balances less evenly than uniform data, which is why its memory saving is the
+smallest of the three.
 
 ### Image-Text — CORD-V2
 
