@@ -24,6 +24,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
     ConfigContainer,
     _benchmark_common,
     _enable_hybridep_full_iteration_mxfp8,
+    _enable_hybridep_full_iteration_nvfp4,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -537,9 +538,13 @@ def qwen3_235b_a22b_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
 
 
 def qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
-    """Qwen3 235B A22B pretrain: 256× B200, NVFP4 (same layout as FP8-CS)."""
+    """Qwen3 235B-A22B pretrain: 256× B200, NVFP4, full-iteration CG and A2A overlap."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_b200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.model.virtual_pipeline_model_parallel_size = 3
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    _enable_hybridep_full_iteration_nvfp4(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -547,17 +552,27 @@ def qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
+
+
+qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_full_iteration_config = qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config
 
 
 def qwen3_30b_a3b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
