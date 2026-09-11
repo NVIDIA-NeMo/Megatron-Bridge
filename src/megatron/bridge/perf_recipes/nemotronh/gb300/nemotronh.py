@@ -197,8 +197,11 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
     _apply_nemotron_3_super_perf_defaults(cfg)
-    _enable_nemotron_3_super_full_iteration(cfg)
-    cfg.mixed_precision.fp8_dot_product_attention = False
+    # _enable_nemotron_3_super_full_iteration(cfg)
+    # cfg.mixed_precision.fp8_dot_product_attention = False
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
