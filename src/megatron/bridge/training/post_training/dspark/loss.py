@@ -83,8 +83,12 @@ class DSparkForwardOutput:
         target_ids: Teacher-forced next token per position
             ``[batch, num_blocks, block_size]``.
         eval_mask: Bool/float supervision mask ``[batch, num_blocks, block_size]``
-            (a block is a contiguous, in-bounds, loss-enabled prefix).
-        block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``.
+            (a block is a contiguous, in-bounds, loss-enabled prefix). Positions
+            outside the mask may carry sentinel ids or non-finite padded values;
+            :func:`dspark_loss` sanitizes them before computing any term.
+        block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``. Dropped anchors
+            are excluded from every loss term, from ``num_tokens``, and from the
+            acceptance metrics, independently of what ``eval_mask`` says.
         confidence_pred: Optional per-position acceptance logit
             ``[batch, num_blocks, block_size]``.
         aligned_target_logits: Optional target next-token logits
@@ -253,10 +257,14 @@ def dspark_loss(
             ``aligned_target_logits``.
     """
     draft_logits = outputs.draft_logits
-    weight = _loss_weight_mask(outputs.eval_mask, loss_decay_gamma)  # [B, N, L]
+    # A position is supervised iff it is eval-masked AND its anchor was kept. A
+    # dropped anchor must not receive gradient or enter the diagnostics, whatever
+    # its eval_mask says, so one combined mask drives the loss weight, the token
+    # count, and the acceptance metrics alike.
+    supervised = outputs.eval_mask.to(torch.float32) * outputs.block_keep_mask.to(torch.float32).unsqueeze(-1)
+    weight = _loss_weight_mask(supervised, loss_decay_gamma)  # [B, N, L]
     weight_sum = weight.sum()
-    eval_mask = outputs.eval_mask.to(torch.float32)
-    num_tokens = eval_mask.sum().detach().to(torch.int)
+    num_tokens = supervised.sum().detach().to(torch.int)
 
     has_confidence = outputs.confidence_pred is not None
     target_logits = outputs.aligned_target_logits
@@ -266,9 +274,19 @@ def dspark_loss(
         raise ValueError("aligned_target_logits is required for the L1 loss or the confidence head.")
     needs_teacher = l1_alpha > 0 or has_confidence
 
+    # Unsupervised positions may carry sentinel target ids (-1 / -100) or
+    # non-finite padded logits. Zero-weighting them afterwards is not enough:
+    # 0 * NaN is NaN, and a non-finite forward row still produces NaN gradients.
+    # Replacing the inputs with torch.where is what makes this safe in both
+    # directions, because where's backward *selects* zeros into the masked slots
+    # rather than multiplying by zero, so no NaN reaches draft_logits.grad.
+    supervised_bool = supervised > 0
+    draft_logits = torch.where(supervised_bool.unsqueeze(-1), draft_logits, 0.0)
+    target_ids = outputs.target_ids.long().masked_fill(~supervised_bool, 0)
+
     # One FP32 normalization of the draft distribution serves both terms.
     ce_per_token, l1_dist = _ce_and_l1_per_token(
-        draft_logits, outputs.target_ids, target_logits if needs_teacher else None, chunk_tokens
+        draft_logits, target_ids, target_logits if needs_teacher else None, chunk_tokens
     )
     ce_num = (ce_per_token * weight).sum()
 
@@ -276,16 +294,18 @@ def dspark_loss(
     l1_num = conf_num = zero
     accept_rate = None
     if needs_teacher:
+        # A non-finite teacher row at an unsupervised position surfaces as NaN in
+        # the reduced distance; scrub it there rather than copying the full-vocab
+        # teacher tensor just to mask a few rows.
+        l1_dist = torch.where(supervised_bool, l1_dist, 0.0)
         accept_rate = (1.0 - 0.5 * l1_dist).clamp(0.0, 1.0)
         if l1_alpha > 0:
             # Raw weighted L1 (paper Eq. 10). The 1/2 lives in accept_rate above.
             l1_num = (l1_dist * weight).sum()
         if has_confidence:
+            confidence_pred = torch.where(supervised_bool, outputs.confidence_pred.float(), 0.0)
             conf_num = (
-                F.binary_cross_entropy_with_logits(
-                    outputs.confidence_pred.float(), accept_rate.detach(), reduction="none"
-                )
-                * weight
+                F.binary_cross_entropy_with_logits(confidence_pred, accept_rate.detach(), reduction="none") * weight
             ).sum()
 
     loss = ce_alpha * ce_num + l1_alpha * l1_num + confidence_alpha * conf_num
@@ -300,13 +320,11 @@ def dspark_loss(
     }
     if accept_rate is not None:
         with torch.no_grad():
-            report.update(_acceptance_report(outputs, eval_mask, accept_rate))
+            report.update(_acceptance_report(supervised, accept_rate))
     return loss, num_tokens, report
 
 
-def _acceptance_report(
-    outputs: DSparkForwardOutput, eval_mask: torch.Tensor, accept_rate: torch.Tensor
-) -> dict[str, torch.Tensor]:
+def _acceptance_report(supervised: torch.Tensor, accept_rate: torch.Tensor) -> dict[str, torch.Tensor]:
     """Analytical acceptance diagnostics as reducible ``[numerator, denominator]`` pairs.
 
     ``accept_rate`` (``= 1 - 0.5 * L1``) is the per-position acceptance probability.
@@ -315,17 +333,18 @@ def _acceptance_report(
     anchor token.
 
     Args:
-        outputs: The forward outputs (for ``block_keep_mask``).
-        eval_mask: The float supervision mask ``[batch, num_blocks, block_size]``.
+        supervised: The combined eval-mask-and-kept-anchor float mask
+            ``[batch, num_blocks, block_size]``. Dropped anchors are already zero
+            here, so they contribute to neither numerator nor denominator.
         accept_rate: Per-position acceptance ``[batch, num_blocks, block_size]``.
 
     Returns:
         ``{"dspark accept rate": pair, "dspark tau": pair}``.
     """
-    valid_accept = accept_rate * eval_mask
-    valid_blocks = (outputs.block_keep_mask.bool() & (eval_mask > 0).any(dim=-1)).to(torch.float32)
+    valid_accept = accept_rate * supervised
+    valid_blocks = (supervised > 0).any(dim=-1).to(torch.float32)
     tau_per_block = valid_accept.cumprod(dim=-1).sum(dim=-1) + 1.0
     return {
-        "dspark accept rate": _pair(valid_accept.sum(), eval_mask.sum()),
+        "dspark accept rate": _pair(valid_accept.sum(), supervised.sum()),
         "dspark tau": _pair((tau_per_block * valid_blocks).sum(), valid_blocks.sum()),
     }
