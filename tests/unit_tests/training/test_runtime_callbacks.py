@@ -12,6 +12,7 @@ from megatron.core.utils import get_model_config
 
 import megatron.bridge.training.setup as training_setup
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
@@ -33,7 +34,10 @@ class FakeDDP:
 
 def _make_configs(
     kind: str,
-) -> tuple[GPTModelProvider | HybridModelProvider | GPTModelConfig | HybridModelConfig, TransformerConfig]:
+) -> tuple[
+    GPTModelProvider | HybridModelProvider | BridgeGPTModelConfig | HybridModelConfig,
+    TransformerConfig,
+]:
     dimensions = dict(num_layers=1, hidden_size=8, num_attention_heads=2)
     if kind == "copied_omni":
         provider = NemotronOmniModelProvider(**dimensions)
@@ -42,14 +46,16 @@ def _make_configs(
         provider = (GPTModelProvider if kind == "gpt_provider" else HybridModelProvider)(**dimensions)
         return provider, provider
     runtime = TransformerConfig(**dimensions)
-    builder = GPTModelConfig if kind == "gpt_builder" else HybridModelConfig
-    return builder(transformer=runtime, vocab_size=32), runtime
+    model_config = BridgeGPTModelConfig if kind == "gpt_builder" else HybridModelConfig
+    return model_config(transformer=runtime, vocab_size=32), runtime
 
 
 def _run_setup(
-    provider: GPTModelProvider | HybridModelProvider | GPTModelConfig | HybridModelConfig,
+    provider: GPTModelProvider | HybridModelProvider | BridgeGPTModelConfig | HybridModelConfig,
     model: list[FakeDDP],
     ddp_config: SimpleNamespace,
+    *,
+    build_model: bool = False,
 ) -> tuple[MagicMock, SimpleNamespace]:
     """Exercise the real setup call and installer without constructing a training job."""
     cfg = SimpleNamespace(
@@ -70,6 +76,7 @@ def _run_setup(
             enable_megatron_core_experimental=False,
             use_decentralized_pg=False,
             use_gloo_process_groups=False,
+            use_megatron_fsdp=False,
             use_torch_fsdp2=False,
         ),
         ft=None,
@@ -118,34 +125,63 @@ def _run_setup(
     pg_collection.tp = SimpleNamespace(size=lambda: 1)
     start_time_tensor = Mock()
     start_time_tensor.item.return_value = 0.0
+    setup_patches = {
+        "DistributedDataParallel": FakeDDP,
+        "_should_load_checkpoint": Mock(return_value=False),
+        "_validate_and_set_vocab_size": Mock(return_value=(32, False)),
+        "barrier_and_log": Mock(),
+        "build_tokenizer": Mock(return_value=SimpleNamespace(vocab_size=32)),
+        "classify_gtp_remat_chains": Mock(),
+        "configure_gtp_remat": Mock(),
+        "create_checkpoint_manager": Mock(return_value=checkpoint_manager),
+        "finalize_tensor_inspect_post_model_initialization": Mock(),
+        "initialize_megatron": Mock(return_value=pg_collection),
+        "initialize_tensor_inspect_pre_model_initialization": Mock(),
+        "maybe_load_dataloader_state": Mock(),
+        "maybe_log_and_save_config": Mock(),
+        "print_rank_0": Mock(),
+        "set_experimental_flag": Mock(),
+        "set_jit_fusion_options": Mock(),
+        "setup_data_iterators": Mock(return_value=(None, None, None)),
+        "setup_logging": Mock(),
+        "setup_optimizer": Mock(return_value=(optimizer, scheduler)),
+        "start_memory_history_recording": Mock(),
+    }
+    if not build_model:
+        setup_patches["_build_distributed_model"] = Mock(return_value=model)
     with (
         patch.multiple(
             training_setup,
-            DistributedDataParallel=FakeDDP,
-            _build_distributed_model=Mock(return_value=model),
-            _should_load_checkpoint=Mock(return_value=False),
-            _validate_and_set_vocab_size=Mock(return_value=(32, False)),
-            barrier_and_log=Mock(),
-            build_tokenizer=Mock(return_value=SimpleNamespace(vocab_size=32)),
-            create_checkpoint_manager=Mock(return_value=checkpoint_manager),
-            finalize_tensor_inspect_post_model_initialization=Mock(),
-            initialize_megatron=Mock(return_value=pg_collection),
-            initialize_tensor_inspect_pre_model_initialization=Mock(),
-            maybe_load_dataloader_state=Mock(),
-            maybe_log_and_save_config=Mock(),
-            print_rank_0=Mock(),
-            set_experimental_flag=Mock(),
-            set_jit_fusion_options=Mock(),
-            setup_data_iterators=Mock(return_value=(None, None, None)),
-            setup_logging=Mock(),
-            setup_optimizer=Mock(return_value=(optimizer, scheduler)),
-            start_memory_history_recording=Mock(),
+            **setup_patches,
         ),
         patch.object(torch, "tensor", return_value=start_time_tensor),
         patch.object(torch.distributed, "all_reduce"),
     ):
         training_setup.setup(state, Mock())
     return optimizer, pg_collection
+
+
+@pytest.mark.parametrize("kind", ["gpt_builder", "hybrid_builder"])
+def test_setup_builds_model_config_and_binds_its_runtime_config(kind: str) -> None:
+    """Cover the ModelConfig builder branch instead of supplying a prebuilt model."""
+    model_config, runtime = _make_configs(kind)
+    model = [FakeDDP(runtime)]
+
+    class RecordingBuilder:
+        def __init__(self, config: GPTModelConfig | HybridModelConfig) -> None:
+            assert config is model_config
+
+        def build_distributed_models(self, **kwargs) -> list[FakeDDP]:
+            assert kwargs["pg_collection"] is not None
+            return model
+
+    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
+    with patch.object(type(model_config), "get_builder_cls", return_value=RecordingBuilder):
+        optimizer, _ = _run_setup(model_config, model, ddp_config, build_model=True)
+
+    assert get_model_config(model[0]) is runtime
+    assert runtime.finalize_model_grads_func is not None
+    assert runtime.grad_scale_func == optimizer.scale_loss
 
 
 @pytest.mark.parametrize("kind", ["copied_omni", "gpt_provider", "hybrid_provider", "gpt_builder", "hybrid_builder"])
