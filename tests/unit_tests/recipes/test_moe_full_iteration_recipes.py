@@ -114,15 +114,15 @@ def test_deepseek_v3_256gpu_vr200_nvfp4_uses_full_iteration_stack() -> None:
 
 
 @pytest.mark.parametrize(
-    ("recipe", "expected_tp"),
+    ("recipe", "expected_tp", "expected_ep", "expected_micro_batch_size"),
     [
-        (nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config, 2),
-        (nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config, 1),
-        (nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config, 1),
+        (nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config, 2, 64, 2),
+        (nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config, 1, 32, 1),
+        (nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config, 1, 32, 1),
     ],
 )
 def test_nemotron_3_super_mxfp8_uses_full_iteration_stack(
-    recipe: Callable[[], ConfigContainer], expected_tp: int
+    recipe: Callable[[], ConfigContainer], expected_tp: int, expected_ep: int, expected_micro_batch_size: int
 ) -> None:
     cfg = recipe()
 
@@ -141,25 +141,26 @@ def test_nemotron_3_super_mxfp8_uses_full_iteration_stack(
     assert cfg.model.delay_wgrad_compute is False
     assert cfg.comm_overlap is None
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ep
+    assert cfg.train.micro_batch_size == expected_micro_batch_size
     assert (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
         cfg.model.virtual_pipeline_model_parallel_size,
         cfg.model.expert_model_parallel_size,
-    ) == (expected_tp, 1, None, 32)
+    ) == (expected_tp, 1, None, expected_ep)
 
 
 @pytest.mark.parametrize(
-    ("recipe", "expected_tp"),
+    ("recipe", "expected_tp", "expected_ep", "expected_micro_batch_size"),
     [
-        (nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config, 2),
-        (nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config, 1),
-        (nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config, 1),
+        (nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config, 2, 64, 2),
+        (nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config, 1, 32, 1),
+        (nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config, 1, 32, 1),
     ],
 )
 def test_nemotron_3_super_nvfp4_uses_full_iteration_stack(
-    recipe: Callable[[], ConfigContainer], expected_tp: int
+    recipe: Callable[[], ConfigContainer], expected_tp: int, expected_ep: int, expected_micro_batch_size: int
 ) -> None:
     cfg = recipe()
 
@@ -178,11 +179,12 @@ def test_nemotron_3_super_nvfp4_uses_full_iteration_stack(
     assert cfg.model.delay_wgrad_compute is False
     assert cfg.comm_overlap is None
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ep
+    assert cfg.train.micro_batch_size == expected_micro_batch_size
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
     assert (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
         cfg.model.virtual_pipeline_model_parallel_size,
         cfg.model.expert_model_parallel_size,
-    ) == (expected_tp, 1, None, 32)
+    ) == (expected_tp, 1, None, expected_ep)

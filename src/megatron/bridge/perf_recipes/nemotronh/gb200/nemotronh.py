@@ -121,7 +121,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB200, MXFP8 with full-iteration CUDA graph."""
+    """Nemotron 3 Super pretrain: 64× GB200, MXFP8 full-iteration graph, EP=64, MBS=2."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
@@ -131,9 +131,9 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 64
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -155,7 +155,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -169,7 +169,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB200, NVFP4 with full-iteration CUDA graph."""
+    """Nemotron 3 Super pretrain: 64× GB200, NVFP4 full-iteration graph, EP=64, MBS=2."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
@@ -179,9 +179,9 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 64
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -204,7 +204,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
