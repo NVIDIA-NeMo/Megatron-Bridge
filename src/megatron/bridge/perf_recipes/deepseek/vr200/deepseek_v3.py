@@ -17,7 +17,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
-    _enable_deepseek_full_iteration_mxfp8,
+    _enable_deepseek_full_iteration,
     _perf_precision,
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -156,7 +156,9 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration_mxfp8(cfg)
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fp8_output_proj = False
+    cfg.mixed_precision.fp8_dot_product_attention = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

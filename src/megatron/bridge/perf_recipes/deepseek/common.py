@@ -45,13 +45,8 @@ def _enable_deepseek_precision_aware_optimizer(cfg: ConfigContainer) -> None:
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
 
-def _enable_deepseek_full_iteration_mxfp8(
-    cfg: ConfigContainer,
-    *,
-    fp8_dot_product_attention: bool = False,
-    fp8_output_proj: bool = False,
-) -> None:
-    """Apply legacy DeepSeek V3 HybridEP full-iteration MXFP8 settings."""
+def _enable_deepseek_full_iteration(cfg: ConfigContainer) -> None:
+    """Apply legacy DeepSeek V3 HybridEP full-iteration settings."""
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
@@ -67,11 +62,9 @@ def _enable_deepseek_full_iteration_mxfp8(
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.fp8_output_proj = fp8_output_proj
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
 
-    cfg.mixed_precision.fp8_dot_product_attention = fp8_dot_product_attention
     cfg.comm_overlap.delay_wgrad_compute = True
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
