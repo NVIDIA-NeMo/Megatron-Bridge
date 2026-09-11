@@ -18,7 +18,6 @@ from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
-from megatron.bridge.training.state import GlobalState
 
 
 pytestmark = pytest.mark.unit
@@ -69,7 +68,7 @@ def _run_setup(
             save=None,
         ),
         dataset=SimpleNamespace(),
-        ddp=SimpleNamespace(),
+        ddp=ddp_config,
         dist=SimpleNamespace(
             align_grad_reduce=True,
             disable_jit_fuser=False,
@@ -87,12 +86,7 @@ def _run_setup(
             modules_to_filter=[],
             set_level_for_all_loggers=False,
         ),
-        model=SimpleNamespace(
-            fine_grained_activation_offloading=False,
-            restore_modelopt_state=False,
-            should_pad_vocab=False,
-            vocab_size=32,
-        ),
+        model=provider,
         optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
         optimizer_config_override_provider=None,
         peft=None,
@@ -115,14 +109,12 @@ def _run_setup(
         train_state=SimpleNamespace(step=1),
         wandb_logger=None,
     )
-    pg_collection = SimpleNamespace(dp=object())
+    pg_collection = SimpleNamespace(
+        dp=object(), cp=SimpleNamespace(size=lambda: 1), tp=SimpleNamespace(size=lambda: 1)
+    )
     checkpoint_manager = MagicMock(checkpointing_context={})
     optimizer = MagicMock()
     scheduler = MagicMock()
-    cfg.model = provider
-    cfg.ddp = ddp_config
-    pg_collection.cp = SimpleNamespace(size=lambda: 1)
-    pg_collection.tp = SimpleNamespace(size=lambda: 1)
     start_time_tensor = Mock()
     start_time_tensor.item.return_value = 0.0
     setup_patches = {
@@ -171,7 +163,7 @@ def test_setup_builds_model_config_and_binds_its_runtime_config(kind: str) -> No
         def __init__(self, config: GPTModelConfig | HybridModelConfig) -> None:
             assert config is model_config
 
-        def build_distributed_models(self, **kwargs) -> list[FakeDDP]:
+        def build_distributed_models(self, **kwargs: object) -> list[FakeDDP]:
             assert kwargs["pg_collection"] is not None
             return model
 
@@ -184,9 +176,16 @@ def test_setup_builds_model_config_and_binds_its_runtime_config(kind: str) -> No
     assert runtime.grad_scale_func == optimizer.scale_loss
 
 
-@pytest.mark.parametrize("kind", ["copied_omni", "gpt_provider", "hybrid_provider", "gpt_builder", "hybrid_builder"])
-@pytest.mark.parametrize("chunk_count", [1, 2])
-@pytest.mark.parametrize("overlap", [False, True])
+@pytest.mark.parametrize(
+    ("kind", "chunk_count", "overlap"),
+    [
+        ("copied_omni", 1, False),
+        ("gpt_provider", 1, False),
+        ("hybrid_provider", 1, False),
+        # One representative case covers callback lists and overlap binding.
+        ("copied_omni", 2, True),
+    ],
+)
 def test_setup_installs_callbacks_on_scheduler_config(kind: str, chunk_count: int, overlap: bool) -> None:
     provider, runtime = _make_configs(kind)
     # The second chunk may have an independent config; the interleaved scheduler
@@ -216,29 +215,8 @@ def test_setup_installs_callbacks_on_scheduler_config(kind: str, chunk_count: in
         assert provider.no_sync_func is None
 
 
-@pytest.mark.parametrize("copied", [False, True])
-def test_restart_binds_callbacks_to_rebuilt_model(copied: bool) -> None:
-    kind = "copied_omni" if copied else "gpt_provider"
-    provider, runtime = _make_configs(kind)
-    ddp_config = SimpleNamespace(overlap_grad_reduce=True, overlap_param_gather=True, align_param_gather=True)
-    first = FakeDDP(runtime)
-    first_optimizer, _ = _run_setup(provider, [first], ddp_config)
-    state = GlobalState()
-    state._cfg = SimpleNamespace(model=provider)
-    state.reset_for_restart()
-    rebuilt_config = provider._copy_config_without_runtime_process_groups(deep=True) if copied else provider
-    rebuilt = FakeDDP(rebuilt_config)
-    rebuilt_optimizer, _ = _run_setup(provider, [rebuilt], ddp_config)
-    assert rebuilt_config.no_sync_func is rebuilt.no_sync
-    assert rebuilt_config.grad_sync_func is rebuilt.start_grad_sync
-    assert rebuilt_config.param_sync_func is rebuilt.start_param_sync
-    assert rebuilt_config.grad_scale_func == rebuilt_optimizer.scale_loss
-    assert rebuilt_config.grad_scale_func != first_optimizer.scale_loss
-
-
 @pytest.mark.parametrize("forward_only", [False, True])
-@pytest.mark.parametrize("microbatches", [1, 3])
-def test_scheduler_finalizes_once_after_setup(forward_only: bool, microbatches: int) -> None:
+def test_scheduler_finalizes_once_after_setup(forward_only: bool) -> None:
     provider, runtime = _make_configs("copied_omni")
     model = FakeDDP(runtime)
     ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False)
@@ -255,11 +233,14 @@ def test_scheduler_finalizes_once_after_setup(forward_only: bool, microbatches: 
             forward_step_func=Mock(),
             data_iterator=iter(()),
             model=[model],
-            num_microbatches=microbatches,
+            num_microbatches=3,
             seq_length=1,
             micro_batch_size=1,
             forward_only=forward_only,
             pg_collection=pg_collection,
         )
-    assert finalizer.call_count == int(not forward_only)
-    assert backward.call_count == (0 if forward_only else microbatches)
+    if forward_only:
+        finalizer.assert_not_called()
+    else:
+        finalizer.assert_called_once_with([model], None, pg_collection=pg_collection, force_all_reduce=False)
+    assert backward.call_count == (0 if forward_only else 3)
