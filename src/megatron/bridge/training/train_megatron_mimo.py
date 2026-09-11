@@ -387,7 +387,12 @@ def train_megatron_mimo(
             )
 
         # Evaluation at specified intervals
-        if eval_interval and train_state.step % eval_interval == 0 and valid_data_iterator is not None:
+        if (
+            eval_interval
+            and (cfg.validation.start_eval_at_iter is None or train_state.step >= cfg.validation.start_eval_at_iter)
+            and train_state.step % eval_interval == 0
+            and valid_data_iterator is not None
+        ):
             if train_config.manual_gc and train_config.manual_gc_eval:
                 gc.collect()
             evaluate_and_print_results(
