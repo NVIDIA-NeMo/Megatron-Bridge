@@ -145,7 +145,7 @@ def test_nemotron_3_super_gb200_mxfp8_uses_te_scoped_graphs() -> None:
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.train.train_iters == 50
-    assert cfg.train.micro_batch_size == 2
+    assert cfg.train.micro_batch_size == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert (
@@ -166,7 +166,7 @@ def test_nemotron_3_super_gb200_nvfp4_uses_te_scoped_graphs() -> None:
     assert cfg.model.quant_recipe is not None
     assert cfg.model.moe_router_padding_for_quantization is True
     assert cfg.train.train_iters == 50
-    assert cfg.train.micro_batch_size == 2
+    assert cfg.train.micro_batch_size == 1
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert (

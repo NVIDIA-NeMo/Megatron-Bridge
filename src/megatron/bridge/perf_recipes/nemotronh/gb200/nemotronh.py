@@ -120,11 +120,11 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB200, MXFP8 TE-scoped graph, EP=64, MBS=2."""
+    """Nemotron 3 Super pretrain: 64× GB200, MXFP8."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -172,11 +172,11 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB200, NVFP4 TE-scoped graph, EP=64, MBS=2."""
+    """Nemotron 3 Super pretrain: 64× GB200, NVFP4."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
