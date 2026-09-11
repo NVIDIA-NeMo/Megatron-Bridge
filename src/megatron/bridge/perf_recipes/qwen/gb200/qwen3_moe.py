@@ -613,9 +613,6 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_full_iteration_config = qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config
-
-
 def qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB200, NVFP4 (same layout as FP8-CS).
 
