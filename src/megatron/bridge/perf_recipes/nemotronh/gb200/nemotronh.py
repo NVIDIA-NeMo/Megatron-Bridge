@@ -124,7 +124,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
-    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -132,7 +132,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -176,7 +176,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
-    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -184,7 +184,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
