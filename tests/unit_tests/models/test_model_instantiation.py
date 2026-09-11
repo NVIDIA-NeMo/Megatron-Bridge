@@ -831,29 +831,57 @@ class TestGetModel:
                 **override,
             )
 
+    @pytest.mark.parametrize("entry_point", ["get_model", "provide_distributed_model"])
+    @pytest.mark.parametrize(
+        ("initial_value", "override", "expected_value"),
+        [
+            pytest.param(True, {}, True, id="omitted-preserves-true"),
+            pytest.param(False, {}, False, id="omitted-preserves-false"),
+            pytest.param(True, {"init_model_with_meta_device": None}, True, id="none-preserves-true"),
+            pytest.param(False, {"init_model_with_meta_device": None}, False, id="none-preserves-false"),
+            pytest.param(True, {"init_model_with_meta_device": False}, False, id="false-disables"),
+            pytest.param(False, {"init_model_with_meta_device": True}, True, id="true-enables"),
+        ],
+    )
     @patch("megatron.bridge.models.model_provider._create_model")
-    def test_get_model_explicitly_disables_meta_initialization(self, mock_create_model):
-        """Test that an explicit False overrides meta initialization."""
+    def test_meta_initialization_override(
+        self, mock_create_model, initial_value, override, expected_value, entry_point
+    ):
+        """Model construction uses the effective meta-device setting."""
 
         class ModelConstructionObserved(Exception):
             pass
 
         def record_meta_initialization(model_provider, *_args, **_kwargs):
-            assert model_provider.init_model_with_meta_device is False
+            assert model_provider.init_model_with_meta_device is expected_value
+            expected_device = "meta" if expected_value else "cpu"
+            assert torch.empty(1).device.type == expected_device
             raise ModelConstructionObserved
 
         mock_create_model.side_effect = record_meta_initialization
         model_provider = MockModelProvider()
-        model_provider.init_model_with_meta_device = True
+        model_provider.init_model_with_meta_device = initial_value
 
-        with pytest.raises(ModelConstructionObserved):
-            get_model(
-                model_provider,
-                DistributedDataParallelConfig(),
-                init_model_with_meta_device=False,
-                wrap_with_ddp=False,
-                pg_collection=_PG(),
-            )
+        with (
+            patch("megatron.bridge.models.model_provider.torch.distributed.is_initialized", return_value=True),
+            pytest.raises(ModelConstructionObserved),
+        ):
+            if entry_point == "get_model":
+                get_model(
+                    model_provider,
+                    DistributedDataParallelConfig(),
+                    wrap_with_ddp=False,
+                    pg_collection=_PG(),
+                    **override,
+                )
+            else:
+                model_provider.provide_distributed_model(
+                    wrap_with_ddp=False,
+                    pg_collection=_PG(),
+                    **override,
+                )
+
+        assert torch.empty(1).device.type == "cpu"
 
     @patch("megatron.bridge.models.model_provider._create_model")
     def test_get_model_default_preserves_cpu_initialization(self, mock_create_model):
