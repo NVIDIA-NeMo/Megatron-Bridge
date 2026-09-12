@@ -38,7 +38,6 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     runtime_config_update,
 )
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.state import GlobalState
@@ -422,7 +421,6 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MFSDP v2 is unavailable in this MCore revision")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
         """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
         initialize_distributed()
@@ -431,10 +429,16 @@ class TestMegatronFSDP:
         cfg = create_fsdp_config_container(
             seq_length=128,
             train_iters=10,
-            optimizer={"clip_grad": 0.0},
+            optimizer={"use_precision_aware_optimizer": True, "optimizer_cuda_graph": True},
         )
         cfg.model = create_dense_hybrid_smoke_model_config()
         cfg.ddp.megatron_fsdp_version = 2
+        # Full-iteration graphs over a dense model: Megatron-LM #7075 made these work
+        # under MFSDP v2. MoE stays out, its dispatch shapes are not capturable.
+        cfg.model.cuda_graph_impl = "full_iteration"
+        # Capturable TE FusedAdam requires the main-gradient and main-weight dtypes
+        # to match (https://github.com/NVIDIA/TransformerEngine/issues/3358).
+        cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
 
         pretrain(cfg, forward_step)
 
@@ -455,6 +459,32 @@ class TestMegatronFSDP:
         cfg.ddp.megatron_fsdp_version = 2
 
         pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize("outer_dp_sharding_strategy", ["no_shard", "optim"], ids=["hsdp", "hfsdp"])
+    def test_fsdp_v2_hybrid_dp_pretrain_smoke(self, outer_dp_sharding_strategy):
+        """Train the dense HybridModel over an outer data-parallel axis.
+
+        no_shard outer over the optim_grads_params inner axis is HSDP, optim outer is HFSDP.
+        """
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            ddp={
+                "num_distributed_optimizer_instances": 2,
+                "outer_dp_sharding_strategy": outer_dp_sharding_strategy,
+            },
+        )
+        cfg.model = create_dense_hybrid_smoke_model_config()
+        cfg.ddp.megatron_fsdp_version = 2
+
+        pretrain(cfg, forward_step)
+
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
