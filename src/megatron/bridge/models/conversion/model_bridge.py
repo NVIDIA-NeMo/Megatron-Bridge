@@ -117,7 +117,8 @@ class HFWeightTuple(NamedTuple):
         cpu: bool,
         export_hook: Callable[[str, torch.Tensor], Iterable["HFWeightTuple"]] | None = None,
         clone_identity_output: bool = False,
-    ) -> Iterable["HFWeightTuple"]:
+        megatron_param_name: str | None = None,
+    ) -> Iterable["HFWeightTuple | HFSourcedWeightTuple"]:
         """Apply an optional export hook and yield finalized weights.
 
         Export hooks run on a detached tensor before final device placement and may
@@ -128,6 +129,8 @@ class HFWeightTuple(NamedTuple):
             cpu: Whether to move exported tensors to CPU.
             export_hook: Optional transformation applied before device placement.
             clone_identity_output: Clone an output when it is the detached input.
+            megatron_param_name: When given, yield :class:`HFSourcedWeightTuple` carrying
+                this Megatron parameter name next to each exported weight.
 
         Yields:
             Finalized HuggingFace weights in export-hook order.
@@ -143,7 +146,26 @@ class HFWeightTuple(NamedTuple):
             exported_tensor = exported_tensor.detach()
             if clone_identity_output and is_identity_output:
                 exported_tensor = exported_tensor.clone().detach()
-            yield HFWeightTuple(exported_name, exported_tensor.cpu() if cpu else exported_tensor)
+            exported_tensor = exported_tensor.cpu() if cpu else exported_tensor
+            if megatron_param_name is not None:
+                yield HFSourcedWeightTuple(exported_name, exported_tensor, megatron_param_name)
+            else:
+                yield HFWeightTuple(exported_name, exported_tensor)
+
+
+class HFSourcedWeightTuple(NamedTuple):
+    """A :class:`HFWeightTuple` that also names the Megatron parameter it was exported from.
+
+    Only produced when a streaming export is called with ``with_megatron_names=True``;
+    the default export keeps yielding plain two-field :class:`HFWeightTuple` values so
+    ``for name, weight in ...`` unpacking keeps working for existing callers.
+    ``megatron_param_name`` is the unwrapped local Megatron parameter name of the
+    conversion task (for adapters, the ``linear_in`` / ``linear_out`` weight name).
+    """
+
+    param_name: str
+    weight: torch.Tensor
+    megatron_param_name: str
 
 
 @dataclass(frozen=True)
@@ -1620,7 +1642,8 @@ class MegatronModelBridge(
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
-    ) -> Iterable[HFWeightTuple]:
+        with_megatron_names: bool = False,
+    ) -> Iterable["HFWeightTuple | HFSourcedWeightTuple"]:
         """Export Megatron weights to HuggingFace format.
 
         This method orchestrates the conversion of weights from Megatron's distributed
@@ -1647,9 +1670,14 @@ class MegatronModelBridge(
                 weights back into their base tensors so the resulting HF checkpoint contains merged
                 weights. Set to False to skip adapter gathering/merge and emit only the base tensors.
                 Defaults to True.
+            with_megatron_names (bool, optional): When True, yield :class:`HFSourcedWeightTuple`
+                (``param_name``, ``weight``, ``megatron_param_name``) so callers can map each
+                exported HF weight back to the Megatron parameter it came from. Defaults to False,
+                which keeps the two-field :class:`HFWeightTuple` output.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format.
+            HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format, or
+            HFSourcedWeightTuple when ``with_megatron_names`` is set.
 
         Example:
             .. code-block:: python
@@ -1751,6 +1779,7 @@ class MegatronModelBridge(
                         yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                             export_hook=task.export_hook,
                             cpu=cpu,
+                            megatron_param_name=task.param_name if with_megatron_names else None,
                         )
                 continue
 
@@ -1805,12 +1834,14 @@ class MegatronModelBridge(
                     yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                         export_hook=task.export_hook,
                         cpu=cpu,
+                        megatron_param_name=task.param_name if with_megatron_names else None,
                     )
                     if emit_output_weight:
                         yield from HFWeightTuple(tied_output_hf_name, tensor).iter_finalized(
                             export_hook=task.export_hook,
                             cpu=cpu,
                             clone_identity_output=True,
+                            megatron_param_name=task.param_name if with_megatron_names else None,
                         )
                 elif embeddings_are_tied and (
                     task.global_param_name.endswith("output_layer.weight") or hf_name == tied_output_hf_name
@@ -1824,6 +1855,7 @@ class MegatronModelBridge(
                     yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                         export_hook=task.export_hook,
                         cpu=cpu,
+                        megatron_param_name=task.param_name if with_megatron_names else None,
                     )
 
     def dtype_from_hf(self, config, default=None):

@@ -22,6 +22,8 @@ import megatron.bridge.models.conversion.model_bridge as model_bridge_module
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import (
     AdapterWeightConversionTask,
+    HFSourcedWeightTuple,
+    HFWeightTuple,
     MegatronModelBridge,
     MegatronWeightTuple,
     WeightConversionTask,
@@ -1223,6 +1225,69 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     assert weights[1].param_name.endswith("lora_B.weight")
     torch.testing.assert_close(weights[0].weight, torch.ones(2, 2))
     torch.testing.assert_close(weights[1].weight, 2 * torch.ones(2, 2))
+
+
+def test_stream_adapter_weights_megatron_to_hf_with_megatron_names(monkeypatch):
+    bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple(
+            "decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight", torch.ones(2, 2), vp_stage=0
+        ),
+        linear_out_weight=MegatronWeightTuple(
+            "decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight", 2 * torch.ones(2, 2), vp_stage=0
+        ),
+    )
+    monkeypatch.setattr(
+        bridge,
+        "build_adapter_conversion_tasks",
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+    )
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_param_names_for_adapter",
+        lambda *_args, **_kwargs: ["model.layers.0.mlp.linear_fc1.weight"],
+    )
+    megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))]
+
+    plain = list(bridge.stream_adapter_weights_megatron_to_hf(megatron_model, cpu=False, show_progress=False))
+    assert [type(w) for w in plain] == [HFWeightTuple, HFWeightTuple]
+
+    sourced = list(
+        bridge.stream_adapter_weights_megatron_to_hf(
+            megatron_model, cpu=False, show_progress=False, with_megatron_names=True
+        )
+    )
+    assert [type(w) for w in sourced] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
+    assert sourced[0].param_name.endswith("lora_A.weight")
+    assert sourced[0].megatron_param_name == "decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight"
+    assert sourced[1].param_name.endswith("lora_B.weight")
+    assert sourced[1].megatron_param_name == "decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight"
+    torch.testing.assert_close(sourced[0].weight, torch.ones(2, 2))
+    torch.testing.assert_close(sourced[1].weight, 2 * torch.ones(2, 2))
 
 
 def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):

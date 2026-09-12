@@ -14,11 +14,12 @@
 
 from __future__ import annotations
 
+import functools
 import itertools
 from collections import defaultdict
 from dataclasses import dataclass
 from string import digits
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple, TypeVar, Union
 
 import torch
 from megatron.core import parallel_state
@@ -847,6 +848,20 @@ class MegatronPeftBridge:
             tensor = torch.cat(mapping.gather_from_tp_ranks(tensor), dim=tp_axis)
         return tensor
 
+    @staticmethod
+    def _make_hf_weight(
+        megatron_param_name: Optional[str],
+        with_megatron_names: bool,
+        hf_name: str,
+        tensor: torch.Tensor,
+    ) -> "HFWeightTuple":
+        """Build the exported tuple, attaching the source Megatron name only when requested."""
+        from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple
+
+        if with_megatron_names and megatron_param_name is not None:
+            return HFSourcedWeightTuple(hf_name, tensor, megatron_param_name)
+        return HFWeightTuple(hf_name, tensor)
+
     def stream_adapter_weights_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -855,6 +870,7 @@ class MegatronPeftBridge:
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors.
 
@@ -867,9 +883,11 @@ class MegatronPeftBridge:
         for gate_up_proj, bare ``...experts`` for down_proj), instead of the per-expert
         2D ``pack_moe`` layout. It is the vLLM-3D-MoE analogue of ``expand_shared_outer``
         and takes precedence over it for shared-outer adapters.
-        """
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
+        ``with_megatron_names`` yields :class:`HFSourcedWeightTuple` values whose
+        ``megatron_param_name`` is the adapter's ``linear_in`` (lora_A) or ``linear_out``
+        (lora_B) Megatron weight name; the default keeps two-field :class:`HFWeightTuple`.
+        """
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
 
@@ -890,6 +908,10 @@ class MegatronPeftBridge:
 
             linear_in_tensor = adapter_weight.linear_in_weight.weight
             linear_out_tensor = adapter_weight.linear_out_weight.weight
+            # Megatron weight names behind lora_A / lora_B, surfaced with ``with_megatron_names``.
+            source_names = (adapter_weight.linear_in_weight.param_name, adapter_weight.linear_out_weight.param_name)
+            emit_in = functools.partial(self._make_hf_weight, source_names[0], with_megatron_names)
+            emit_out = functools.partial(self._make_hf_weight, source_names[1], with_megatron_names)
             is_expert = is_expert_linear(adapter_task.global_base_prefix)
             is_grouped_expert = is_expert and ".local_experts." not in adapter_task.global_base_prefix
             is_shared_outer_lora = is_grouped_expert and linear_in_tensor.ndim != linear_out_tensor.ndim
@@ -905,6 +927,8 @@ class MegatronPeftBridge:
                     cpu,
                     expand_shared_outer=expand_shared_outer,
                     stack_3d_moe=stack_3d_moe,
+                    source_names=source_names,
+                    with_megatron_names=with_megatron_names,
                 )
                 continue
 
@@ -972,8 +996,8 @@ class MegatronPeftBridge:
                     linear_out_stacked = linear_out_by_base[base_name]
                     if cpu:
                         linear_out_stacked = linear_out_stacked.cpu()
-                    yield HFWeightTuple(linear_in_hf_names[index], linear_in_stacked)
-                    yield HFWeightTuple(linear_out_hf_names[index], linear_out_stacked)
+                    yield emit_in(linear_in_hf_names[index], linear_in_stacked)
+                    yield emit_out(linear_out_hf_names[index], linear_out_stacked)
 
                 continue
 
@@ -1028,12 +1052,12 @@ class MegatronPeftBridge:
                                 "Return ABSENT_PROJECTION from _split_qkv_linear_out_weight "
                                 "to intentionally skip a projection."
                             )
-                            yield HFWeightTuple(linear_in_hf_names[index], current_linear_in_tensor)
-                            yield HFWeightTuple(linear_out_hf_names[index], current_linear_out_tensor)
+                            yield emit_in(linear_in_hf_names[index], current_linear_in_tensor)
+                            yield emit_out(linear_out_hf_names[index], current_linear_out_tensor)
                         continue
 
-                yield HFWeightTuple(linear_in_hf_names[0], current_linear_in_tensor)
-                yield HFWeightTuple(linear_out_hf_names[0], current_linear_out_tensor)
+                yield emit_in(linear_in_hf_names[0], current_linear_in_tensor)
+                yield emit_out(linear_out_hf_names[0], current_linear_out_tensor)
 
     def _stream_shared_outer_adapter_weights(
         self,
@@ -1046,6 +1070,8 @@ class MegatronPeftBridge:
         cpu: bool,
         expand_shared_outer: bool,
         stack_3d_moe: bool = False,
+        source_names: Optional[Tuple[str, str]] = None,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream a shared-outer grouped-expert LoRA adapter (SGLang PR #21466).
 
@@ -1064,9 +1090,8 @@ class MegatronPeftBridge:
         mixed MoE LoRA format.
         """
 
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
-
         is_expert = is_expert_linear(adapter_task.global_base_prefix)
+        in_name, out_name = source_names if source_names is not None else (None, None)
 
         if stack_3d_moe:
             yield from self._stream_shared_outer_adapter_weights_3d_moe(
@@ -1078,13 +1103,16 @@ class MegatronPeftBridge:
                 num_moe_experts,
                 cpu,
                 is_expert,
+                source_names=source_names,
+                with_megatron_names=with_megatron_names,
             )
             return
 
-        for side_tensor, side_suffix in (
-            (linear_in_tensor, ".linear_in.weight"),
-            (linear_out_tensor, ".linear_out.weight"),
+        for side_tensor, side_suffix, side_source in (
+            (linear_in_tensor, ".linear_in.weight", in_name),
+            (linear_out_tensor, ".linear_out.weight", out_name),
         ):
+            emit = functools.partial(self._make_hf_weight, side_source, with_megatron_names)
             if side_tensor.ndim == 2 and not expand_shared_outer:
                 # Shared side: emit one [1, out, in] tensor. A shared linear_in
                 # feeding a fused gate/up FC1 maps to two HF names, so the same
@@ -1097,7 +1125,7 @@ class MegatronPeftBridge:
                 )
                 for base_name in base_hf_weight_names:
                     hf_name = self._make_lora_param_name(self._strip_hf_expert_index(base_name), side_suffix)
-                    yield HFWeightTuple(hf_name, current)
+                    yield emit(hf_name, current)
                 continue
 
             if side_tensor.ndim == 2 and expand_shared_outer:
@@ -1115,7 +1143,7 @@ class MegatronPeftBridge:
                         hf_name = self._make_lora_param_name(base_name, side_suffix)
                         if hf_name is None:
                             continue
-                        yield HFWeightTuple(hf_name, shared_current)
+                        yield emit(hf_name, shared_current)
                 continue
 
             # Per-expert side: emit one slice per global expert. A fused FC1
@@ -1138,12 +1166,12 @@ class MegatronPeftBridge:
                         megatron_model, base_hf_weight_names, current, is_expert=is_expert
                     )
                 if per_base is None:
-                    yield HFWeightTuple(side_hf_names[0], current)
+                    yield emit(side_hf_names[0], current)
                     continue
                 for index, base_name in enumerate(base_hf_weight_names):
                     chunk = per_base.get(base_name)
                     assert chunk is not None, f"unknown projection name: {base_name!r}"
-                    yield HFWeightTuple(side_hf_names[index], chunk)
+                    yield emit(side_hf_names[index], chunk)
 
     def _stream_shared_outer_adapter_weights_3d_moe(
         self,
@@ -1155,6 +1183,8 @@ class MegatronPeftBridge:
         num_moe_experts: int,
         cpu: bool,
         is_expert: bool,
+        source_names: Optional[Tuple[str, str]] = None,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Emit a shared-outer routed-expert LoRA adapter in vLLM 3D-MoE layout.
 
@@ -1176,7 +1206,7 @@ class MegatronPeftBridge:
         ``linear_out`` carries gate+up on its output dim already, matching vLLM's
         ``2*moe_intermediate`` w13 fused stack, so no gate/up re-split is needed.
         """
-        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
+        in_name, out_name = source_names if source_names is not None else (None, None)
 
         # Resolve the HF base names for expert 0 to discover this adapter's projection
         # (gate_up vs down) and the expert-agnostic stem (...experts).
@@ -1235,8 +1265,8 @@ class MegatronPeftBridge:
             lora_b_3d = lora_b_3d.cpu()
 
         suffix = "base_layer." if is_gate_up else ""
-        yield HFWeightTuple(f"{stem}.{suffix}lora_A.weight", lora_a_3d)
-        yield HFWeightTuple(f"{stem}.{suffix}lora_B.weight", lora_b_3d)
+        yield self._make_hf_weight(in_name, with_megatron_names, f"{stem}.{suffix}lora_A.weight", lora_a_3d)
+        yield self._make_hf_weight(out_name, with_megatron_names, f"{stem}.{suffix}lora_B.weight", lora_b_3d)
 
     def _get_fused_adapter_linear_out_slices(
         self,

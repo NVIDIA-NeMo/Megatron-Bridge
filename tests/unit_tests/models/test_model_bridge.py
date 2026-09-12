@@ -24,7 +24,12 @@ from megatron.bridge.models.conversion import model_bridge as model_bridge_modul
 from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion import param_mapping as param_mapping_module
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import (
+    HFSourcedWeightTuple,
+    HFWeightTuple,
+    MegatronModelBridge,
+    WeightConversionTask,
+)
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     DirectMapping,
@@ -652,6 +657,57 @@ def test_stream_weights_megatron_to_hf_custom_export_preserves_device_when_cpu_f
     )
 
     assert weights == [("hf.weight", source)]
+
+
+def test_stream_weights_megatron_to_hf_with_megatron_names_reports_source_param(monkeypatch):
+    bridge = DummyBridge()
+    source = torch.ones(2, 2)
+
+    class DummyMapping:
+        def megatron_to_hf(self, weight, module):
+            return {"hf.weight": weight}
+
+    task = WeightConversionTask(
+        param_name="decoder.layers.0.mlp.linear_fc1.weight",
+        global_param_name="decoder.layers.0.mlp.linear_fc1.weight",
+        mapping=DummyMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=source,
+    )
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    def stream(**kwargs):
+        return list(
+            bridge.stream_weights_megatron_to_hf(
+                [Mock()],
+                SimpleNamespace(),
+                cpu=False,
+                show_progress=False,
+                conversion_tasks=[task],
+                merge_adapter_weights=False,
+                **kwargs,
+            )
+        )
+
+    # Default output stays a two-field tuple so ``for name, weight in ...`` keeps working.
+    (plain,) = stream()
+    assert type(plain) is HFWeightTuple
+    name, weight = plain
+    assert name == "hf.weight"
+    assert torch.equal(weight, source)
+
+    (sourced,) = stream(with_megatron_names=True)
+    assert type(sourced) is HFSourcedWeightTuple
+    assert sourced.param_name == "hf.weight"
+    assert torch.equal(sourced.weight, source)
+    assert sourced.megatron_param_name == "decoder.layers.0.mlp.linear_fc1.weight"
 
 
 def test_stream_weights_megatron_to_hf_transforms_before_final_cpu_placement(monkeypatch):
