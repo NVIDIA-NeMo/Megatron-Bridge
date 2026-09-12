@@ -95,6 +95,14 @@ class MultiLoRA(PEFT, ModuleMatcher):
                     f"MultiLoRA does not support {unsupported}=True; expert adapters use the "
                     f"per-expert layout at the same max rank as every other target module."
                 )
+        # Unlike single-LoRA, the grouped-GEMM path never casts adapter weights:
+        # the field is accepted for argument-surface parity but honoring it needs
+        # an explicit activation/weight-cast contract. Reject rather than ignore.
+        if self.lora_dtype is not None:
+            raise NotImplementedError(
+                f"MultiLoRA does not support lora_dtype={self.lora_dtype}; adapters run in the "
+                f"base model's dtype on the grouped-GEMM path."
+            )
 
         model = super().__call__(model, training=training)
         hooked = install_moe_slot_routing(model)
