@@ -926,6 +926,29 @@ def install_moe_slot_routing(model) -> int:
     return installed
 
 
+def _reseed_rng_tracker(seed: int) -> None:
+    """Rebuild the CUDA RNG tracker's streams from ``seed`` with Megatron-Core's topology offsets.
+
+    Delegates to :func:`megatron.core.tensor_parallel.random.model_parallel_cuda_manual_seed`,
+    so every stream keeps the rank dependence the base weights were initialised with:
+    ``data-parallel-rng`` gets ``seed`` (equal on every rank), ``model-parallel-rng``
+    ``seed + 2718 + tp_rank`` and ``expert-parallel-rng`` ``seed + 1024 + 100 * ep_rank +
+    etp_rank``. TP and EP/ETP shards therefore draw distinct values while DP replicas
+    match. Like :func:`megatron.bridge.training.initialize._set_random_seed`, pipeline
+    stages are offset by ``100 * pp_rank`` so layer ``k`` of one stage does not reproduce
+    layer ``k`` of another. The caller snapshots and restores the tracker and the default
+    CUDA generator (which Megatron-Core reseeds as a side effect).
+    """
+    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+
+    if not parallel_state.model_parallel_is_initialized():
+        raise RuntimeError(
+            "init_adapter_slot(seed=...) requires megatron.core.parallel_state to be initialized: "
+            "the slot re-initialisation follows the model-parallel topology."
+        )
+    model_parallel_cuda_manual_seed(seed + 100 * parallel_state.get_pipeline_model_parallel_rank())
+
+
 def init_adapter_slot(model, idx: int, rank: int, alpha: float, seed: int | None = None) -> None:
     """Claim slot ``idx`` across every multi-LoRA layer for an adapter.
 
@@ -938,10 +961,12 @@ def init_adapter_slot(model, idx: int, rank: int, alpha: float, seed: int | None
     Without ``seed`` the slot keeps whatever weights construction or the last
     :func:`clear_adapter_slot` re-init left behind (DP-consistent but not
     reproducible). With ``seed`` every layer's slot weights are re-initialised
-    deterministically first: the RNG-tracker streams are reseeded from ``seed``
-    for the duration and restored afterwards, so a given seed reproduces the
-    same adapter weights on every rank and every run (layers draw sequentially
-    from the reseeded streams).
+    deterministically first: the RNG-tracker streams are rebuilt from ``seed``
+    with Megatron-Core's own TP/EP/ETP-dependent offsets (see
+    :func:`_reseed_rng_tracker`) for the duration and restored afterwards. A given
+    seed therefore reproduces the same adapter weights on every run, DP replicas
+    stay identical, and tensor- or expert-parallel shards keep distinct draws
+    exactly as the base weights do (layers draw sequentially from the streams).
     """
     if seed is None:
         for module in _iter_multi_lora_modules(model):
@@ -952,17 +977,16 @@ def init_adapter_slot(model, idx: int, rank: int, alpha: float, seed: int | None
 
     tracker = get_cuda_rng_tracker()
     saved_states = tracker.get_states()
-    # Rebuild each stream from the seed through tracker.add, which mints the
-    # tracker's native state representation (byte tensor or graph-safe generator).
-    tracker.reset()
-    for offset, name in enumerate(sorted(saved_states)):
-        tracker.add(name, seed + offset + 1)
+    saved_default_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
     try:
+        _reseed_rng_tracker(seed)
         for module in _iter_multi_lora_modules(model):
             module.reset_adapter(idx)
             module.init_adapter_slot(idx, rank, alpha)
     finally:
         tracker.set_states(saved_states)
+        if saved_default_rng_state is not None:
+            torch.cuda.set_rng_state(saved_default_rng_state)
 
 
 def clear_adapter_slot(model, idx: int) -> None:

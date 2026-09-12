@@ -150,6 +150,9 @@ def adapter_deps_patch() -> ExitStack:
     tracker.fork.side_effect = lambda *args, **kwargs: nullcontext()
     tracker.get_states.return_value = {}
     stack.enter_context(patch("megatron.core.tensor_parallel.random.get_cuda_rng_tracker", return_value=tracker))
+    # The seeded re-init follows the model-parallel topology through Megatron-Core's
+    # seeding function, which needs initialized parallel state; stub it on CPU.
+    stack.enter_context(patch.object(multi_lora_layers_module, "_reseed_rng_tracker", lambda seed: None))
     return stack
 
 
