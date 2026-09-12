@@ -32,7 +32,13 @@ def test_batch_moves_only_one_compatible_token_alias_to_cuda(monkeypatch):
     monkeypatch.setattr(torch.Tensor, "cuda", record_cuda)
     tokens = torch.tensor([[1, 2, 3]])
     position_ids = torch.tensor([[0, 1, 2]])
-    batch = {"tokens": tokens, "input_ids": tokens, "position_ids": position_ids}
+    media_mask = torch.tensor([[False, True, False]])
+    batch = {
+        "tokens": tokens,
+        "input_ids": tokens,
+        "position_ids": position_ids,
+        "media_token_validity_mask": media_mask,
+    }
 
     moved = get_batch_from_iterator(
         iter([batch]),
@@ -42,6 +48,7 @@ def test_batch_moves_only_one_compatible_token_alias_to_cuda(monkeypatch):
 
     assert moved["tokens"] is tokens
     assert moved["input_ids"] is None
+    assert moved["media_token_validity_mask"] is media_mask
     assert sum(tensor is tokens for tensor in cuda_inputs) == 1
 
 
@@ -94,6 +101,7 @@ def _packed_pipeline_batch():
         "imgs_sizes": torch.tensor([[32, 32], [32, 32]]),
         "num_frames": torch.tensor([1, 1]),
         "num_image_tiles": torch.tensor([1, 1], dtype=torch.int),
+        "media_token_validity_mask": torch.tensor([[True, False, True, False]]),
         "cu_seqlens_q": cu_seqlens,
         "cu_seqlens_kv": cu_seqlens,
         "max_seqlen_q": torch.tensor(2, dtype=torch.int32),
@@ -137,6 +145,7 @@ def test_middle_pipeline_stage_preserves_only_packed_attention_metadata(monkeypa
     assert result[7]["cu_seqlens_q"].tolist() == [0, 2, 4]
     assert result[7]["total_tokens"] == 4
     assert result[14].tolist() == [[False, False, False, False]]
+    assert result[15] is None
 
 
 def test_middle_unpacked_pipeline_stage_does_not_consume_iterator(monkeypatch):
@@ -146,7 +155,7 @@ def test_middle_unpacked_pipeline_stage_does_not_consume_iterator(monkeypatch):
 
     result = get_batch(data_iterator, _pipeline_cfg(packed=False), pg_collection=SimpleNamespace(pp=object()))
 
-    assert result == (None,) * 15
+    assert result == (None,) * 16
     assert next(data_iterator)["input_ids"].tolist() == [[18, 1, 18, 2]]
 
 
@@ -169,6 +178,7 @@ def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypa
     assert moved["imgs_sizes"] is None
     assert moved["cu_seqlens_q"] is batch["cu_seqlens_q"]
     assert moved["padding_mask"] is batch["padding_mask"]
+    assert moved["media_token_validity_mask"] is None
 
 
 def test_packed_middle_pipeline_forward_uses_boundaries_without_input_tensors(monkeypatch):
@@ -248,8 +258,11 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
     assert not expanded_loss_mask.is_contiguous()
 
     class _Model:
+        def __init__(self):
+            self.kwargs = None
+
         def __call__(self, **kwargs):
-            del kwargs
+            self.kwargs = kwargs
             return losses, expanded_loss_mask
 
     monkeypatch.setattr(
@@ -271,6 +284,7 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
             None,
             None,
             None,
+            torch.tensor([[False, True]]),
         ),
     )
     monkeypatch.setattr(
@@ -293,9 +307,11 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
         ),
     )
 
-    output, loss_function = nemotron_omni_step.forward_step(state, iter(()), _Model())
+    model = _Model()
+    output, loss_function = nemotron_omni_step.forward_step(state, iter(()), model)
 
     assert output is losses
+    assert model.kwargs["media_token_validity_mask"].tolist() == [[False, True]]
     assert torch.equal(loss_function.args[0], expanded_loss_mask)
     assert loss_function.args[0].is_contiguous()
 

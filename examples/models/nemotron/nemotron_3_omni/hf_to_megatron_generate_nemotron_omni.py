@@ -86,9 +86,11 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     COMPACT_IMAGE_PLACEHOLDER,
     inference_expanded_image_token_counts,
     inference_num_image_tiles,
-    patchify_temporal_frame,
+    processor_patchify_temporal_frames,
     select_inference_next_token,
     temporal_model_frames,
+    temporal_tubelet_feature_counts,
+    temporal_video_frame_labels,
     valid_audio_feature_lengths,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
@@ -96,11 +98,9 @@ from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
 
 # Must stay in sync with nemotron_omni_provider.py and the temporal SFT recipe
-# `nemotron_omni_valor32k_sft_config` (patch_dim=16, 512x512 frames,
-# tps=2). Reused across video / video+audio preprocessing for temporal inference.
+# `nemotron_omni_valor32k_sft_config`. Reused across video / video+audio
+# preprocessing for temporal inference.
 _VIDEO_TEMPORAL_PATCH_SIZE = 2
-_VIDEO_FRAME_H = 512
-_VIDEO_FRAME_W = 512
 _VISION_PATCH_DIM = 16
 _VIDEO_FPS = 1
 _VIDEO_NFRAMES = 8
@@ -401,7 +401,13 @@ def process_image_inputs(
         return inputs.input_ids, None, 0, None
 
 
-def process_video_inputs(tokenizer, video_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):
+def process_video_inputs(
+    tokenizer,
+    processor,
+    video_path: Optional[str],
+    prompt: str,
+    system_prompt: Optional[str] = None,
+):
     """Process video inputs for the temporal video embedder inference path.
 
     Mirrors the shared ``nemotron_omni_collate_fn`` SFT data pipeline so the
@@ -410,9 +416,10 @@ def process_video_inputs(tokenizer, video_path: Optional[str], prompt: str, syst
     - Frames are grouped by ``temporal_patch_size`` (pair of consecutive frames
       per image placeholder) and the prompt uses the training-time timestamp
       format with one compact ``<img><image></img>`` wrapper per group.
-    - All sampled video frames are patchified to a [1, total_patches, 3*P*P]
-      tensor. A single frame is repeated only in this model tensor/metadata so
-      RADIO selects the temporal embedder; the prompt still has one placeholder.
+    - All sampled video frames use the processor's aspect-preserving video grid
+      and are patchified to a [1, total_patches, 3*P*P] tensor. A single frame is
+      repeated only in this model tensor/metadata so RADIO selects the temporal
+      embedder; the prompt still has one placeholder.
     - ``imgs_sizes`` and ``num_frames`` describe those model frames so RADIO's
       ``_apply_temporal_grouping`` can pad incomplete groups, fuse tubelets, and
       route them through the trained ``video_embedder``.
@@ -442,15 +449,13 @@ def process_video_inputs(tokenizer, video_path: Optional[str], prompt: str, syst
     model_frames = temporal_model_frames(frames, tps)
 
     # 2. Build the training-style prompt with one compact wrapper per group.
-    fps_for_ts = float(metadata.fps) if (metadata and metadata.fps) else float(_VIDEO_FPS)
-    video_prompt_lines = ["This is a video:"]
-    for i in range(0, len(frames), tps):
-        group = frames[i : i + tps]
-        ts_parts = [
-            f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds"
-            for j in range(len(group))
-        ]
-        video_prompt_lines.append(" and ".join(ts_parts) + f": {COMPACT_IMAGE_PLACEHOLDER}")
+    frame_labels = temporal_video_frame_labels(
+        len(frames),
+        temporal_patch_size=tps,
+        source_fps=getattr(metadata, "fps", _VIDEO_FPS),
+        frame_indices=getattr(metadata, "frames_indices", None),
+    )
+    video_prompt_lines = [label + COMPACT_IMAGE_PLACEHOLDER for label in frame_labels]
 
     content = "\n".join(video_prompt_lines) + "\n" + prompt
     messages = [{"role": "user", "content": content}]
@@ -459,24 +464,17 @@ def process_video_inputs(tokenizer, video_path: Optional[str], prompt: str, syst
 
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # 3. The compact visual wrappers are already model-ready; no image
-    #    processor prepass is needed because its pixels would be discarded.
+    # 3. Tokenize the model-ready compact visual wrappers directly; the image
+    #    processor is used below only for its video pixel/grid contract.
     input_ids = tokenizer([text], return_tensors="pt").input_ids
-    num_patches = torch.ones(len(video_prompt_lines) - 1, dtype=torch.long)
+    num_patches = torch.ones(len(video_prompt_lines), dtype=torch.long)
 
-    # 4. Replace the HF processor's pixels with the model-frame patch tensor.
-    all_patches = [
-        patchify_temporal_frame(
-            frame,
-            height=_VIDEO_FRAME_H,
-            width=_VIDEO_FRAME_W,
-            patch_dim=_VISION_PATCH_DIM,
-        )
-        for frame in model_frames
-    ]
-    packed_pixel_values = torch.cat(all_patches, dim=0).unsqueeze(0)
-
-    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
+    # 4. Apply the same processor-owned video grid as the training collator.
+    packed_pixel_values, imgs_sizes = processor_patchify_temporal_frames(
+        model_frames,
+        image_processor=processor.image_processor,
+        patch_dim=_VISION_PATCH_DIM,
+    )
     num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
 
     return input_ids, packed_pixel_values, num_patches, imgs_sizes, num_frames
@@ -570,15 +568,13 @@ def process_video_audio_inputs(
         raise ValueError("Temporal video embedder inference requires at least one sampled frame.")
     model_frames = temporal_model_frames(frames, tps)
 
-    fps_for_ts = float(metadata.fps) if (metadata and metadata.fps) else float(_VIDEO_FPS)
-    video_prompt_lines = ["This is a video:"]
-    for i in range(0, len(frames), tps):
-        group = frames[i : i + tps]
-        ts_parts = [
-            f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds"
-            for j in range(len(group))
-        ]
-        video_prompt_lines.append(" and ".join(ts_parts) + f": {COMPACT_IMAGE_PLACEHOLDER}")
+    frame_labels = temporal_video_frame_labels(
+        len(frames),
+        temporal_patch_size=tps,
+        source_fps=getattr(metadata, "fps", _VIDEO_FPS),
+        frame_indices=getattr(metadata, "frames_indices", None),
+    )
+    video_prompt_lines = [label + COMPACT_IMAGE_PLACEHOLDER for label in frame_labels]
 
     audio_token = getattr(tokenizer, "audio_token", "<so_embedding>")
     content = "\n".join(video_prompt_lines) + f"\nThis is the audio: {audio_token}\n" + prompt
@@ -615,18 +611,12 @@ def process_video_audio_inputs(
         f"Audio: {audio_path}, sound_clips shape: {sound_clips.shape}, expected_sound_tokens: {expected_sound_tokens}"
     )
 
-    num_patches = torch.ones(len(video_prompt_lines) - 1, dtype=torch.long)
-    all_patches = [
-        patchify_temporal_frame(
-            frame,
-            height=_VIDEO_FRAME_H,
-            width=_VIDEO_FRAME_W,
-            patch_dim=_VISION_PATCH_DIM,
-        )
-        for frame in model_frames
-    ]
-    packed_pixel_values = torch.cat(all_patches, dim=0).unsqueeze(0)
-    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
+    num_patches = torch.ones(len(video_prompt_lines), dtype=torch.long)
+    packed_pixel_values, imgs_sizes = processor_patchify_temporal_frames(
+        model_frames,
+        image_processor=processor.image_processor,
+        patch_dim=_VISION_PATCH_DIM,
+    )
     num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
 
     return input_ids, packed_pixel_values, num_patches, imgs_sizes, num_frames, sound_clips, sound_length
@@ -672,9 +662,6 @@ def main(args) -> None:
     # Audio / text-only: temporal_patch_dim=1; RADIO is not called.
     is_video_inference = bool(args.video_path)
     is_image_inference = bool(args.image_path) and not is_video_inference
-    image_seq_len = (
-        (_VIDEO_FRAME_H // _VISION_PATCH_DIM) * (_VIDEO_FRAME_W // _VISION_PATCH_DIM) // 4 if is_video_inference else 1
-    )
     if is_video_inference:
         temporal_patch_dim = 2
         separate_video_embedder = True
@@ -818,7 +805,7 @@ def main(args) -> None:
         )
     elif args.video_path:
         input_ids, pixel_values, num_patches, imgs_sizes, num_frames = process_video_inputs(
-            tokenizer, args.video_path, args.prompt, args.system_prompt
+            tokenizer, processor, args.video_path, args.prompt, args.system_prompt
         )
         images = pixel_values.bfloat16() if pixel_values is not None else None
     else:
@@ -828,16 +815,18 @@ def main(args) -> None:
         images = pixel_values.bfloat16() if pixel_values is not None else None
 
     if images is not None:
-        tile_feature_counts = inference_num_image_tiles(
-            imgs_sizes,
-            patch_dim=_VISION_PATCH_DIM,
-            num_frames=num_frames,
-            temporal_patch_size=temporal_patch_dim,
-        )
+        if num_frames is not None:
+            tile_feature_counts = temporal_tubelet_feature_counts(
+                imgs_sizes,
+                num_frames,
+                temporal_patch_size=temporal_patch_dim,
+                patch_dim=_VISION_PATCH_DIM,
+            )
+        else:
+            tile_feature_counts = inference_num_image_tiles(imgs_sizes, patch_dim=_VISION_PATCH_DIM)
         expanded_counts = inference_expanded_image_token_counts(
             tile_feature_counts,
             num_patches,
-            feature_multiplier=image_seq_len,
         )
         # Normalize processor output to the canonical one-placeholder-per-
         # projected-feature contract.
