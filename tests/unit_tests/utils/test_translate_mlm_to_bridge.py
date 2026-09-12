@@ -393,6 +393,41 @@ class TestTranslateSeqLength:
         assert r.overrides["model.seq_length"] == 4096
 
 
+class TestTranslateMaxPositionEmbeddings:
+    """Tests for max-position-embeddings translation."""
+
+    def test_never_emits_a_max_position_embeddings_path(self):
+        """--max-position-embeddings produces no model.max_position_embeddings override."""
+        r = translate({"seq-length": 4096, "max-position-embeddings": 4096})
+        assert "model.max_position_embeddings" not in r.overrides
+        assert r.overrides["model.seq_length"] == 4096
+        assert r.overrides["dataset.seq_length"] == 4096
+
+    def test_maps_to_seq_length_when_seq_length_absent(self):
+        """--max-position-embeddings alone supplies both seq_length fields."""
+        r = translate({"max-position-embeddings": 2048})
+        assert r.overrides["model.seq_length"] == 2048
+        assert r.overrides["dataset.seq_length"] == 2048
+
+    def test_divergent_value_is_skipped_not_translated(self):
+        """A max-position-embeddings that differs from seq-length is reported, not applied."""
+        r = translate({"seq-length": 512, "max-position-embeddings": 1024})
+        assert r.overrides["model.seq_length"] == 512
+        assert ("max-position-embeddings", 1024) in r.skipped
+        assert any("max-position-embeddings" in note for note in r.notes)
+
+    def test_emitted_recipe_has_no_unknown_provider_kwarg(self):
+        """The generated recipe passes no max_position_embeddings kwarg to the provider."""
+        args, env = parse_raw_args(
+            "--num-layers 4 --hidden-size 256 --ffn-hidden-size 512 --num-attention-heads 8 "
+            "--seq-length 512 --max-position-embeddings 512 --micro-batch-size 1 "
+            "--global-batch-size 4 --train-iters 6 --lr 3e-4 --mock-data"
+        )
+        code = emit_recipe(translate(args, env), "mlm_dense")
+        assert "max_position_embeddings=" not in code
+        assert "seq_length=512," in code
+
+
 class TestTranslateSkippedAndUnknown:
     """Tests for skipped and unknown arg handling."""
 

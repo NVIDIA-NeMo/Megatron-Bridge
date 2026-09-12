@@ -365,7 +365,7 @@ Below is a concise mapping from common `megatron-lm/megatron/training/arguments.
 | `--num-query-groups` | `model.num_query_groups` | Number of query groups. |
 | `--qk-layernorm` | `model.qk_layernorm` | Enable QK LayerNorm. |
 | `--seq-length` | `model.seq_length` | Max model sequence length. |
-| `--max-position-embeddings` | `model.seq_length` | Alias used by HF conversions. |
+| `--max-position-embeddings` | `model.seq_length` | Alias used by HF conversions. A value differing from `--seq-length` is reported in the skipped section instead, since Bridge has no separate field for it. |
 | `--make-vocab-size-divisible-by` | `model.make_vocab_size_divisible_by` | TP padding multiple. |
 | `--disable-bias-linear` | `model.add_bias_linear=false` | Disable linear bias. |
 | `--use-flash-attn` | `model.attention_backend=flash` | Use FlashAttention backend. |
