@@ -733,6 +733,7 @@ class AutoBridge(Generic[MegatronModelT]):
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
@@ -757,10 +758,14 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
                 tensors during export (defaults to True). Set to False to export only the base tensors.
             weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
-
+            with_megatron_names: Yield ``HFSourcedWeightTuple`` (param_name, weight,
+                megatron_param_name) instead of the two-field tuple, so each exported weight can
+                be traced back to its Megatron parameter (e.g. by RL weight-sync loops). Bridges
+                that override ``stream_weights_megatron_to_hf`` must accept the flag to support it.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor)
+            HFWeightTuple: Named tuples of (param_name, weight_tensor), or HFSourcedWeightTuple
+            when ``with_megatron_names`` is set.
 
         Example:
             >>> # Export and process weights
@@ -790,6 +795,8 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
+            # Only forward the flag when set so bridges with a custom streamer keep working.
+            **({"with_megatron_names": True} if with_megatron_names else {}),
         )
 
     def export_hf_weights_modelopt(
@@ -884,6 +891,7 @@ class AutoBridge(Generic[MegatronModelT]):
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -905,9 +913,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
                 down_proj), instead of the per-expert 2D ``pack_moe`` layout.
                 Default ``False``; no effect for non-shared-outer adapters.
+            with_megatron_names: Yield ``HFSourcedWeightTuple`` whose ``megatron_param_name`` is
+                the adapter's ``linear_in`` (lora_A) or ``linear_out`` (lora_B) Megatron weight
+                name. Default ``False`` keeps the two-field tuple.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
+            HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters,
+            or HFSourcedWeightTuple when ``with_megatron_names`` is set
 
         Note:
             With ``expand_shared_outer``, the per-expert copies of the shared factor alias one
@@ -923,6 +935,7 @@ class AutoBridge(Generic[MegatronModelT]):
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
             stack_3d_moe=stack_3d_moe,
+            **({"with_megatron_names": True} if with_megatron_names else {}),
         )
 
     def save_hf_adapter(
