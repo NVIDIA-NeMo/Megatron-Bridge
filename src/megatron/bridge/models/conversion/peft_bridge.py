@@ -368,10 +368,16 @@ class MegatronPeftBridge:
         """Split a fused LoRA linear_out tensor for QKV adapters."""
 
         model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
-        # Pass the LoRA rank as feature_dim so split_qkv_weights doesn't
-        # mistake it for an FP8 compressed hidden_size.
-        feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
-        q_out, k_out, v_out = split_qkv_weights(model.config, linear_out_weight, feature_dim=feature_dim)
+        config = model.config
+        if getattr(config, "kda_two_stage_gates", False):
+            # Low-rank KDA gates leave a contiguous Q/K/V-only input projection.
+            q_dim = config.linear_num_key_heads * config.linear_key_head_dim
+            v_dim = config.linear_num_value_heads * config.linear_value_head_dim
+            q_out, k_out, v_out = linear_out_weight.split((q_dim, q_dim, v_dim), dim=0)
+        else:
+            # LoRA rank is the feature width, not an FP8-compressed hidden size.
+            feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
+            q_out, k_out, v_out = split_qkv_weights(config, linear_out_weight, feature_dim=feature_dim)
         return {"q_proj": q_out, "k_proj": k_out, "v_proj": v_out}
 
     def _split_gdn_in_proj_linear_out_weight(
