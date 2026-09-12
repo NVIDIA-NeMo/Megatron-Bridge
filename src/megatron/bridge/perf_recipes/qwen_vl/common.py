@@ -57,6 +57,19 @@ def _qwen35_vl_common(cfg: ConfigContainer) -> None:
     cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
 
+    # Fuse the GatedDeltaNet pre-gated-delta-rule path (causal conv1d + QK
+    # L2-norm) into Triton kernels. Qwen3.5-VL is 3/4 GDN layers, and this is
+    # the largest single fusion win measured for the model.
+    #
+    # Requires a Megatron-Core that carries gdn_pre_gated_delta_rule_fusion.
+    # Assigning it on an older core would silently add an unused attribute
+    # rather than raise, so guard on the field actually existing -- a silently
+    # inert perf flag is worse than an explicit no-op.
+    if hasattr(type(cfg.model), "gdn_pre_gated_delta_rule_fusion") or hasattr(
+        cfg.model, "gdn_pre_gated_delta_rule_fusion"
+    ):
+        cfg.model.gdn_pre_gated_delta_rule_fusion = True
+
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
 
