@@ -587,9 +587,7 @@ class TestDeepSeekV4HardwareDefaults:
     def test_provider_bridge_gates_blackwell_only_fusions(self, capability, expected):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields(
-            "apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams"
-        )
+        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -632,9 +630,7 @@ class TestDeepSeekV4HardwareDefaults:
     def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields(
-            "apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams"
-        )
+        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -651,9 +647,7 @@ class TestDeepSeekV4HardwareDefaults:
     def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = _provider_with_fields(
-            "apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams"
-        )
+        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
