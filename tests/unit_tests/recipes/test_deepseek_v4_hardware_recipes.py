@@ -20,6 +20,12 @@ import pytest
 import torch
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.recipes.deepseek.b200.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config as flash_b200_library_config,
+)
+from megatron.bridge.recipes.deepseek.b200.deepseek_v4 import (
+    deepseek_v4_flash_sft_160gpu_b200_bf16_128k_config as flash_b200_128k_config,
+)
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config as flash_packed_peft_config,
 )
@@ -238,7 +244,128 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 0
 
 
+def test_flash_b200_nvl8_recipe_preserves_real_training_contract() -> None:
+    cfg = flash_b200_library_config()
+
+    assert cfg.train.train_iters == 1_000_000
+    assert cfg.train.global_batch_size == 256
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.pipeline_model_parallel_layout == (
+        "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
+    )
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_modules == ["mhc", "mla_up_proj"]
+    assert cfg.model.fine_grained_activation_offloading is False
+    assert cfg.model.offload_modules == []
+    assert cfg.mixed_precision.fp8_param_gather is True
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
+    assert getattr(cfg.model, "moe_expert_rank_capacity_factor", None) is None
+    assert getattr(cfg.model, "moe_paged_stash", False) is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert "NVTE_CPU_OFFLOAD_V1" not in cfg.env_vars
+
+
+def test_flash_b200_128k_recipe_matches_validated_training_contract() -> None:
+    cfg = flash_b200_128k_config()
+
+    assert cfg.model.seq_length == 131072
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 5
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 16
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout == "Et*8|t*9|t*9|t*9|t*8L"
+    assert cfg.model.mtp_num_layers is None
+    assert cfg.model.cp_partition_mode == "contiguous"
+    assert cfg.model.sequence_packing_scheduler == "dp_balanced"
+    assert cfg.model.max_seqlen_per_dp_cp_rank == 8192
+    assert cfg.model.thd_max_packed_sequences == 6
+    assert cfg.model.thd_tail_padding_policy == "append_dummy_seq"
+    assert cfg.model.pad_packed_seq_alignment == "max"
+    assert cfg.model.variable_seq_lengths is True
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is True
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.model.moe_router_bias_update_rate == 0.001
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.moe_token_dropping is False
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.model.moe_grouped_gemm is True
+    assert cfg.model.moe_permute_fusion is True
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.mlp_chunks_for_training == 1
+    assert cfg.model.use_transformer_engine_op_fuser is True
+
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["mhc", "mla_up_proj"]
+    assert cfg.model.mhc_recompute_attn_cuda_graph_split is False
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["fused_group_mlp"]
+    assert cfg.model.activation_offload_fraction == 1.0
+    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 2
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn"]
+    assert cfg.model.cuda_graph_warmup_steps == 1
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+
+    assert cfg.dataset.seq_length == 131072
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+    assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
+    assert cfg.train.train_iters == 50
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 128
+    assert cfg.train.empty_unused_memory_level == 2
+    assert cfg.validation.eval_interval == 0
+    assert cfg.validation.eval_iters == 0
+    assert cfg.checkpoint.pretrained_checkpoint is None
+    assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.save_optim is False
+    assert cfg.checkpoint.load_optim is False
+    assert cfg.checkpoint.load_rng is False
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.dist.distributed_timeout_minutes == 120
+    assert not getattr(cfg.model, "fp8", False)
+    assert getattr(cfg.model, "quant_recipe", None) is None
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["HYBRID_EP_DOCA_WRITE_FLAGS"] == 1
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["USE_MNNVL"] == 0
+
+
 def test_high_scale_deepseek_v4_recipes_are_exported() -> None:
+    assert recipes.deepseek_v4_flash_pretrain_64gpu_b200_fp8mx_library_config is flash_b200_library_config
+    assert recipes.deepseek_v4_flash_sft_160gpu_b200_bf16_128k_config is flash_b200_128k_config
     assert recipes.deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config is flash_packed_peft_config
     assert recipes.deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config is flash_library_config
     assert recipes.deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config is flash_packed_sft_config
