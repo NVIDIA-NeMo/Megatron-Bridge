@@ -97,6 +97,22 @@ def _deepseek_v4_hf_config():
 class TestNativeDeepSeekV4ConfigTranslation:
     """Native Transformers DSv4 config fields must map back to MCore fields."""
 
+    def test_output_projection_geometry_uses_mcore_field_names(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        hf_pretrained.config.o_groups = 4
+        hf_pretrained.config.o_lora_rank = 256
+        provider = MagicMock()
+        provider.output_projection_groups = 8
+        provider.output_projection_lora_rank = 1024
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with patch.object(MegatronModelBridge, "provider_bridge", return_value=provider):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.output_projection_groups == 4
+        assert out.output_projection_lora_rank == 256
+
     def test_compress_ratios_from_native_layer_types(self):
         hf_config = SimpleNamespace(
             num_hidden_layers=4,
@@ -343,6 +359,36 @@ def test_sequential_expert_mappings_present(bridge_with_mtp):
     assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
 
 
+@pytest.mark.parametrize(
+    "megatron_param",
+    [
+        "decoder.layers.0.mlp.router.expert_bias",
+        "mtp.layers.0.mtp_model_layer.mlp.router.expert_bias",
+    ],
+)
+def test_expert_bias_mapping_accepts_missing_hf_bias(bridge_with_mtp, megatron_param):
+    """MCore's zero-initialized expert bias may be absent from HF checkpoints."""
+    mapping = bridge_with_mtp.mapping_registry().megatron_to_hf_lookup(megatron_param)
+
+    assert mapping is not None
+    assert mapping.allow_hf_name_mismatch is True
+
+
+def test_missing_expert_bias_is_initialized_to_float32_zeros():
+    """Missing training-state expert bias preserves MCore's zero initialization."""
+    bridge = DeepSeekV4Bridge()
+    gate_weight = torch.ones(8, 16, dtype=torch.bfloat16)
+
+    result = bridge.maybe_modify_loaded_hf_weight(
+        "layers.2.ffn.gate.bias",
+        {"layers.2.ffn.gate.weight": gate_weight},
+    )
+
+    assert result.dtype == torch.float32
+    assert result.shape == (8,)
+    assert torch.count_nonzero(result) == 0
+
+
 class TestDecoderHCHeadMappings:
     """The global decoder HC-head triplet must be replicated mappings."""
 
@@ -476,6 +522,7 @@ class TestDeepSeekV4HardwareDefaults:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.apply_dsa_kernel_fusion is expected
+        assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is expected
 
     def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
