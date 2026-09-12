@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -419,6 +420,44 @@ def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
     modeling_source = modeling_path.read_text()
     assert modeling_source.count("from .configuration_nemotron_h import NemotronHConfig") == 1
     assert modeling_source.count("from .configuration_radio import RADIOConfig") == 1
+
+
+def test_nemotron_omni_export_rewrites_modeling_as_utf8(tmp_path, monkeypatch):
+    """``modeling.py`` is UTF-8 source, so the rewrite must pin UTF-8.
+
+    Without an explicit ``encoding``, ``Path.read_text``/``write_text`` fall
+    back to the locale encoding, which is cp1252 on Windows and ASCII under
+    a C locale. Both raise on the non-ASCII characters that appear in real
+    modeling sources, failing the export after the weights are already
+    written.
+    """
+    modeling_path = tmp_path / "modeling.py"
+    # U+2581 is the SentencePiece word-boundary marker; U+2190 also appears
+    # in NVIDIA modeling sources. Neither survives a cp1252 round trip.
+    original = 'BOS = "<|begin▁of▁sentence|>"  # ←'
+    modeling_path.write_text(original + "\n", encoding="utf-8")
+
+    seen = {}
+    real_read, real_write = Path.read_text, Path.write_text
+
+    def spy_read(self, *args, **kwargs):
+        seen["read"] = kwargs.get("encoding")
+        return real_read(self, *args, **kwargs)
+
+    def spy_write(self, *args, **kwargs):
+        seen["write"] = kwargs.get("encoding")
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", spy_read)
+    monkeypatch.setattr(Path, "write_text", spy_write)
+
+    NemotronOmniBridge().postprocess_hf_export_artifacts(tmp_path)
+
+    assert seen["read"] == "utf-8"
+    assert seen["write"] == "utf-8"
+    rewritten = modeling_path.read_text(encoding="utf-8")
+    assert original in rewritten
+    assert rewritten.count("from .configuration_nemotron_h import NemotronHConfig") == 1
 
 
 def test_nemotron_omni_export_requires_modeling_entrypoint(tmp_path):
