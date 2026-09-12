@@ -14,8 +14,7 @@
 
 import argparse
 import logging
-import os
-import socket
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Literal, Optional, Union
@@ -128,15 +127,8 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     Yields:
         None.
     """
-    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
-        init_method = None
-    else:
-        # Find an available port dynamically
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
-            addr, port = s.getsockname()
-        init_method = f"tcp://{addr}:{port}"
-
+    rendezvous_dir = tempfile.TemporaryDirectory()
+    init_method = f"file://{Path(rendezvous_dir.name) / 'rendezvous'}"
     dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
@@ -159,6 +151,7 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     finally:
         parallel_state.destroy_model_parallel()
         dist.destroy_process_group()
+        rendezvous_dir.cleanup()
 
 
 def _get_or_initialize_pg_collection(
