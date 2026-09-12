@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import itertools
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from string import digits
@@ -1585,6 +1586,35 @@ class MegatronPeftBridge:
 _HF_LORA_SUFFIXES = (".lora_A.weight", ".lora_B.weight")
 
 
+def _is_shared_outer_expert_export(
+    base_name: str,
+    weights: Dict[str, torch.Tensor],
+    module_weight_names: List[str],
+) -> bool:
+    """Return whether a 3D adapter export is one side of a shared-outer MoE LoRA.
+
+    Shared-outer expert LoRA exports its shared factor once as a ``[1, ...]`` tensor
+    under the expert-agnostic HF name. Its per-expert partner is emitted either as
+    numbered 2D slices (``...experts.N.<proj>``, the default layout) or as an
+    ``[E, ...]`` stack under the same expert-agnostic name (``stack_3d_moe``). In both
+    cases the two sides do not share an expert dim, so they cannot be folded into one
+    PEFT ``target_parameters`` entry the way packed per-expert adapters are.
+    """
+    if ".experts." not in base_name:
+        return False
+    lora_a = weights.get(".lora_A.weight")
+    lora_b = weights.get(".lora_B.weight")
+    if lora_a is not None and lora_b is not None:
+        return lora_a.shape[0] != lora_b.shape[0]
+    present = lora_a if lora_a is not None else lora_b
+    if present is None or present.shape[0] != 1:
+        return False
+    missing_suffix = ".lora_B.weight" if lora_b is None else ".lora_A.weight"
+    prefix, _, projection = base_name.partition(".experts.")
+    sibling = re.compile(rf"^{re.escape(prefix)}\.experts\.\d+\.{re.escape(projection)}{re.escape(missing_suffix)}$")
+    return any(sibling.match(name) for name in module_weight_names)
+
+
 def infer_target_modules_from_adapter_weights(adapter_weight_names: Iterable[str]) -> List[str]:
     """Derive HF ``target_modules`` from the HF-format adapter weight names.
 
@@ -1696,6 +1726,22 @@ def convert_adapter_weights_to_peft_state(
 
         adapter_state[f"base_model.model.{name}"] = tensor
         module_weight_names.append(name)
+
+    # Shared-outer MoE LoRA (one side shared across experts, the other per-expert)
+    # has no common expert dim to pack along. Keep both sides exactly as exported so
+    # the adapter still saves; serving stacks that understand the layout read the
+    # leading dim to tell the shared factor from the per-expert one.
+    shared_outer_targets = [
+        base_name
+        for base_name in target_parameters
+        if _is_shared_outer_expert_export(base_name, parameter_weights[base_name], module_weight_names)
+    ]
+    for base_name in shared_outer_targets:
+        for lora_suffix, tensor in parameter_weights[base_name].items():
+            name = f"{base_name}{lora_suffix}"
+            adapter_state[f"base_model.model.{name}"] = tensor
+            module_weight_names.append(name)
+    target_parameters = [base_name for base_name in target_parameters if base_name not in shared_outer_targets]
 
     target_parameters = _order_target_parameters(target_parameters)
     parameter_prefixes = _build_target_parameter_prefixes(target_parameters)

@@ -395,6 +395,56 @@ class TestSaveHfAdapter:
             "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight",
         }
 
+    def test_convert_shared_outer_adapter_keeps_shared_factor_as_module_weight(self):
+        # Default shared-outer export: the shared lora_A is emitted once as [1, r, in]
+        # under the expert-agnostic name while lora_B is emitted per expert as 2D slices.
+        shared_a = torch.randn(1, 2, 4)
+        adapter_state, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
+            [
+                _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", shared_a),
+                _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(3, 2)),
+                _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(3, 2)),
+            ]
+        )
+
+        assert target_parameters == []
+        assert "model.layers.0.mlp.experts.gate_proj.lora_A.weight" in module_keys
+        torch.testing.assert_close(
+            adapter_state["base_model.model.model.layers.0.mlp.experts.gate_proj.lora_A.weight"], shared_a
+        )
+        assert "base_model.model.model.layers.0.mlp.experts.0.gate_proj.lora_B.weight" in adapter_state
+        assert "base_model.model.model.layers.0.mlp.experts.1.gate_proj.lora_B.weight" in adapter_state
+
+    def test_convert_shared_outer_stacked_pair_keeps_both_sides_as_module_weights(self):
+        # stack_3d_moe-style pair: shared side [1, ...], per-expert side [E, ...] under one name.
+        shared_a = torch.randn(1, 2, 4)
+        per_expert_b = torch.randn(2, 3, 2)
+        adapter_state, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
+            [
+                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_A.weight", shared_a),
+                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_B.weight", per_expert_b),
+            ]
+        )
+
+        assert target_parameters == []
+        assert module_keys == [
+            "model.layers.0.mlp.experts.down_proj.lora_A.weight",
+            "model.layers.0.mlp.experts.down_proj.lora_B.weight",
+        ]
+        torch.testing.assert_close(
+            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_A.weight"], shared_a
+        )
+        torch.testing.assert_close(
+            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_B.weight"], per_expert_b
+        )
+
+    def test_convert_incomplete_target_parameter_still_raises(self):
+        # A lone per-expert 3D side with no partner and no numbered siblings is a broken export.
+        with pytest.raises(ValueError, match="Incomplete adapter export"):
+            convert_adapter_weights_to_peft_state(
+                [_adapter_export("model.layers.0.mlp.experts.gate_up_proj.lora_A.weight", torch.randn(2, 2, 4))]
+            )
+
     def test_infer_rank_pattern_uses_module_names_for_linear_targets(self):
         rank_pattern = infer_rank_pattern_from_adapter_weights(
             [
