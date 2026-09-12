@@ -1225,6 +1225,86 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     torch.testing.assert_close(weights[1].weight, 2 * torch.ones(2, 2))
 
 
+def _shared_grouped_expert_adapter(linear_in: torch.Tensor, linear_out: torch.Tensor):
+    prefix = "decoder.layers.0.mlp.experts.linear_fc1"
+    task = AdapterWeightConversionTask(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in", global_param_name=f"{prefix}.adapter.linear_in.weight", mapping=Mock()
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out", global_param_name=f"{prefix}.adapter.linear_out.weight", mapping=Mock()
+        ),
+    )
+    weight = AdapterWeight(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", linear_in, vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", linear_out, vp_stage=0),
+    )
+    return prefix, task, weight
+
+
+def _stream_packed_expert_adapter(monkeypatch, linear_in, linear_out, **kwargs):
+    """Stream one grouped-expert adapter whose HF base name is a packed expert tensor (GPT-OSS style)."""
+    bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
+    prefix, adapter_task, adapter_weight = _shared_grouped_expert_adapter(linear_in, linear_out)
+    monkeypatch.setattr(bridge, "build_adapter_conversion_tasks", lambda *_a, **_k: {prefix: [adapter_task]})
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    # A packed HF expert name (no ``experts.N.``) routes the export through the packed-expert path.
+    monkeypatch.setattr(
+        bridge,
+        "_get_base_hf_param_names_for_adapter",
+        lambda *_a, **_k: ["model.layers.0.mlp.experts.gate_up_proj"],
+    )
+    monkeypatch.setattr(bridge, "_get_fused_adapter_linear_out_slices", lambda *_a, **_k: None)
+    megatron_model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=8))]
+    return list(bridge.stream_adapter_weights_megatron_to_hf(megatron_model, cpu=False, show_progress=False, **kwargs))
+
+
+def test_stream_adapter_weights_megatron_to_hf_replicates_shared_expert_adapter_by_default(monkeypatch):
+    weights = _stream_packed_expert_adapter(monkeypatch, torch.ones(4, 2), 2 * torch.ones(2, 4))
+
+    assert [w.param_name for w in weights] == [
+        "model.layers.0.mlp.experts.gate_up_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.gate_up_proj.lora_B.weight",
+    ]
+    assert weights[0].weight.shape == (8, 4, 2)
+    assert weights[1].weight.shape == (8, 2, 4)
+
+
+def test_stream_adapter_weights_megatron_to_hf_collapse_shared_experts(monkeypatch):
+    weights = _stream_packed_expert_adapter(
+        monkeypatch, torch.ones(4, 2), 2 * torch.ones(2, 4), collapse_shared_experts=True
+    )
+
+    assert [w.param_name for w in weights] == [
+        "model.layers.0.mlp.experts.gate_up_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.gate_up_proj.lora_B.weight",
+    ]
+    assert weights[0].weight.shape == (1, 4, 2)
+    assert weights[1].weight.shape == (1, 2, 4)
+    torch.testing.assert_close(weights[0].weight[0], torch.ones(4, 2))
+    torch.testing.assert_close(weights[1].weight[0], 2 * torch.ones(2, 4))
+
+
+def test_stream_adapter_weights_megatron_to_hf_collapse_ignores_per_expert_adapters(monkeypatch):
+    # Per-expert (3D) adapters are not shared, so the flag must leave them alone.
+    weights = _stream_packed_expert_adapter(
+        monkeypatch, torch.ones(8, 4, 2), 2 * torch.ones(8, 2, 4), collapse_shared_experts=True
+    )
+
+    assert weights[0].weight.shape == (8, 4, 2)
+    assert weights[1].weight.shape == (8, 2, 4)
+
+
 def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     bridge = DummyBridge()
     bridge.hf_pretrained = SimpleNamespace()
