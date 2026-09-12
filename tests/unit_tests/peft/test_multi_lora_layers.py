@@ -294,6 +294,13 @@ class TestMultiLoRALinearSlots:
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
 
+    def test_dense_layer_records_base_linear_name(self) -> None:
+        # forward's token-span guard formats this name in its diagnostic; only
+        # the MoE subclass assigned it, so the dense guard raised AttributeError
+        # instead of the intended RuntimeError.
+        layer = _build_multi_lora_linear(full_name="decoder.layers.0.mlp.linear_fc1")
+        assert layer.base_linear_name == "decoder.layers.0.mlp.linear_fc1"
+
     def test_constructor_forwards_wrapped_module_runtime_config(self) -> None:
         """Adapter construction mirrors the single-LoRA path (LoRA.transform)."""
         base = nn.Linear(16, 32)
