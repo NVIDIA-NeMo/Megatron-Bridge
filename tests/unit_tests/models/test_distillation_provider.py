@@ -185,6 +185,9 @@ class TestDistillationProvider:
         mock_student_model.parameters.return_value = iter(())
         mock_teacher_model.parameters.return_value = iter(())
         mock_kd_model.parameters.return_value = iter(())
+        mock_student_model.named_modules.return_value = []
+        mock_teacher_model.named_modules.return_value = []
+        mock_kd_model.named_modules.return_value = []
 
         # Set the side effects for the model provider - student first, then teacher
         mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]

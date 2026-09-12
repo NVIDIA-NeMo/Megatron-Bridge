@@ -31,7 +31,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.conversion.param_mapping import LocalHFParam
+    from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -708,6 +708,16 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(model, list):
             model = [model]
         return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
+
+    def get_export_mxfp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask]:
+        """Build native MXFP8 export tasks, including singular grouped-expert weights."""
+        if not isinstance(model, list):
+            model = [model]
+        return self._model_bridge.build_export_mxfp8_tasks(self.hf_pretrained, model)
+
+    def iter_local_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:
+        """Yield local native MXFP8 projections through the public bridge API."""
+        return self._model_bridge.iter_local_mxfp8_params(tasks)
 
     def iter_local_hf_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalHFParam"]:
         """Yield local unquantized BF16 parameters as canonical HF views.
