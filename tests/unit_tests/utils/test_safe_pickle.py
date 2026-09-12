@@ -22,10 +22,13 @@ import pickle
 import subprocess
 from collections import OrderedDict
 from enum import Enum
+from pathlib import PurePosixPath
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 import torch
+from megatron.energon.epathlib import EPath
 from megatron.energon.savable_loader import SavableDataLoaderState
 from megatron.energon.state import FlexState
 
@@ -473,6 +476,23 @@ def test_energon_group_bucket_enum_with_custom_repr_is_rejected_before_reduce(tm
 
     with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
         energon_torch_load(str(path))
+
+
+def test_energon_epath_is_rejected_without_resolving_storage_client(tmp_path):
+    """Application path restore hooks remain outside the dataloader-state allowlist."""
+    epath = EPath.__new__(EPath)
+    epath.internal_path = PurePosixPath("/dataset")
+    epath.profile = "default"
+    path = tmp_path / "dataloader-state.pt"
+    torch.save({"dataloader_state_dict": epath}, path)
+
+    with (
+        patch("multistorageclient.resolve_storage_client") as resolve_storage_client,
+        pytest.raises(pickle.UnpicklingError, match="EPath"),
+    ):
+        energon_torch_load(str(path))
+
+    resolve_storage_client.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
