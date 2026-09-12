@@ -282,6 +282,18 @@ class TestQwen35VLBridgeMappingRegistry:
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("patch_embed" in n for n in names)
 
+    def test_mapping_registry_mtp_params_use_top_level_prefix(self, bridge):
+        """MTP is a sibling of `language_model` in the real Megatron VL model, not
+        nested under it, so its Megatron param names must be "mtp.layers.*" rather
+        than "language_model.mtp.layers.*" (see regression this guards against:
+        MTP params silently failing to resolve during weight conversion)."""
+        registry = bridge.mapping_registry()
+        assert registry.megatron_to_hf_lookup("mtp.layers.0.enorm.weight") is not None
+        assert registry.megatron_to_hf_lookup("mtp.layers.0.hnorm.weight") is not None
+        assert registry.megatron_to_hf_lookup("mtp.layers.0.eh_proj.weight") is not None
+        assert registry.megatron_to_hf_lookup("mtp.layers.0.final_layernorm.weight") is not None
+        assert registry.megatron_to_hf_lookup("language_model.mtp.layers.0.enorm.weight") is None
+
 
 # =====================================================================
 # Tests for Qwen35TokenClassificationBridge

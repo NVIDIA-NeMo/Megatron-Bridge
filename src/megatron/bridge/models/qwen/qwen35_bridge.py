@@ -584,8 +584,10 @@ class Qwen35Bridge(MegatronModelBridge):
         """Get MTP (Multi-Token Prediction) parameter mappings for dense Qwen3.5.
 
         Args:
-            megatron_prefix: Prefix for Megatron param names. Use "" for LM and
-                "language_model." for VL models.
+            megatron_prefix: Prefix for Megatron param names. In both the plain LM
+                and the VL model, MTP is attached at the top level of the Megatron
+                model (a sibling of "language_model", not nested under it), so this
+                should always be "".
 
         Returns:
             List of mapping objects for the MTP portion.
@@ -595,8 +597,8 @@ class Qwen35Bridge(MegatronModelBridge):
         # =================================================================
         # MTP (Multi-Token Prediction) mappings
         # MTP uses standard attention (not GDN) and dense MLP.
-        # Megatron VL prefix: language_model.mtp.*
-        # Megatron ML prefix: mtp.*
+        # Megatron prefix: mtp.* (top-level, not nested under "language_model.",
+        # even for the VL model).
         # HF prefix: mtp.* (top-level, not under model.language_model.)
         # =================================================================
         mtp_param_mappings = {
