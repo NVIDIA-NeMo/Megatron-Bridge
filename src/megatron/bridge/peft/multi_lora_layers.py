@@ -926,17 +926,43 @@ def install_moe_slot_routing(model) -> int:
     return installed
 
 
-def init_adapter_slot(model, idx: int, rank: int, alpha: float) -> None:
+def init_adapter_slot(model, idx: int, rank: int, alpha: float, seed: int | None = None) -> None:
     """Claim slot ``idx`` across every multi-LoRA layer for an adapter.
 
     A model-wide adapter is the set of slot-``idx`` chunks across all layers;
     this initialises that set with the given ``rank``/``alpha``. Thin iterator
     over the model — per-slot setup (rank/alpha bookkeeping + rank-mask
     invariant) lives on the layer itself in
-    :meth:`MultiLoRALinear.init_adapter_slot` /
+    :meth:`MultiLoRALinear.init_adapter_slot`.
+
+    Without ``seed`` the slot keeps whatever weights construction or the last
+    :func:`clear_adapter_slot` re-init left behind (DP-consistent but not
+    reproducible). With ``seed`` every layer's slot weights are re-initialised
+    deterministically first: the RNG-tracker streams are reseeded from ``seed``
+    for the duration and restored afterwards, so a given seed reproduces the
+    same adapter weights on every rank and every run (layers draw sequentially
+    from the reseeded streams).
     """
-    for module in _iter_multi_lora_modules(model):
-        module.init_adapter_slot(idx, rank, alpha)
+    if seed is None:
+        for module in _iter_multi_lora_modules(model):
+            module.init_adapter_slot(idx, rank, alpha)
+        return
+
+    from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
+
+    tracker = get_cuda_rng_tracker()
+    saved_states = tracker.get_states()
+    # Rebuild each stream from the seed through tracker.add, which mints the
+    # tracker's native state representation (byte tensor or graph-safe generator).
+    tracker.reset()
+    for offset, name in enumerate(sorted(saved_states)):
+        tracker.add(name, seed + offset + 1)
+    try:
+        for module in _iter_multi_lora_modules(model):
+            module.reset_adapter(idx)
+            module.init_adapter_slot(idx, rank, alpha)
+    finally:
+        tracker.set_states(saved_states)
 
 
 def clear_adapter_slot(model, idx: int) -> None:
