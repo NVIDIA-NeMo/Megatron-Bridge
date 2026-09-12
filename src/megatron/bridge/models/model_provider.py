@@ -223,7 +223,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             wrap_with_ddp: Whether to wrap model with DDP.
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
             use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
-            init_model_with_meta_device: Initialize model on meta device.
+            init_model_with_meta_device: Override meta-device initialization. None preserves the provider setting.
             pre_wrap_hook: A single callable or list of callables to modify the model before it's wrapped.
                 If provided, this will override all hooks registered via `register_pre_wrap_hook`.
                 If a list is provided, hooks will be executed in order.
@@ -510,7 +510,7 @@ class GetModelKwargs(TypedDict, total=False):
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
         use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
-        init_model_with_meta_device: Initialize model on meta device.
+        init_model_with_meta_device: Override meta-device initialization. None preserves the provider setting.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
         mixed_precision_wrapper: Module wrapper to apply for fp16/bf16. None to skip.
@@ -606,7 +606,7 @@ def get_model(
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
         use_cpu_initialization: Override CPU initialization. None preserves the provider setting
-        init_model_with_meta_device: Whether to initialize the model on the meta device
+        init_model_with_meta_device: Override meta-device initialization. None preserves the provider setting
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
             hooks will be executed in order.
@@ -645,8 +645,9 @@ def get_model(
 
     if use_cpu_initialization is not None:
         model_provider.use_cpu_initialization = use_cpu_initialization
-    if init_model_with_meta_device:
-        model_provider.init_model_with_meta_device = True
+    if init_model_with_meta_device is not None:
+        model_provider.init_model_with_meta_device = init_model_with_meta_device
+    if getattr(model_provider, "init_model_with_meta_device", False):
         with torch.device("meta"):
             model = _create_model(model_provider, model_type, pg_collection=pg_collection)
     else:
