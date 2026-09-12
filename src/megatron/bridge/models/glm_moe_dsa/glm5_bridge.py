@@ -104,6 +104,7 @@ class GLM5Bridge(MegatronModelBridge):
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
+        provider.moe_router_bias_update_rate = 0
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
 
