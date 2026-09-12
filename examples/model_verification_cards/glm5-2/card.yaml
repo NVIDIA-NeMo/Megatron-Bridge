@@ -240,7 +240,7 @@ items:
         moe_dispatcher: deepep
       command: >
         ./scripts/training/train.sh --nodes 52 --gpus-per-node 8
-        --recipe glm52_sft_416gpu_h100_bf16_config --mode sft
+        --recipe glm52_h100_sft_config --mode sft
         --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
         --max_steps 100 --seq_length 2048
         dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32
@@ -275,7 +275,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
-        --recipe glm52_sft_192gpu_gb200_bf16_config --mode sft
+        --recipe glm52_gb200_sft_config --mode sft
         --pretrained_checkpoint
         work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88
         --max_steps 100
