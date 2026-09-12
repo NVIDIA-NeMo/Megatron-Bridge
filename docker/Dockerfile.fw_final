@@ -93,7 +93,7 @@ RUN pip install "fastapi==0.139.1" \
     "jupyterlab>=4.5.10" \
     "jupyter-server>=2.20.0" \
     "mistune>=3.3.0" \
-    "GitPython>=3.1.55" && \
+    "GitPython>=3.1.62,<4" && \
     # Address CVE from transitive dependency
     pip uninstall -y opencv-python-headless nvidia-dali-cuda130
 
