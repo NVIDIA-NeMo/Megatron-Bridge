@@ -578,8 +578,9 @@ def normalize_chat_conversation(
     """Normalize supported text-chat schemas to OpenAI-style messages.
 
     Rows may use ``messages``, singular ``conversation``, or legacy plural
-    ``conversations`` with ``from``/``value`` keys. Null OpenAI message content
-    is converted to an empty string before chat-template rendering.
+    ``conversations`` with ``from``/``value`` keys. Null message content is
+    converted to an empty string before chat-template rendering, in either
+    supported schema.
     """
     if isinstance(example_or_conversation, Mapping):
         source = example_or_conversation
@@ -611,7 +612,13 @@ def normalize_chat_conversation(
             continue
         if "from" in turn and "value" in turn:
             role = str(turn["from"]).lower()
-            normalized.append({"role": _LEGACY_CHAT_ROLE_ALIASES.get(role, role), "content": turn["value"]})
+            value = turn["value"]
+            normalized.append(
+                {
+                    "role": _LEGACY_CHAT_ROLE_ALIASES.get(role, role),
+                    "content": "" if value is None else value,
+                }
+            )
             continue
         raise ValueError("Chat turns must contain role/content or legacy from/value fields.")
 
