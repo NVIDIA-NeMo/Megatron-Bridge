@@ -212,8 +212,11 @@ class MultiLoRALinear(AdapterWrapper):
         # forward never synchronizes each layer to recover split sizes.
         self.tokens_per_adapter_splits: Optional[Tuple[int, ...]] = None
         self.tokens_per_adapter_total: Optional[int] = None
-        device = next(to_wrap.parameters()).device
-        dtype = next(to_wrap.parameters()).dtype
+        reference = next(to_wrap.parameters(), None)
+        if reference is None:
+            reference = next(self.adapters.parameters())
+        device = reference.device
+        dtype = reference.dtype
         # Non-persistent: slot lifecycle is externally managed, not checkpointed.
         self.register_buffer("alpha_values", torch.ones(n_adapters, dtype=dtype, device=device), persistent=False)
         self.register_buffer(
