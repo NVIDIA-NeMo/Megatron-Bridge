@@ -151,6 +151,9 @@ class MultiLoRALinear(AdapterWrapper):
         self._adapter_enabled = True
         self.n_adapters = n_adapters
         self.max_rank = dim
+        # Read by forward's diagnostics (and by callers that route on the wrapped
+        # module's name), like MultiLoRAGroupedExpertLinear already does.
+        self.base_linear_name = full_name
         # Kept so a slot re-init (reset_adapter) mirrors the construction-time
         # init methods instead of hardcoding xavier/zero.
         self._column_init_method = column_init_method
