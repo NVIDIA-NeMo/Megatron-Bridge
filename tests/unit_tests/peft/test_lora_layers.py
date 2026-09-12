@@ -34,6 +34,7 @@ from megatron.bridge.peft.lora_layers import (
     LoRALinear,
     LoRATopKRouter,
     TEFusedLoRALinear,
+    TEFusedLoRAMergeLinear,
 )
 from megatron.bridge.peft.utils import AdapterAttributes
 
@@ -630,6 +631,22 @@ class TestTEFusedLoRALinear:
         assert output.shape == (3, 5)
         # Verify scale is correctly set (alpha/dim = 16/4 = 4)
         assert adapter.alpha / adapter.dim == 4.0
+
+    def test_fused_lora_merge_matches_unfused_forward_and_backward(self, te_linear, parallel_linear_adapter):
+        x = torch.randn(3, 10, device="cuda", requires_grad=True)
+        unfused = LoRALinear(te_linear, parallel_linear_adapter)
+        expected, _ = unfused(x)
+        expected = expected.detach()
+        fused = TEFusedLoRAMergeLinear(te_linear, parallel_linear_adapter)
+
+        actual, _ = fused(x)
+        torch.testing.assert_close(actual, expected)
+        assert not any(name.startswith("_fused_lora") for name, _ in fused.named_modules())
+        actual.sum().backward()
+
+        assert te_linear.weight.grad is not None
+        assert parallel_linear_adapter.linear_in.weight.grad is not None
+        assert parallel_linear_adapter.linear_out.weight.grad is not None
 
 
 class TestLoRAUtilities:
