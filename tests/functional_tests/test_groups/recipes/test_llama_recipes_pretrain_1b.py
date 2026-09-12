@@ -39,7 +39,6 @@ LLAMA_PRETRAIN_RECIPES = [
             "ckpt_format": "fsdp_dtensor",
             "strict_fsdp_dtensor_load": True,
             "async_save": True,
-            "async_strategy": "nvrx",
             "use_persistent_ckpt_worker": True,
         },
         {
