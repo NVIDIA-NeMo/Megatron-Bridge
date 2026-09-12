@@ -44,7 +44,7 @@ class TERowParallelLinearLayerNorm(TERowParallelLinear):
             config=config,
             **kwargs,
         )
-        self.post_layernorm = TENorm(config, output_size)
+        self.post_layernorm = TENorm(config, output_size, eps=config.layernorm_epsilon)
 
     def forward(self, x):
         """Forward with additional Post-LN on output."""
