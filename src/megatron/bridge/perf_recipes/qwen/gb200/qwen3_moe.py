@@ -203,6 +203,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
@@ -311,6 +312,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     # Full-iteration graphs remain benchmark-only because they alter natural-routing auxiliary loss.
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -344,6 +346,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
@@ -471,6 +474,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -584,6 +588,8 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB200, NVFP4, full-iteration CG and A2A overlap."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.model.recompute_modules = []
+    cfg.comm_overlap.tp_comm_overlap = False
     cfg.model.virtual_pipeline_model_parallel_size = 3
     _enable_hybridep_full_iteration_nvfp4(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
