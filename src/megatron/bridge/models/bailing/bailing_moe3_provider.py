@@ -1,6 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
-from megatron.bridge.models.bailing.bailing_moe3_bridge import BailingMoeV3Bridge
-from megatron.bridge.models.bailing.bailing_moe3_provider import BailingMoe3HybridProvider
+"""HybridModel provider for Ling 3.0."""
+
+from dataclasses import dataclass
+
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
-__all__ = [
-    "BailingMoeV2Bridge",
-    "BailingMoeV3Bridge",
-    "BailingMoe3HybridProvider",
-]
+@dataclass
+class BailingMoe3HybridProvider(HybridModelProvider, MLATransformerConfig):
+    """Combine HybridModel construction with MLA configuration for Ling 3.0."""
+
+    multi_latent_attention: bool = True

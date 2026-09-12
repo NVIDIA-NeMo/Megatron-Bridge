@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,33 +15,38 @@
 
 set -euo pipefail
 
-# Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
-
-HF_MODEL_ID=${HF_MODEL_ID:-inclusionAI/${MODEL_NAME:-Ling-mini-2.0}}
+HF_MODEL_ID=${HF_MODEL_ID:-inclusionAI/Ling-3.0-tiny}
 MODEL_NAME=${MODEL_NAME:-${HF_MODEL_ID##*/}}
+
 MEGATRON_PATH=${MEGATRON_PATH:-${WORKSPACE}/models/${MODEL_NAME}}
 MEGATRON_LOAD_PATH=${MEGATRON_LOAD_PATH:-${MEGATRON_PATH}/iter_0000000}
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/${MODEL_NAME}-hf-export}
 ROUNDTRIP_OUTPUT_DIR=${ROUNDTRIP_OUTPUT_DIR:-${WORKSPACE}/models/${MODEL_NAME}-roundtrip}
 
-TP=${TP:-2}
+TP=${TP:-1}
 PP=${PP:-1}
-EP=${EP:-4}
+EP=${EP:-1}
 ETP=${ETP:-1}
 NPROC_PER_NODE=${NPROC_PER_NODE:-$((TP * PP * EP))}
 
-# Import HF → Megatron
+# Import HF -> Megatron.
 ./scripts/conversion/convert.sh import \
+    --executor local --device gpu --gpus-per-node "$NPROC_PER_NODE" \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "$MEGATRON_PATH" \
+    --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP" \
+    --torch-dtype bfloat16 \
     --trust-remote-code
 
-# Export Megatron → HF
+# Export Megatron -> HF.
 ./scripts/conversion/convert.sh export \
+    --executor local --device gpu --gpus-per-node "$NPROC_PER_NODE" \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "$MEGATRON_LOAD_PATH" \
     --hf-path "$HF_EXPORT_PATH" \
+    --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP" \
+    --torch-dtype bfloat16 \
     --trust-remote-code
 
 # Multi-GPU verification of the imported checkpoint and HF export.

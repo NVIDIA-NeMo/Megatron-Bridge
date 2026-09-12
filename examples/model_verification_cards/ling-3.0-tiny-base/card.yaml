@@ -1,0 +1,243 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: ling_3_0_tiny_base
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Ling 3.0 Tiny Base verification covers lossless CPU and 8-GPU
+  checkpoint round trips of the pinned public checkpoint. Each export contains
+  all 9,686 source tensors with identical keys, shapes, dtypes, and values, and
+  reloads the complete Hugging Face model with the public remote code under its
+  compatible Transformers runtime. Megatron inference is unsupported because
+  the current MCore KDA implementation does not provide the inference path. The
+  8-GPU SFT validation reached the first completed forward/backward pass but is
+  blocked in the current upstream Bridge/MCore combination by an unrelated MoE
+  metrics API mismatch, so SFT remains unverified.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+    unverified:
+      - manual_forward_pass
+    unsupported:
+      - inference
+  training:
+    H200:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: inclusionAI/Ling-3.0-tiny-base
+  hf_revision: bab7297fa02713af237e378bf21107718b8e0e1a  # pragma: allowlist secret
+  architecture: BailingMoeV3ForCausalLM
+  min_transformers_version: "4.56.2"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.06-py3
+  bridge_commit: fef3033b000e8d97b1e120d734b6d4d0cf35a23a  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model inclusionAI/Ling-3.0-tiny-base
+      --hf-revision bab7297fa02713af237e378bf21107718b8e0e1a
+      --megatron-path work/model-verification/ling-3.0-tiny-base/cpu-megatron
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-09-03
+    expected_result: >
+      CPU import exits successfully and creates a reloadable iter_0000000
+      distributed checkpoint from the pinned public revision.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model inclusionAI/Ling-3.0-tiny-base
+      --hf-revision bab7297fa02713af237e378bf21107718b8e0e1a
+      --megatron-path work/model-verification/ling-3.0-tiny-base/gpu-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --trust-remote-code
+    last_verified: 2026-09-03
+    expected_result: >
+      Distributed import exits successfully on 8 GPUs at
+      TP1/PP1/EP8/ETP1 and creates a reloadable iter_0000000 checkpoint with
+      MLA, KDA, MoE, and MTP weights intact.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model inclusionAI/Ling-3.0-tiny-base
+      --hf-revision bab7297fa02713af237e378bf21107718b8e0e1a
+      --megatron-path work/model-verification/ling-3.0-tiny-base/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/ling-3.0-tiny-base/cpu-hf-export
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-09-03
+    expected_result: >
+      CPU export exits successfully and writes the complete indexed Hugging
+      Face checkpoint. All 9,686 tensors match the pinned source exactly in
+      keys, shapes, dtypes, and values with max_abs_diff=0.0. AutoConfig,
+      AutoTokenizer, and BailingMoeV3ForCausalLM reload successfully under
+      Transformers 4.56.2; the full model has 8,209,994,528 parameters.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model inclusionAI/Ling-3.0-tiny-base
+      --hf-revision bab7297fa02713af237e378bf21107718b8e0e1a
+      --megatron-path work/model-verification/ling-3.0-tiny-base/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/ling-3.0-tiny-base/gpu-hf-export
+      --torch-dtype bfloat16 --distributed-save --save-every-n-ranks 1
+      --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
+    last_verified: 2026-09-03
+    expected_result: >
+      Distributed export exits successfully on 8 GPUs at TP1/PP1/EP8/ETP1.
+      All 9,686 tensors match the pinned source exactly in keys, shapes, dtypes,
+      and values with max_abs_diff=0.0, including the source FP32 KDA and router
+      state. BailingMoeV3ForCausalLM reloads successfully under Transformers
+      4.56.2 with 8,209,994,528 parameters.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Verification requires a same-prompt, no-cache Hugging Face and Megatron
+      forward comparison with matching next-token IDs, cosine similarity of at
+      least 0.99, and absolute-logit diagnostics.
+
+  inference:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      The current Megatron-Core KDA implementation does not support the model's
+      inference path, so deterministic Megatron text generation cannot run.
+
+  pretrain:
+    H200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Verification requires a bounded public-data pretraining run with finite
+        loss, no skipped or NaN iterations, all five metrics, and a reloadable
+        final checkpoint.
+
+  sft:
+    H200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        The 8-GPU validation loaded the pinned Tiny Base checkpoint, transformed
+        10,000 pinned public SQuAD rows into 898 sequence-length-2048 packs at
+        99.12 percent efficiency, built TP1/PP1/CP1/EP8/ETP1 with the MTP layer,
+        and completed the first forward/backward pass. It then stopped before a
+        complete optimizer step because Bridge main passes num_moe_layers to
+        the pinned MCore track_moe_metrics API, which does not accept that
+        argument. Verified status requires an unpatched 100-step run with finite
+        loss, all five metrics, and a reloadable final checkpoint.
+
+  sft_export_inference:
+    H200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Verification requires a completed SFT checkpoint, a strict Hugging Face
+        export and full-model reload under the compatible public runtime, and
+        two deterministic greedy Hugging Face runs with identical token IDs and
+        literal output.
+
+  sft_long_context:
+    H200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Verification requires a public long-context Tiny Base SFT run with
+        supported sequence packing and context parallelism, finite loss, no
+        skipped or NaN iterations, and all five metrics.
+
+  peft:
+    H200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Verification requires a public Tiny Base PEFT recipe with an audited
+        adapter target set, finite loss, no skipped or NaN iterations, all five
+        metrics, and a reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    H200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Verification requires an uninterrupted pretraining reference and a
+        direct continuation that restores model, optimizer, scheduler,
+        data-order, and RNG state, matches declared sentinel losses within
+        tolerance, and saves a reloadable checkpoint to a distinct output root.
