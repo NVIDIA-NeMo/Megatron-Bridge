@@ -18,6 +18,7 @@ import logging
 import math
 import re
 import textwrap
+from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass, fields
 from functools import cache
@@ -29,8 +30,9 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import packaging
 import torch
 import torch.nn as nn
-from megatron.core import ModelParallelConfig, dist_checkpointing, parallel_state
+from megatron.core import ModelParallelConfig, dist_checkpointing
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
+from megatron.core.distributed import finalize_model_grads
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
 from megatron.core.tensor_parallel.mappings import (
@@ -42,8 +44,10 @@ from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import get_pg_rank, get_pg_size
+from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
 
 from megatron.bridge.utils.activation_map import str_to_dtype
+from megatron.bridge.utils.common_utils import warn_rank_0
 from megatron.bridge.utils.import_utils import safe_import_from
 
 
@@ -940,6 +944,176 @@ def all2all_hp2sp(input_: torch.Tensor, tensor_parallel_group: object | None = N
     return _All2AllHp2Sp.apply(input_, tensor_parallel_group)
 
 
+_EXPERT_PARALLEL_REPLICATED_ATTR = "expert_parallel_replicated"
+_EXPERT_PARALLEL_GRAD_HOOK_ATTR = "_expert_parallel_grad_hook"
+
+
+def _broadcast_shared_expert_weights(weights: list[torch.Tensor], ep_group: object | None) -> None:
+    """Broadcast shared expert adapter weights from EP rank zero so every EP rank starts bitwise identical."""
+
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return
+    if not weights or ep_group is None or _process_group_size(ep_group) <= 1:
+        return
+
+    src_rank = torch.distributed.get_global_rank(ep_group, 0)
+    with torch.no_grad():
+        for weight in weights:
+            if weight.is_meta:
+                raise RuntimeError("Shared expert adapter parameters must be materialized before EP synchronization")
+            if weight.is_cuda or torch.distributed.get_backend(ep_group) != "nccl":
+                torch.distributed.broadcast(weight, src=src_rank, group=ep_group)
+                continue
+            # NCCL cannot broadcast CPU tensors; stage through the current device.
+            staged_weight = weight.to(torch.device("cuda", torch.cuda.current_device()))
+            torch.distributed.broadcast(staged_weight, src=src_rank, group=ep_group)
+            weight.copy_(staged_weight.cpu())
+
+
+def mark_expert_parallel_replicated(weight: torch.Tensor, *, ep_group: object | None) -> None:
+    """Tag ``weight`` as replicated across expert parallelism so its gradient is summed over EP every step.
+
+    MCore's DDP reduces ``is_expert`` parameters over expert-DP only;
+    :func:`allreduce_expert_parallel_replicated_grads` adds the EP sum once per step. Until
+    :func:`enable_expert_parallel_grad_sync_in_finalize` removes it, a per-microbatch fallback hook sums eagerly
+    computed gradients across EP so training loops that never install the finalize wrapper keep working.
+
+    Args:
+        weight: Parameter replicated across the EP group.
+        ep_group: Expert-model-parallel process group, or ``None`` when expert parallelism is not set up.
+    """
+
+    setattr(weight, _EXPERT_PARALLEL_REPLICATED_ATTR, True)
+    if ep_group is None or _process_group_size(ep_group) <= 1 or not weight.requires_grad:
+        return
+
+    def _allreduce_grad_across_ep(grad: torch.Tensor) -> torch.Tensor:
+        if getattr(weight, "grad_added_to_main_grad", False):
+            # MCore accumulated the real gradient into ``main_grad`` and handed autograd a dummy tensor.
+            warn_rank_0(
+                "Fused weight-gradient accumulation put an expert-parallel replicated adapter gradient into "
+                "main_grad, which the per-layer fallback hook cannot synchronize. Install "
+                "finalize_model_grads_with_expert_adapter_sync as finalize_model_grads_func; otherwise the shared "
+                "adapter weights drift apart across EP ranks."
+            )
+            return grad
+        # Sum across EP first; MCore's expert DDP then reduces across expert-DP and scales expert buffers by
+        # 1 / dp_cp_group.size(), i.e. the full EP x expert-DP data-parallel world.
+        grad = grad.contiguous()
+        torch.distributed.all_reduce(grad, op=torch.distributed.ReduceOp.SUM, group=ep_group)
+        return grad
+
+    setattr(weight, _EXPERT_PARALLEL_GRAD_HOOK_ATTR, weight.register_hook(_allreduce_grad_across_ep))
+
+
+def _expert_parallel_replicated_params(model: nn.Module | list[nn.Module]) -> Iterator[nn.Parameter]:
+    """Yield the parameters tagged by :func:`mark_expert_parallel_replicated`."""
+
+    for model_chunk in model if isinstance(model, list) else [model]:
+        if isinstance(model_chunk, nn.Module):
+            yield from (p for p in model_chunk.parameters() if getattr(p, _EXPERT_PARALLEL_REPLICATED_ATTR, False))
+
+
+def _remove_fallback_hook(param: nn.Parameter) -> bool:
+    """Remove the per-layer fallback hook from ``param``; return whether one was still installed."""
+
+    handle = getattr(param, _EXPERT_PARALLEL_GRAD_HOOK_ATTR, None)
+    if handle is None:
+        return False
+    handle.remove()
+    delattr(param, _EXPERT_PARALLEL_GRAD_HOOK_ATTR)
+    return True
+
+
+def enable_expert_parallel_grad_sync_in_finalize(model: nn.Module | list[nn.Module]) -> int:
+    """Remove the per-layer fallback hooks so :func:`allreduce_expert_parallel_replicated_grads` owns the EP sum.
+
+    Bridge's training setup calls this once the model is wrapped.
+
+    Args:
+        model: Model chunk or list of model chunks, DDP-wrapped or bare.
+
+    Returns:
+        Number of tagged parameters.
+    """
+
+    params = list(_expert_parallel_replicated_params(model))
+    for param in params:
+        _remove_fallback_hook(param)
+    return len(params)
+
+
+def allreduce_expert_parallel_replicated_grads(
+    model: nn.Module | list[nn.Module], *, ep_group: object | None = None
+) -> None:
+    """Sum the tagged parameters' gradients across the EP group once per step, coalesced per dtype.
+
+    Call it after the data-parallel gradient sync (after Megatron-Core's ``finalize_model_grads``), the point
+    where MCore also sums sequence-parallel layernorm gradients across TP. It reads ``main_grad`` under DDP and
+    ``.grad`` otherwise, so fused and eager weight-gradient accumulation give the same result.
+
+    Args:
+        model: Model chunk or list of model chunks, DDP-wrapped or bare.
+        ep_group: Expert-model-parallel group; defaults to MCore's global expert-model-parallel group.
+    """
+
+    params = list(_expert_parallel_replicated_params(model))
+    if not params or not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return
+    if ep_group is None:
+        ep_group = _get_process_group(_get_pg_collection(required_pgs=["ep"]), "ep")
+    if ep_group is None or _process_group_size(ep_group) <= 1:
+        return
+
+    grads_by_dtype: dict[tuple[torch.dtype, torch.device], list[torch.Tensor]] = {}
+    for param in params:
+        hook_was_active = _remove_fallback_hook(param)
+        if not param.requires_grad:
+            continue
+        if hook_was_active and not getattr(param, "grad_added_to_main_grad", False):
+            # The fallback hook already summed this step's eagerly computed gradient.
+            continue
+        grad = getattr(param, "main_grad", None)
+        if grad is None:
+            grad = param.grad
+        if grad is None:
+            continue
+        # Megatron-FSDP keeps gradients as DTensors; reduce the local shard like MCore's finalize step does.
+        grad = getattr(grad, "_local_tensor", grad).data
+        grads_by_dtype.setdefault((grad.dtype, grad.device), []).append(grad)
+
+    for grads in grads_by_dtype.values():
+        if len(grads) == 1:
+            torch.distributed.all_reduce(grads[0], op=torch.distributed.ReduceOp.SUM, group=ep_group)
+            continue
+        coalesced = _flatten_dense_tensors(grads)
+        torch.distributed.all_reduce(coalesced, op=torch.distributed.ReduceOp.SUM, group=ep_group)
+        for grad, synced in zip(grads, _unflatten_dense_tensors(coalesced, grads), strict=True):
+            grad.copy_(synced)
+
+
+def finalize_model_grads_with_expert_adapter_sync(
+    model: list[nn.Module],
+    num_tokens: torch.Tensor | None = None,
+    pg_collection: ProcessGroupCollection | None = None,
+    **kwargs: object,
+) -> None:
+    """Run Megatron-Core's ``finalize_model_grads``, then :func:`allreduce_expert_parallel_replicated_grads`.
+
+    Drop-in replacement for ``config.finalize_model_grads_func``. Bridge's training setup installs it; training
+    loops that call ``finalize_model_grads`` themselves should call this instead.
+
+    Args:
+        model: List of model chunks.
+        num_tokens: Optional global token count used by MCore for per-token loss scaling.
+        pg_collection: Process groups for MCore's finalize step; its ``ep`` group drives the EP sum.
+        **kwargs: Forwarded to ``finalize_model_grads`` (for example ``force_all_reduce``).
+    """
+
+    finalize_model_grads(model, num_tokens, pg_collection=pg_collection, **kwargs)
+    allreduce_expert_parallel_replicated_grads(model, ep_group=_get_process_group(pg_collection, "ep"))
+
+
 class ParallelLinearAdapter(nn.Module):
     """Parallel Linear Adapter for Parameter-Efficient Fine-Tuning (PEFT) in distributed settings.
 
@@ -1370,57 +1544,29 @@ class ParallelLinearAdapter(nn.Module):
 
         return self.is_expert and is_grouped_expert_linear(self.base_linear_name)
 
-    def _allreduce_shared_expert_grad(self, grad: torch.Tensor) -> torch.Tensor:
-        """Sum shared expert adapter grads across EP before expert-DP reduction."""
-
-        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-            return grad
-        if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
-            return grad
-        # Sum across EP first; MCore expert DDP then reduces across expert-DP
-        # and scales expert buffers by 1 / dp_cp_group.size(), i.e. the full
-        # EP x expert-DP data-parallel world, not just expert-DP.
-        torch.distributed.all_reduce(grad, group=self.ep_group)
-        return grad
-
     def _synchronize_shared_expert_parameters(self) -> None:
         """Broadcast shared expert adapter parameters from EP group rank zero."""
 
-        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
-            return
-        if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
-            return
+        _broadcast_shared_expert_weights(self._shared_expert_weights(), self.ep_group)
 
-        weights = [
+    def _register_shared_expert_grad_sync_hooks(self) -> None:
+        """Keep shared grouped-expert adapters synchronized across EP ranks.
+
+        MCore's expert DDP only reduces over expert-DP; :func:`mark_expert_parallel_replicated` adds the
+        cross-EP sum (once per step from the finalize step, with a per-layer fallback hook until then).
+        """
+
+        for weight in self._shared_expert_weights():
+            mark_expert_parallel_replicated(weight, ep_group=self.ep_group)
+
+    def _shared_expert_weights(self) -> list[torch.Tensor]:
+        """Return the adapter weights shared by every expert on this EP rank."""
+
+        return [
             weight
             for module in (self.linear_in, self.linear_out)
             if isinstance(weight := getattr(module, "weight", None), torch.Tensor)
         ]
-        if not weights:
-            return
-
-        src_rank = torch.distributed.get_global_rank(self.ep_group, 0)
-        with torch.no_grad():
-            for weight in weights:
-                if weight.is_meta:
-                    raise RuntimeError(
-                        "Shared expert adapter parameters must be materialized before EP synchronization"
-                    )
-                if weight.is_cuda or torch.distributed.get_backend(self.ep_group) != "nccl":
-                    torch.distributed.broadcast(weight, src=src_rank, group=self.ep_group)
-                    continue
-
-                staged_weight = weight.to(torch.device("cuda", torch.cuda.current_device()))
-                torch.distributed.broadcast(staged_weight, src=src_rank, group=self.ep_group)
-                weight.copy_(staged_weight.cpu())
-
-    def _register_shared_expert_grad_sync_hooks(self) -> None:
-        """Keep shared grouped-expert adapters synchronized across EP ranks."""
-
-        for module in (self.linear_in, self.linear_out):
-            weight = getattr(module, "weight", None)
-            if isinstance(weight, torch.Tensor) and weight.requires_grad:
-                weight.register_hook(self._allreduce_shared_expert_grad)
 
     def _expert_axis_info(self, sharded_offsets: Tuple) -> Tuple[int, int, int]:
         """Return the global expert-axis sharding metadata for this rank."""
@@ -2477,59 +2623,6 @@ class GroupedExpertLinearAdapter(nn.Module):
         return sharded_state_dict
 
 
-def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
-    """Mark a weight as logically replicated across the intra-PP-stage group.
-
-    Megatron's DDP routes ``is_expert=True`` parameters through the expert
-    data-parallel group only, which does not span the EP axis. A weight
-    that must stay bit-identical across all EP ranks (e.g., the shared
-    side of :class:`SharedOuterGroupedExpertAdapter`, which a serving
-    engine consumes as a single global LoRA tensor) is otherwise left
-    unsynced. This helper closes that gap with two primitives:
-
-      * a one-shot broadcast from group rank 0 so every rank starts with
-        bit-identical values despite per-rank RNG forks;
-      * a backward hook that SUM all-reduces the gradient across the group
-        so the optimizer step on every rank applies the same update.
-
-    SUM is the correct reduction: each rank's local gradient is the partial
-    loss gradient over its (token, expert) subset, and the total gradient
-    is the sum of those partials. AVG would train at 1/N the intended rate.
-
-    The intra-PP-stage group is ``tensor_and_data_parallel_group`` with
-    context parallel included, which by Megatron's construction equals
-    ETP × EP × EDP — all ranks within the current pipeline stage.
-
-    Args:
-        weight: The parameter to keep replicated across the group. Must
-            be a leaf parameter so the backward hook fires when its
-            gradient is computed.
-    """
-
-    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
-        return
-    try:
-        group = parallel_state.get_tensor_and_data_parallel_group(with_context_parallel=True)
-    except AssertionError:
-        return
-    if torch.distributed.get_world_size(group=group) <= 1:
-        return
-
-    if weight.is_cuda:
-        # NCCL requires CUDA tensors; pre-GPU construction relies on
-        # deterministic init matching across ranks.
-        src_rank = torch.distributed.get_global_rank(group, 0)
-        with torch.no_grad():
-            torch.distributed.broadcast(weight.data, src=src_rank, group=group)
-
-    def _all_reduce_grad(grad: torch.Tensor) -> torch.Tensor:
-        grad = grad.contiguous()
-        torch.distributed.all_reduce(grad, op=torch.distributed.ReduceOp.SUM, group=group)
-        return grad
-
-    weight.register_hook(_all_reduce_grad)
-
-
 class PackedPerExpertLinear(nn.Module):
     """Per-expert linear with a packed 3D weight ``[N_local, out, in]``.
 
@@ -2605,9 +2698,10 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
 
     The shared side is an ``is_expert=True`` ``ColumnParallelLinear`` (fc1)
     or ``RowParallelLinear`` (fc2): the TP group is ETP (ETP=1 → local
-    forward), DDP routes the weight through the EDP group, and the
-    logically-replicated cross-EP axis is covered by
-    :func:`_make_cross_ep_replicated`.
+    forward), DDP routes the weight through the EDP group, and
+    :func:`mark_expert_parallel_replicated` keeps the logically-replicated
+    cross-EP axis in sync (summed once per step by
+    :func:`allreduce_expert_parallel_replicated_grads`).
 
     The per-expert side is :class:`PackedPerExpertLinear` (packed 3D weight
     + :func:`torch._grouped_mm`) — kept as a single ``.weight`` Parameter so
@@ -2637,6 +2731,7 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         base_linear_is_parallel: bool = True,
         params_device: Optional[torch.device] = None,
         params_dtype: Optional[torch.dtype] = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         """Initialize shared-outer LoRA weights with one shared and one per-expert side."""
 
@@ -2657,6 +2752,9 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
             model_parallel_config = ModelParallelConfig()
         model_parallel_config.perform_initialization = True
         self.config = model_parallel_config
+
+        self.pg_collection = _get_pg_collection(pg_collection, model_parallel_config, required_pgs=["ep"])
+        self.ep_group = _get_process_group(self.pg_collection, "ep")
 
         # ``input_is_parallel`` selects fc1 (column-parallel base) vs fc2
         # (row-parallel base). Mirrors :class:`ParallelLinearAdapter` and
@@ -2712,10 +2810,10 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
         elif model_parallel_config.fp16:
             self.half()
 
-        # The shared weight is logically replicated across EP; close the gap
-        # that Megatron's expert-DDP routing leaves open.
+        # The shared weight is replicated across EP, which MCore's expert DDP does not cover.
         shared_weight = self.linear_in.weight if self._is_fc1 else self.linear_out.weight
-        _make_cross_ep_replicated(shared_weight)
+        _broadcast_shared_expert_weights([shared_weight], self.ep_group)
+        mark_expert_parallel_replicated(shared_weight, ep_group=self.ep_group)
 
     def forward(self, x: torch.Tensor, m_splits=None) -> torch.Tensor:
         """Forward. ``m_splits`` is the tokens-per-expert split passed through
