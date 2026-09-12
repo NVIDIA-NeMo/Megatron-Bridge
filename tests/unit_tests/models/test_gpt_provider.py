@@ -635,3 +635,95 @@ class TestGPTModelProvider:
 
         assert result == "te_spec_unsupported"
         assert "use_grouped_gemm_for_dense_mlp" not in captured
+
+
+class TestCallableSpecPpRank:
+    """Tests for forwarding pp_rank to callable transformer layer specs."""
+
+    @staticmethod
+    def _provider(**kwargs) -> GPTModelProvider:
+        return GPTModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            vocab_size=1000,
+            **kwargs,
+        )
+
+    def test_provide_forwards_pp_rank_resolved_from_the_pg_collection(self):
+        """A spec callable that accepts pp_rank receives the rank of _pg_collection.pp."""
+        captured: dict = {}
+
+        def spec_fn(config, vp_stage=None, pp_rank=None):
+            captured["vp_stage"] = vp_stage
+            captured["pp_rank"] = pp_rank
+            return "block_spec"
+
+        pp_group = object()
+        provider = self._provider(transformer_layer_spec=spec_fn)
+        provider._pg_collection = type("PG", (), {"pp": pp_group, "tp": object(), "cp": object()})()
+
+        with patch("megatron.bridge.models.gpt_provider.get_pg_rank", return_value=3) as mock_rank:
+            with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel"):
+                provider.provide(pre_process=True, post_process=True, vp_stage=1)
+
+        mock_rank.assert_called_once_with(pp_group)
+        assert captured["pp_rank"] == 3, "pp_rank must come from the provider's pipeline group"
+        assert captured["vp_stage"] == 1
+
+    def test_provide_omits_pp_rank_for_specs_that_do_not_accept_it(self):
+        """Regression: a spec callable without a pp_rank parameter is called unchanged."""
+        captured: dict = {}
+
+        def spec_fn(config, vp_stage=None):
+            captured["vp_stage"] = vp_stage
+            return "block_spec"
+
+        provider = self._provider(transformer_layer_spec=spec_fn)
+        provider._pg_collection = type("PG", (), {"pp": object(), "tp": object(), "cp": object()})()
+
+        with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel") as mock_model:
+            provider.provide(pre_process=True, post_process=True, vp_stage=2)
+
+        assert captured["vp_stage"] == 2
+        assert mock_model.call_args.kwargs["transformer_layer_spec"] == "block_spec"
+
+    def test_provide_omits_pp_rank_when_no_pg_collection_is_set(self):
+        """Without a process group collection the spec keeps its own pp_rank default."""
+        captured: dict = {}
+
+        def spec_fn(config, vp_stage=None, pp_rank="unset"):
+            captured["pp_rank"] = pp_rank
+            return "block_spec"
+
+        provider = self._provider(transformer_layer_spec=spec_fn)
+
+        with patch("megatron.bridge.models.gpt_provider.MCoreGPTModel"):
+            provider.provide(pre_process=True, post_process=True)
+
+        assert captured["pp_rank"] == "unset"
+
+    @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
+    def test_mtp_block_spec_forwards_pp_rank_to_callable_spec(self, mock_get_mtp):
+        """mtp_block_spec resolves pp_rank the same way when re-invoking the spec callable."""
+        from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+        captured: dict = {}
+        block_spec = Mock()
+        block_spec.layer_specs = ["layer_a"]
+
+        def spec_fn(config, vp_stage=None, pp_rank=None):
+            captured["pp_rank"] = pp_rank
+            return block_spec
+
+        pp_group = object()
+        provider = self._provider(mtp_num_layers=1, transformer_layer_spec=spec_fn)
+        provider._pg_collection = type("PG", (), {"pp": pp_group, "tp": object(), "cp": object()})()
+        mock_get_mtp.return_value = "mtp_spec"
+
+        with patch("megatron.bridge.models.gpt_provider.get_pg_rank", return_value=5) as mock_rank:
+            result = mtp_block_spec(provider, vp_stage=0)
+
+        mock_rank.assert_called_once_with(pp_group)
+        assert captured["pp_rank"] == 5
+        assert result == "mtp_spec"
