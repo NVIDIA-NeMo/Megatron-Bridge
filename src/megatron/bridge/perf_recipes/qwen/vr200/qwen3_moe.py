@@ -14,17 +14,14 @@
 """VR200 performance recipes for Qwen3 MoE."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
-from megatron.bridge.perf_recipes.qwen.common import (
-    ConfigContainer,
-    _perf_precision,
-)
+from megatron.bridge.perf_recipes.qwen.common import ConfigContainer
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
 )
 
 
@@ -85,11 +82,8 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """Qwen3 235B A22B pretrain: 256× VR200, NVFP4 (alias of GB300)."""
-    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
-    cfg.mixed_precision = _perf_precision("nvfp4")
-    cfg.comm_overlap.tp_comm_overlap = False
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    """Qwen3 235B A22B pretrain: 256× VR200, NVFP4, full-iteration CG and A2A overlap."""
+    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config()
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -99,7 +93,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -108,7 +102,9 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
