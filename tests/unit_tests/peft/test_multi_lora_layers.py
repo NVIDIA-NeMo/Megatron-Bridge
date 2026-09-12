@@ -40,6 +40,7 @@ Single-GPU integration (needs CUDA + model-parallel init):
 
 import os
 from contextlib import ExitStack, nullcontext
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -293,6 +294,19 @@ class TestMultiLoRALinearSlots:
         assert layer.tokens_per_adapter_splits is None
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
+
+    def test_constructor_without_wrapped_parameters_uses_config_dtype(self) -> None:
+        """A tied output layer owns no weight; slot buffers fall back to the config dtype."""
+        base = nn.Module()
+        base.in_features, base.out_features = 16, 32
+        base.config = SimpleNamespace(params_dtype=torch.bfloat16)
+        assert next(base.parameters(), None) is None
+
+        layer = MultiLoRALinear(to_wrap=base, n_adapters=2, dim=8, alpha=16, full_name="output_layer")
+
+        assert layer.alpha_values.dtype == torch.bfloat16
+        assert layer.rank_values.dtype == torch.bfloat16
+        assert layer.alpha_values.device.type == ("cuda" if torch.cuda.is_available() else "cpu")
 
     def test_constructor_forwards_wrapped_module_runtime_config(self) -> None:
         """Adapter construction mirrors the single-LoRA path (LoRA.transform)."""
