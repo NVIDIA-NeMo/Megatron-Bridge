@@ -276,6 +276,14 @@ def _resolve_pretrained_wrapper_cls(
     return PreTrainedCausalLM
 
 
+def _get_architecture_class_name_via_auto_map(config: Any, architecture: str) -> str | None:
+    """Return the model class from a Hugging Face ``auto_map`` when applicable."""
+    if architecture.endswith("ForTokenClassification"):
+        return None
+
+    return get_causal_lm_class_name_via_auto_map(config=config)
+
+
 def _drop_readonly_config_properties(
     config_dict: dict[str, object], config_type: Type[PretrainedConfig]
 ) -> dict[str, object]:
@@ -2274,7 +2282,7 @@ class AutoBridge(Generic[MegatronModelT]):
             )
 
         # Try auto_map first (returns class name string if available)
-        cls_name = get_causal_lm_class_name_via_auto_map(config=config)
+        cls_name = _get_architecture_class_name_via_auto_map(config, causal_lm_arch)
         if cls_name is not None:
             # For auto_map models, return the class name as a string
             return cls_name
@@ -2314,7 +2322,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if architecture:
             # Try auto_map first; returns a class-name string if available
-            arch_name = get_causal_lm_class_name_via_auto_map(config=config)
+            arch_name = _get_architecture_class_name_via_auto_map(config, architecture)
             if arch_name is not None:
                 # For auto_map models, use class-name string
                 arch_key = arch_name
