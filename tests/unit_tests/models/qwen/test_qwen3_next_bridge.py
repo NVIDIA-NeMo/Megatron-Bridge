@@ -433,6 +433,35 @@ class TestQwen3NextBridge:
         assert "mtp.norm.weight" in hf_params
         assert "mtp.layers.0.final_layernorm.weight" in megatron_params
 
+    def test_mapping_registry_mtp_layer_spellings(self):
+        """Every MTP sub-layer mapping is registered under both Megatron-Core spellings."""
+        bridge = Qwen3NextBridge()
+
+        registry = bridge.mapping_registry()
+
+        megatron_params = [mapping.megatron_param for mapping in registry.mappings]
+        for layer_attr in ("mtp_model_layer", "transformer_layer"):
+            for suffix in (
+                "mlp.router.weight",
+                "pre_mlp_layernorm.weight",
+                "self_attention.linear_qkv.layer_norm_weight",
+                "self_attention.q_layernorm.weight",
+                "self_attention.k_layernorm.weight",
+                "self_attention.linear_proj.weight",
+                "mlp.shared_experts.gate_weight",
+            ):
+                assert f"mtp.layers.0.{layer_attr}.{suffix}" in megatron_params
+            for suffix in (
+                "self_attention.linear_qkv.weight",
+                "mlp.experts.linear_fc1.weight*",
+                "mlp.experts.linear_fc2.weight*",
+                "mlp.experts.local_experts.*.linear_fc1.weight",
+                "mlp.experts.local_experts.*.linear_fc2.weight",
+                "mlp.shared_experts.linear_fc1.weight",
+                "mlp.shared_experts.linear_fc2.weight",
+            ):
+                assert f"mtp.layers.*.{layer_attr}.{suffix}" in megatron_params
+
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
         bridge = Qwen3NextBridge()
