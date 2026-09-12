@@ -162,9 +162,11 @@ The durable constraints for packed sequences in Bridge are:
   worker; it is not a byte cache or a packed-sequence length
 - Energon native packing and collator-owned `enable_in_batch_packing=True` are
   mutually exclusive
-- Energon native packing does not currently support MTP, CUDA graphs, Qwen3-VL
-  DistTrain, or pipeline parallelism; requested MoE expert-parallel communication
-  overlap is disabled with a warning so training uses the non-overlapped path
+- Energon native packing does not currently support CUDA graphs, Qwen3-VL
+  DistTrain, or pipeline parallelism; MTP is supported via MCore's packed
+  sequence boundary-aware token rolling; requested MoE expert-parallel
+  communication overlap is disabled with a warning so training uses the
+  non-overlapped path
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
 - GPT-SFT and Direct-HF sequence length must also satisfy the LCM of the training and
