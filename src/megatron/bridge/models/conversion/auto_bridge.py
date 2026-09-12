@@ -884,6 +884,7 @@ class AutoBridge(Generic[MegatronModelT]):
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
+        collapse_shared_experts: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -905,6 +906,12 @@ class AutoBridge(Generic[MegatronModelT]):
                 (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
                 down_proj), instead of the per-expert 2D ``pack_moe`` layout.
                 Default ``False``; no effect for non-shared-outer adapters.
+            collapse_shared_experts: For grouped-expert adapters shared by every expert
+                (``share_expert_adapters=True``) that export under a packed HF expert name
+                (e.g. GPT-OSS ``experts.gate_up_proj``), emit the shared lora_A/lora_B once as
+                ``[1, ...]`` tensors (SGLang shared-LoRA layout) instead of replicating them
+                into a ``[num_experts, ...]`` stack. Default ``False``; no effect on per-expert
+                or shared-outer adapters.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
@@ -923,6 +930,7 @@ class AutoBridge(Generic[MegatronModelT]):
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
             stack_3d_moe=stack_3d_moe,
+            collapse_shared_experts=collapse_shared_experts,
         )
 
     def save_hf_adapter(

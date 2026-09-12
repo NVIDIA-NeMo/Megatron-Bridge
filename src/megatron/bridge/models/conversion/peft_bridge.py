@@ -855,6 +855,7 @@ class MegatronPeftBridge:
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
+        collapse_shared_experts: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors.
 
@@ -867,6 +868,13 @@ class MegatronPeftBridge:
         for gate_up_proj, bare ``...experts`` for down_proj), instead of the per-expert
         2D ``pack_moe`` layout. It is the vLLM-3D-MoE analogue of ``expand_shared_outer``
         and takes precedence over it for shared-outer adapters.
+
+        ``collapse_shared_experts`` applies to grouped-expert adapters whose lora_A *and*
+        lora_B are both 2D, i.e. one adapter shared by every expert
+        (``share_expert_adapters=True``) exported under a packed HF expert name such as
+        GPT-OSS ``...experts.gate_up_proj``. By default that adapter is replicated into a
+        ``[num_experts, ...]`` stack; with the flag it is emitted once as a ``[1, ...]``
+        tensor (the SGLang shared-LoRA layout also used for shared-outer adapters).
         """
         from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
@@ -940,6 +948,33 @@ class MegatronPeftBridge:
 
             if packed_expert:
                 linear_in_hf_names, linear_out_hf_names = self._build_lora_hf_names(base_hf_weight_names)
+                if collapse_shared_experts and linear_in_tensor.ndim == 2 and linear_out_tensor.ndim == 2:
+                    # One 2D A/B pair serves every expert (kept identical across EP ranks by the
+                    # shared-adapter sync), so emit it once as [1, ...] instead of replicating
+                    # it num_moe_experts times. A fused gate/up linear_out is still split per HF
+                    # projection name through the packed-expert builder (single expert).
+                    shared_linear_in = linear_in_tensor.unsqueeze(0)
+                    if adapter_task.adapter_key is None:
+                        shared_linear_out_by_base = self._build_packed_expert_linear_out_by_base(
+                            megatron_model,
+                            base_hf_weight_names,
+                            [linear_out_tensor],
+                            is_expert=is_expert_linear(adapter_task.global_base_prefix),
+                        )
+                    else:
+                        shared_linear_out_by_base = {
+                            base_name: linear_out_tensor.unsqueeze(0) for base_name in base_hf_weight_names
+                        }
+                    if cpu:
+                        shared_linear_in = shared_linear_in.cpu()
+                    for index, base_name in enumerate(base_hf_weight_names):
+                        shared_linear_out = shared_linear_out_by_base[base_name]
+                        if cpu:
+                            shared_linear_out = shared_linear_out.cpu()
+                        yield HFWeightTuple(linear_in_hf_names[index], shared_linear_in)
+                        yield HFWeightTuple(linear_out_hf_names[index], shared_linear_out)
+                    continue
+
                 per_expert_linear_in, per_expert_linear_out = self._collect_packed_expert_adapter_tensors(
                     linear_in_tensor,
                     linear_out_tensor,
