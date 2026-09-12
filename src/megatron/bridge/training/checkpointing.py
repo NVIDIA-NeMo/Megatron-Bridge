@@ -2465,14 +2465,16 @@ def _load_model_weights_from_checkpoint(
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
         load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
-    state_dict = dist_checkpointing.load(
+    load_result = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
+    # MCore's return_* strictness modes append missing and unexpected key sets.
+    state_dict = load_result[0] if isinstance(load_result, tuple) else load_result
     # we keep weights only for bridge use, remove extra state
     # because they are not needed and could cause unexpected issues.
     delete_extra_state(state_dict)
     if return_state_dict:
-        return state_dict
+        return load_result
 
     if len(model) == 1:
         _load_model_state_dict(model[0], state_dict["model"], strict)
@@ -3750,6 +3752,9 @@ def _load_global_dist_base_checkpoint(
         strict=ckpt_cfg.dist_ckpt_strictness,
         validate_access_integrity=validate_sharding_integrity,
     )
+    # MCore's return_* strictness modes append missing and unexpected key sets.
+    if isinstance(state_dict, tuple):
+        state_dict = state_dict[0]
     return state_dict, checkpoint_name, release, CheckpointType.GLOBAL
 
 
