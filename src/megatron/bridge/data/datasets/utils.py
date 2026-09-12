@@ -55,35 +55,73 @@ GENERATION_REGEX: Pattern[str] = re.compile(r"\{%-?\s+generation\s+-?%\}")
 __idx_version__: str = "0.2"  # index file version
 __idx_suffix__: str = "idx"  # index file suffix
 
+_MEMMAP_INDEX_CHUNK_SIZE: int = 64 * 1024 * 1024
+
 
 def build_index_from_memdata(fn, newline_int):
     """
     Build index of delimiter positions between samples in memmap.
-    Can be provided externally.
 
-    Returns a 1D array of ints.
+    The input file is scanned in fixed-size chunks to avoid allocating
+    temporary arrays proportional to the full file size.
+
+    Returns:
+        A 1D NumPy array containing delimiter positions.
     """
-    # use memmap to read file
+    # Use memmap to read the file without loading the entire file into memory.
     if MultiStorageClientFeature.is_enabled():
         msc = MultiStorageClientFeature.import_package()
         mdata = msc.numpy.memmap(fn, dtype=np.uint8, mode="r")
     else:
         mdata = np.memmap(fn, dtype=np.uint8, mode="r")
-    # find newline positions
-    midx = np.where(mdata == newline_int)[0]
-    midx_dtype = midx.dtype
-    # make sure to account for all data
-    midx = midx.tolist()
-    # add last item in case there is no new-line at the end of the file
-    if (len(midx) == 0) or (midx[-1] + 1 != len(mdata)):
-        midx = midx + [len(mdata) + 1]
 
-    # remove empty lines from end of file
-    while len(midx) > 1 and (midx[-1] - midx[-2]) < 2:
-        midx.pop(-1)
-    midx = np.asarray(midx, dtype=midx_dtype)
+    data_size = len(mdata)
 
-    # free memmap
+    # First pass: count delimiters in bounded-size chunks.
+    num_newlines = 0
+
+    for start in range(0, data_size, _MEMMAP_INDEX_CHUNK_SIZE):
+        chunk = mdata[start : start + _MEMMAP_INDEX_CHUNK_SIZE]
+        num_newlines += np.count_nonzero(chunk == newline_int)
+
+    # Add an EOF sentinel when the file does not end with a newline.
+    needs_eof = int(mdata[-1]) != newline_int
+
+    # Preallocate the exact-size index array.
+    midx = np.empty(
+        num_newlines + int(needs_eof),
+        dtype=np.intp,
+    )
+
+    # Second pass: fill the preallocated array with delimiter positions.
+    offset = 0
+
+    for start in range(0, data_size, _MEMMAP_INDEX_CHUNK_SIZE):
+        chunk = mdata[start : start + _MEMMAP_INDEX_CHUNK_SIZE]
+
+        # Find delimiter positions within this chunk.
+        local_midx = np.flatnonzero(chunk == newline_int)
+        num_found = len(local_midx)
+
+        if num_found:
+            # Shift local positions by the chunk offset to get global positions.
+            midx[offset : offset + num_found] = local_midx + start
+            offset += num_found
+
+    if needs_eof:
+        # Sentinel one past the end of file.
+        midx[offset] = data_size + 1
+
+    # Remove trailing empty lines: when two consecutive delimiters are
+    # adjacent (gap < 2), the last one represents an empty line at EOF.
+    end = len(midx)
+
+    while end > 1 and (midx[end - 1] - midx[end - 2]) < 2:
+        end -= 1
+
+    midx = midx[:end]
+
+    # Free memmap
     mdata._mmap.close()
     del mdata
 
