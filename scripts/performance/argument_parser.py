@@ -681,6 +681,99 @@ def parse_cli_args():
         default=None,
     )
 
+    # Nvcre
+    nvcre_args = parser.add_argument_group("Nvcre arguments")
+    nvcre_args.add_argument(
+        "--nvcre_namespace",
+        type=str,
+        help="Kubernetes namespace for Nvcre WorkloadRun. When set, uses the Nvcre executor instead of Slurm.",
+        required=False,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_image_pull_secret",
+        type=str,
+        help="Kubernetes image pull secret name for pulling the container image.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir to the cluster before launch.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod.",
+        default="/nemo_run",
+        required=False,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_workdir_local_path",
+        type=str,
+        help="Local directory rsynced into the workdir PVC before launch.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_node_selector_json",
+        type=str,
+        help="JSON-encoded dict of node selector labels for targeting specific nodes.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_volumes_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Volume dicts.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_volume_mounts_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes VolumeMount dicts.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_timeout_per_job",
+        type=str,
+        help="Per-job timeout passed to Nvcre orchestration (e.g. '24h').",
+        required=False,
+        default="24h",
+    )
+    nvcre_args.add_argument(
+        "--nvcre_test_scale",
+        type=str,
+        help="Nvcre test scale: 'intra-node', 'intra-rack', or 'full-scale'.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_kubeconfig",
+        type=str,
+        help="Path to kubeconfig file for nvcrectl/kubectl.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_kube_context",
+        type=str,
+        help="Kubernetes context to use with nvcrectl/kubectl.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_gang_scheduler_name",
+        type=str,
+        help="Gang scheduler name for the WorkloadRun (e.g. 'kai-scheduler').",
+        required=False,
+        default=None,
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(

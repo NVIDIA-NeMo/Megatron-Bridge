@@ -361,3 +361,42 @@ def kubeflow_executor(
         packager=run.GitArchivePackager(include_submodules=True),
     )
     return executor
+
+
+def nvcre_executor(
+    namespace: str,
+    image: str,
+    num_nodes: int,
+    gpus_per_node: int,
+    image_pull_secret: Optional[str] = None,
+    workdir_pvc: Optional[str] = None,
+    workdir_pvc_path: str = "/nemo_run",
+    workdir_local_path: Optional[str] = None,
+    node_selector: Optional[dict] = None,
+    volumes: Optional[list] = None,
+    volume_mounts: Optional[list] = None,
+    timeout_per_job: str = "24h",
+    test_scale: Optional[str] = None,
+    kubeconfig: Optional[str] = None,
+    kube_context: Optional[str] = None,
+    gang_scheduler_name: Optional[str] = None,
+):
+    from nemo_run.core.execution.nvcre import NvcreExecutor
+    return NvcreExecutor(
+        namespace=namespace,
+        container_image=image,
+        num_nodes=num_nodes,
+        gpus_per_node=gpus_per_node,
+        image_pull_secret=image_pull_secret,
+        node_selector=node_selector or {},
+        workdir_pvc=workdir_pvc,
+        workdir_pvc_path=workdir_pvc_path,
+        workdir_local_path=workdir_local_path,
+        volumes=volumes or [],
+        volume_mounts=volume_mounts or [],
+        timeout_per_job=timeout_per_job,
+        test_scale=test_scale,
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        gang_scheduler_name=gang_scheduler_name,
+    )
