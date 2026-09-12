@@ -306,6 +306,21 @@ class TestMultiLoRALinearSlots:
             assert adapter.extra_kwargs["disable_tensor_parallel_comm"] is False
             assert adapter.extra_kwargs["base_linear_is_parallel"] is True
 
+    def test_constructor_accepts_parameterless_wrapped_module(self) -> None:
+        """Tied output layers receive their shared weight at forward time."""
+        base = nn.Module()
+        base.in_features = 16
+        base.out_features = 32
+        base.config = object()
+
+        layer = MultiLoRALinear(to_wrap=base, n_adapters=2, dim=8, alpha=16, full_name="output_layer")
+
+        adapter_reference = next(layer.adapters.parameters())
+        assert layer.alpha_values.device == adapter_reference.device
+        assert layer.alpha_values.dtype == adapter_reference.dtype
+        assert layer.rank_values.device == adapter_reference.device
+        assert layer.rank_values.dtype == adapter_reference.dtype
+
     def test_slot_metadata_registered_as_buffers(self) -> None:
         layer = _build_multi_lora_linear(n_adapters=2, dim=8)
 
