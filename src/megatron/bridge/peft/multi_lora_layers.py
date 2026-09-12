@@ -212,18 +212,17 @@ class MultiLoRALinear(AdapterWrapper):
         # forward never synchronizes each layer to recover split sizes.
         self.tokens_per_adapter_splits: Optional[Tuple[int, ...]] = None
         self.tokens_per_adapter_total: Optional[int] = None
-        # A tied output layer (``skip_weight_param_allocation=True``) owns no
-        # weight -- it forwards the shared embedding weight per call -- so there
-        # is no parameter to read device/dtype from; fall back to the wrapped
-        # module's model-parallel config.
+        # The buffers live where the adapters just built above live: that follows the
+        # active construction context (CPU initialization with a visible GPU, a
+        # ``torch.device("meta")`` build, or the accelerator), and it also covers a
+        # tied output layer (``skip_weight_param_allocation=True``) that owns no
+        # weight of its own. The dtype stays the compute dtype -- the wrapped weight's
+        # when there is one, else the model-parallel config's ``params_dtype`` -- because
+        # the adapters may still be fp32 here and the alpha/rank scaling must never
+        # promote the activation dtype.
+        device = next(self.adapters.parameters()).device
         reference = next(to_wrap.parameters(), None)
-        if reference is not None:
-            device, dtype = reference.device, reference.dtype
-        else:
-            dtype = to_wrap.config.params_dtype
-            device = (
-                torch.device("cuda", torch.cuda.current_device()) if torch.cuda.is_available() else torch.device("cpu")
-            )
+        dtype = reference.dtype if reference is not None else to_wrap.config.params_dtype
         # Non-persistent: slot lifecycle is externally managed, not checkpointed.
         self.register_buffer("alpha_values", torch.ones(n_adapters, dtype=dtype, device=device), persistent=False)
         self.register_buffer(
