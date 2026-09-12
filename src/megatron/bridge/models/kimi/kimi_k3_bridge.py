@@ -271,9 +271,20 @@ class KimiK3Bridge(MegatronModelBridge):
         if packed_key and packed_key in hf_state_dict:
             if scale_key not in hf_state_dict:
                 raise ValueError(f"Missing MXFP4 scale for {packed_key}")
+            # AutoBridge.from_hf_pretrained loads HF state dicts on CPU. Under
+            # the distributed GPU conversion backend, dequantize on the
+            # current CUDA device instead so this doesn't become a CPU-bound
+            # bottleneck for the whole conversion; the single-process CPU
+            # backend (which never initializes a process group) is unaffected.
+            device = (
+                torch.device("cuda", torch.cuda.current_device())
+                if torch.cuda.is_available() and torch.distributed.is_initialized()
+                else None
+            )
             return quantization_utils.dequantize_mxfp4_e2m1_packed(
                 hf_state_dict[packed_key],
                 hf_state_dict[scale_key],
+                device=device,
             )
         return hf_state_dict[name]
 
