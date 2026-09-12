@@ -1,3 +1,4 @@
 [submodule "3rdparty/Megatron-LM"]
 	path = 3rdparty/Megatron-LM
-	url = https://github.com/NVIDIA/Megatron-LM.git
+	url = https://github.com/ehosseiniasl/Megatron-LM.git
+	branch = ehsan/super35-0912-video-r3-mcore-pr6912-7278-7279
