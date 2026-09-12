@@ -563,6 +563,40 @@ class TestNemotronHBridgeMegatronToHFConfig:
         assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
         assert hf_cfg["num_nextn_predict_layers"] == 2
 
+    @pytest.mark.parametrize(
+        ("mtp_use_repeated_layer", "expected_num_nextn_predict_layers"),
+        [(True, 1), (False, 2)],
+    )
+    def test_megatron_to_hf_config_exports_physical_mtp_layer_count(
+        self,
+        mtp_use_repeated_layer,
+        expected_num_nextn_predict_layers,
+    ):
+        """Export shared and independent MTP modules at their physical depths."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME/*E/*E",
+            mtp_num_layers=2,
+            mtp_use_repeated_layer=mtp_use_repeated_layer,
+        )
+
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["hybrid_override_pattern"] == "MEME"
+        assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
+        assert hf_cfg["num_nextn_predict_layers"] == expected_num_nextn_predict_layers
+
+    def test_megatron_to_hf_config_disables_mtp_with_zero_physical_layers(self):
+        """Export zero physical MTP layers when MTP is disabled."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME",
+            mtp_num_layers=0,
+            mtp_use_repeated_layer=False,
+        )
+
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["num_nextn_predict_layers"] == 0
+
     def test_megatron_to_hf_config_rejects_unknown_main_pattern_characters(self):
         """Preserve validation for unknown main hybrid_override_pattern characters."""
         provider = SimpleNamespace(
