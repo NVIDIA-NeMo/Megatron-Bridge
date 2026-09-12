@@ -220,6 +220,47 @@ def test_offline_packing_consumes_one_blended_raw_dataset(tmp_path, monkeypatch)
     assert blend.weights == (3.0, 1.0)
 
 
+def test_cached_offline_packing_does_not_forward_chat_template(tmp_path, monkeypatch):
+    """Preparation-only chat templates must not reach the packed dataset constructor."""
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: tmp_path / "cache" / name)
+    train_a = tmp_path / "train-a.jsonl"
+    train_b = tmp_path / "train-b.jsonl"
+    for path in (train_a, train_b):
+        path.write_text('{"messages": []}\n')
+    args_path = tmp_path / "per-split.json"
+    args_path.write_text(json.dumps({"train": [str(train_a), str(train_b)]}))
+
+    builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            seq_length=128,
+            per_split_data_source_manifest_path=args_path,
+            preprocessing=ChatSFTPreprocessingConfig(),
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
+                packed_sequence_size=128,
+                tokenizer_model_name="mock-tokenizer",
+            ),
+            dataset_kwargs={"chat_template": "{{ messages }}"},
+            do_validation=False,
+            do_test=False,
+        ),
+        tokenizer=MagicMock(),
+    )
+    builder.train_path_packed.touch()
+    packed_dataset = object()
+
+    def build_packed_dataset(**kwargs):
+        assert "chat_template" not in kwargs
+        return packed_dataset
+
+    monkeypatch.setattr(
+        "megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset",
+        build_packed_dataset,
+    )
+
+    assert builder.build() == [packed_dataset, None, None]
+
+
 def test_offline_packing_materializes_one_weighted_blend_parquet(tmp_path, monkeypatch):
     monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: tmp_path / "cache" / name)
 
