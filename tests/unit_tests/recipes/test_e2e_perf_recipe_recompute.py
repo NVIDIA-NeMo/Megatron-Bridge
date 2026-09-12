@@ -61,7 +61,6 @@ _E2E_NO_RECOMPUTE_RECIPES = (
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
 )
 
@@ -77,3 +76,8 @@ def test_e2e_perf_recipes_disable_unneeded_recompute(
 ) -> None:
     """E2E benchmark recipes do not inherit the implicit core-attention default."""
     assert recipe_factory().model.recompute_modules == []
+
+
+def test_nemotron_3_5_lightning_gb300_bf16_keeps_recompute_enabled() -> None:
+    """The CUDA-graph workload keeps recompute enabled to avoid capture OOM."""
+    assert nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config().model.recompute_modules is None

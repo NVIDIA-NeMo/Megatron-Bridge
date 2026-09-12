@@ -568,7 +568,6 @@ def nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× GB300, BF16."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb300_bf16_config()
-    cfg.model.recompute_modules = []
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
