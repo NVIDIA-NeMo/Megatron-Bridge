@@ -13,6 +13,23 @@ from megatron.bridge.training.megatron_mimo_step import resolve_step_packing
 class TestLossFunc:
     """Test cases for loss_func()."""
 
+    def test_loss_rejects_nan_by_default(self):
+        """The stock MIMO loss should honor the default non-finite loss guard."""
+        from megatron.core.rerun_state_machine import destroy_rerun_state_machine, initialize_rerun_state_machine
+
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        destroy_rerun_state_machine()
+        initialize_rerun_state_machine()
+        try:
+            with (
+                patch("torch.cuda.current_device", return_value=0),
+                pytest.raises(RuntimeError, match="Unexpected result"),
+            ):
+                loss_func(torch.ones(2), torch.tensor([1.0, float("nan")]))
+        finally:
+            destroy_rerun_state_machine()
+
     def test_loss_computation(self):
         """Test loss is computed correctly with mask."""
         from megatron.bridge.training.megatron_mimo_step import loss_func
@@ -53,6 +70,19 @@ class TestLossFunc:
 
         assert total_loss.item() == 0.0
         assert num_tokens.item() == 0
+
+    def test_loss_with_noncontiguous_mask(self):
+        """The shared loss helper should preserve the MIMO loss mask contract."""
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        output_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        loss_mask = torch.tensor([[1.0, 0.0], [1.0, 0.0]]).T
+
+        assert not loss_mask.is_contiguous()
+        total_loss, num_tokens, _ = loss_func(loss_mask, output_tensor)
+
+        assert total_loss.item() == 3.0
+        assert num_tokens.item() == 2
 
 
 class TestGetBatch:
