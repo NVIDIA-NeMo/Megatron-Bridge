@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 from types import SimpleNamespace
 from typing import Any
 
-from megatron.core.models.bagel.bagel_mimo import BagelMimoModel
 from transformers import AutoConfig, PretrainedConfig
 
 from megatron.bridge.models.bagel.checkpoint import initialize_bagel_from_native_checkpoint
@@ -56,12 +56,6 @@ class BagelConfig(PretrainedConfig):
 AutoConfig.register("bagel", BagelConfig, exist_ok=True)
 
 
-@MegatronModelBridge.register_bridge(
-    source="BagelForConditionalGeneration",
-    target=BagelMimoModel,
-    provider=BagelModelProvider,
-    model_type="bagel",
-)
 class BagelBridge(MegatronModelBridge):
     """Import official BAGEL tensors with the strict native checkpoint mapper."""
 
@@ -122,3 +116,17 @@ class BagelBridge(MegatronModelBridge):
             report.fp32_main_tensors_preserved,
         )
         return models
+
+
+if (
+    importlib.util.find_spec("megatron.core.models.bagel") is not None
+    and importlib.util.find_spec("megatron.core.models.bagel.bagel_mimo") is not None
+):
+    from megatron.core.models.bagel.bagel_mimo import BagelMimoModel
+
+    MegatronModelBridge.register_bridge(
+        source="BagelForConditionalGeneration",
+        target=BagelMimoModel,
+        provider=BagelModelProvider,
+        model_type="bagel",
+    )(BagelBridge)
