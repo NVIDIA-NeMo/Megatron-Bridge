@@ -24,7 +24,7 @@ from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, get_model_bridge
+from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
@@ -406,6 +406,27 @@ def test_nemotron_omni_export_preserves_source_only_buffers():
     assert exported_buffers.keys() == source_tensors.keys()
     for name, source_tensor in source_tensors.items():
         assert torch.equal(exported_buffers[name], source_tensor)
+
+
+def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sourceless():
+    bridge = NemotronOmniBridge()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    source_tensors = {
+        name: torch.full((2,), index, dtype=torch.float32) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)
+    }
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = ["language_model.weight", *source_tensors]
+    hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
+    converted = HFSourcedWeightTuple("language_model.weight", torch.ones(1), ("decoder.weight",))
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])) as stream:
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained, with_megatron_names=True))
+
+    assert stream.call_args.kwargs["with_megatron_names"] is True
+    assert exported[0] == converted
+    assert all(type(item) is HFSourcedWeightTuple for item in exported[1:])
+    assert {item.param_name for item in exported[1:]} == set(source_tensors)
+    assert all(item.megatron_param_names == () and item.megatron_param_name is None for item in exported[1:])
 
 
 def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):

@@ -855,11 +855,17 @@ class MegatronPeftBridge:
         hf_name: str,
         tensor: torch.Tensor,
     ) -> "HFWeightTuple":
-        """Build the exported tuple, attaching the source Megatron name only when requested."""
+        """Build the exported tuple, attaching the source Megatron name only when requested.
+
+        Adapter weights always come from exactly one Megatron parameter, so the sourced tuple
+        carries a one-element ``megatron_param_names``; a missing source (not expected on any
+        current path) is reported as an empty tuple rather than silently dropping the flag.
+        """
         from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple
 
-        if with_megatron_names and megatron_param_name is not None:
-            return HFSourcedWeightTuple(hf_name, tensor, megatron_param_name)
+        if with_megatron_names:
+            sources = (megatron_param_name,) if megatron_param_name is not None else ()
+            return HFSourcedWeightTuple(hf_name, tensor, sources)
         return HFWeightTuple(hf_name, tensor)
 
     def stream_adapter_weights_megatron_to_hf(
@@ -885,8 +891,9 @@ class MegatronPeftBridge:
         and takes precedence over it for shared-outer adapters.
 
         ``with_megatron_names`` yields :class:`HFSourcedWeightTuple` values whose
-        ``megatron_param_name`` is the adapter's ``linear_in`` (lora_A) or ``linear_out``
-        (lora_B) Megatron weight name; the default keeps two-field :class:`HFWeightTuple`.
+        ``megatron_param_names`` is the one-element tuple holding the adapter's ``linear_in``
+        (lora_A) or ``linear_out`` (lora_B) Megatron weight name; the default keeps the
+        two-field :class:`HFWeightTuple`.
         """
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]

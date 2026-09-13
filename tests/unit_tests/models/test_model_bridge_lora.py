@@ -1283,8 +1283,10 @@ def test_stream_adapter_weights_megatron_to_hf_with_megatron_names(monkeypatch):
     )
     assert [type(w) for w in sourced] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
     assert sourced[0].param_name.endswith("lora_A.weight")
+    assert sourced[0].megatron_param_names == ("decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight",)
     assert sourced[0].megatron_param_name == "decoder.layers.0.mlp.linear_fc1.adapter.linear_in.weight"
     assert sourced[1].param_name.endswith("lora_B.weight")
+    assert sourced[1].megatron_param_names == ("decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight",)
     assert sourced[1].megatron_param_name == "decoder.layers.0.mlp.linear_fc1.adapter.linear_out.weight"
     torch.testing.assert_close(sourced[0].weight, torch.ones(2, 2))
     torch.testing.assert_close(sourced[1].weight, 2 * torch.ones(2, 2))
