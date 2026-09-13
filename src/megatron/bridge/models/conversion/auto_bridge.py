@@ -934,12 +934,14 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        allow_serving_layout: bool = False,
     ) -> None:
         """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
 
         The output directory contains ``adapter_config.json`` and
         ``adapter_model.safetensors`` and can be loaded directly with
-        ``peft.PeftModel.from_pretrained(base_model, path)``.
+        ``peft.PeftModel.from_pretrained(base_model, path)`` -- except when
+        ``allow_serving_layout`` is used, which writes a serving-only layout.
 
         Args:
             model: Megatron model instance or list of instances.
@@ -952,8 +954,15 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress: Display progress bar during export.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
-            expand_shared_outer: Replicate the shared factor across experts under per-expert
-                names (vLLM 2D ``pack_moe``). Default ``False`` keeps the PEFT shared ``[1, ...]`` layout.
+            expand_shared_outer: Replicate the shared factor of a shared-outer MoE LoRA across
+                experts under per-expert names (vLLM 2D ``pack_moe``); this is the PEFT-loadable
+                form of such an adapter. Default ``False`` keeps the shared ``[1, ...]`` factor as
+                exported, which then requires ``allow_serving_layout``.
+            allow_serving_layout: Write shared-outer MoE LoRA pairs in the serving layout (the
+                shared factor once as ``[1, ...]`` under the expert-agnostic name, next to its
+                per-expert partner) instead of raising. Serving stacks keyed on the leading
+                expert dim (SGLang ``experts_shared_outer_loras``) read this layout; it is not
+                loadable by ``PeftModel.from_pretrained``. Default ``False``.
 
         Example:
             >>> bridge.save_hf_adapter(
@@ -1004,6 +1013,7 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
             raw_adapter_weights,
+            allow_serving_layout=allow_serving_layout,
         )
         rank_pattern = infer_rank_pattern_from_adapter_weights(
             raw_adapter_weights,

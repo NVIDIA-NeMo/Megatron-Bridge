@@ -1586,33 +1586,110 @@ class MegatronPeftBridge:
 _HF_LORA_SUFFIXES = (".lora_A.weight", ".lora_B.weight")
 
 
-def _is_shared_outer_expert_export(
+# Expert projections on which a shared-outer MoE LoRA shares lora_A (the first expert
+# linear: gate/up) or lora_B (the second: down). ``base_layer`` / ``experts`` are the
+# expert-agnostic stems the vLLM 3D-MoE layout uses for gate_up / down respectively.
+_SHARED_OUTER_LORA_A_PROJECTIONS = frozenset(
+    {"gate_proj", "up_proj", "gate_up_proj", "w1", "w3", "linear_fc1", "fc1", "base_layer"}
+)
+_SHARED_OUTER_LORA_B_PROJECTIONS = frozenset({"down_proj", "w2", "linear_fc2", "fc2", "experts"})
+
+
+def _is_expert_adapter_base_name(base_name: str) -> bool:
+    """Return whether an HF LoRA base name addresses a routed-expert projection."""
+    return base_name.endswith(".experts") or ".experts." in base_name
+
+
+def _expected_shared_outer_side(base_name: str) -> Optional[str]:
+    """Return the LoRA suffix a shared-outer adapter shares for this projection, if known."""
+    projection = base_name.rsplit(".", 1)[-1]
+    if projection in _SHARED_OUTER_LORA_A_PROJECTIONS:
+        return ".lora_A.weight"
+    if projection in _SHARED_OUTER_LORA_B_PROJECTIONS:
+        return ".lora_B.weight"
+    return None
+
+
+def _lora_rank_of(lora_suffix: str, tensor: torch.Tensor) -> int:
+    """Rank axis of an exported LoRA factor: ``[.., r, in]`` for lora_A, ``[.., out, r]`` for lora_B."""
+    return int(tensor.shape[-2] if lora_suffix == ".lora_A.weight" else tensor.shape[-1])
+
+
+def _classify_shared_outer_expert_export(
     base_name: str,
     weights: Dict[str, torch.Tensor],
-    module_weight_names: List[str],
-) -> bool:
-    """Return whether a 3D adapter export is one side of a shared-outer MoE LoRA.
+    module_weights: Dict[str, torch.Tensor],
+) -> Optional[str]:
+    """Return the shared LoRA suffix of a shared-outer MoE LoRA export, or ``None`` otherwise.
 
-    Shared-outer expert LoRA exports its shared factor once as a ``[1, ...]`` tensor
-    under the expert-agnostic HF name. Its per-expert partner is emitted either as
-    numbered 2D slices (``...experts.N.<proj>``, the default layout) or as an
-    ``[E, ...]`` stack under the same expert-agnostic name (``stack_3d_moe``). In both
-    cases the two sides do not share an expert dim, so they cannot be folded into one
-    PEFT ``target_parameters`` entry the way packed per-expert adapters are.
+    Shared-outer expert LoRA shares lora_A on the first expert projection (gate/up) and
+    lora_B on the second (down). The shared factor is exported once as a ``[1, ...]``
+    tensor under the expert-agnostic HF name; its per-expert partner is either the
+    numbered 2D slices of the default layout (``...experts.N.<proj>``) or an
+    ``[E, ...]`` stack under the same expert-agnostic name. A regular per-expert export
+    (equal expert dims on both sides) returns ``None`` and stays on the PEFT
+    ``target_parameters`` packing path.
+
+    Raises:
+        ValueError: for layouts that are neither -- unequal expert dims with no side equal
+            to 1, the shared factor on the wrong side, a rank mismatch between the two
+            sides, or a shared factor without any per-expert partner.
     """
-    if ".experts." not in base_name:
-        return False
+    if not _is_expert_adapter_base_name(base_name):
+        return None
     lora_a = weights.get(".lora_A.weight")
     lora_b = weights.get(".lora_B.weight")
+
     if lora_a is not None and lora_b is not None:
-        return lora_a.shape[0] != lora_b.shape[0]
-    present = lora_a if lora_a is not None else lora_b
-    if present is None or present.shape[0] != 1:
-        return False
-    missing_suffix = ".lora_B.weight" if lora_b is None else ".lora_A.weight"
-    prefix, _, projection = base_name.partition(".experts.")
-    sibling = re.compile(rf"^{re.escape(prefix)}\.experts\.\d+\.{re.escape(projection)}{re.escape(missing_suffix)}$")
-    return any(sibling.match(name) for name in module_weight_names)
+        if lora_a.shape[0] == lora_b.shape[0]:
+            return None
+        shared_sides = [
+            suffix
+            for suffix, tensor in ((".lora_A.weight", lora_a), (".lora_B.weight", lora_b))
+            if tensor.shape[0] == 1
+        ]
+        if len(shared_sides) != 1:
+            raise ValueError(
+                f"Cannot pack the MoE LoRA export for {base_name} into PEFT target_parameters: lora_A has expert "
+                f"dim {lora_a.shape[0]} but lora_B has {lora_b.shape[0]}. A per-expert pair has equal expert dims "
+                "and a shared-outer pair has exactly one side with expert dim 1."
+            )
+        shared_suffix = shared_sides[0]
+        partner_suffix = ".lora_B.weight" if shared_suffix == ".lora_A.weight" else ".lora_A.weight"
+        partner_ranks = {_lora_rank_of(partner_suffix, weights[partner_suffix])}
+    else:
+        shared_suffix, shared = next(iter(weights.items()))
+        if shared.shape[0] != 1:
+            # A lone per-expert stack is not shared-outer; the packing path reports it as incomplete.
+            return None
+        partner_suffix = ".lora_B.weight" if shared_suffix == ".lora_A.weight" else ".lora_A.weight"
+        prefix, separator, projection = base_name.partition(".experts.")
+        sibling = re.compile(
+            rf"^{re.escape(prefix)}\.experts\.\d+\.{re.escape(projection)}{re.escape(partner_suffix)}$"
+        )
+        partners = [tensor for name, tensor in module_weights.items() if separator and sibling.match(name)]
+        if not partners:
+            raise ValueError(
+                f"Shared-outer MoE LoRA export for {base_name} has a shared {shared_suffix[1:-7]} factor of shape "
+                f"{tuple(shared.shape)} but no per-expert {partner_suffix[1:-7]} partner (neither numbered "
+                f"experts.N.{projection or '<proj>'} slices nor an [E, ...] stack under the same name)."
+            )
+        partner_ranks = {_lora_rank_of(partner_suffix, tensor) for tensor in partners}
+
+    expected_suffix = _expected_shared_outer_side(base_name)
+    if expected_suffix is not None and expected_suffix != shared_suffix:
+        raise ValueError(
+            f"Shared-outer MoE LoRA export for {base_name} shares {shared_suffix[1:-7]}, but a shared-outer adapter "
+            "shares lora_A on the first expert projection (gate/up) and lora_B on the second (down); this looks "
+            "like a malformed export."
+        )
+    shared_rank = _lora_rank_of(shared_suffix, weights[shared_suffix])
+    if partner_ranks != {shared_rank}:
+        raise ValueError(
+            f"Shared-outer MoE LoRA export for {base_name} has rank {shared_rank} on its shared "
+            f"{shared_suffix[1:-7]} factor but rank(s) {sorted(partner_ranks)} on the per-expert {partner_suffix[1:-7]} side."
+        )
+    return shared_suffix
 
 
 def infer_target_modules_from_adapter_weights(adapter_weight_names: Iterable[str]) -> List[str]:
@@ -1689,6 +1766,8 @@ def _pack_target_parameter_adapter_weights(
 
 def convert_adapter_weights_to_peft_state(
     adapter_weights: Iterable["HFWeightTuple"],
+    *,
+    allow_serving_layout: bool = False,
 ) -> tuple[Dict[str, torch.Tensor], List[str], List[str]]:
     """Rewrite exported adapter weights into the PEFT on-disk state-dict layout.
 
@@ -1696,6 +1775,13 @@ def convert_adapter_weights_to_peft_state(
     the exported HF names, write normal 2D LoRA tensors directly under
     ``base_model.model.*``, and only special-case 3D tensors because PEFT stores
     packed parameter targets through ``ParamWrapper``.
+
+    A shared-outer MoE LoRA (one factor shared across experts, the other per-expert)
+    has no ``ParamWrapper`` representation, so ``PeftModel.from_pretrained`` cannot load
+    it. By default such an export raises; with ``allow_serving_layout=True`` both sides
+    are written exactly as exported (the shared factor once as ``[1, ...]`` under the
+    expert-agnostic name, next to its per-expert partner), which is the layout serving
+    stacks keyed on the leading expert dim (SGLang ``experts_shared_outer_loras``) read.
     """
 
     adapter_weights = list(adapter_weights)
@@ -1711,6 +1797,7 @@ def convert_adapter_weights_to_peft_state(
 
     adapter_state: Dict[str, torch.Tensor] = {}
     module_weight_names: List[str] = []
+    module_weights: Dict[str, torch.Tensor] = {}
     target_parameters: List[str] = []
     parameter_weights: Dict[str, Dict[str, torch.Tensor]] = defaultdict(dict)
 
@@ -1726,16 +1813,24 @@ def convert_adapter_weights_to_peft_state(
 
         adapter_state[f"base_model.model.{name}"] = tensor
         module_weight_names.append(name)
+        module_weights[name] = tensor
 
-    # Shared-outer MoE LoRA (one side shared across experts, the other per-expert)
-    # has no common expert dim to pack along. Keep both sides exactly as exported so
-    # the adapter still saves; serving stacks that understand the layout read the
-    # leading dim to tell the shared factor from the per-expert one.
+    # Shared-outer MoE LoRA has no common expert dim to pack along. Validate the layout
+    # (exactly one shared side, on the expected projection, matching ranks) and only
+    # write it as exported when the caller explicitly asked for the serving layout.
     shared_outer_targets = [
         base_name
         for base_name in target_parameters
-        if _is_shared_outer_expert_export(base_name, parameter_weights[base_name], module_weight_names)
+        if _classify_shared_outer_expert_export(base_name, parameter_weights[base_name], module_weights) is not None
     ]
+    if shared_outer_targets and not allow_serving_layout:
+        raise ValueError(
+            f"Shared-outer MoE LoRA export for {shared_outer_targets} (a factor shared across experts next to a "
+            "per-expert partner) has no PEFT ParamWrapper representation, so PeftModel.from_pretrained could not "
+            "load it. Export with expand_shared_outer=True to replicate the shared factor into the per-expert PEFT "
+            "layout, or pass allow_serving_layout=True to write the serving layout (SGLang "
+            "experts_shared_outer_loras) as exported."
+        )
     for base_name in shared_outer_targets:
         for lora_suffix, tensor in parameter_weights[base_name].items():
             name = f"{base_name}{lora_suffix}"

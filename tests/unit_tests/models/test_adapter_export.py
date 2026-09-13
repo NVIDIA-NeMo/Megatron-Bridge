@@ -395,35 +395,46 @@ class TestSaveHfAdapter:
             "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight",
         }
 
-    def test_convert_shared_outer_adapter_keeps_shared_factor_as_module_weight(self):
-        # Default shared-outer export: the shared lora_A is emitted once as [1, r, in]
-        # under the expert-agnostic name while lora_B is emitted per expert as 2D slices.
-        shared_a = torch.randn(1, 2, 4)
+    # Shared-outer export in the default layout: gate/up shares lora_A once as [1, r, in]
+    # under the expert-agnostic name, lora_B is emitted per expert as 2D [out, r] slices.
+    _SHARED_OUTER_DEFAULT_LAYOUT = (
+        ("model.layers.0.mlp.experts.gate_proj.lora_A.weight", (1, 2, 4)),
+        ("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", (3, 2)),
+        ("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", (3, 2)),
+    )
+
+    def test_convert_shared_outer_adapter_requires_serving_layout_opt_in(self):
+        """Shared-outer has no PEFT representation: the PEFT-format default must refuse it."""
+        with pytest.raises(ValueError, match="PeftModel.from_pretrained could not load it"):
+            convert_adapter_weights_to_peft_state(
+                [_adapter_export(name, torch.randn(*shape)) for name, shape in self._SHARED_OUTER_DEFAULT_LAYOUT]
+            )
+
+    def test_convert_shared_outer_adapter_serving_layout_keeps_shared_factor_as_module_weight(self):
+        exports = [_adapter_export(name, torch.randn(*shape)) for name, shape in self._SHARED_OUTER_DEFAULT_LAYOUT]
         adapter_state, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
-            [
-                _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", shared_a),
-                _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(3, 2)),
-                _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(3, 2)),
-            ]
+            exports, allow_serving_layout=True
         )
 
         assert target_parameters == []
         assert "model.layers.0.mlp.experts.gate_proj.lora_A.weight" in module_keys
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.gate_proj.lora_A.weight"], shared_a
+            adapter_state["base_model.model.model.layers.0.mlp.experts.gate_proj.lora_A.weight"], exports[0].weight
         )
         assert "base_model.model.model.layers.0.mlp.experts.0.gate_proj.lora_B.weight" in adapter_state
         assert "base_model.model.model.layers.0.mlp.experts.1.gate_proj.lora_B.weight" in adapter_state
 
     def test_convert_shared_outer_stacked_pair_keeps_both_sides_as_module_weights(self):
-        # stack_3d_moe-style pair: shared side [1, ...], per-expert side [E, ...] under one name.
-        shared_a = torch.randn(1, 2, 4)
-        per_expert_b = torch.randn(2, 3, 2)
+        # Both sides 3D under one expert-agnostic name (SGLang's 3D shared-outer contract):
+        # down shares lora_B as [1, out, r] next to a per-expert lora_A stack [E, r, in].
+        per_expert_a = torch.randn(2, 2, 4)
+        shared_b = torch.randn(1, 3, 2)
         adapter_state, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
             [
-                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_A.weight", shared_a),
-                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_B.weight", per_expert_b),
-            ]
+                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_A.weight", per_expert_a),
+                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_B.weight", shared_b),
+            ],
+            allow_serving_layout=True,
         )
 
         assert target_parameters == []
@@ -432,11 +443,72 @@ class TestSaveHfAdapter:
             "model.layers.0.mlp.experts.down_proj.lora_B.weight",
         ]
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_A.weight"], shared_a
+            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_A.weight"], per_expert_a
         )
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_B.weight"], per_expert_b
+            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_B.weight"], shared_b
         )
+
+    def test_convert_shared_outer_accepts_3d_moe_stems_and_unknown_projections(self):
+        # vLLM 3D-MoE stems: ``experts.base_layer`` is gate_up (shares lora_A), bare
+        # ``experts`` is down (shares lora_B). Unknown projection names are validated
+        # structurally only.
+        _, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
+            [
+                _adapter_export("model.layers.0.mlp.experts.base_layer.lora_A.weight", torch.randn(1, 2, 4)),
+                _adapter_export("model.layers.0.mlp.experts.base_layer.lora_B.weight", torch.randn(2, 6, 2)),
+                _adapter_export("model.layers.0.mlp.experts.lora_A.weight", torch.randn(2, 2, 3)),
+                _adapter_export("model.layers.0.mlp.experts.lora_B.weight", torch.randn(1, 4, 2)),
+                _adapter_export("model.layers.1.mlp.experts.custom_proj.lora_A.weight", torch.randn(2, 2, 4)),
+                _adapter_export("model.layers.1.mlp.experts.custom_proj.lora_B.weight", torch.randn(1, 3, 2)),
+            ],
+            allow_serving_layout=True,
+        )
+
+        assert target_parameters == []
+        assert len(module_keys) == 6
+
+    def test_convert_rejects_unequal_expert_dims_without_a_shared_side(self):
+        with pytest.raises(ValueError, match="lora_A has expert dim 8 but lora_B has 4"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.randn(8, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_B.weight", torch.randn(4, 3, 2)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_rejects_shared_factor_on_the_wrong_side(self):
+        # down shares lora_B in shared-outer; a shared down lora_A is a malformed export.
+        with pytest.raises(ValueError, match="shares lora_A, but a shared-outer adapter shares"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.down_proj.lora_A.weight", torch.randn(1, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.down_proj.lora_B.weight", torch.randn(2, 3, 2)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_rejects_shared_outer_rank_mismatch(self):
+        with pytest.raises(ValueError, match=r"rank 2 on its shared lora_A factor but rank\(s\) \[5\]"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.randn(1, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(3, 5)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_rejects_shared_factor_without_per_expert_partner(self):
+        with pytest.raises(ValueError, match="no per-expert lora_B partner"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.randn(1, 2, 4)),
+                    _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(2, 4)),
+                    _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(4, 2)),
+                ],
+                allow_serving_layout=True,
+            )
 
     def test_convert_incomplete_target_parameter_still_raises(self):
         # A lone per-expert 3D side with no partner and no numbered siblings is a broken export.
@@ -631,6 +703,55 @@ class TestSaveHfAdapter:
         assert len(saved) == 2
         for tensor in saved:
             torch.testing.assert_close(tensor, shared)
+
+    def test_save_shared_outer_adapter_requires_serving_layout(self, tmp_path):
+        """save_hf_adapter refuses a shared-outer export unless the serving layout is requested."""
+        from safetensors.torch import load_file
+
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+        from megatron.bridge.peft.lora import LoRA
+
+        def fake_weights():
+            return iter(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.ones(1, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(3, 2)),
+                    _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(3, 2)),
+                ]
+            )
+
+        mock_bridge = MagicMock()
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            mock_bridge.export_adapter_weights.return_value = fake_weights()
+            with pytest.raises(ValueError, match="allow_serving_layout=True"):
+                AutoBridge.save_hf_adapter(
+                    mock_bridge,
+                    model=[MagicMock()],
+                    path=tmp_path / "peft_layout",
+                    peft_config=LoRA(dim=2, alpha=4),
+                    base_model_name_or_path="test/model",
+                )
+            assert not (tmp_path / "peft_layout" / "adapter_model.safetensors").exists()
+
+            output_dir = tmp_path / "serving_layout"
+            mock_bridge.export_adapter_weights.return_value = fake_weights()
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(dim=2, alpha=4),
+                base_model_name_or_path="test/model",
+                allow_serving_layout=True,
+            )
+
+        state = load_file(str(output_dir / "adapter_model.safetensors"))
+        assert state["base_model.model.model.layers.0.mlp.experts.gate_proj.lora_A.weight"].shape == (1, 2, 4)
+        assert "base_model.model.model.layers.0.mlp.experts.1.gate_proj.lora_B.weight" in state
+        config = json.loads((output_dir / "adapter_config.json").read_text())
+        assert "target_parameters" not in config
+        assert "gate_proj" in config["target_modules"]
 
     def test_save_with_nonzero_dropout_keeps_linear_target_modules(self, tmp_path):
         from megatron.bridge.peft.lora import LoRA
