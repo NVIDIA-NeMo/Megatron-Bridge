@@ -56,7 +56,7 @@ from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import get_last_rank, maybe_initialize_distributed, print_rank_0
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
@@ -236,6 +236,8 @@ def main(args) -> None:
         args: Parsed command line arguments containing model paths, prompt,
               audio path, parallelism settings, and generation parameters
     """
+    maybe_initialize_distributed()
+
     tp = args.tp
     pp = args.pp
     ep = args.ep

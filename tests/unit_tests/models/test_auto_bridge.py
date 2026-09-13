@@ -1205,6 +1205,21 @@ class TestAutoBridge:
                 mock_hf_model, mock_megatron_model, allowed_mismatched_params=None
             )
 
+    def test_iter_local_hf_params_uses_public_auto_bridge_api(self):
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock(spec=PretrainedConfig)
+        mock_model_bridge = Mock()
+        tasks = [Mock()]
+        expected_params = [Mock()]
+        mock_model_bridge.iter_local_hf_params.return_value = iter(expected_params)
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            params = list(bridge.iter_local_hf_params(tasks))
+
+        assert params == expected_params
+        mock_model_bridge.iter_local_hf_params.assert_called_once_with(tasks)
+
     def test_load_hf_weights_with_allowed_mismatched_params(self):
         """Test loading weights with allowed_mismatched_params."""
         # Setup mocks

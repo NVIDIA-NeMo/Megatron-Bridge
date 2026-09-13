@@ -177,6 +177,12 @@ runs:
           set -e
           export GH_TOKEN=${{ inputs.github-token }}
 
+          if [[ "${{ contains(inputs.runner, 'gcp') }}" == "true" ]]; then
+            export NCCL_ENV_PLUGIN=none
+            export NCCL_NET_PLUGIN=none
+            export NCCL_NET=Socket
+          fi
+
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then

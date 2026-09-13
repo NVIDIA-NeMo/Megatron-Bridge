@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import re
+import time
 import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -60,6 +61,9 @@ from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)
+
+_SHARED_FS_DIRECTORY_RESTAT_ATTEMPTS = 3
+_SHARED_FS_DIRECTORY_RESTAT_DELAY_S = 0.1
 
 _SEMANTIC_DATASET_KWARGS = {
     "add_bos",
@@ -471,9 +475,23 @@ def _load_hf_examples(
     return normalize_sft_examples(load_and_adapt_hf_dataset(source), preprocessing)
 
 
+def _ensure_hf_output_root(root: Path) -> None:
+    """Create the HF output root despite transient shared-filesystem metadata races."""
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, FileNotFoundError):
+        # Shared filesystems can briefly report a concurrently created parent as both existing and missing.
+        for attempt in range(_SHARED_FS_DIRECTORY_RESTAT_ATTEMPTS):
+            if root.is_dir():
+                return
+            if attempt + 1 < _SHARED_FS_DIRECTORY_RESTAT_ATTEMPTS:
+                time.sleep(_SHARED_FS_DIRECTORY_RESTAT_DELAY_S)
+        raise
+
+
 def _write_hf_examples(root: Path, output_name: str, examples: list[dict[str, Any]]) -> None:
     output_path = root / f"{output_name}.jsonl"
-    root.mkdir(parents=True, exist_ok=True)
+    _ensure_hf_output_root(root)
     for index_path in _hf_jsonl_index_paths(output_path):
         index_path.unlink(missing_ok=True)
     with output_path.open("w", encoding="utf-8") as output_file:
@@ -937,6 +955,11 @@ class GPTSFTDatasetBuilder:
             Elements can be None if the corresponding data file doesn't exist
             or if dataset building is skipped for the split.
         """
+        # Dataset-root resolution runs on every rank. Wait for those mkdir calls to
+        # finish before rank 0 materializes files in the shared root.
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+
         # Prepare packed data if needed
         if get_rank_safe() == 0:
             self.prepare_data()

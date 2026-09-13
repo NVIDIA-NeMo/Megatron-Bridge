@@ -56,6 +56,7 @@ from transformers.modeling_utils import PreTrainedModel
 from megatron.bridge.models.common import ModelConfigOverrideMixin
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
+    LocalHFParam,
     LocalHFParamSpec,
     MegatronParamMapping,
 )
@@ -1501,6 +1502,44 @@ class MegatronModelBridge(
             else:
                 self.unquantized_state_dict = captured_state_dicts
         return megatron_model
+
+    def iter_local_hf_params(
+        self,
+        tasks: Iterable[WeightConversionTask],
+    ) -> Iterable[LocalHFParam]:
+        """Yield local unquantized BF16 parameters as canonical HF views.
+
+        The caller may reuse tasks from :meth:`build_conversion_tasks` across
+        iterations to cache parameter topology. Each pass reads ``param_weight``
+        again and yields live local views without Bridge collectives, dtype
+        conversion, or quantization sidecars.
+
+        Args:
+            tasks: Conversion tasks in deterministic export order.
+
+        Yields:
+            Canonical local HF parameter views in task and mapping order after
+            every locally owned task passes validation.
+
+        Raises:
+            ValueError: If a locally owned task has inconsistent metadata, is
+                not backed by unquantized BF16 storage, or needs conversion that
+                cannot be represented by local views.
+        """
+        params = []
+        for task in tasks:
+            if task.param_weight is None:
+                continue
+            if task.megatron_module is None:
+                raise ValueError(f"{task.global_param_name}: local parameter has no owning Megatron module")
+            params.extend(
+                task.mapping.local_hf_params(
+                    task.param_weight,
+                    global_param_name=task.global_param_name,
+                    megatron_module=task.megatron_module,
+                )
+            )
+        yield from params
 
     def stream_weights_hf_to_megatron(
         self,
