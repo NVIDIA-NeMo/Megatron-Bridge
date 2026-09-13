@@ -31,7 +31,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
 
 
 def qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
-    """Qwen3 235B-A22B pretrain: 64× GB300, BF16, EP=64."""
+    """Qwen3 235B-A22B pretrain: 64× GB300, BF16, PP=2, EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -44,7 +44,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.expert_model_parallel_size = 32
@@ -85,7 +85,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
 
 def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
-    """Qwen3 235B-A22B pretrain: 64× GB300, FP8 current-scaling, EP=64."""
+    """Qwen3 235B-A22B pretrain: 64× GB300, FP8 current-scaling, PP=2, EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.bias_activation_fusion = True
@@ -98,7 +98,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.expert_model_parallel_size = 32
@@ -139,7 +139,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Qwen3 235B-A22B pretrain: 64× GB300, MXFP8, EP=64."""
+    """Qwen3 235B-A22B pretrain: 64× GB300, MXFP8, PP=2, EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
@@ -152,7 +152,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 12
     cfg.model.expert_model_parallel_size = 32
