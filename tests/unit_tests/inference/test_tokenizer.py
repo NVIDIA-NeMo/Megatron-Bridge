@@ -31,14 +31,17 @@ class _FakeTokenizer:
         self.eos_token_id = 2
         self.bos_token_id = 1
         self.pad_token = None
+        self.add_bos_token = False
         self.decode_calls = []
 
     def __len__(self):
         return 32000
 
     def encode(self, text, add_special_tokens=False):
-        assert add_special_tokens is False
-        return [ord(c) for c in text]
+        tokens = [ord(c) for c in text]
+        if add_special_tokens and self.add_bos_token:
+            tokens.insert(0, self.bos_token_id)
+        return tokens
 
     def decode(self, tokens, skip_special_tokens=True):
         self.decode_calls.append(skip_special_tokens)
@@ -73,6 +76,14 @@ def test_text_generation_defaults():
     adapter.detokenize([65], skip_special_tokens=True)
     adapter.detokenize([65], skip_special_tokens=False)
     assert tok.decode_calls == [True, False]
+
+
+@pytest.mark.parametrize("add_bos_token", [True, False])
+def test_bos_insertion_policy(add_bos_token):
+    tok = _FakeTokenizer()
+    tok.add_bos_token = add_bos_token
+
+    assert HFTokenizerAdapter(tok).add_bos_token is add_bos_token
 
 
 def test_vlm_preserving_flags():

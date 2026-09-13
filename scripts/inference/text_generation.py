@@ -243,6 +243,7 @@ def main() -> None:
     if args.use_legacy_generation:
         _generate_with_legacy_static_engine(args, model, tokenizer, prompts, sampling_params)
     else:
+        sampling_params.add_BOS = tokenizer.add_bos_token
         _generate_with_dynamic_engine(args, model, tokenizer, prompts, sampling_params)
 
     if dist.is_available() and dist.is_initialized():

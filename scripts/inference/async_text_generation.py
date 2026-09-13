@@ -180,6 +180,7 @@ def main() -> None:
         top_n_logprobs=args.top_n_logprobs,
         stop_words=args.stop_words,
     )
+    sampling_params.add_BOS = tokenizer.add_bos_token
 
     try:
         asyncio.run(_generate(args, model, tokenizer, prompts, sampling_params))

@@ -115,9 +115,29 @@ def text_generation_entrypoint(monkeypatch: pytest.MonkeyPatch):
 
 def _args(**overrides: object) -> types.SimpleNamespace:
     values = {
+        "attention_backend": None,
+        "cache_mla_latents": None,
+        "dtype": "bf16",
+        "etp": 1,
         "use_legacy_generation": True,
         "use_coordinator": False,
         "ep": 1,
+        "hf_model_path": "org/model",
+        "inference_moe_token_dispatcher_type": None,
+        "max_new_tokens": 4,
+        "megatron_model_path": None,
+        "pp": 1,
+        "prompt": ["Hello"],
+        "prompt_file": None,
+        "prompt_file_num_truncate": None,
+        "seed": 1234,
+        "sequence_parallel": False,
+        "skip_prompt_log_probs": False,
+        "temperature": 1.0,
+        "top_k": 1,
+        "top_p": 0.0,
+        "tp": 1,
+        "trust_remote_code": False,
         "coordinator_host": None,
         "coordinator_port": None,
         "top_n_logprobs": 0,
@@ -233,3 +253,40 @@ def test_dynamic_generation_rejects_failed_inference_requests(
             prompts=["Hello world"],
             sampling_params=object(),
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("add_bos_token", [True, False])
+def test_main_preserves_tokenizer_bos_policy_for_dynamic_generation(
+    text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    add_bos_token: bool,
+) -> None:
+    args = _args(use_legacy_generation=False)
+    tokenizer = types.SimpleNamespace(bos=1, eod=2, add_bos_token=add_bos_token)
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        text_generation_entrypoint,
+        "add_args",
+        lambda _parser: types.SimpleNamespace(parse_args=lambda: args),
+    )
+    monkeypatch.setattr(text_generation_entrypoint, "_validate_args", lambda _args: None)
+    monkeypatch.setattr(text_generation_entrypoint, "build_tokenizer", lambda *_args: tokenizer)
+    monkeypatch.setattr(
+        text_generation_entrypoint,
+        "build_sampling_params",
+        lambda **_kwargs: types.SimpleNamespace(add_BOS=False),
+    )
+    monkeypatch.setattr(text_generation_entrypoint, "load_prompts", lambda *_args: ["Hello"])
+    monkeypatch.setattr(
+        text_generation_entrypoint,
+        "_generate_with_dynamic_engine",
+        lambda *_args: captured.update(sampling_params=_args[-1]),
+    )
+
+    text_generation_entrypoint.main()
+
+    sampling_params = captured["sampling_params"]
+    assert isinstance(sampling_params, types.SimpleNamespace)
+    assert sampling_params.add_BOS is add_bos_token

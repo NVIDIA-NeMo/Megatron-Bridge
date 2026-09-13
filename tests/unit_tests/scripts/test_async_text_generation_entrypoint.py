@@ -233,3 +233,66 @@ def test_generate_rejects_failed_inference_requests(
                 sampling_params=object(),
             )
         )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("add_bos_token", [True, False])
+def test_main_preserves_tokenizer_bos_policy(
+    async_text_generation_entrypoint: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    add_bos_token: bool,
+) -> None:
+    args = types.SimpleNamespace(
+        attention_backend=None,
+        cache_mla_latents=None,
+        distributed_timeout_minutes=10,
+        dtype="bf16",
+        ep=1,
+        etp=1,
+        hf_model_path="org/model",
+        inference_moe_token_dispatcher_type=None,
+        max_new_tokens=4,
+        megatron_model_path=None,
+        pp=1,
+        prompt=["Hello"],
+        prompt_file=None,
+        prompt_file_num_truncate=None,
+        return_log_probs=False,
+        seed=1234,
+        sequence_parallel=False,
+        skip_prompt_log_probs=False,
+        stop_words=None,
+        temperature=1.0,
+        termination_id=None,
+        top_k=1,
+        top_n_logprobs=0,
+        top_p=0.0,
+        tp=1,
+        trust_remote_code=False,
+    )
+    tokenizer = types.SimpleNamespace(bos=1, eod=2, add_bos_token=add_bos_token)
+    captured: dict[str, object] = {}
+
+    async def _capture_generate(*call_args: object) -> None:
+        captured["sampling_params"] = call_args[-1]
+
+    monkeypatch.setattr(
+        async_text_generation_entrypoint,
+        "add_args",
+        lambda _parser: types.SimpleNamespace(parse_args=lambda: args),
+    )
+    monkeypatch.setattr(async_text_generation_entrypoint, "_validate_args", lambda _args: None)
+    monkeypatch.setattr(async_text_generation_entrypoint, "build_tokenizer", lambda *_args: tokenizer)
+    monkeypatch.setattr(
+        async_text_generation_entrypoint,
+        "build_sampling_params",
+        lambda **_kwargs: types.SimpleNamespace(add_BOS=False),
+    )
+    monkeypatch.setattr(async_text_generation_entrypoint, "load_prompts", lambda *_args: ["Hello"])
+    monkeypatch.setattr(async_text_generation_entrypoint, "_generate", _capture_generate)
+
+    async_text_generation_entrypoint.main()
+
+    sampling_params = captured["sampling_params"]
+    assert isinstance(sampling_params, types.SimpleNamespace)
+    assert sampling_params.add_BOS is add_bos_token

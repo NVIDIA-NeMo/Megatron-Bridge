@@ -56,6 +56,7 @@ class HFTokenizerAdapter:
         self.eod = tokenizer.eos_token_id
         self.eos_id = tokenizer.eos_token_id
         self.bos = tokenizer.bos_token_id
+        self.add_bos_token = tokenizer.encode("", add_special_tokens=True)[:1] == [self.bos]
         self.vocab_size = len(tokenizer) if expose_vocab_size else None
 
     @property
