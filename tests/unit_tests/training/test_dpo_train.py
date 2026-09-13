@@ -148,6 +148,13 @@ def test_expected_scoring_metadata_reads_the_split_source_and_model_config(tmp_p
     )
 
 
+def test_expected_scoring_metadata_routes_jsonl_paths_like_the_loader(tmp_path):
+    config = make_config(tmp_path)
+    config.dataset.source = HFDatasetSourceConfig(path_or_dataset="/data/pairs.jsonl", split="train")
+    fingerprint = expected_scoring_metadata(config, "train")
+    assert (fingerprint.dataset, fingerprint.split) == ("/data/pairs.jsonl", None)
+
+
 def test_expert_layout_mismatch_warns_but_passes(tmp_path, caplog):
     config = make_config(tmp_path)
     config.model.expert_model_parallel_size = 8
