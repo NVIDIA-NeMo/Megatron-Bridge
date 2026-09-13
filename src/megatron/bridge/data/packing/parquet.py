@@ -47,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 # Required columns in packed Parquet schema
 REQUIRED_COLUMNS = {"input_ids", "seq_start_id", "loss_mask"}
+_MAX_OPEN_PARQUET_FILES = 8
 
 
 def _lazy_import_pyarrow():
@@ -301,7 +302,17 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
         survives DataLoader worker forking (each worker creates its own readers).
         """
         if file_idx in self._parquet_files:
-            return self._parquet_files[file_idx][0]
+            pf, handle = self._parquet_files.pop(file_idx)
+            self._parquet_files[file_idx] = (pf, handle)
+            return pf
+
+        if len(self._parquet_files) >= _MAX_OPEN_PARQUET_FILES:
+            oldest_file_idx = next(iter(self._parquet_files))
+            pf, handle = self._parquet_files.pop(oldest_file_idx)
+            if handle is not None:
+                handle.close()
+            if hasattr(pf, "close"):
+                pf.close()
 
         pyarrow, pq = _lazy_import_pyarrow()
         parquet_path = self._parquet_paths[file_idx]

@@ -21,6 +21,7 @@ and the validate_row helper.
 
 from __future__ import annotations
 
+import resource
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -36,6 +37,7 @@ from megatron.bridge.data.packing.paths import (
     _resolve_parquet_paths,
     is_packed_parquet_file,
 )
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +79,12 @@ def _write_parquet(path: str | Path, rows: list[dict], row_group_size: int = 500
         }
     )
     pq.write_table(table, str(path), row_group_size=row_group_size)
+
+
+def _limit_worker_file_descriptors(_worker_id: int) -> None:
+    """Apply a deterministic low descriptor limit inside a DataLoader worker."""
+    _, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE, (min(48, hard_limit), hard_limit))
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +279,41 @@ class TestPackedParquetDatasetMultiFile:
         assert file_idx_4 == 0
         assert file_idx_5 == 1
         assert file_idx_15 == 2
+
+    def test_persistent_workers_bound_open_shard_readers(self, tmp_path):
+        for shard_id in range(96):
+            _write_parquet(tmp_path / f"shard_{shard_id:03d}.idx.parquet", [_make_packed_row(n_tokens=16, n_seqs=1)])
+        dataset = _make_dataset(str(tmp_path / "shard_*.idx.parquet"))
+        data_loader = build_pretraining_data_loader(
+            dataset,
+            consumed_samples=0,
+            dataloader_type="single",
+            micro_batch_size=1,
+            num_workers=2,
+            data_sharding=True,
+            worker_init_fn=_limit_worker_file_descriptors,
+            collate_fn=dataset.collate_fn,
+            persistent_workers=True,
+        )
+
+        batches = list(data_loader)
+
+        assert len(batches) == len(dataset)
+
+    def test_reader_cache_is_bounded_and_reuses_recent_shards(self, tmp_path):
+        for shard_id in range(12):
+            _write_parquet(tmp_path / f"shard_{shard_id:03d}.idx.parquet", [_make_packed_row(n_tokens=16, n_seqs=1)])
+        dataset = _make_dataset(str(tmp_path / "shard_*.idx.parquet"))
+
+        dataset[0]
+        first_reader = dataset._parquet_files[0][0]
+        dataset[1]
+        dataset[0]
+
+        assert dataset._parquet_files[0][0] is first_reader
+        for index in range(len(dataset)):
+            dataset[index]
+        assert len(dataset._parquet_files) <= 8
 
 
 class TestPackedParquetDatasetRowGroupCache:
