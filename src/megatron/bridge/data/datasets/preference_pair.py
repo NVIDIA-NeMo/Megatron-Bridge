@@ -26,11 +26,11 @@ from megatron.bridge.data.datasets.preference_tokenization import build_pair_con
 logger = logging.getLogger(__name__)
 
 
-class LazyChatPreferencePairDataset(Dataset):
-    """Preference-pair dataset that tokenizes chat-format rows on fetch.
+class PreferencePairDataset(Dataset):
+    """Preference-pair dataset that tokenizes rows on fetch.
 
-    Nothing is tokenized at init; each ``__getitem__`` runs the chat template on
-    that pair. ``__len__`` must stay fixed for the sampler, so invalid pairs are
+    Fields may be message lists or plain strings; nothing is tokenized at init,
+    and each ``__getitem__`` runs the chat template on that pair. ``__len__`` must stay fixed for the sampler, so invalid pairs are
     not dropped - they are emitted as two-token stubs with ``loss_multiplier=0.0``
     and contribute nothing to the loss. ``pair_id`` is the source row index, which
     is what ``ref_logprobs`` (the scorer's output) is keyed by.

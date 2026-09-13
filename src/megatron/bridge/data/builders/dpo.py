@@ -29,7 +29,7 @@ from transformers import AutoTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.datasets.preference import load_ref_logprobs
-from megatron.bridge.data.datasets.preference_lazy import LazyChatPreferencePairDataset
+from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.datasets.utils import _JSONLMemMapDataset
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_hf_dataset_source, prepare_hf_dataset_sources
 from megatron.bridge.data.sources.jsonl import PreferenceJSONLSource
@@ -194,7 +194,7 @@ def build_preference_split(
     split: Literal["train", "validation"],
     tokenizer,
     ref_artifact: str | None = None,
-) -> LazyChatPreferencePairDataset:
+) -> PreferencePairDataset:
     """Load one split's rows and wrap them as a pair dataset.
 
     The scorer builds without ``ref_artifact``; the trainer supplies the split's artifact,
@@ -202,7 +202,7 @@ def build_preference_split(
     """
     rows = config.load_source(split)
     ref_logprobs = load_ref_logprobs(ref_artifact, expected_num_pairs=len(rows)) if ref_artifact else None
-    return LazyChatPreferencePairDataset(
+    return PreferencePairDataset(
         rows,
         tokenizer,
         max_seq_length=config.seq_length,
@@ -229,7 +229,7 @@ class DPODatasetBuilder:
     def build(
         self,
         context: DatasetBuildContext,
-    ) -> tuple[LazyChatPreferencePairDataset, LazyChatPreferencePairDataset | None, None]:
+    ) -> tuple[PreferencePairDataset, PreferencePairDataset | None, None]:
         tokenizer = self.config.load_tokenizer()
         train_dataset = build_preference_split(self.config, "train", tokenizer, self.config.ref_artifact)
         valid_dataset = (
@@ -245,7 +245,7 @@ def dpo_train_valid_test_datasets_provider(
     dataset_config: DPODatasetConfig,
     tokenizer: "MegatronTokenizer | None" = None,
     pg_collection: "ProcessGroupCollection | None" = None,
-) -> tuple[LazyChatPreferencePairDataset, LazyChatPreferencePairDataset | None, None]:
+) -> tuple[PreferencePairDataset, PreferencePairDataset | None, None]:
     """Build DPO preference datasets through the canonical runtime builder."""
     context = DatasetBuildContext(
         train_samples=train_val_test_num_samples[0],

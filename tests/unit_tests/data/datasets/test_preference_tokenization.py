@@ -7,7 +7,7 @@ import torch
 
 from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 from megatron.bridge.data.datasets.preference import build_preference_data_loader
-from megatron.bridge.data.datasets.preference_lazy import LazyChatPreferencePairDataset
+from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.datasets.preference_tokenization import build_pair_conversations, tokenize_conversation
 from tests.unit_tests.data.preference_fakes import ASSISTANT_HEADER, USER_HEADER, FakeChatTokenizer
 
@@ -60,7 +60,7 @@ def build_chat_preference_records(
     prompt_key: str | None = None,
     num_pairs: int = 0,
 ) -> tuple[list[dict], Counter]:
-    """Eager twin of the lazy dataset: drops bad pairs whole and counts the reasons."""
+    """Eager twin of PreferencePairDataset: drops bad pairs whole and counts the reasons."""
     records: list[dict] = []
     drops: Counter = Counter()
     for example in source:
@@ -211,10 +211,10 @@ class CountingChatTokenizer(FakeChatTokenizer):
         return super().apply_chat_template(messages, tokenize, add_generation_prompt)
 
 
-def test_lazy_dataset_tokenizes_on_fetch_and_stubs_invalid_pairs():
+def test_dataset_tokenizes_on_fetch_and_stubs_invalid_pairs():
     source = chat_source(3) + [{"chosen": conversation("one prompt"), "rejected": conversation("another prompt")}]
     tokenizer = CountingChatTokenizer()
-    dataset = LazyChatPreferencePairDataset(source, tokenizer, max_seq_length=100)
+    dataset = PreferencePairDataset(source, tokenizer, max_seq_length=100)
 
     assert len(dataset) == 4  # invalid pair kept, not dropped
     assert tokenizer.calls == 0  # nothing tokenized at init
@@ -230,11 +230,11 @@ def test_lazy_dataset_tokenizes_on_fetch_and_stubs_invalid_pairs():
     assert len(stub["chosen_input_ids"]) == 2  # two-token stub, valid for the collate
 
 
-def test_lazy_dataset_loss_multiplier_rides_row_aligned_through_the_loader():
+def test_dataset_loss_multiplier_rides_row_aligned_through_the_loader():
     over_length_pair = {"chosen": conversation(completion="x " * 50), "rejected": conversation()}
     source = chat_source(7) + [over_length_pair]
     # BatchEncodingChatTokenizer also covers the transformers>=5 return shape end-to-end.
-    dataset = LazyChatPreferencePairDataset(source, BatchEncodingChatTokenizer(), max_seq_length=20)
+    dataset = PreferencePairDataset(source, BatchEncodingChatTokenizer(), max_seq_length=20)
     loader = build_preference_data_loader(
         dataset=dataset,
         micro_batch_size=4,
@@ -253,11 +253,11 @@ def test_lazy_dataset_loss_multiplier_rides_row_aligned_through_the_loader():
             assert torch.equal(dead, mb["pair_id"] == 7), "only the over-length pair is dead"
 
 
-def test_lazy_dataset_joins_ref_logprobs_by_source_index():
+def test_dataset_joins_ref_logprobs_by_source_index():
     # The collate asserts each row's completion-token count matches the artifact's, so the
     # ref entries must carry the counts this tokenization actually produces
     # (completion tokens == len(input_ids) - context_len).
-    probe = LazyChatPreferencePairDataset(chat_source(4), FakeChatTokenizer(), max_seq_length=100)
+    probe = PreferencePairDataset(chat_source(4), FakeChatTokenizer(), max_seq_length=100)
     ref = {
         p: {
             "ref_chosen_logprob_sum": p + 0.25,
@@ -267,12 +267,12 @@ def test_lazy_dataset_joins_ref_logprobs_by_source_index():
         }
         for p in range(4)
     }
-    dataset = LazyChatPreferencePairDataset(chat_source(4), FakeChatTokenizer(), max_seq_length=100, ref_logprobs=ref)
+    dataset = PreferencePairDataset(chat_source(4), FakeChatTokenizer(), max_seq_length=100, ref_logprobs=ref)
     assert dataset.require_ref_logprobs
     batch = dataset.collate_fn([dataset[i] for i in range(4)])
     assert torch.equal(batch["ref_logprob_sum"][::2], batch["pair_id"][::2].float() + 0.25)
 
-    incomplete = LazyChatPreferencePairDataset(
+    incomplete = PreferencePairDataset(
         chat_source(4), FakeChatTokenizer(), max_seq_length=100, ref_logprobs={0: ref[0]}
     )
     with pytest.raises(ValueError, match="no entry for pair_id"):
@@ -316,7 +316,7 @@ def test_explicit_prompt_mode_keeps_pairs_whose_completions_share_no_prefix():
 
 def test_explicit_prompt_rows_read_without_prompt_key_are_all_dead():
     """Documents the misconfiguration: no crash, just zero training signal."""
-    dataset = LazyChatPreferencePairDataset(explicit_chat_source(3), FakeChatTokenizer(), max_seq_length=100)
+    dataset = PreferencePairDataset(explicit_chat_source(3), FakeChatTokenizer(), max_seq_length=100)
     assert [dataset[i]["loss_multiplier"] for i in range(3)] == [0.0, 0.0, 0.0]
 
 
@@ -338,11 +338,11 @@ def test_explicit_prompt_malformed_rows_drop_by_reason(completion, max_seq_lengt
     assert dict(drops) == {reason: 1}
 
 
-def test_lazy_dataset_stubs_malformed_explicit_rows_without_shrinking():
+def test_dataset_stubs_malformed_explicit_rows_without_shrinking():
     source = explicit_chat_source(2) + [
         {"messages": [{"role": "user", "content": "q"}], "chosen": [], "rejected": []},
     ]
-    dataset = LazyChatPreferencePairDataset(source, FakeChatTokenizer(), max_seq_length=100, prompt_key="messages")
+    dataset = PreferencePairDataset(source, FakeChatTokenizer(), max_seq_length=100, prompt_key="messages")
     assert len(dataset) == 3
     assert [dataset[i]["loss_multiplier"] for i in range(3)] == [1.0, 1.0, 0.0]
     assert dataset[2]["chosen_input_ids"] == [0, 0]

@@ -48,7 +48,7 @@ from megatron.bridge.data.datasets.preference import (
     write_ref_logprobs,
     write_scoring_metadata,
 )
-from megatron.bridge.data.datasets.preference_lazy import LazyChatPreferencePairDataset
+from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from megatron.bridge.data.sources.jsonl import PreferenceJSONLSource
 from megatron.bridge.models import GPTModelProvider
@@ -188,9 +188,7 @@ class ReferenceLogprobScorer:
         if torch.distributed.is_initialized():
             torch.distributed.barrier()  # don't tear down the process group under the writer
 
-    def _score_all(
-        self, model: list[torch.nn.Module], dataset: LazyChatPreferencePairDataset
-    ) -> list[dict[str, float | int]]:
+    def _score_all(self, model: list[torch.nn.Module], dataset: PreferencePairDataset) -> list[dict[str, float | int]]:
         """Forward every batch and collect one record per pair, logging progress about ten times."""
         loader = self._pair_loader(dataset)
         log_every = max(1, len(loader) // 10)
@@ -239,7 +237,7 @@ class ReferenceLogprobScorer:
                 raise ValueError(f"Model provider {type(provider).__name__} has no '{name}' to pin.")
             setattr(provider, name, value)
 
-    def _pair_loader(self, dataset: LazyChatPreferencePairDataset) -> DataLoader:
+    def _pair_loader(self, dataset: PreferencePairDataset) -> DataLoader:
         """Deterministic full-coverage batches: records carry pair_id, so order is free."""
         if self.args.token_budget:
             print_rank_0(f"token-budget batching: measuring {len(dataset)} pair lengths (one CPU pass)...")
