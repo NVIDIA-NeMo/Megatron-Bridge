@@ -92,7 +92,11 @@ python -m torch.distributed.run --nproc_per_node=2 \
 Training must then run with the same `--tp` (recorded in the artifact's
 metadata and checked at startup): TP changes the vocab-parallel CE reduction
 order, so a mismatch would shift step 0 off ln 2 and hide a real mismatch
-behind it. Pipeline parallelism is not supported.
+behind it. Pipeline parallelism is free to differ: the scorer always runs at
+PP=1 and its artifact is valid for any training PP, because PP only decides
+which rank runs a layer. Training with PP > 1 turns on
+`model.variable_seq_lengths` automatically, since pair batches are padded to
+their own longest row and the stages must exchange shapes.
 
 MoE models can additionally shard experts with `--ep` (experts split *between*
 ranks) and `--etp` (each expert's GEMMs split *within* a rank group). `--etp`
@@ -100,8 +104,8 @@ defaults to `--tp`, so dense models need neither flag. The expert mesh must
 also cover the world exactly, so `--ep > 1` requires `--etp 1`:
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=8 \
-    scripts/dpo/score_reference_logprobs.py --tp 8 --ep 8 --etp 1 \
+python -m torch.distributed.run --nproc_per_node=4 \
+    scripts/dpo/score_reference_logprobs.py --tp 4 --ep 4 --etp 1 \
     --model <moe-model> \
     --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
     --output /data/uf_ref_logprobs
@@ -123,8 +127,8 @@ training effect, so pick whatever fits the hardware. `--micro-batch-size 1`
 only matters if you want step 0 to read ln 2 to the third decimal:
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=8 \
-    scripts/dpo/score_reference_logprobs.py --tp 8 --token-budget 16384 \
+python -m torch.distributed.run --nproc_per_node=4 \
+    scripts/dpo/score_reference_logprobs.py --tp 4 --token-budget 16384 \
     --model <moe-model> --max-seq-length 4096 \
     --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
     --output /data/uf_ref_logprobs
@@ -155,16 +159,16 @@ callers. `dpo_train` fail-fast validates the run config and the artifact
 metadata, then delegates to the stock `finetune` loop with the `dpo_step`
 forward step from the shared registry.
 
-Multi-GPU: `--nproc_per_node = tp × dp`. Pass `-tp` matching the scoring
-run; the remaining ranks form the data-parallel group. Recipes carry their
+Multi-GPU: `--nproc_per_node = tp × pp × dp`. Pass `-tp` matching the scoring
+run; PP is free, and the remaining ranks form the data-parallel group. Recipes carry their
 model's recompute settings; override via `model.recompute_granularity` if the
 measured headroom allows.
 
 ### Multinode
 
-`world_size = nnodes × nproc_per_node = tp × dp`. DP > 1 is what a second
+`world_size = nnodes × nproc_per_node = tp × pp × dp`. DP > 1 is what a second
 node buys: the distributed optimizer (already enabled) shards the fp32 Adam
-state — the largest per-GPU resident at TP=8 — across the DP replicas. DP is
+state — the largest per-GPU resident — across the DP replicas. DP is
 parity-neutral: it only deals different *pairs* to different replicas, so
 existing ref artifacts stay valid.
 
@@ -222,7 +226,7 @@ same token streams. These must match between the scoring run and the training ru
 | Tokenizer | `scoring_metadata.json` check at startup |
 | Sequence length (`dataset.seq_length`, stored as `max_seq_length` in the artifact) | `scoring_metadata.json` check at startup |
 | Row layout (`dataset.prompt_key` / `--prompt-key`) | `scoring_metadata.json` check at startup |
-| TP / PP sizes | `scoring_metadata.json` check at startup |
+| TP size and sequence parallelism | `scoring_metadata.json` check at startup (PP may differ) |
 | `num_pairs` (same rows, same order) | artifact coverage check: ref logprobs must cover `pair_id 0..N-1` exactly |
 | Reference model == `pretrained_checkpoint` | not checked — visible as step-0 `preference loss` ≠ ln 2 in the log |
 | No MTP head | `validate_dpo_run_config` |

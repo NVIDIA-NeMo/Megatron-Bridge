@@ -169,6 +169,7 @@ def test_dpo_forward_step_wires_forward_and_loss_closure(monkeypatch, fake_rerun
     import megatron.bridge.training.dpo_step as dpo_step_module
 
     batch = make_batch()
+    monkeypatch.setattr(dpo_step_module, "pipeline_stage_roles", lambda model: (True, True))
     monkeypatch.setattr(dpo_step_module, "get_dpo_batch", lambda it, _mult=1: validate_dpo_batch(next(it)))
 
     forward_calls = []
@@ -196,3 +197,44 @@ def test_dpo_forward_step_wires_forward_and_loss_closure(monkeypatch, fake_rerun
         "found NaN in local forward loss calculation",
         "found Inf in local forward loss calculation",
     ]
+
+
+@pytest.mark.parametrize("roles", [(True, False), (False, True)], ids=["first-stage", "last-stage"])
+def test_dpo_forward_step_fetches_the_batch_on_the_edge_pipeline_stages(monkeypatch, roles):
+    """The first stage needs the tokens, the last stage needs the labels and the reference sums."""
+    import megatron.bridge.training.dpo_step as dpo_step_module
+
+    batch = make_batch()
+    monkeypatch.setattr(dpo_step_module, "pipeline_stage_roles", lambda model: roles)
+    monkeypatch.setattr(dpo_step_module, "get_dpo_batch", lambda it, _mult=1: validate_dpo_batch(next(it)))
+    iterator = iter([batch])
+
+    def fake_model(*, input_ids, position_ids, attention_mask, labels):
+        assert input_ids is batch["tokens"]
+        return torch.full(labels.shape, 0.5)
+
+    dpo_forward_step(FakeState(), iterator, fake_model)
+    assert next(iterator, None) is None  # the one batch was consumed
+
+
+def test_dpo_forward_step_skips_the_batch_on_a_middle_pipeline_stage(monkeypatch):
+    """A middle stage forwards the previous stage's activations and never touches the iterator."""
+    import megatron.bridge.training.dpo_step as dpo_step_module
+
+    monkeypatch.setattr(dpo_step_module, "pipeline_stage_roles", lambda model: (False, False))
+
+    def fail_if_fetched(*args, **kwargs):
+        raise AssertionError("a middle stage must not fetch a batch")
+
+    monkeypatch.setattr(dpo_step_module, "get_dpo_batch", fail_if_fetched)
+    forward_calls = []
+
+    def fake_model(*, input_ids, position_ids, attention_mask, labels):
+        forward_calls.append((input_ids, position_ids, attention_mask, labels))
+        return torch.zeros(2, 3, 8)
+
+    output_tensor, loss_closure = dpo_forward_step(FakeState(), iter([make_batch()]), fake_model)
+    assert forward_calls == [(None, None, None, None)]
+    assert output_tensor.shape == (2, 3, 8)
+    with pytest.raises(RuntimeError, match="last stage"):
+        loss_closure(output_tensor)

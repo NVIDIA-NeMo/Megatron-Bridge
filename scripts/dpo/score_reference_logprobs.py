@@ -317,7 +317,6 @@ class ReferenceLogprobScorer:
             prompt_key=self.args.prompt_key,
             tensor_model_parallel_size=self.args.tp,
             sequence_parallel=bool(self.args.sequence_parallel),
-            pipeline_model_parallel_size=1,
         )
         write_scoring_metadata(
             {

@@ -1469,6 +1469,34 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(("pipeline_size", "expected"), [(1, False), (2, True)])
+    def test_dpo_dataset_enables_variable_seq_lengths_only_under_pipeline_parallelism(self, pipeline_size, expected):
+        """Pair batches vary in width per micro batch, so PP stages must exchange shapes."""
+        gpt_model_cfg = create_test_gpt_config(
+            pipeline_model_parallel_size=pipeline_size,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            tokenizer_name="org/some-model",
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=pipeline_size,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert gpt_model_cfg.variable_seq_lengths is expected
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_energon_packing_and_non_packed_padding_include_cp_sp_requirements(self, monkeypatch):
         """Test Energon receives the same CP/SP-safe collate multiples as direct HF."""
         model_cfg = create_test_qwen3_vl_config(

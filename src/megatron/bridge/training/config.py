@@ -1411,6 +1411,10 @@ class ConfigContainer(Container):
             )
         elif isinstance(self.dataset, DPODatasetConfig):
             self.dataset.pad_seq_length_to_mult = collate_padding_multiple
+            # Pair batches are padded to their own longest row, so the activation width changes per
+            # micro batch and pipeline stages must exchange shapes, as with in-batch packing.
+            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+                transformer_config.variable_seq_lengths = True
 
         _enable_safe_hybridep_dispatch(transformer_config, uses_thd=uses_thd)
 

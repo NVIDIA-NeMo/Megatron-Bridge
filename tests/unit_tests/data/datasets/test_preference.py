@@ -289,7 +289,6 @@ def fingerprint(**overrides) -> ScoringFingerprint:
         "prompt_key": None,
         "tensor_model_parallel_size": 1,
         "sequence_parallel": False,
-        "pipeline_model_parallel_size": 1,
     }
     fields.update(overrides)
     return ScoringFingerprint(**fields)

@@ -42,7 +42,6 @@ class ScoringFingerprint:
     prompt_key: str | None
     tensor_model_parallel_size: int
     sequence_parallel: bool
-    pipeline_model_parallel_size: int
 
 
 def _open_path(path: str, mode: str):

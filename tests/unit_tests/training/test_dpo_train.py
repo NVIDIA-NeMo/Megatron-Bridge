@@ -22,7 +22,6 @@ SCORED_FINGERPRINT = ScoringFingerprint(
     prompt_key=None,
     tensor_model_parallel_size=1,
     sequence_parallel=False,
-    pipeline_model_parallel_size=1,
 )
 
 
@@ -96,7 +95,6 @@ def with_validation(mutate):
         (lambda c, _: setattr(c.dataset, "ref_artifact", None), "ref_artifact"),
         (lambda c, _: setattr(c.model, "calculate_per_token_loss", False), "calculate_per_token_loss"),
         (lambda c, _: setattr(c.ddp, "average_in_collective", True), "average_in_collective"),
-        (lambda c, _: setattr(c.model, "pipeline_model_parallel_size", 2), "pipeline"),
         (lambda c, _: setattr(c.model, "context_parallel_size", 2), "context"),
         (lambda c, _: setattr(c.model, "mtp_num_layers", 1), "mtp_num_layers"),
         (lambda c, _: setattr(c.train, "micro_batch_size", 3), "even"),

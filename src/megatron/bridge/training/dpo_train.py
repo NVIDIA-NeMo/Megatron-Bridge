@@ -64,8 +64,6 @@ def validate_dpo_run_config(config: ConfigContainer) -> None:
             "ddp.average_in_collective must be False: gradients are normalized by the global live-pair "
             "count, not averaged over DP ranks."
         )
-    if config.model.pipeline_model_parallel_size != 1:
-        problems.append("pipeline_model_parallel_size > 1 is not supported for DPO.")
     if config.model.context_parallel_size != 1:
         problems.append("context_parallel_size > 1 is not supported for DPO.")
     if config.model.mtp_num_layers:
@@ -148,5 +146,4 @@ def expected_scoring_metadata(
         prompt_key=config.dataset.prompt_key,
         tensor_model_parallel_size=config.model.tensor_model_parallel_size,
         sequence_parallel=bool(config.model.sequence_parallel),
-        pipeline_model_parallel_size=config.model.pipeline_model_parallel_size,
     )
