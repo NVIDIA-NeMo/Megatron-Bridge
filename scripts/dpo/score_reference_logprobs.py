@@ -17,15 +17,18 @@
 Runs the reference model forward over the trainer's own pair dataset and writes a
 ``pair_id``-keyed artifact the trainer loads instead of the reference weights. Data, tokenizer, ``--max-seq-length`` and
 the parallel layout (``--tp``, ``--sequence-parallel``) must equal the training run's;
-``scoring_metadata.json`` records them and the trainer checks it.
+``scoring_metadata.json`` records them and the trainer checks it. Ranks beyond one TP group
+form data-parallel replicas that each score a share of the batches; DP only decides which
+pairs share a batch, so it is not recorded. The scorer always runs at PP=1, and its artifact
+is valid for any training PP.
 
 Example:
     python scripts/dpo/score_reference_logprobs.py \\
         --model Qwen/Qwen2.5-0.5B-Instruct \\
         --output /tmp/capybara_ref_logprobs --num-pairs 1024
 
-With tensor parallelism (launch exactly ``--tp`` processes; rank 0 writes the artifact):
-    python -m torch.distributed.run --nproc_per_node=2 \\
+With tensor and data parallelism (launch ``--tp`` x DP processes; rank 0 gathers and writes):
+    python -m torch.distributed.run --nproc_per_node=8 \\
         scripts/dpo/score_reference_logprobs.py --tp 2 \\
         --model Qwen/Qwen2.5-7B-Instruct --output /tmp/uf_ref_logprobs
 """
@@ -35,6 +38,7 @@ import os
 from dataclasses import asdict
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from torch.utils.data import BatchSampler, DataLoader, SequentialSampler
@@ -65,6 +69,9 @@ from megatron.bridge.utils.common_utils import (
 # The trainer's default recipe; applied here too so the reference forward runs the policy's numerics
 # whatever precision the checkpoint declares.
 MIXED_PRECISION_RECIPE = "bf16_mixed"
+
+# One artifact row: pair_id plus the chosen/rejected logprob sums and token counts.
+PairRecord = dict[str, float | int]
 
 
 def parse_args() -> argparse.Namespace:
@@ -123,7 +130,7 @@ def parse_args() -> argparse.Namespace:
         "--tp",
         type=int,
         default=1,
-        help="Tensor parallel size; launch exactly this many processes. Must match training",
+        help="Tensor parallel size; must match training. Ranks beyond one TP group become data-parallel replicas",
     )
     parser.add_argument(
         "--sequence-parallel",
@@ -136,13 +143,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=0)
 
     args = parser.parse_args()
-    if args.ep < 1 or (args.etp is not None and args.etp < 1):
-        parser.error(f"--ep and --etp must be >= 1; got --ep {args.ep} --etp {args.etp}.")
+    if args.tp < 1 or args.ep < 1 or (args.etp is not None and args.etp < 1):
+        parser.error(f"--tp, --ep and --etp must be >= 1; got --tp {args.tp} --ep {args.ep} --etp {args.etp}.")
     if args.etp is None:
         args.etp = args.tp
     if args.micro_batch_size is None and args.token_budget is None:
         args.micro_batch_size = 8
     return args
+
+
+def validate_scorer_world_size(world_size: int, *, tp: int, ep: int, etp: int) -> int:
+    """Return the data-parallel size. TP and the EP x ETP expert mesh must both tile the world."""
+    expert_mesh = ep * etp
+    if world_size % tp != 0 or world_size % expert_mesh != 0:
+        raise SystemExit(
+            f"World size {world_size} must be a multiple of both --tp {tp} and EP x ETP = {ep} x {etp} = "
+            f"{expert_mesh}. The ranks beyond one TP group form the data-parallel replicas that split the pairs."
+        )
+    return world_size // tp
+
+
+def shard_batches(batch_plan: list[list[int]], *, rank: int, size: int) -> list[list[int]]:
+    """Deal whole batches round-robin to the data-parallel replicas, so a length-sorted plan stays balanced."""
+    return batch_plan[rank::size]
 
 
 def dpo_source(args: argparse.Namespace) -> PreferenceSource:
@@ -188,27 +211,34 @@ class ReferenceLogprobScorer:
         if torch.distributed.is_initialized():
             torch.distributed.barrier()  # don't tear down the process group under the writer
 
-    def _score_all(self, model: list[torch.nn.Module], dataset: PreferencePairDataset) -> list[dict[str, float | int]]:
-        """Forward every batch and collect one record per pair, logging progress about ten times."""
+    def _score_all(self, model: list[torch.nn.Module], dataset: PreferencePairDataset) -> list[PairRecord]:
+        """Score this replica's batches, then gather every replica's records; complete and pair_id-sorted on all ranks."""
         loader = self._pair_loader(dataset)
+        replica_pairs = sum(len(batch) for batch in loader.batch_sampler)
         log_every = max(1, len(loader) // 10)
-        records: list[dict[str, float | int]] = []
+        records: list[PairRecord] = []
         for step, batch in enumerate(loader):
             records.extend(self._score_batch(model, batch))
             if step % log_every == 0 or step == len(loader) - 1:
-                print_rank_0(f"scored {len(records)}/{len(dataset)} pairs")
-        return records
+                print_rank_0(f"scored {len(records)}/{replica_pairs} pairs on replica 0 of {self._dp_size()}")
+        return sorted(self._gather_records(records), key=lambda record: record["pair_id"])
+
+    @staticmethod
+    def _dp_size() -> int:
+        return parallel_state.get_data_parallel_world_size() if torch.distributed.is_initialized() else 1
+
+    def _gather_records(self, records: list[PairRecord]) -> list[PairRecord]:
+        """Concatenate the replicas' records; TP ranks within a replica hold identical copies, so DP suffices."""
+        dp_size = self._dp_size()
+        if dp_size == 1:
+            return records
+        shards = [None] * dp_size
+        torch.distributed.all_gather_object(shards, records, group=parallel_state.get_data_parallel_group())
+        return [record for shard in shards for record in shard]
 
     def _build_model(self) -> list[torch.nn.Module]:
         """Forward-only Megatron bring-up (no ConfigContainer/optimizer)."""
-        world_size = get_world_size_safe()
-        expert_mesh = self.args.ep * self.args.etp
-        if world_size != self.args.tp or world_size != expert_mesh:
-            raise SystemExit(
-                f"World size {world_size} must equal both --tp {self.args.tp} and EP x ETP "
-                f"{self.args.ep} x {self.args.etp} = {expert_mesh}: the scorer runs "
-                "without data parallelism on either mesh."
-            )
+        validate_scorer_world_size(get_world_size_safe(), tp=self.args.tp, ep=self.args.ep, etp=self.args.etp)
         bridge = AutoBridge.from_hf_pretrained(self.args.model, torch_dtype=torch.bfloat16)
         provider = bridge.to_megatron_provider(load_weights=True)
         self._configure_provider(provider)
@@ -238,7 +268,18 @@ class ReferenceLogprobScorer:
             setattr(provider, name, value)
 
     def _pair_loader(self, dataset: PreferencePairDataset) -> DataLoader:
-        """Deterministic full-coverage batches: records carry pair_id, so order is free."""
+        """This replica's share of a deterministic full-coverage batch plan; records carry pair_id, so order is free."""
+        batch_plan = self._batch_plan(dataset)
+        if torch.distributed.is_initialized():
+            batch_plan = shard_batches(
+                batch_plan,
+                rank=parallel_state.get_data_parallel_rank(),
+                size=parallel_state.get_data_parallel_world_size(),
+            )
+        return DataLoader(dataset, batch_sampler=batch_plan, collate_fn=dataset.collate_fn, pin_memory=True)
+
+    def _batch_plan(self, dataset: PreferencePairDataset) -> list[list[int]]:
+        """Every pair index exactly once: length-sorted token-budget batches, or fixed-size sequential ones."""
         if self.args.token_budget:
             print_rank_0(f"token-budget batching: measuring {len(dataset)} pair lengths (one CPU pass)...")
             batch_plan = pack_pairs_by_token_budget(
@@ -249,12 +290,12 @@ class ReferenceLogprobScorer:
             print_rank_0(
                 f"token-budget batching: {len(batch_plan)} batches under {self.args.token_budget} padded tokens"
             )
-            return DataLoader(dataset, batch_sampler=batch_plan, collate_fn=dataset.collate_fn, pin_memory=True)
+            return batch_plan
         sampler = BatchSampler(SequentialSampler(dataset), batch_size=self.args.micro_batch_size, drop_last=False)
-        return DataLoader(dataset, batch_sampler=sampler, collate_fn=dataset.collate_fn, pin_memory=True)
+        return [list(batch) for batch in sampler]
 
     @staticmethod
-    def _score_batch(model: list[torch.nn.Module], batch: dict[str, torch.Tensor]) -> list[dict[str, float | int]]:
+    def _score_batch(model: list[torch.nn.Module], batch: dict[str, torch.Tensor]) -> list[PairRecord]:
         """One forward pass; returns one record per pair via the shared DPO sum math."""
         rows = {key: batch[key].cuda() for key in ("tokens", "labels", "loss_mask", "position_ids")}
 

@@ -77,12 +77,17 @@ any MTP head, and records the recipe name; `--tp` and
 TP > 1 need `--sequence-parallel` — MCore refuses MoE + TP without it in
 train mode).
 
-For models that don't fit on one GPU, score with tensor parallelism — launch
-exactly `--tp` processes; every rank computes identical sums (vocab-parallel
-CE all-reduces across the TP group) and rank 0 writes the artifact:
+Multi-GPU: `--nproc_per_node = tp × dp`. `--tp` shards the weights and every
+rank in a TP group computes identical sums (vocab-parallel CE all-reduces
+across the group). The remaining ranks form data-parallel replicas that each
+score a disjoint share of the batches; rank 0 gathers the records and writes
+the artifact. DP is parity-neutral — it only changes which pairs share a
+batch, so it is not recorded and any DP is valid for any training layout. Add
+nodes with the usual torchrun rendezvous; scoring time falls linearly with the
+replica count:
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=2 \
+python -m torch.distributed.run --nproc_per_node=8 \
     scripts/dpo/score_reference_logprobs.py --tp 2 \
     --model Qwen/Qwen2.5-7B-Instruct \
     --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
@@ -100,11 +105,13 @@ their own longest row and the stages must exchange shapes.
 
 MoE models can additionally shard experts with `--ep` (experts split *between*
 ranks) and `--etp` (each expert's GEMMs split *within* a rank group). `--etp`
-defaults to `--tp`, so dense models need neither flag. The expert mesh must
-also cover the world exactly, so `--ep > 1` requires `--etp 1`:
+defaults to `--tp`, so dense models need neither flag. `EP × ETP` must divide
+the world, and replicas beyond the expert mesh are expert-data-parallel, so a
+744B-class MoE scores on 32 GPUs at `--tp 1 --ep 32 --etp 1` with its dense
+layers replicated and its experts sharded 32 ways:
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=4 \
+python -m torch.distributed.run --nproc_per_node=8 \
     scripts/dpo/score_reference_logprobs.py --tp 4 --ep 4 --etp 1 \
     --model <moe-model> \
     --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
