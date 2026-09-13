@@ -332,7 +332,7 @@ def evaluate(
         collected_non_loss_data = None
         if non_loss_data_func is not None:
             collected_non_loss_data = non_loss_data_func(model)
-        elif process_non_loss_data_func is not None and is_last_rank():
+        elif process_non_loss_data_func is not None:
             # Handle finetuning vs pretraining for non-loss data collection
             non_loss_data_iterator = data_iterator
             non_loss_seq_length = default_seq_length
