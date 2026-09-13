@@ -50,7 +50,7 @@ from megatron.bridge.data.datasets.preference import (
 )
 from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
-from megatron.bridge.data.sources.jsonl import PreferenceJSONLSource
+from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.dpo import sequence_logprob_sums, split_pair_rows
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -148,7 +148,7 @@ def parse_args() -> argparse.Namespace:
 def dpo_source(args: argparse.Namespace) -> PreferenceSource:
     """The preference source these CLI args select; a path-shaped --dataset is routed to JSONL by the config."""
     if args.jsonl:
-        return PreferenceJSONLSource(paths=list(args.jsonl), index_mapping_dir=args.index_mapping_dir)
+        return JSONLSourceConfig(paths=list(args.jsonl), index_mapping_dir=args.index_mapping_dir)
     return HFDatasetSourceConfig(path_or_dataset=args.dataset, split=args.split)
 
 

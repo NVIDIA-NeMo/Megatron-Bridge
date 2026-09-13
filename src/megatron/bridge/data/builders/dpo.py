@@ -32,7 +32,7 @@ from megatron.bridge.data.datasets.preference import load_ref_logprobs
 from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.datasets.utils import _JSONLMemMapDataset
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_hf_dataset_source, prepare_hf_dataset_sources
-from megatron.bridge.data.sources.jsonl import PreferenceJSONLSource
+from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
-PreferenceSource = HFDatasetSourceConfig | PreferenceJSONLSource
+PreferenceSource = HFDatasetSourceConfig | JSONLSourceConfig
 
 _JSONL_SUFFIXES = (".jsonl", ".json")
 
@@ -51,15 +51,15 @@ def _as_source(entry: "PreferenceSource | Mapping[str, Any]") -> Any:
     """Rebuild a source that an override round trip flattened into a mapping."""
     if not isinstance(entry, Mapping):
         return entry
-    return PreferenceJSONLSource(**dict(entry)) if "paths" in entry else HFDatasetSourceConfig(**dict(entry))
+    return JSONLSourceConfig(**dict(entry)) if "paths" in entry else HFDatasetSourceConfig(**dict(entry))
 
 
 @dataclass(kw_only=True)
 class DPODatasetConfig(DataloaderConfig):
-    """Chat-format preference dataset plus its offline-scored ref-logprob artifact.
+    """Preference dataset plus its offline-scored ref-logprob artifact.
 
     ``source`` is an ``HFDatasetSourceConfig`` for anything HuggingFace ``datasets``
-    can read, or a ``PreferenceJSONLSource`` for JSONL that may live in object storage.
+    can read, or a ``JSONLSourceConfig`` for JSONL that may live in object storage.
     The source identity, ``tokenizer_name``, and ``seq_length`` must equal the
     scoring run's values, which ``dpo_train`` checks against ``scoring_metadata.json``
     (where the length is recorded under its dataset-level name, ``max_seq_length``).
@@ -101,9 +101,9 @@ class DPODatasetConfig(DataloaderConfig):
         """Route a JSONL path to the memmap reader, then validate whichever source type results."""
         source = _as_source(source)
         if isinstance(source, HFDatasetSourceConfig) and (source.path_or_dataset or "").endswith(_JSONL_SUFFIXES):
-            source = PreferenceJSONLSource(paths=[source.path_or_dataset], index_mapping_dir=self.index_mapping_dir)
-        if not isinstance(source, (HFDatasetSourceConfig, PreferenceJSONLSource)):
-            raise TypeError(f"{field} must be an HFDatasetSourceConfig or PreferenceJSONLSource; got {source!r}.")
+            source = JSONLSourceConfig(paths=[source.path_or_dataset], index_mapping_dir=self.index_mapping_dir)
+        if not isinstance(source, (HFDatasetSourceConfig, JSONLSourceConfig)):
+            raise TypeError(f"{field} must be an HFDatasetSourceConfig or JSONLSourceConfig; got {source!r}.")
 
         source.validate()
         return source
@@ -146,7 +146,7 @@ class DPODatasetConfig(DataloaderConfig):
 
         JSONL sources have no split: their paths name the rows directly.
         """
-        if isinstance(source, PreferenceJSONLSource):
+        if isinstance(source, JSONLSourceConfig):
             return ",".join(source.paths), None
         return source.dataset_name or source.path_or_dataset, source.split
 
@@ -170,7 +170,7 @@ class DPODatasetConfig(DataloaderConfig):
 
     @staticmethod
     def _load_rows(source: PreferenceSource, num_pairs: int):
-        if isinstance(source, PreferenceJSONLSource):
+        if isinstance(source, JSONLSourceConfig):
             rows = _JSONLMemMapDataset(
                 dataset_paths=source.paths,
                 tokenizer=None,

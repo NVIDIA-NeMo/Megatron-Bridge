@@ -12,7 +12,7 @@ from megatron.bridge.data.builders.dpo import (
     dpo_train_valid_test_datasets_provider,
 )
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
-from megatron.bridge.data.sources.jsonl import PreferenceJSONLSource
+from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
 from tests.unit_tests.data.preference_fakes import FakeChatTokenizer
 
 
@@ -83,9 +83,9 @@ def test_dataloader_type_is_pinned_to_batch():
 
 def test_source_must_be_a_supported_source_type():
     """The source type selects the mode, so anything else fails loudly."""
-    with pytest.raises(TypeError, match="HFDatasetSourceConfig or PreferenceJSONLSource"):
+    with pytest.raises(TypeError, match="HFDatasetSourceConfig or JSONLSourceConfig"):
         make_config(source=None).finalize()
-    with pytest.raises(TypeError, match="HFDatasetSourceConfig or PreferenceJSONLSource"):
+    with pytest.raises(TypeError, match="HFDatasetSourceConfig or JSONLSourceConfig"):
         make_config(source=["/tmp/pairs.jsonl"]).finalize()
 
 
@@ -98,7 +98,7 @@ def test_mapping_shaped_sources_are_rebuilt_after_an_override_round_trip():
     )
     config.finalize()
     assert isinstance(config.source, HFDatasetSourceConfig)
-    assert isinstance(config.validation_source, PreferenceJSONLSource)
+    assert isinstance(config.validation_source, JSONLSourceConfig)
     assert config.source_identity(config.source) == ("org/some-preference-set", "train")
     assert config.source_identity(config.validation_source) == ("/tmp/v.jsonl", None)
 
@@ -109,18 +109,18 @@ def test_seq_length_must_be_positive():
 
 
 def test_jsonl_sources_reject_formats_the_memmap_reader_cannot_parse():
-    config = make_config(source=PreferenceJSONLSource(paths=["/tmp/pairs.parquet"]))
+    config = make_config(source=JSONLSourceConfig(paths=["/tmp/pairs.parquet"]))
     with pytest.raises(ValueError, match="accepts only"):
         config.finalize()
 
 
 def test_remote_jsonl_requires_an_index_mapping_dir():
     """The .idx sidecars cannot be written beside data in a read-only bucket."""
-    config = make_config(source=PreferenceJSONLSource(paths=["msc://bucket/pairs.jsonl"]))
+    config = make_config(source=JSONLSourceConfig(paths=["msc://bucket/pairs.jsonl"]))
     with pytest.raises(ValueError, match="index_mapping_dir"):
         config.finalize()
 
-    ok = make_config(source=PreferenceJSONLSource(paths=["msc://bucket/pairs.jsonl"], index_mapping_dir="/tmp/idx"))
+    ok = make_config(source=JSONLSourceConfig(paths=["msc://bucket/pairs.jsonl"], index_mapping_dir="/tmp/idx"))
     ok.finalize()
 
 
@@ -129,7 +129,7 @@ def test_source_identity_covers_each_source_mode():
     hf = make_config()
     assert hf.source_identity(hf.source) == ("org/some-preference-set", "train")
 
-    jsonl = make_config(source=PreferenceJSONLSource(paths=["/tmp/a.jsonl", "/tmp/b.jsonl"]))
+    jsonl = make_config(source=JSONLSourceConfig(paths=["/tmp/a.jsonl", "/tmp/b.jsonl"]))
     assert jsonl.source_identity(jsonl.source) == ("/tmp/a.jsonl,/tmp/b.jsonl", None)
 
 
@@ -140,7 +140,7 @@ def test_validate_resolves_a_jsonl_path_on_the_hf_source_in_place(tmp_path):
         index_mapping_dir=str(tmp_path / "index"),
     )
     config.finalize()
-    assert isinstance(config.source, PreferenceJSONLSource)
+    assert isinstance(config.source, JSONLSourceConfig)
     assert config.source.index_mapping_dir == str(tmp_path / "index")
     assert config.source_identity(config.source) == ("/tmp/pairs.jsonl", None)
 
@@ -251,7 +251,7 @@ def test_load_source_concatenates_files_in_order_and_truncates_to_num_pairs(tmp_
     write_jsonl(data_dir / "b.jsonl", [{"x": 1}, {"x": 2}])
 
     config = make_config(
-        source=PreferenceJSONLSource(
+        source=JSONLSourceConfig(
             paths=[str(data_dir / "a.jsonl"), str(data_dir / "b.jsonl")],
             index_mapping_dir=str(tmp_path / "index"),
         ),
@@ -304,7 +304,7 @@ def test_builder_validates_at_construction():
     """Bad configs fail when the builder is created, before any data is touched."""
     with pytest.raises(ValueError, match="ref_artifact"):
         DPODatasetBuilder(make_config(ref_artifact=None))
-    with pytest.raises(TypeError, match="HFDatasetSourceConfig or PreferenceJSONLSource"):
+    with pytest.raises(TypeError, match="HFDatasetSourceConfig or JSONLSourceConfig"):
         DPODatasetBuilder(make_config(source=None))
 
 

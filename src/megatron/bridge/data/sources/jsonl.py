@@ -23,8 +23,8 @@ def _is_object_store_url(path: str) -> bool:
 
 
 @dataclass(kw_only=True)
-class PreferenceJSONLSource:
-    """JSONL preference rows read in place through the memmap reader.
+class JSONLSourceConfig:
+    """JSONL rows read in place through the memmap reader.
 
     The only source type that reads object storage (``msc://`` paths); anything
     HuggingFace ``datasets`` can read goes through ``HFDatasetSourceConfig`` instead.
@@ -38,11 +38,11 @@ class PreferenceJSONLSource:
     def validate(self) -> None:
         """Validate the paths against the memmap reader's constraints."""
         if not self.paths:
-            raise ValueError("PreferenceJSONLSource.paths must contain at least one path.")
+            raise ValueError("JSONLSourceConfig.paths must contain at least one path.")
         bad = [path for path in self.paths if not path.endswith((".jsonl", ".json"))]
         if bad:
             raise ValueError(
-                f"PreferenceJSONLSource accepts only .jsonl/.json files (the memmap reader's formats); got {bad}. "
+                f"JSONLSourceConfig accepts only .jsonl/.json files (the memmap reader's formats); got {bad}. "
                 "Other formats must go through HFDatasetSourceConfig, which cannot read msc://."
             )
         if any(_is_object_store_url(path) for path in self.paths) and self.index_mapping_dir is None:

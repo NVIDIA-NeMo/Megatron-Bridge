@@ -193,7 +193,7 @@ repeat step 1 over the validation rows (same model, tokenizer, and
 `--max-seq-length` as the train scoring run).
 
 Enable it by setting `dataset.validation_source` (an `HFDatasetSourceConfig`
-or a `PreferenceJSONLSource`) plus `dataset.validation_ref_artifact` — in the
+or a `JSONLSourceConfig`) plus `dataset.validation_ref_artifact` — in the
 model's DPO recipe or from a programmatic caller — and turn it on with
 `validation.eval_interval` / `validation.eval_iters`. `eval_global_batch_size` /
 `eval_micro_batch_size` default to the train sizes and are row-denominated
