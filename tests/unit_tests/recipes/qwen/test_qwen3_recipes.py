@@ -52,17 +52,18 @@ def test_qwen3_30b_a3b_dpo_config_applies_the_dpo_contract(monkeypatch):
     assert cfg.model.calculate_per_token_loss is True
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.ddp.average_in_collective is False
-    assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.mtp_num_layers is None
 
-    # One node fills both meshes, matching a --tp 8 --sequence-parallel --ep 8 --etp 1 scoring run.
-    assert cfg.model.tensor_model_parallel_size == 8
+    # One node fills both meshes (TP4 x PP2 = PP2 x EP4 x ETP1 = 8), matching a
+    # --tp 4 --sequence-parallel --ep 4 --etp 1 scoring run; PP is not part of the artifact.
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.sequence_parallel is True
-    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_model_parallel_size == 4
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_granularity is None
 
     # Row-denominated batch sizes must be even (one pair == two rows).
     assert cfg.train.global_batch_size % 2 == 0

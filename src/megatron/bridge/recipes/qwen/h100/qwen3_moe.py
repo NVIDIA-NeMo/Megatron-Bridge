@@ -1000,14 +1000,14 @@ def qwen3_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
 def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a DPO config for Qwen3-30B-A3B MoE.
 
-    Recommended parallelism: TP=8, EP=8, ETP=1, SP=True (1 node, 8 GPUs); score the
-    reference with the same layout. Runs must set ``--pretrained_checkpoint`` to a local
-    HF model directory and ``dataset.ref_artifact`` to the scored artifact.
+    Recommended parallelism: TP=4, PP=2, EP=4 (1 node, 8 GPUs with SP=True). Requires
+    ``--pretrained_checkpoint`` and ``dataset.ref_artifact`` scored at ``--tp 4 --ep 4 --etp 1``.
     """
     cfg = _dpo_common(_QWEN3_30B_A3B_MODEL_ID, seq_length=4096, revision=_QWEN3_30B_A3B_MODEL_REVISION)
 
-    cfg.model.tensor_model_parallel_size = 8
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True
 
@@ -1026,9 +1026,11 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
 
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    # Fits without recompute at seq 4096 / mbs 2 rows (46 GB per H100); TP8 / PP1 needs full
+    # recompute for the same memory and runs about 40% slower.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # A no-op at DP=1; shards the Adam state as soon as the run adds nodes.
     cfg.ddp.use_distributed_optimizer = True
