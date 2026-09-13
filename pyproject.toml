@@ -98,8 +98,8 @@ dependencies = [
     "mlflow>=3.15.1",   # To address CVE-2025-15031
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
-    "flashinfer-python==0.6.8.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
-    "flashinfer-cubin==0.6.8.post1",   # the runtime version-match check fails otherwise
+    "flashinfer-python==0.6.18.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
+    "flashinfer-cubin==0.6.18.post1",   # the runtime version-match check fails otherwise
     "fast-hadamard-transform>=1.1.0",
 ]
 
@@ -151,6 +151,11 @@ override-dependencies = [
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 
+[[tool.uv.index]]
+name = "flashinfer"
+url = "https://flashinfer.ai/whl/"
+explicit = true
+
 # flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
 # resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
 [[tool.uv.dependency-metadata]]
@@ -190,6 +195,8 @@ megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
+flashinfer-python = { index = "flashinfer" }
+flashinfer-cubin = { index = "flashinfer" }
 
 [project.optional-dependencies]
 recipes = [
