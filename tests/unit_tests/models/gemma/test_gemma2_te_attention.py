@@ -14,17 +14,20 @@
 
 """Tests for the Gemma2 TransformerEngine attention path.
 
-Two tiers, deliberately separated:
+Three tiers, gated as narrowly as each actually requires:
 
-**CPU-only, and therefore actually executed in CI.** The config rewrite
-Gemma2TEDotProductAttention performs, the provider's backend forcing and softcap validation,
-and the layer-spec selection. These need no GPU and no softcap-capable TransformerEngine.
-They exist because the GPU tier below is skipped in CI (the container's TE predates the
-``softcap`` kwarg), which is how an inverted sliding-window layer parity once shipped.
+**CPU-only**, so these always execute. The config rewrite Gemma2TEDotProductAttention
+performs, the provider's backend forcing and softcap validation, and the layer-spec selection.
+They exist because everything here used to sit behind the softcap gate below and was therefore
+skipped in CI, which is how an inverted sliding-window layer parity once shipped.
 
-**GPU + softcap-capable TE.** Numerical parity against the unfused Gemma2DotProductAttention
-oracle: per-layer forward-output equivalence, SWA masking, and the tanh softcap being applied
-pre-softmax. Only these three genuinely require the fused kernel, so only these are gated.
+**CUDA only.** Forward-output parity against the unfused Gemma2DotProductAttention oracle, and
+SWA masking. Both run with the cap disabled: masking, the Gemma2 attention scale and the output
+layout are all observable uncapped, and mcore asserts ``_te_dpa_supports_softcap`` only when
+``attn_logit_softcapping`` is set. So these need a GPU but not a softcap-capable build.
+
+**CUDA and a softcap-capable TE.** Only ``test_softcap_applied_pre_softmax``, which is the one
+assertion that genuinely cannot be made without the fused kernel.
 
 Run with:
     uv run pytest tests/unit_tests/models/gemma/test_gemma2_te_attention.py
@@ -62,6 +65,7 @@ except Exception:  # pragma: no cover - import guard
 
 
 _HAVE_CUDA = torch.cuda.is_available()
+requires_cuda = pytest.mark.skipif(not _HAVE_CUDA, reason="Requires a CUDA device")
 requires_te_flash_softcap = pytest.mark.skipif(
     not (_HAVE_CUDA and _te_dpa_supports_softcap),
     reason=(
@@ -125,6 +129,7 @@ def _qkv(seq, batch, *, device, dtype=torch.bfloat16, scale=1.0, seed=0):
     return q, k, v
 
 
+@pytest.mark.unit
 class TestGemma2TEDotProductAttentionConfigRewrite:
     """CPU-only checks on the config Gemma2TEDotProductAttention hands to TransformerEngine.
 
@@ -213,6 +218,7 @@ class TestGemma2TEDotProductAttentionConfigRewrite:
         assert self._captured_init(provider, 1)["config"].attn_logit_softcapping == _SOFTCAP
 
 
+@pytest.mark.unit
 class TestGemma2ModelProviderAttentionConstraints:
     """CPU-only checks on the provider's backend forcing and softcap validation."""
 
@@ -265,6 +271,7 @@ class TestGemma2ModelProviderAttentionConstraints:
         assert provider.attn_logit_softcapping is None
 
 
+@pytest.mark.unit
 class TestGemma2LayerSpecSelection:
     """CPU-only checks that the opt-in flag picks the right core-attention class."""
 
@@ -281,9 +288,15 @@ class TestGemma2LayerSpecSelection:
         assert spec.submodules.self_attention.submodules.core_attention is Gemma2FlexDotProductAttention
 
 
-@requires_te_flash_softcap
+@requires_cuda
 class TestGemma2TEDotProductAttentionParity:
-    """Parity of the TE flash path against the unfused Gemma2 oracle."""
+    """Parity of the TE flash path against the unfused Gemma2 oracle.
+
+    Gated on CUDA only. Masking, the Gemma2 attention scale and output layout are all
+    observable with the cap disabled, and mcore asserts _te_dpa_supports_softcap only when
+    attn_logit_softcapping is set, so these run against any TE with flash attention. Only
+    the softcap test below additionally needs a softcap-capable build.
+    """
 
     @classmethod
     def setup_class(cls):
@@ -346,7 +359,8 @@ class TestGemma2TEDotProductAttentionParity:
     def test_forward_output_parity(self, layer_number, label):
         """TE flash output must match the unfused oracle on both odd (SWA) and even (causal) layers."""
         seq, batch = 16, 2
-        config = _make_config(window_size=(3, 0))
+        # Uncapped: this test is about masking, scale and layout, none of which need the cap.
+        config = _make_config(window_size=(3, 0), softcap=None)
         oracle = self._make_oracle(config, layer_number)
         te = self._make_te(config, layer_number)
 
@@ -374,7 +388,8 @@ class TestGemma2TEDotProductAttentionParity:
         """
         seq, batch = 8, 1
         window_left = 3
-        config = _make_config(window_size=(window_left, 0))
+        # Uncapped: pure masking behaviour, independent of the softcap.
+        config = _make_config(window_size=(window_left, 0), softcap=None)
 
         q, k, v = _qkv(seq, batch, device="cuda", seed=11)
         # Perturb a token strictly outside the last query's window: position 0 is far past for the
@@ -409,6 +424,7 @@ class TestGemma2TEDotProductAttentionParity:
                 f"{'SWA to exclude' if is_swa else 'full causal to include'} tokens beyond the window"
             )
 
+    @requires_te_flash_softcap
     def test_softcap_applied_pre_softmax(self):
         """With large logits, the TE path must saturate via 50*tanh (matching the oracle) and differ
         from an uncapped TE path — proving the softcap is applied pre-softmax."""
