@@ -12,24 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Numerical parity tests for Gemma2TEDotProductAttention.
+"""Tests for the Gemma2 TransformerEngine attention path.
 
-These compare the TransformerEngine flash-attention path (Gemma2TEDotProductAttention)
-against the unfused Gemma2DotProductAttention oracle on small tensors, covering:
+Two tiers, deliberately separated:
 
-* per-layer forward-output parity (odd/SWA layer and even/causal layer),
-* SWA masking: tokens beyond the window are excluded only on odd layers,
-* the tanh softcap being applied pre-softmax.
+**CPU-only, and therefore actually executed in CI.** The config rewrite
+Gemma2TEDotProductAttention performs, the provider's backend forcing and softcap validation,
+and the layer-spec selection. These need no GPU and no softcap-capable TransformerEngine.
+They exist because the GPU tier below is skipped in CI (the container's TE predates the
+``softcap`` kwarg), which is how an inverted sliding-window layer parity once shipped.
 
-They require a real GPU and a TransformerEngine build whose DotProductAttention exposes a
-``softcap`` argument, so they are skipped cleanly otherwise. They are not run in CI on CPU.
+**GPU + softcap-capable TE.** Numerical parity against the unfused Gemma2DotProductAttention
+oracle: per-layer forward-output equivalence, SWA masking, and the tanh softcap being applied
+pre-softmax. Only these three genuinely require the fused kernel, so only these are gated.
 
 Run with:
     uv run pytest tests/unit_tests/models/gemma/test_gemma2_te_attention.py
 """
 
 import datetime
+import math
 import os
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -37,12 +41,14 @@ import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer.enums import AttnMaskType
+from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 
 from megatron.bridge.models.gemma.gemma2_provider import (
     Gemma2DotProductAttention,
+    Gemma2FlexDotProductAttention,
     Gemma2ModelProvider,
     Gemma2TEDotProductAttention,
+    gemma2_layer_spec,
 )
 
 
@@ -117,6 +123,162 @@ def _qkv(seq, batch, *, device, dtype=torch.bfloat16, scale=1.0, seed=0):
     k = torch.randn(shape, device=device, dtype=dtype, generator=gen) * scale
     v = torch.randn(shape, device=device, dtype=dtype, generator=gen) * scale
     return q, k, v
+
+
+class TestGemma2TEDotProductAttentionConfigRewrite:
+    """CPU-only checks on the config Gemma2TEDotProductAttention hands to TransformerEngine.
+
+    Unlike the parity tests below, these need no GPU and no softcap-capable TE build, so they
+    actually execute in CI. Gemma2TEDotProductAttention does all of its work before calling
+    super().__init__, so patching the base captures everything it computed. Patching is not
+    merely a convenience: mcore asserts `_te_dpa_supports_softcap` whenever
+    attn_logit_softcapping is set, so real construction cannot run against a TE without softcap.
+    """
+
+    @staticmethod
+    def _captured_init(provider, layer_number, **kwargs):
+        """Construct the TE attention class with the base stubbed, returning the captured kwargs."""
+        with patch.object(Gemma2TEDotProductAttention.__bases__[0], "__init__", return_value=None) as init:
+            Gemma2TEDotProductAttention(
+                config=provider,
+                layer_number=layer_number,
+                attn_mask_type=AttnMaskType.causal,
+                attention_type="self",
+                **kwargs,
+            )
+        return init.call_args.kwargs
+
+    @pytest.mark.parametrize(
+        "layer_number, expect_window",
+        [(1, True), (2, False), (3, True), (4, False)],
+    )
+    def test_sliding_window_on_odd_layers_only(self, layer_number, expect_window):
+        """SWA belongs on odd 1-indexed layers; even layers are full causal.
+
+        HuggingFace builds layer_types as "sliding_attention" when (i + 1) % 2 is truthy over its
+        0-indexed i, and mcore's layer_number is i + 1, so HF layer 0 is mcore layer 1. This
+        mirrors Gemma2DotProductAttention, which applies the window when layer_number % 2 == 1.
+        Getting this backwards does not crash; it silently trains a different model.
+        """
+        window = (4095, 0)
+        provider = _make_config(window_size=window)
+        captured = self._captured_init(provider, layer_number)
+        if expect_window:
+            assert captured["config"].window_size == window, (
+                f"layer_number={layer_number} is odd and must use sliding-window attention"
+            )
+        else:
+            assert captured["config"].window_size is None, (
+                f"layer_number={layer_number} is even and must use full causal attention"
+            )
+
+    def test_layer_number_zero_is_clamped_to_one(self):
+        """max(1, layer_number) means layer 0 is treated as layer 1, so it slides."""
+        provider = _make_config(window_size=(4095, 0))
+        assert self._captured_init(provider, 0)["config"].window_size == (4095, 0)
+
+    def test_softmax_scale_uses_query_pre_attn_scalar_not_head_dim(self):
+        """Gemma2 scales by 1/sqrt(query_pre_attn_scalar), which is not 1/sqrt(head_dim).
+
+        The fixture keeps the two deliberately different, so dropping the scale logic entirely
+        would fail here rather than silently coinciding with the TE default.
+        """
+        provider = _make_config()
+        captured = self._captured_init(provider, 1)
+        assert _QUERY_PRE_ATTN_SCALAR != _HEAD_DIM, "fixture must keep these distinct"
+        assert captured["softmax_scale"] == pytest.approx(1.0 / math.sqrt(_QUERY_PRE_ATTN_SCALAR))
+        assert captured["softmax_scale"] != pytest.approx(1.0 / math.sqrt(_HEAD_DIM))
+
+    def test_explicit_softmax_scale_is_honored(self):
+        """An explicit softmax_scale from SelfAttention must not be overwritten."""
+        provider = _make_config()
+        captured = self._captured_init(provider, 1, softmax_scale=0.123)
+        assert captured["softmax_scale"] == pytest.approx(0.123)
+
+    def test_provider_config_is_not_mutated(self):
+        """The per-layer rewrite happens on a deep copy.
+
+        Without the copy, constructing an even layer would write window_size=None onto the shared
+        provider and every later layer would inherit it.
+        """
+        window = (4095, 0)
+        provider = _make_config(window_size=window)
+        self._captured_init(provider, 2)  # even layer clears window_size on its own copy
+        assert provider.window_size == window
+        assert self._captured_init(provider, 1)["config"] is not provider
+
+    def test_softcap_survives_the_deep_copy(self):
+        """attn_logit_softcapping must reach TE; mcore turns it into the `softcap` kwarg."""
+        provider = _make_config(softcap=_SOFTCAP)
+        assert self._captured_init(provider, 1)["config"].attn_logit_softcapping == _SOFTCAP
+
+
+class TestGemma2ModelProviderAttentionConstraints:
+    """CPU-only checks on the provider's backend forcing and softcap validation."""
+
+    def test_default_leaves_backend_untouched(self):
+        """The opt-in flag defaults off, and the default path keeps the inherited backend."""
+        provider = _make_config()
+        assert provider.use_transformer_engine_attention is False
+        assert provider.attention_backend is AttnBackend.auto
+
+    def test_enabling_the_flag_forces_flash_backend(self):
+        """cuDNN cannot serve Gemma2 (head_dim=256, no softcap), so the TE path requires flash."""
+        provider = _make_config()
+        provider.use_transformer_engine_attention = True
+        provider.__post_init__()
+        assert provider.attention_backend is AttnBackend.flash
+
+    def test_finalize_reapplies_constraints_after_overrides(self):
+        """apply_overrides_and_finalize() never re-runs __post_init__.
+
+        Without the finalize() override, enabling the flag through the canonical override path
+        would select Gemma2TEDotProductAttention while leaving attention_backend at auto.
+        """
+        provider = _make_config()
+        assert provider.attention_backend is AttnBackend.auto
+        provider.apply_overrides_and_finalize(overrides={"use_transformer_engine_attention": True})
+        assert provider.attention_backend is AttnBackend.flash
+
+    @pytest.mark.parametrize("bad_cap", [0.0, -1.0, float("inf"), float("nan")])
+    def test_invalid_softcap_rejected_at_construction(self, bad_cap):
+        """0.0 divides by zero, a negative cap is applied as its absolute value because tanh is
+        odd, and nan is truthy so it slips past `if not scale` and yields all-NaN scores."""
+        provider = _make_config()
+        provider.attn_logit_softcapping = bad_cap
+        with pytest.raises(ValueError, match="positive finite"):
+            provider.__post_init__()
+
+    @pytest.mark.parametrize("bad_cap", [0.0, -1.0, float("inf"), float("nan")])
+    def test_invalid_softcap_rejected_through_the_override_path(self, bad_cap):
+        """The override path must validate too; before finalize() existed it accepted anything."""
+        provider = _make_config()
+        with pytest.raises(ValueError, match="positive finite"):
+            provider.apply_overrides_and_finalize(overrides={"attn_logit_softcapping": bad_cap})
+
+    def test_none_softcap_is_allowed(self):
+        """None disables the cap, as HuggingFace spells it."""
+        provider = _make_config(softcap=None)
+        provider.__post_init__()
+        assert provider.attn_logit_softcapping is None
+        provider.apply_overrides_and_finalize(overrides={"attn_logit_softcapping": None})
+        assert provider.attn_logit_softcapping is None
+
+
+class TestGemma2LayerSpecSelection:
+    """CPU-only checks that the opt-in flag picks the right core-attention class."""
+
+    def test_flag_selects_the_transformer_engine_path(self):
+        provider = _make_config()
+        provider.use_transformer_engine_attention = True
+        spec = gemma2_layer_spec(provider)
+        assert spec.submodules.self_attention.submodules.core_attention is Gemma2TEDotProductAttention
+
+    def test_default_keeps_the_unfused_flex_path(self):
+        """The no-regression default: anyone not opting in is untouched."""
+        provider = _make_config()
+        spec = gemma2_layer_spec(provider)
+        assert spec.submodules.self_attention.submodules.core_attention is Gemma2FlexDotProductAttention
 
 
 @requires_te_flash_softcap
