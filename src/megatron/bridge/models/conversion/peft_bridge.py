@@ -16,9 +16,9 @@ from __future__ import annotations
 
 import itertools
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from string import digits
-from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Dict, Iterable, List, Literal, Optional, TypeVar, Union
 
 import torch
 from megatron.core import parallel_state
@@ -121,6 +121,30 @@ class AdapterWeight:
     dim: int
     linear_in_weight: "MegatronWeightTuple"
     linear_out_weight: "MegatronWeightTuple"
+
+
+@dataclass(frozen=True)
+class LocalAdapterWeight:
+    """One rank-local FP32 adapter source and its reconstruction recipe.
+
+    ``weight`` is a detached snapshot owned by the caller. The remaining fields
+    describe how the tensor participates in regular HF/PEFT export without
+    gathering it over TP or EP. A remote consumer can move the source and apply
+    the same reconstruction at its destination.
+    """
+
+    global_param_name: str
+    hf_param_names: tuple[str, ...]
+    component: Literal["linear_in", "linear_out"]
+    transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp", "split_gdn_in_proj"]
+    weight: torch.Tensor
+    tensor_parallel_axis: int | None
+    tensor_parallel_rank: int
+    tensor_parallel_size: int
+    expert_parallel_axis: int | None
+    expert_parallel_rank: int
+    expert_parallel_size: int
+    transform_config: tuple[tuple[str, int | bool | None], ...]
 
 
 def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expected_suffix: str) -> Optional[str]:
@@ -846,6 +870,269 @@ class MegatronPeftBridge:
         if mapping.tp_size > 1:
             tensor = torch.cat(mapping.gather_from_tp_ranks(tensor), dim=tp_axis)
         return tensor
+
+    def stream_local_adapter_weights(
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
+    ) -> Iterable[LocalAdapterWeight]:
+        """Yield rank-local FP32 adapter snapshots without TP or EP materialization.
+
+        This method exposes the same adapter naming and fused-projection metadata
+        used by :meth:`stream_adapter_weights_megatron_to_hf`, but leaves every
+        TP and EP shard on its owning rank. Pipeline parallel export remains
+        unsupported because its task discovery is collective; callers must use
+        the regular exporter when PP is greater than one.
+
+        Args:
+            megatron_model: Megatron model instance or local model chunks.
+            exclude_adapter_base_prefixes: Adapter base prefixes to omit.
+
+        Yields:
+            LocalAdapterWeight records with FP32 tensor snapshots and ownership
+            metadata for destination-side reconstruction.
+
+        Raises:
+            ValueError: If pipeline parallelism is enabled or an adapter has no
+                HF parameter mapping.
+        """
+        if parallel_state.get_pipeline_model_parallel_world_size() != 1:
+            raise ValueError(
+                "Rank-local adapter export does not support pipeline parallelism; "
+                "use stream_adapter_weights_megatron_to_hf instead."
+            )
+        if not isinstance(megatron_model, list):
+            megatron_model = [megatron_model]
+
+        for adapter_tasks in self.build_adapter_conversion_tasks(
+            megatron_model,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+        ).values():
+            for adapter_task in adapter_tasks:
+                linear_in = adapter_task.linear_in_task.param_weight
+                linear_out = adapter_task.linear_out_task.param_weight
+                if linear_in is None or linear_out is None:
+                    raise ValueError(f"Rank-local adapter source is absent for {adapter_task.global_base_prefix!r}")
+                is_grouped_expert = (
+                    is_expert_linear(adapter_task.global_base_prefix)
+                    and ".local_experts." not in adapter_task.global_base_prefix
+                )
+                if is_grouped_expert:
+                    expert_names = self._get_base_hf_param_names_for_adapter(
+                        self.mapping_registry(),  # type: ignore[attr-defined]
+                        adapter_task.global_base_prefix,
+                        adapter_task.adapter_key,
+                        ".weight0",
+                    )
+                    if any(self._infer_hf_expert_idx(name) is not None for name in expert_names):
+                        yield from self._stream_local_grouped_adapter_weights(adapter_task, megatron_model[0].config)
+                        continue
+                    if linear_in.ndim != 3 or linear_out.ndim != 3:
+                        raise ValueError("Rank-local fused expert export requires per-expert 3D adapter factors")
+                base_suffix = (
+                    ".weight0"
+                    if (
+                        is_expert_linear(adapter_task.global_base_prefix)
+                        and ".local_experts." not in adapter_task.global_base_prefix
+                    )
+                    else ".weight"
+                )
+                base_hf_names = self._get_base_hf_param_names_for_adapter(
+                    self.mapping_registry(),  # type: ignore[attr-defined]
+                    adapter_task.global_base_prefix,
+                    adapter_task.adapter_key,
+                    base_suffix,
+                )
+                if not base_hf_names:
+                    raise ValueError(
+                        "No HF mapping found for rank-local adapter export, "
+                        f"global_base_prefix={adapter_task.global_base_prefix!r}"
+                    )
+                linear_in_names, linear_out_names = self._build_lora_hf_names(base_hf_names)
+                yield self._build_local_adapter_weight(
+                    adapter_task,
+                    component="linear_in",
+                    hf_param_names=linear_in_names,
+                    model_config=megatron_model[0].config,
+                )
+                yield self._build_local_adapter_weight(
+                    adapter_task,
+                    component="linear_out",
+                    hf_param_names=linear_out_names,
+                    model_config=megatron_model[0].config,
+                )
+
+    def _stream_local_grouped_adapter_weights(
+        self,
+        adapter_task: AdapterWeightConversionTask,
+        model_config: object,
+    ) -> Iterable[LocalAdapterWeight]:
+        """Emit grouped factors with explicit global expert names and local ownership."""
+        shared_outer = adapter_task.linear_in_task.param_weight.ndim != adapter_task.linear_out_task.param_weight.ndim
+        mapping_registry = self.mapping_registry()  # type: ignore[attr-defined]
+        components: tuple[Literal["linear_in", "linear_out"], ...] = ("linear_in", "linear_out")
+        for component_index, component in enumerate(components):
+            task = adapter_task.linear_in_task if component == "linear_in" else adapter_task.linear_out_task
+            if task.mapping.tp_size != 1:
+                raise ValueError("Rank-local grouped expert export requires expert tensor parallel size 1")
+            tensor = task.param_weight
+            if tensor.ndim not in (2, 3):
+                raise ValueError(f"Unsupported grouped expert adapter shape {tuple(tensor.shape)}")
+            base_names = self._get_base_hf_param_names_for_adapter(
+                mapping_registry, adapter_task.global_base_prefix, adapter_task.adapter_key, ".weight0"
+            )
+            if not base_names:
+                raise ValueError(f"No HF mapping found for {adapter_task.global_base_prefix!r}")
+            hf_names = self._build_lora_hf_names(base_names)[component_index]
+            record = self._build_local_adapter_weight(
+                adapter_task, component=component, hf_param_names=hf_names, model_config=model_config
+            )
+            if tensor.ndim == 2 and shared_outer:
+                yield replace(
+                    record,
+                    hf_param_names=tuple(self._strip_hf_expert_index(name) for name in hf_names),
+                    weight=record.weight.unsqueeze(0),
+                    tensor_parallel_axis=None,
+                    expert_parallel_axis=None,
+                )
+                continue
+
+            local_experts, remainder = divmod(getattr(model_config, "num_moe_experts"), record.expert_parallel_size)
+            if remainder or (tensor.ndim == 3 and tensor.shape[0] != local_experts):
+                raise ValueError("Rank-local grouped expert export requires evenly partitioned experts")
+            expert_names = []
+            for local_index in range(local_experts):
+                expert_index = record.expert_parallel_rank * local_experts + local_index
+                base_names = self._get_base_hf_param_names_for_adapter(
+                    mapping_registry,
+                    adapter_task.global_base_prefix,
+                    adapter_task.adapter_key,
+                    f".weight{expert_index}",
+                )
+                if not base_names:
+                    raise ValueError(f"No HF mapping found for expert {expert_index}")
+                names = tuple(self._build_lora_hf_names(base_names)[component_index])
+                expert_names.append(names)
+                if tensor.ndim == 3:
+                    yield replace(
+                        record,
+                        global_param_name=f"{record.global_param_name}.expert{expert_index}",
+                        hf_param_names=names,
+                        weight=record.weight[local_index],
+                        tensor_parallel_axis=None,
+                        expert_parallel_axis=None,
+                        expert_parallel_rank=0,
+                        expert_parallel_size=1,
+                    )
+            if tensor.ndim == 3:
+                continue
+
+            # Each 2D factor is shared only by this EP rank's local experts.
+            if record.transform == "split_gated_mlp":
+                parts = record.weight.chunk(2, dim=0)
+                names_by_part = list(zip(*expert_names, strict=True))
+            elif record.transform in ("identity", "replicate"):
+                parts = (record.weight,)
+                names_by_part = [tuple(itertools.chain.from_iterable(expert_names))]
+            else:
+                raise ValueError(f"Unsupported shared expert transform {record.transform!r}")
+            for index, (weight, names) in enumerate(zip(parts, names_by_part, strict=True)):
+                yield replace(
+                    record,
+                    global_param_name=f"{record.global_param_name}.ep{record.expert_parallel_rank}.part{index}",
+                    hf_param_names=tuple(names),
+                    weight=weight,
+                    transform="replicate",
+                    tensor_parallel_axis=None,
+                    expert_parallel_axis=None,
+                    expert_parallel_rank=0,
+                    expert_parallel_size=1,
+                )
+
+    def _build_local_adapter_weight(
+        self,
+        adapter_task: AdapterWeightConversionTask,
+        *,
+        component: Literal["linear_in", "linear_out"],
+        hf_param_names: List[str],
+        model_config: object,
+    ) -> LocalAdapterWeight:
+        """Build one transport record from a local adapter task."""
+        task = adapter_task.linear_in_task if component == "linear_in" else adapter_task.linear_out_task
+        tensor = task.param_weight
+        if tensor is None:
+            raise ValueError(f"Rank-local adapter source is absent for {task.global_param_name!r}")
+        mapping = task.mapping
+        tensor = mapping.maybe_dequantize(tensor).detach().to(dtype=torch.float32).contiguous().clone()
+        if isinstance(mapping, RowParallelMapping):
+            tensor_parallel_axis = tensor.ndim - 1
+        elif isinstance(mapping, ColumnParallelMapping):
+            tensor_parallel_axis = tensor.ndim - 2
+        else:
+            tensor_parallel_axis = None
+        if component == "linear_in" and len(hf_param_names) > 1:
+            transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp", "split_gdn_in_proj"] = (
+                "replicate"
+            )
+        elif self._is_fused_qkv(hf_param_names):
+            transform = "split_qkv"
+        elif self._is_gdn_in_proj_split(hf_param_names):
+            transform = "split_gdn_in_proj"
+        elif len(hf_param_names) == 2 and all(
+            self._is_fused_fc1_gate_proj(name) or self._is_fused_fc1_up_proj(name) for name in hf_param_names
+        ):
+            transform = "split_gated_mlp"
+        else:
+            transform = "identity"
+        transform_config = self._build_local_adapter_transform_config(transform, model_config)
+        is_expert = mapping.is_expert
+        return LocalAdapterWeight(
+            global_param_name=task.global_param_name,
+            hf_param_names=tuple(hf_param_names),
+            component=component,
+            transform=transform,
+            weight=tensor,
+            tensor_parallel_axis=tensor_parallel_axis,
+            tensor_parallel_rank=mapping.tp_rank,
+            tensor_parallel_size=mapping.tp_size,
+            expert_parallel_axis=0 if is_expert and tensor.ndim == 3 else None,
+            expert_parallel_rank=mapping.ep_rank if is_expert else 0,
+            expert_parallel_size=mapping.ep_size if is_expert else 1,
+            transform_config=transform_config,
+        )
+
+    def _build_local_adapter_transform_config(
+        self,
+        transform: str,
+        model_config: object,
+    ) -> tuple[tuple[str, int | bool | None], ...]:
+        """Return only the model fields required by a destination transform."""
+        if transform == "split_qkv":
+            fields = (
+                "num_attention_heads",
+                "num_query_groups",
+                "kv_channels",
+                "hidden_size",
+                "attention_output_gate",
+            )
+            optional = {"attention_output_gate"}
+        elif transform == "split_gdn_in_proj":
+            fields = (
+                "linear_key_head_dim",
+                "linear_value_head_dim",
+                "linear_num_key_heads",
+                "linear_num_value_heads",
+            )
+            optional = set()
+        else:
+            return ()
+        values = []
+        for field in fields:
+            value = getattr(model_config, field, None)
+            if field not in optional and value is None:
+                raise ValueError(f"{transform} LoRA export requires model config field {field!r}")
+            values.append((field, value))
+        return tuple(values)
 
     def stream_adapter_weights_megatron_to_hf(
         self,

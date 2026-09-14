@@ -32,6 +32,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
+    from megatron.bridge.models.conversion.peft_bridge import LocalAdapterWeight
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -933,6 +934,24 @@ class AutoBridge(Generic[MegatronModelT]):
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
             stack_3d_moe=stack_3d_moe,
+        )
+
+    def export_local_adapter_weights(
+        self,
+        model: list[MegatronModelT],
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
+    ) -> Iterable["LocalAdapterWeight"]:
+        """Export rank-local FP32 adapter sources without TP or EP gathering.
+
+        The returned records retain the conversion and ownership metadata needed
+        to reconstruct PEFT tensors on a remote consumer. See
+        :meth:`MegatronPeftBridge.stream_local_adapter_weights` for topology
+        restrictions.
+        """
+        bridge = self._model_bridge
+        return bridge.stream_local_adapter_weights(
+            model,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
         )
 
     def save_hf_adapter(
