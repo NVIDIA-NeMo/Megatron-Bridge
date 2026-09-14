@@ -2714,6 +2714,48 @@ def test_build_local_adapter_weight_snapshots_fp32_and_replication_metadata() ->
     assert result.expert_parallel_size == 1
 
 
+def test_local_adapter_export_rejects_gdn_transform() -> None:
+    source = torch.ones((2, 3), dtype=torch.float32)
+    mapping = Mock()
+    mapping.maybe_dequantize.side_effect = lambda tensor: tensor
+    mapping.tp_rank = 0
+    mapping.tp_size = 1
+    mapping.ep_rank = 0
+    mapping.ep_size = 1
+    mapping.is_expert = False
+    task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.linear_attention.linear_qkv",
+        adapter_key=None,
+        alpha=32,
+        dim=32,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.linear_attention.linear_qkv.adapter.linear_in.weight",
+            mapping=mapping,
+            param_weight=source,
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.linear_attention.linear_qkv.adapter.linear_out.weight",
+            mapping=mapping,
+            param_weight=source,
+        ),
+    )
+
+    with pytest.raises(NotImplementedError, match="does not support GDN"):
+        DummyBridge()._build_local_adapter_weight(
+            task,
+            component="linear_out",
+            hf_param_names=[
+                "model.layers.0.linear_attn.in_proj_qkv.lora_B.weight",
+                "model.layers.0.linear_attn.in_proj_z.lora_B.weight",
+                "model.layers.0.linear_attn.in_proj_b.lora_B.weight",
+                "model.layers.0.linear_attn.in_proj_a.lora_B.weight",
+            ],
+            model_config=SimpleNamespace(),
+        )
+
+
 @pytest.mark.parametrize("projection", ["fc1", "fc2"])
 def test_local_shared_outer_export_matches_global_hf_export(monkeypatch, projection):
     bridge = DummyBridge()
