@@ -72,8 +72,8 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
         attn_mask_type: AttnMaskType,
         cp_comm_type: str = None,
         pg_collection=None,
-        is_mtp_layer: bool = False,
         name: str | None = None,
+        is_mtp_layer: bool = False,
     ):
         super().__init__(
             config,
@@ -82,8 +82,8 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
             attn_mask_type,
             cp_comm_type,
             pg_collection,
-            is_mtp_layer=is_mtp_layer,
             name=name,
+            is_mtp_layer=is_mtp_layer,
         )
 
         self.layernorm_across_heads = getattr(self.config, "layernorm_across_heads", False)
@@ -224,8 +224,8 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
         attn_mask_type: AttnMaskType,
         cp_comm_type: str = None,
         pg_collection=None,
-        is_mtp_layer: bool = False,
         name: str | None = None,
+        is_mtp_layer: bool = False,
     ):
         super().__init__(
             config,
@@ -234,8 +234,8 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             attn_mask_type,
             cp_comm_type,
             pg_collection,
-            is_mtp_layer=is_mtp_layer,
             name=name,
+            is_mtp_layer=is_mtp_layer,
         )
 
         self.layernorm_across_heads = getattr(self.config, "layernorm_across_heads", False)

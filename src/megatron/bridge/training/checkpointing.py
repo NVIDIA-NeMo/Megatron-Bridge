@@ -464,6 +464,10 @@ def schedule_async_save(global_state: GlobalState, async_request: AsyncRequest) 
     """
     async_queue = global_state.async_calls_queue
     if async_queue is not None:
+        if global_state.cfg.checkpoint.async_strategy == "mcore" and not isinstance(async_request, AsyncRequest):
+            # MCore's persistent worker accepts requests by nominal type. FSDP
+            # DTensor saves originate from NVRx even when the worker is MCore.
+            async_request = AsyncRequest(**async_request._asdict())
         async_queue.schedule_async_request(async_request)
 
 
@@ -1491,7 +1495,6 @@ def save_checkpoint(
                 dist_save_target,
                 save_strategy,
                 async_sharded_save=ckpt_cfg.async_save,
-                async_strategy=ckpt_cfg.async_strategy,
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
                 content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
