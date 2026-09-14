@@ -138,7 +138,7 @@ class LocalAdapterWeight:
     global_param_name: str
     hf_param_names: tuple[str, ...]
     component: Literal["linear_in", "linear_out"]
-    transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp", "split_gdn_in_proj"]
+    transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp"]
     weight: torch.Tensor
     tensor_parallel_axis: int | None
     tensor_parallel_rank: int
@@ -1093,13 +1093,11 @@ class MegatronPeftBridge:
         else:
             tensor_parallel_axis = None
         if component == "linear_in" and len(hf_param_names) > 1:
-            transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp", "split_gdn_in_proj"] = (
-                "replicate"
-            )
+            transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp"] = "replicate"
         elif self._is_fused_qkv(hf_param_names):
             transform = "split_qkv"
         elif self._is_gdn_in_proj_split(hf_param_names):
-            transform = "split_gdn_in_proj"
+            raise NotImplementedError("Rank-local adapter export does not support GDN in_proj")
         elif len(hf_param_names) == 2 and all(
             self._is_fused_fc1_gate_proj(name) or self._is_fused_fc1_up_proj(name) for name in hf_param_names
         ):
@@ -1138,14 +1136,6 @@ class MegatronPeftBridge:
                 "attention_output_gate",
             )
             optional = {"attention_output_gate"}
-        elif transform == "split_gdn_in_proj":
-            fields = (
-                "linear_key_head_dim",
-                "linear_value_head_dim",
-                "linear_num_key_heads",
-                "linear_num_value_heads",
-            )
-            optional = set()
         else:
             return ()
         values = []
