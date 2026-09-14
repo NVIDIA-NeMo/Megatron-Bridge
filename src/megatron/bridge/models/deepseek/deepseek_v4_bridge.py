@@ -61,7 +61,6 @@ Megatron-Core prerequisites:
   - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
-import inspect
 from typing import Dict, Mapping
 
 import torch
@@ -112,6 +111,19 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
     ratio: layer_type for layer_type, ratio in _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO.items()
 }
 
+_DSV4_FUSED_DSA_WRAPPERS = (
+    "compactify_wrapper",
+    "dense_attn_score_recompute_wrapper",
+    "dense_indexer_backward_wrapper",
+    "dense_indexer_score_recompute_wrapper",
+    "indexer_backward_wrapper",
+    "indexer_forward_wrapper",
+    "indexer_top_k_wrapper",
+    "sparse_attention_backward_wrapper",
+    "sparse_attn_score_recompute_wrapper",
+    "sparse_indexer_score_recompute_wrapper",
+)
+
 
 def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
     """Return whether DSv4 Blackwell-only fused kernels should default on."""
@@ -126,17 +138,13 @@ def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     """Return whether DSv4 fused DSA kernels can be enabled."""
     try:
         from cudnn import DSA
-        from flash_mla import flash_mla_sparse_fwd  # noqa: F401
+        from flash_mla import flash_mla_sparse_fwd
     except ImportError:
         return False
 
-    compact_wrapper = getattr(DSA, "indexer_forward_top_k_wrapper", None)
-    if not callable(compact_wrapper):
-        return False
-    try:
-        return "deterministic" in inspect.signature(compact_wrapper).parameters
-    except (TypeError, ValueError):
-        return False
+    return callable(flash_mla_sparse_fwd) and all(
+        callable(getattr(DSA, wrapper, None)) for wrapper in _DSV4_FUSED_DSA_WRAPPERS
+    )
 
 
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:

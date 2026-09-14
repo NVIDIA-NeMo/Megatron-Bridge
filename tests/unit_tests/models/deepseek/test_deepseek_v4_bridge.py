@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    _DSV4_FUSED_DSA_WRAPPERS,
     DeepSeekV4Bridge,
     _dsv4_compress_ratios,
     _dsv4_hybrid_csa_compress_ratios,
@@ -522,24 +523,19 @@ class TestDeepSeekV4MoEDispatcher:
 
 
 class TestDeepSeekV4HardwareCapabilities:
-    def test_fused_dsa_requires_compatible_compact_wrapper(self):
-        def compatible_wrapper(*, deterministic):
-            pass
-
+    def test_fused_dsa_accepts_current_cudnn_frontend_api(self):
+        wrappers = {name: (lambda: None) for name in _DSV4_FUSED_DSA_WRAPPERS}
         modules = {
-            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=compatible_wrapper)),
-            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=object()),
+            "cudnn": SimpleNamespace(DSA=SimpleNamespace(**wrappers)),
+            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=lambda: None),
         }
         with patch.dict(sys.modules, modules):
             assert deepseek_v4_supports_fused_dsa_kernels() is True
 
-    def test_fused_dsa_rejects_incompatible_compact_wrapper(self):
-        def incompatible_wrapper():
-            pass
-
+    def test_fused_dsa_rejects_obsolete_combined_indexer_api(self):
         modules = {
-            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=incompatible_wrapper)),
-            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=object()),
+            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=lambda: None)),
+            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=lambda: None),
         }
         with patch.dict(sys.modules, modules):
             assert deepseek_v4_supports_fused_dsa_kernels() is False
