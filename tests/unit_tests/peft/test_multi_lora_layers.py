@@ -294,6 +294,13 @@ class TestMultiLoRALinearSlots:
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
 
+    def test_dense_layer_records_base_linear_name(self) -> None:
+        # forward's token-span guard formats this name in its diagnostic; only
+        # the MoE subclass assigned it, so the dense guard raised AttributeError
+        # instead of the intended RuntimeError.
+        layer = _build_multi_lora_linear(full_name="decoder.layers.0.mlp.linear_fc1")
+        assert layer.base_linear_name == "decoder.layers.0.mlp.linear_fc1"
+
     def test_constructor_forwards_wrapped_module_runtime_config(self) -> None:
         """Adapter construction mirrors the single-LoRA path (LoRA.transform)."""
         base = nn.Linear(16, 32)
@@ -533,6 +540,20 @@ class TestMultiLoRAModelHelpers:
             assert module.tokens_per_adapter is tokens
             assert module.tokens_per_adapter_splits == (3, 5)
             assert module.tokens_per_adapter_total == 8
+
+    def test_set_tokens_per_adapter_slot_validates_input(self) -> None:
+        # A wrong length silently mis-groups the grouped GEMM; negative counts
+        # produce non-monotonic (out-of-bounds) offsets; floats break the
+        # int32 cumsum contract -- all must fail loudly at the setter.
+        container = _MultiLoRAContainer(n_layers=1)
+        with pytest.raises(ValueError, match="1-D"):
+            set_tokens_per_adapter_slot(container, torch.tensor([[3, 5]], dtype=torch.int32))
+        with pytest.raises(ValueError, match="integer"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3.0, 5.0]))
+        with pytest.raises(ValueError, match="nonnegative"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3, -1], dtype=torch.int32))
+        with pytest.raises(ValueError, match="n_adapters"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3, 5, 7], dtype=torch.int32))
 
     def test_init_and_clear_adapter_slot_across_model(self) -> None:
         container = _MultiLoRAContainer(n_layers=2)
