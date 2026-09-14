@@ -48,9 +48,9 @@ except the MXFP4 expert path, where scale is per-row over 32-element K-tiles.
 F32 via ``.to(torch.float32)`` and selects the tile expansion automatically.
 All weights are dequantised to bfloat16 during import.
 
-MoE router note: Hash-routing layers (layer_number <= moe_n_hash_layers)
-contain a `tid2eid` buffer (int32 vocab→expert lookup table).  Buffers are not
-parameters, so Megatron does not expose them via `named_parameters()`.
+MoE router note: The first ``moe_n_hash_layers`` MoE positions in the hybrid
+pattern contain a `tid2eid` buffer (int32 vocab→expert lookup table). Buffers are
+not parameters, so Megatron does not expose them via `named_parameters()`.
 The bridge handles `tid2eid` via `maybe_modify_loaded_hf_weight()` and
 a dedicated `_Tid2EidMapping` that writes it into `state_dict` directly.
 
@@ -531,15 +531,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
-        # MCore renamed the grouped output-projection fields on dev. Populate the
-        # names supported by the selected ref so the HF geometry is not replaced
-        # by TransformerConfig defaults on main.
-        if hasattr(provider, "output_projection_groups"):
-            provider.output_projection_groups = hf_config.o_groups  # 8
-            provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
-        else:
-            provider.o_groups = hf_config.o_groups  # 8
-            provider.o_lora_rank = hf_config.o_lora_rank  # 1024
+        provider.output_projection_groups = hf_config.o_groups  # 8
+        provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
 
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
@@ -632,13 +625,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.norm_topk_prob = hf_config.norm_topk_prob
         provider.moe_router_topk_scaling_factor = hf_config.routed_scaling_factor  # 1.5
 
-        # Hash routing. moe_n_hash_layers is a leading-layer cutoff on the hybrid layer
-        # index (layer_number <= moe_n_hash_layers uses the tid2eid table). Since each
-        # logical DSv4 layer becomes two hybrid layers, the cutoff doubles: 3 leading
-        # hash-routed logical layers -> the first 6 hybrid layers (i.e. the first 3 MoE
-        # layers, at hybrid layer_numbers 2/4/6).
-        provider.moe_n_hash_layers = 2 * _dsv4_num_hash_layers(hf_config)  # 6 for DSv4 Flash
-        provider.actual_vocab_size = hf_config.vocab_size  # 129280
+        # Hash routing. MCore counts MoE positions in the hybrid pattern rather than all
+        # hybrid symbols, so this remains the logical HF hash-layer count.
+        provider.moe_n_hash_layers = _dsv4_num_hash_layers(hf_config)  # 3 for DSv4 Flash
+        provider.hash_moe_vocab_size = hf_config.vocab_size  # 129280
 
         # SwiGLU activation clamp
         provider.activation_func_clamp_value = hf_config.swiglu_limit  # 10.0
@@ -688,17 +678,14 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         hf_cfg["num_nextn_predict_layers"] = getattr(provider, "mtp_num_layers", None) or 0
         num_mtp = hf_cfg["num_nextn_predict_layers"]
 
-        # moe_n_hash_layers is a doubled hybrid-layer cutoff; halve it for the logical HF view.
-        num_hash_layers = getattr(provider, "moe_n_hash_layers", 0) // 2
+        num_hash_layers = getattr(provider, "moe_n_hash_layers", 0)
         hf_cfg["num_hash_layers"] = num_hash_layers
         hf_cfg["mlp_layer_types"] = ["hash_moe"] * min(num_hidden_layers, num_hash_layers) + ["moe"] * max(
             0, num_hidden_layers - num_hash_layers
         )
         hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
-        hf_cfg["o_groups"] = getattr(provider, "output_projection_groups", getattr(provider, "o_groups", 8))
-        hf_cfg["o_lora_rank"] = getattr(
-            provider, "output_projection_lora_rank", getattr(provider, "o_lora_rank", 1024)
-        )
+        hf_cfg["o_groups"] = provider.output_projection_groups
+        hf_cfg["o_lora_rank"] = provider.output_projection_lora_rank
 
         hf_cfg["compress_ratios"] = flat_ratios + [0] * num_mtp
         hf_cfg["layer_types"] = [_DSV4_COMPRESS_RATIO_TO_LAYER_TYPE[ratio] for ratio in flat_ratios]
