@@ -310,7 +310,6 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -327,6 +326,8 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
     cfg.model.recompute_modules = []
+    cfg.model.moe_router_force_load_balancing = False
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
