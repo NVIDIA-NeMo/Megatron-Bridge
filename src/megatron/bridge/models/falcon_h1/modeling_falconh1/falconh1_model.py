@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
 
+import torch
 from megatron.core import tensor_parallel
 from megatron.core.config_logger import has_config_logger_enabled, log_config_to_disk
 from megatron.core.inference.contexts import BaseInferenceContext
@@ -16,6 +17,8 @@ from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.utils import WrappedTensor, deprecate_inference_params
 from torch import Tensor
+
+from megatron.bridge.models.logit_dtype import output_dtype_kwarg
 
 
 @dataclass
@@ -173,6 +176,7 @@ class FalconH1Model(LanguageModule):
         hybrid_override_pattern: str = None,
         post_process: bool = True,
         fp16_lm_cross_entropy: bool = False,
+        logit_dtype: torch.dtype | None = None,
         parallel_output: bool = True,
         share_embeddings_and_output_weights: bool = False,
         # Mamba with no attention has no need for position embeddings, so none is default
@@ -251,6 +255,7 @@ class FalconH1Model(LanguageModule):
                 gather_output=not self.parallel_output,
                 skip_weight_param_allocation=self.pre_process and self.share_embeddings_and_output_weights,
                 tp_group=self.pg_collection.tp,
+                **output_dtype_kwarg(tensor_parallel.ColumnParallelLinear, logit_dtype),
             )
 
         if self.pre_process or self.post_process:

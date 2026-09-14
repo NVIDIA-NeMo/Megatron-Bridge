@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 
 _CURRENT_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
-_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv", "pad_between_seqs")
 _CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
@@ -131,7 +131,10 @@ def _patch_mcore_schedule_plan_padding_mask() -> None:
     TODO: Remove this compatibility patch after MCore dev's schedule-plan
     padding-mask forwarding reaches the pinned main commit.
     """
-    from megatron.core.models.common import fine_grained_callables
+    try:
+        from megatron.core.models.common import fine_grained_callables
+    except ImportError:
+        from megatron.core.models.gpt import fine_grained_callables
 
     current_builder = fine_grained_callables.build_transformer_layer_callables
     if getattr(current_builder, _MCORE_SCHEDULE_PADDING_MASK_PATCHED, False):
@@ -327,6 +330,7 @@ def _partition_packed_batch_for_cp(
         "cu_seqlens_kv_padded",
         "max_seqlen_q",
         "max_seqlen_kv",
+        "pad_between_seqs",
         "token_count",
         # THD/packed attention is driven by cu_seqlens (PackedSeqParams), so the dense
         # attention_mask is unused here. It is also not sequence-partitionable: it is
@@ -401,7 +405,7 @@ def get_batch_from_iterator(
         if key in required_device_keys:
             _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
         elif key in required_host_keys:
-            _batch_required_keys[key] = val.cpu() if val is not None else None
+            _batch_required_keys[key] = val.cpu() if isinstance(val, torch.Tensor) else val
         else:
             _batch_required_keys[key] = None
 

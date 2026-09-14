@@ -14,15 +14,16 @@
 
 """Iterator utilities for handling virtual pipeline parallelism."""
 
-from typing import Iterator, TypeVar, Union
+from typing import Iterator, TypeVar
 
 
 DataT = TypeVar("DataT")
+ModelT = TypeVar("ModelT")
 
 
 def make_data_iterator_list(
-    model: list, data_iterator: Iterator[DataT]
-) -> Union[Iterator[DataT], list[Iterator[DataT]]]:
+    model: list[ModelT], data_iterator: Iterator[DataT] | list[Iterator[DataT]]
+) -> Iterator[DataT] | list[Iterator[DataT]]:
     """Convert data iterator into form expected by Megatron with virtual pipeline parallelism.
 
     With interleaved/virtual pipeline parallelism, Megatron expects a list of one data
@@ -33,7 +34,8 @@ def make_data_iterator_list(
 
     Args:
         model: List of model chunks (when virtual PP is used) or single-element list
-        data_iterator: Iterator yielding microbatch data
+        data_iterator: Iterator yielding microbatch data, or an existing list of
+            per-model-chunk iterators
 
     Returns:
         If model has only 1 chunk: returns the iterator as-is
@@ -49,8 +51,8 @@ def make_data_iterator_list(
         >>> batch_from_chunk0 = next(iters[0])  # Fetches from data_iterator, caches
         >>> batch_from_chunk1 = next(iters[1])  # Reads from cache, same data
     """
-    # Single model chunk - no caching needed
-    if not isinstance(model, list) or len(model) <= 1:
+    # Single model chunk or an already-partitioned iterator list - no caching needed
+    if not isinstance(model, list) or len(model) <= 1 or isinstance(data_iterator, list):
         return data_iterator
 
     class SharedCache:
@@ -78,10 +80,10 @@ def make_data_iterator_list(
             self.cache = cache
             self.index = 0
 
-        def __iter__(self):
+        def __iter__(self) -> Iterator[DataT]:
             return self
 
-        def __next__(self):
+        def __next__(self) -> DataT:
             """Return the next value for this chunk from the shared cache."""
             val = self.cache.get(self.index)
             self.index += 1

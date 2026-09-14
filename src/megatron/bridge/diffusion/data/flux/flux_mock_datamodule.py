@@ -220,6 +220,11 @@ class FluxMockDataModuleConfig(DatasetProvider):
 
     def __post_init__(self):
         """Initialize the mock dataset and dataloader."""
+        if 0 < self.num_train_samples < self.micro_batch_size:
+            raise ValueError(
+                "num_train_samples must be at least micro_batch_size so drop_last=True yields a complete batch."
+            )
+
         self._mock_ds = _MockT2IDataset(
             image_H=self.image_H,
             image_W=self.image_W,

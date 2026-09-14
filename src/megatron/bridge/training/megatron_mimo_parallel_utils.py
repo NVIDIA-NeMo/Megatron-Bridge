@@ -24,6 +24,7 @@ import torch.distributed as dist
 from megatron.core.distributed.finalize_model_grads import finalize_model_grads as _finalize_model_grads
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
 
@@ -258,9 +259,9 @@ def finalize_model_grads_multimodule(
         # pass num_tokens=None for them to skip the broken normalization,
         # then broadcast the correct total from LLM and apply it manually.
         #
-        # With gradient_scaling_factor=1.0 (calculate_per_token_loss=True),
-        # DDP does a plain SUM.  After dividing by the global token count
-        # the gradient is correct — no DP compensation factor needed.
+        # A per-token module's DDP does a plain SUM, while a non-per-token
+        # module's DDP averages over its DP ranks. Account for that module-local
+        # choice before dividing by the global token count.
 
         # Phase 1: gradient all-reduce for each module.  Only the LLM gets
         # num_tokens so _finalize_model_grads can PP-broadcast + DP-all-reduce
@@ -295,7 +296,9 @@ def finalize_model_grads_multimodule(
             if module is not None and is_current_rank_in_grid(grid):
                 module_name, _ = _find_module(grid)
                 if module_name != MIMO_LANGUAGE_MODULE_KEY and num_tokens > 0:
-                    module.scale_gradients(1.0 / num_tokens.float().item())
+                    module_dp = _get_dp_size_from_grid(grid)
+                    ddp_mean_correction = 1.0 if get_model_config(module).calculate_per_token_loss else module_dp
+                    module.scale_gradients(ddp_mean_correction / num_tokens.float().item())
     else:
         # calculate_per_token_loss=False path.
         #
@@ -316,8 +319,10 @@ def finalize_model_grads_multimodule(
                     )
 
                     module_dp = _get_dp_size_from_grid(grid)
-                    if module_dp != llm_dp:
-                        module.scale_gradients(float(module_dp) / float(llm_dp))
+                    ddp_mean_correction = 1.0 if get_model_config(module).calculate_per_token_loss else module_dp
+                    module_scale = float(ddp_mean_correction) / float(llm_dp)
+                    if module_scale != 1.0:
+                        module.scale_gradients(module_scale)
 
 
 def zero_grad_buffer_for_multimodule(module_to_grid_tuple: List[Tuple]):

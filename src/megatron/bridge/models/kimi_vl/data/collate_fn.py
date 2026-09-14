@@ -26,6 +26,7 @@ from megatron.bridge.data.conversation_processing import (
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
     get_processor_tokenizer,
+    resolve_chat_template_kwargs,
     tokenize_text_without_special_tokens,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
@@ -225,7 +226,8 @@ def kimi_k25_vl_collate_fn(
                         medias.append({"type": "image", "image": item.get("image")})
 
         template_kwargs = chat_template_kwargs_from_example(example)
-        template_kwargs.setdefault("preserve_thinking", True)
+        template_kwargs.setdefault("truncate_history_thinking", False)
+        template_kwargs = resolve_chat_template_kwargs(processor, template_kwargs)
         text = processor.apply_chat_template(
             conversation,
             add_generation_prompt=False,

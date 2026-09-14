@@ -111,7 +111,7 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     Default configuration: 8 GPUs
     - TP=4, PP=1, EP=8, ETP=1 (dense DP=2, expert DP=1)
-    - Selective core-attention and MoE-activation recompute
+    - Full-layer uniform activation recompute
     - Frozen vision encoder with trainable projection and language model
     - LR=5e-5 (full SFT)
     - Sequence length: 4096
@@ -130,12 +130,12 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
 
-    # Real CORD-v2 measurements require both modules to preserve H100 memory
-    # headroom after optimizer-state initialization. Full-layer recompute is not needed.
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn", "moe_act"]
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    # Real-data SFT has batch-dependent activation and cross-entropy workspace peaks.
+    # Checkpoint each decoder layer to preserve H100 memory headroom after optimizer initialization.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
 
     # Decoder-focused SFT keeps the vision encoder fixed while training the
     # multimodal projection and language model.

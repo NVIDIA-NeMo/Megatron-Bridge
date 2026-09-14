@@ -583,6 +583,66 @@ def test_merge_canonical_adapter_from_weights(monkeypatch):
     torch.testing.assert_close(updated["decoder.layers.0.self_attn.v_proj.weight"], 3 * torch.ones(1, 2))
 
 
+def test_merge_partial_canonical_adapter_preserves_unselected_projection():
+    bridge = DummyBridge()
+    converted = {
+        "model.layers.0.self_attn.q_proj.weight": torch.zeros(2, 2),
+        "model.layers.0.self_attn.k_proj.weight": torch.zeros(1, 2),
+        "model.layers.0.self_attn.v_proj.weight": torch.full((1, 2), 9.0),
+    }
+    adapter_q = AdapterWeight(
+        global_base_prefix="decoder.layers.0.self_attention.linear_qkv",
+        adapter_key="adapter_q",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_q", torch.tensor([[1.0, 2.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_q", torch.ones(2, 1), vp_stage=0),
+    )
+    adapter_k = AdapterWeight(
+        global_base_prefix="decoder.layers.0.self_attention.linear_qkv",
+        adapter_key="adapter_k",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_k", torch.tensor([[1.0, 2.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_k", 2 * torch.ones(1, 1), vp_stage=0),
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_q, adapter_k],
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.self_attn.q_proj.weight"], torch.tensor([[1.0, 2.0]] * 2))
+    torch.testing.assert_close(updated["model.layers.0.self_attn.k_proj.weight"], torch.tensor([[2.0, 4.0]]))
+    torch.testing.assert_close(updated["model.layers.0.self_attn.v_proj.weight"], torch.full((1, 2), 9.0))
+
+
+def test_merge_single_canonical_adapter_preserves_unselected_projection():
+    bridge = DummyBridge()
+    converted = {
+        "model.layers.0.mlp.gate_proj.weight": torch.full((2, 2), 7.0),
+        "model.layers.0.mlp.up_proj.weight": torch.zeros(2, 2),
+    }
+    adapter_up = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.linear_fc1",
+        adapter_key="adapter_up",
+        alpha=1,
+        dim=1,
+        linear_in_weight=MegatronWeightTuple("in_up", torch.tensor([[1.0, 2.0]]), vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out_up", torch.ones(2, 1), vp_stage=0),
+    )
+
+    updated = bridge._merge_lora_adapter_weights(
+        [SimpleNamespace(config=SimpleNamespace(num_moe_experts=0))],
+        converted,
+        [adapter_up],
+    )
+
+    torch.testing.assert_close(updated["model.layers.0.mlp.gate_proj.weight"], torch.full((2, 2), 7.0))
+    torch.testing.assert_close(updated["model.layers.0.mlp.up_proj.weight"], torch.tensor([[1.0, 2.0]] * 2))
+
+
 def test_column_parallel_mapping_gathers_3d_expert_adapter_along_tp(monkeypatch):
     mapping = ColumnParallelMapping(
         "decoder.layers.0.mlp.experts.linear_fc1.adapter.linear_out.weight",

@@ -63,10 +63,10 @@ def test_gemma4_vl_sft_uses_memory_stable_8gpu_contract(monkeypatch: pytest.Monk
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is True
-    assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["core_attn", "moe_act"]
-    assert cfg.model.recompute_method is None
-    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is False

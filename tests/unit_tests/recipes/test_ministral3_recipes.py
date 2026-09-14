@@ -44,6 +44,8 @@ _MINISTRAL3_PEFT_FUNCS = [
     _ministral3_module.ministral3_14b_peft_config,
 ]
 
+_MINISTRAL3_FUNCS = _MINISTRAL3_SFT_FUNCS + _MINISTRAL3_PEFT_FUNCS
+
 
 class _FakeModelCfg:
     """Fake model configuration for testing."""
@@ -136,6 +138,16 @@ def test_each_ministral3_sft_recipe_uses_recommended_learning_rate(
 
     assert cfg.optimizer.lr == pytest.approx(5e-6)
     assert cfg.optimizer.min_lr == pytest.approx(5e-7)
+
+
+@pytest.mark.parametrize("recipe_func", _MINISTRAL3_FUNCS)
+def test_each_ministral3_recipe_defaults_validate(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    """Test that every Ministral3 recipe has runnable default batch settings."""
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    assert not cfg.dataset.enable_in_batch_packing or cfg.train.micro_batch_size > 1
 
 
 @pytest.mark.parametrize("recipe_func", _MINISTRAL3_PEFT_FUNCS)

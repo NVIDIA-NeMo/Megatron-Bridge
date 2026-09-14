@@ -181,6 +181,67 @@ class TestSupervisedFinetuning:
             clear_directories(shared_base_dir)
 
     @pytest.mark.run_only_on("GPU")
+    def test_direct_hf_blended_sources_training_step(self, tmp_path):
+        """Run one GPT training step over a weighted blend of two direct-HF sources."""
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+        checkpoint_dir, tensorboard_dir, _, _ = self._setup_directories(shared_base_dir)
+        first_path = os.path.join(shared_base_dir, "blend-a.jsonl")
+        second_path = os.path.join(shared_base_dir, "blend-b.jsonl")
+
+        if torch.distributed.get_rank() == 0:
+            # NullTokenizer reads whitespace-separated integers, so the sources are
+            # told apart by disjoint number ranges rather than by a text label.
+            for path, offset, rows in ((first_path, 0, 8), (second_path, 100, 4)):
+                with open(path, "w", encoding="utf-8") as output_file:
+                    for index in range(rows):
+                        value = offset + index
+                        record = {"input": f"{value} {value}", "output": str(value + 1)}
+                        output_file.write(json.dumps(record) + "\n")
+        torch.distributed.barrier()
+
+        try:
+            config = self._create_config(1, checkpoint_dir, tensorboard_dir, seq_length=16)
+            config.model.vocab_size = 1024
+            config.train.global_batch_size = 4
+            config.train.micro_batch_size = 2
+            config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=1024)
+            config.dataset = DirectHFSFTDatasetConfig(
+                seq_length=16,
+                source=[
+                    HFDatasetSourceConfig(
+                        path_or_dataset="json",
+                        load_kwargs={"data_files": {"train": first_path}},
+                    ),
+                    HFDatasetSourceConfig(
+                        path_or_dataset="json",
+                        load_kwargs={"data_files": {"train": second_path}},
+                    ),
+                ],
+                source_weights=[1.0, 3.0],
+                preprocessing=PromptCompletionSFTPreprocessingConfig(
+                    prompt_column="input",
+                    completion_column="output",
+                ),
+                do_validation=False,
+                do_test=False,
+                enable_in_batch_packing=True,
+                pad_to_multiple_of=1,
+                num_workers=0,
+                persistent_workers=False,
+            )
+
+            pretrain(config, forward_step)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                1,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
     def test_direct_hf_non_packed_context_parallel_training_step(self, tmp_path):
         """Run direct-HF dynamic padding through a two-rank context-parallel step."""
         initialize_distributed()

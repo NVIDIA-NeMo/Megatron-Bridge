@@ -309,8 +309,8 @@ class TestGPTSFTChatDataset:
     """Test cases for GPTSFTChatDataset with HF chat template support."""
 
     @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
-    def test_chat_dataset_init_with_hf_template(self, mock_dataset_class):
-        """Test GPTSFTChatDataset initialization with HF chat template enabled."""
+    def test_chat_dataset_defaults_to_hf_template(self, mock_dataset_class):
+        """Test GPTSFTChatDataset defaults to the HF chat template."""
         # Mock the indexed dataset
         mock_dataset = MagicMock()
         mock_dataset.__len__.return_value = 10
@@ -328,7 +328,6 @@ class TestGPTSFTChatDataset:
             file_path="test.jsonl",
             tokenizer=mock_tokenizer,
             max_seq_length=512,
-            use_hf_tokenizer_chat_template=True,
             tool_schemas=None,
         )
 
@@ -427,14 +426,19 @@ class TestGPTSFTChatDataset:
             file_path="test.jsonl",
             tokenizer=mock_tokenizer,
             max_seq_length=512,
-            use_hf_tokenizer_chat_template=True,
         )
 
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
         example = {
             "conversations": [
                 {"from": "User", "value": "Hello"},
                 {"from": "Assistant", "value": "Hi!"},
             ],
+            "chat_template_kwargs": {
+                "enable_thinking": True,
+                "truncate_history_thinking": False,
+            },
+            "tools": tools,
             "metadata_key": "test_value",
         }
 
@@ -451,6 +455,15 @@ class TestGPTSFTChatDataset:
         assert result["metadata"]["metadata_key"] == "test_value"
         # Verify conversations not in metadata by default
         assert "conversations" not in result["metadata"]
+        assert mock_hf_tokenizer.apply_chat_template.call_args_list[0].kwargs == {
+            "tokenize": True,
+            "add_generation_prompt": False,
+            "return_dict": True,
+            "enable_thinking": True,
+            "truncate_history_thinking": False,
+            "tools": tools,
+            "return_assistant_tokens_mask": True,
+        }
 
     @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_collate_fn_handles_loss_mask(self, mock_dataset_class):
@@ -1027,7 +1040,7 @@ class TestEOSIndexFixInPackedDataset:
             {
                 "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
                 "seq_boundaries": [0, 5],
-                "loss_mask": np.ones(5, dtype=np.int64),
+                "loss_mask": np.array([1, 0, 0, 0, 0], dtype=np.int64),
             }
         ]
 
@@ -1056,7 +1069,7 @@ class TestEOSIndexFixInPackedDataset:
             {
                 "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
                 "seq_boundaries": [0, 5],
-                "loss_mask": np.ones(5, dtype=np.int64),
+                "loss_mask": np.array([1, 0, 0, 0, 0], dtype=np.int64),
             }
         ]
 
@@ -1067,6 +1080,23 @@ class TestEOSIndexFixInPackedDataset:
         assert processed["cu_seqlens_kv"][0].tolist() == [0, 1, 1, 1, 1]
         assert processed["cu_seqlens_q_padded"][0].tolist() == [0, 4, 8, 8, 8]
         assert processed["cu_seqlens_kv_padded"][0].tolist() == [0, 4, 8, 8, 8]
+
+    def test_supervised_terminal_eos_precedes_zero_loss_padding(self):
+        """A supervised EOS remains logical while later zero-loss EOS tokens are padding."""
+        dataset = _create_minimal_packed_dataset()
+        batch = [
+            {
+                "input_ids": np.array([7, 0, 0, 0, 0], dtype=np.int64),
+                "seq_boundaries": [0, 5],
+                "loss_mask": np.array([1, 1, 0, 0, 0], dtype=np.int64),
+            }
+        ]
+
+        processed = dataset.collate_fn(batch)
+
+        assert processed["cu_seqlens_q"][0].tolist() == [0, 2]
+        assert processed["cu_seqlens_q_padded"][0].tolist() == [0, 4]
+        assert processed["padding_mask"].tolist() == [[False, False, True, True]]
 
     def test_without_alignment_padding_omits_physical_variants(self):
         """Identical logical and physical layouts use only the faster logical TE fields."""
@@ -1261,14 +1291,14 @@ class TestLogicalCuSeqlensCalculation:
                     dtype=np.int64,
                 ),
                 "seq_boundaries": [0, 5, 10],
-                "loss_mask": np.ones(10, dtype=np.int64),
+                "loss_mask": np.array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0], dtype=np.int64),
             }
         ]
 
         processed = dataset.collate_fn(batch)
         cu_logical = processed["cu_seqlens_q"][0].tolist()
 
-        # Each non-EOS token contributes exactly once despite EOS padding.
+        # Each non-EOS token contributes exactly once despite zero-loss EOS padding.
         assert cu_logical == [0, 1, 2]
 
 

@@ -23,6 +23,7 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.data.sft_processing import normalize_sft_example
 from megatron.bridge.recipes.utils.dataset_utils import (
+    default_coderforge_config,
     default_gsm8k_config,
     default_openmathinstruct2_config,
     default_openmathinstruct2_thinking_config,
@@ -52,6 +53,29 @@ class TestDefaultTulu3Config:
         assert cfg.offline_packing_specs is not None
         assert cfg.offline_packing_specs.packed_sequence_size == 8192
         assert cfg.offline_packing_specs.pad_seq_to_mult == 4
+
+
+@pytest.mark.unit
+class TestDefaultCoderForgeConfig:
+    def test_uses_swe_rebench_chat_preset_without_eval(self):
+        cfg = default_coderforge_config()
+
+        assert isinstance(cfg, GPTSFTDatasetConfig)
+        assert cfg.hf_dataset.dataset_name == "coderforge"
+        assert cfg.hf_dataset.split is None
+        assert isinstance(cfg.preprocessing, ChatSFTPreprocessingConfig)
+        assert cfg.do_validation is False
+        assert cfg.do_test is False
+        assert cfg.dataloader_type == "batch"
+
+    def test_custom_sequence_length_and_offline_packing(self):
+        cfg = default_coderforge_config(seq_length=131072, enable_offline_packing=True, pad_seq_to_mult=16)
+
+        assert cfg.seq_length == 131072
+        assert cfg.enable_offline_packing is True
+        assert cfg.offline_packing_specs is not None
+        assert cfg.offline_packing_specs.packed_sequence_size == 131072
+        assert cfg.offline_packing_specs.pad_seq_to_mult == 16
 
 
 @pytest.mark.unit

@@ -180,6 +180,7 @@ items:
         last_10_steps_step_time_ms_avg: 36869.270
         # Real RP2 convergence-verification run, not a mock-data benchmark.
         last_10_steps_model_tflops_per_gpu_avg: 200.180
+        last_10_steps_tokens_per_second_per_gpu_avg: 7110.095
         peak_allocated_memory_gib: 68.547
         peak_reserved_memory_gib: 73.893
       expected_result: >
@@ -218,6 +219,7 @@ items:
         last_10_steps_step_time_ms_avg: 21483.630
         # Real RP2 convergence-verification run, not a mock-data benchmark.
         last_10_steps_model_tflops_per_gpu_avg: 686.920
+        last_10_steps_tokens_per_second_per_gpu_avg: 24404.070
         peak_allocated_memory_gib: 158.220
         peak_reserved_memory_gib: 162.290
       expected_result: >
@@ -265,6 +267,7 @@ items:
             last_10_steps_step_time_ms_avg: 26665.830
             # Real RP2 convergence-verification run, not a mock-data benchmark.
             last_10_steps_model_tflops_per_gpu_avg: 553.430
+            last_10_steps_tokens_per_second_per_gpu_avg: 19661.417
             peak_allocated_memory_gib: 160.760
             peak_reserved_memory_gib: 166.230
           expected_result: >
@@ -302,6 +305,7 @@ items:
             last_10_steps_step_time_ms_avg: 13917.000
             # Mock-data performance run; not a convergence measurement.
             last_10_steps_model_tflops_per_gpu_avg: 795.390
+            last_10_steps_tokens_per_second_per_gpu_avg: 28254.365
             peak_allocated_memory_gib: 169.54
             peak_reserved_memory_gib: 173.86
           expected_result: >
@@ -334,6 +338,7 @@ items:
         final_loss: 0.2757806
         last_10_steps_step_time_ms_avg: 9887.800
         last_10_steps_model_tflops_per_gpu_avg: 79.240
+        last_10_steps_tokens_per_second_per_gpu_avg: 3313.983
       expected_result: >
         Packed OpenMathInstruct-2 full SFT completes 100 finite-loss steps with
         active MTP gradients, LM loss 0.4406566 -> 0.2757806, finite MTP-1
@@ -361,6 +366,7 @@ items:
         final_loss: 0.2762039
         last_10_steps_step_time_ms_avg: 6795.830
         last_10_steps_model_tflops_per_gpu_avg: 256.990
+        last_10_steps_tokens_per_second_per_gpu_avg: 9643.561
         peak_allocated_memory_gib: 101.510
         peak_reserved_memory_gib: 103.960
       expected_result: >
@@ -456,6 +462,7 @@ items:
         final_loss: 0.2650192
         last_10_steps_step_time_ms_avg: 40863.010
         last_10_steps_model_tflops_per_gpu_avg: 188.950
+        last_10_steps_tokens_per_second_per_gpu_avg: 6415.191
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
         steps with LM loss 0.4268321 -> 0.2650192 and MTP-1 loss 0.7322379 ->
@@ -502,6 +509,7 @@ items:
         final_loss: 0.2649925
         last_10_steps_step_time_ms_avg: 129692.530
         last_10_steps_model_tflops_per_gpu_avg: 119.030
+        last_10_steps_tokens_per_second_per_gpu_avg: 4042.546
       expected_result: >
         Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
         steps with LM loss 0.4268995 -> 0.2649925 and MTP-1 loss 0.7322624 ->
@@ -542,6 +550,7 @@ items:
         final_loss: 0.2854756
         last_10_steps_step_time_ms_avg: 16900.360
         last_10_steps_model_tflops_per_gpu_avg: 92.890
+        last_10_steps_tokens_per_second_per_gpu_avg: 3877.787
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
         steps with adapters on the MTP layers, LM loss 0.4406696 -> 0.2854756,
@@ -580,6 +589,7 @@ items:
         final_loss: 0.2855029
         last_10_steps_step_time_ms_avg: 19230.400
         last_10_steps_model_tflops_per_gpu_avg: 81.780
+        last_10_steps_tokens_per_second_per_gpu_avg: 3407.937
       expected_result: >
         Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
         steps with 48 rank-local adapter attachment records covering MTP
@@ -615,6 +625,7 @@ items:
         final_loss: 7.238846
         last_10_steps_step_time_ms_avg: 56671.640
         last_10_steps_model_tflops_per_gpu_avg: 176.630
+        last_10_steps_tokens_per_second_per_gpu_avg: 4625.665
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
@@ -658,6 +669,7 @@ items:
         final_loss: 5.796845
         last_10_steps_step_time_ms_avg: 22233.450
         last_10_steps_model_tflops_per_gpu_avg: 663.860
+        last_10_steps_tokens_per_second_per_gpu_avg: 23581.046
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -688,6 +700,7 @@ items:
         final_loss: 0.01217863
         last_10_steps_step_time_ms_avg: 18467.280
         last_10_steps_model_tflops_per_gpu_avg: 399.580
+        last_10_steps_tokens_per_second_per_gpu_avg: 14195.052
         peak_allocated_memory_gib: 72.066
         peak_reserved_memory_gib: 75.340
       expected_result: >
@@ -714,6 +727,7 @@ items:
         final_loss: 0.03325584
         last_10_steps_step_time_ms_avg: 18236.060
         last_10_steps_model_tflops_per_gpu_avg: 809.220
+        last_10_steps_tokens_per_second_per_gpu_avg: 28750.070
         peak_allocated_memory_gib: 156.850
         peak_reserved_memory_gib: 161.260
       expected_result: >

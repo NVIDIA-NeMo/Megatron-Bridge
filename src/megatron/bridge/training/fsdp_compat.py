@@ -21,7 +21,9 @@ try:
     )
 
     MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
+    MCORE_HAS_MEGATRON_FSDP_V2 = True
 except ImportError:
     from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 
     MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)
+    MCORE_HAS_MEGATRON_FSDP_V2 = False

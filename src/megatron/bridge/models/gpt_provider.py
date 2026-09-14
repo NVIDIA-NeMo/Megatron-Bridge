@@ -36,8 +36,8 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
-from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
@@ -135,6 +135,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # Model configuration
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
     make_vocab_size_divisible_by: int = 128
@@ -168,6 +169,15 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     use_transformer_engine_op_fuser: bool = False
     dense_grouped_gemm: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
+
+    mtp_layer_spec_transform: Optional[Callable[["GPTModelProvider", ModuleSpec], ModuleSpec]] = None
+    """Optional fix-up applied to an MTP layer spec re-derived straight from MCore.
+
+    A standalone MTP pipeline stage owns no decoder layers, so ``mtp_block_spec`` cannot
+    reuse ``transformer_layer_spec``'s output and calls ``get_gpt_decoder_layer_specs``
+    instead. Any model whose layer spec is not plain MCore therefore loses its
+    customisation on exactly that stage. Set this to re-apply it.
+    """
 
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
@@ -296,6 +306,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 vocab_size=padded_vocab_size,
                 max_sequence_length=self.seq_length,
                 fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(MCoreGPTModel, self.logit_dtype),
                 parallel_output=self.parallel_output,
                 share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
                 position_embedding_type=self.position_embedding_type,
@@ -373,6 +384,11 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
                 qk_l2_norm=config.qk_l2_norm,
             )
             spec = decoder_layer_specs[-1]
+            # This spec came from MCore directly, so anything transformer_layer_spec would
+            # have changed is absent from it. Give the model a chance to re-apply it.
+            transform = getattr(config, "mtp_layer_spec_transform", None)
+            if transform is not None:
+                spec = transform(config, spec)
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None

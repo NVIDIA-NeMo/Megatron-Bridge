@@ -1,0 +1,43 @@
+[
+  {
+    "id": "vision-dp-over-cp-positive-enablement",
+    "question": "Use the nemo-mbridge-perf-vision-dp-over-cp skill. Our Nemotron Omni VLM run at CP=2 shows the vision encoder doing identical work on every context-parallel rank. Give the exact Bridge config values to shard it, explain what collective this adds, and state how to prove the flag actually took effect.",
+    "expected_skill": "nemo-mbridge-perf-vision-dp-over-cp",
+    "expected_script": null,
+    "ground_truth": "The answer should use the vision DP over CP skill. It should note that cfg.model.vision_dp_over_cp already defaults to True, so the only required change is cfg.model.context_parallel_size>1, and that the flag self-disables silently at CP=1. It should explain that images or tubelets are split whole across the CP ranks (data parallelism over images, not ring attention, because the encoder attends within each image via cu_seqlens), that the vision projector runs on the rank-local shard, and that the only added collective is the post-projector gather. Verification should be an A/B at CP>1 flipping only the flag, expecting lower peak memory with no step-time regression and matching loss curves, plus a reminder to confirm context_parallel_size>1 if nothing changes.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-vision-dp-over-cp skill before answering.",
+      "State that model.vision_dp_over_cp is already True by default and require context_parallel_size>1.",
+      "State that the flag is a silent no-op at CP=1.",
+      "Explain the split is over whole images, not over the sequence dimension.",
+      "Identify the post-projector gather as the only added collective, and that projection happens before the gather.",
+      "Propose an A/B verification comparing peak memory, step time, and loss parity."
+    ]
+  },
+  {
+    "id": "vision-dp-over-cp-positive-load-imbalance",
+    "question": "Use the nemo-mbridge-perf-vision-dp-over-cp skill. We enabled vision DP over CP at CP=4 on a multi-image dataset where samples carry between 1 and 5 images, and the memory saving is much smaller than on our single-image datasets. Explain why and say where the fix belongs.",
+    "expected_skill": "nemo-mbridge-perf-vision-dp-over-cp",
+    "expected_script": null,
+    "ground_truth": "The answer should attribute the weak saving to the split being by image count rather than patch count, with the remainder assigned to the last rank, so a wide per-sample image-count spread leaves the tail rank overloaded and peak memory is set by the busiest rank. It should cite the measured Mantis result (CP=4, peak memory 81 -> 77 GB) as smaller than InfoVQA or llava_video (roughly -10%). It should say the fix is a patch-count-balanced greedy split on image boundaries and that it belongs upstream in Megatron-Core, not reimplemented in Bridge, since 3rdparty/Megatron-LM must not be modified in this repo.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-vision-dp-over-cp skill before answering.",
+      "Identify the count-based split with remainder-on-last-rank as the cause.",
+      "Explain that peak memory is set by the busiest rank.",
+      "Reference the measured Mantis result as the load-imbalance signature.",
+      "Locate the fix upstream in Megatron-Core rather than in Megatron-Bridge."
+    ]
+  },
+  {
+    "id": "vision-dp-over-cp-negative-hierarchical-cp",
+    "question": "Our text-only MoE model has 8 KV heads and we need CP=16 for 128K sequences. Which cp_comm_type should we use and what else must be set?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a hierarchical context parallelism question about splitting a long text sequence across ranks, not about sharding vision-encoder images. The vision DP over CP skill should not be loaded. A correct answer discusses cp_comm_type=a2a+p2p with hierarchical_context_parallel_sizes whose product equals context_parallel_size, and the KV-head limit on pure a2a.",
+    "expected_behavior": [
+      "Do not load the nemo-mbridge-perf-vision-dp-over-cp skill.",
+      "Recognize the question concerns sequence-dimension context parallelism for a text-only model.",
+      "Route to hierarchical context parallelism guidance instead."
+    ]
+  }
+]

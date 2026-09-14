@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
     _apply_gpt_oss_20b_transformer_engine_graph_configs,
     _apply_gpt_oss_120b_full_iter_fp8mx_configs,
     _benchmark_common,
+    _enable_ncclep_bf16,
     _gpt_oss_20b_fp8mx_precision,
     _gpt_oss_20b_nvfp4_precision,
     _perf_precision,
@@ -259,6 +260,34 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def gpt_oss_120b_pretrain_64gpu_gb200_bf16_ncclep_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× GB200, BF16, NCCL EP=64.
+
+    Note:
+        This recipe is temporary, added only for experimentation with NCCL EP.
+        It will be removed in the near future.
+    """
+    cfg = gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
+    _enable_ncclep_bf16(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    # Eager NCCL EP reads no HybridEP topology, so no HybridEP names are declared here.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg

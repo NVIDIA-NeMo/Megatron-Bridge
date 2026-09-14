@@ -196,7 +196,7 @@ class TestGemma4RecipeOverrides:
     def test_recipe_runtime_overrides(self, recipe_config):
         assert recipe_config.tokenizer.tokenizer_type == "NullTokenizer"
         assert recipe_config.tokenizer.tokenizer_model is None
-        assert recipe_config.tokenizer.vocab_size == 32000
+        assert recipe_config.tokenizer.vocab_size == 262143
         assert recipe_config.dataset.blend is None
         assert recipe_config.dataset.seq_length == 4096
         assert recipe_config.model.seq_length == 4096

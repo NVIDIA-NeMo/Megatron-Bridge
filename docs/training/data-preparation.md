@@ -99,6 +99,37 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
+To blend independent JSONL files, set `per_split_data_source_manifest_path` to a JSON file
+with the same alternating weight/path form as Megatron-LM:
+
+```json
+{
+  "train": ["0.75", "/data/sft_a.jsonl", "0.25", "/data/sft_b.jsonl"],
+  "valid": ["1.0", "/data/sft_validation.jsonl"],
+  "test": ["1.0", "/data/sft_test.jsonl"]
+}
+```
+
+```python
+dataset = GPTSFTDatasetConfig(
+    seq_length=4096,
+    per_split_data_source_manifest_path="/data/sft_blend.json",
+    preprocessing=PromptCompletionSFTPreprocessingConfig(),
+)
+```
+
+Weights are positive relative row-sampling ratios and need not sum to one.
+Without weights, each source row is used once. A split containing one path uses
+the existing single-JSONL path directly. For a weighted split, the default
+blend length is the sum of its source row counts; source-local rows are shuffled
+without replacement and repeat only when the ratio requires oversampling.
+
+Offline packing consumes this blended raw-row stream and writes one packed
+artifact per enabled train or validation split. Bridge stores these artifacts
+under the NeMo datasets cache in an identity-derived directory based on the
+source paths, weights, and file sizes. Replacing content without changing its
+path or byte size requires renaming the source or clearing the derived cache.
+
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 
 For preparation schemas, offline packing, finite epochs, and a complete knob reference, see the [text-only SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/text-only-sft/README.md).
@@ -188,6 +219,35 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 ```
 
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
+
+Model-specific Jinja controls can be supplied per row under `chat_template_kwargs`, for example
+`{"truncate_history_thinking": false}` to retain all historical reasoning. Megatron Bridge translates this canonical
+control to model-template-specific parameter names where necessary. The data pipeline owns tokenization,
+truncation, padding, and template selection, so those controls cannot be overridden from a dataset row. Tool
+schemas remain in the top-level `tools` field. Processor-batched VLM rows must use identical template kwargs and
+tools within a microbatch.
+
+To train on several sources at once, pass a list to `source`. Each entry in `source_weights` is an epoch count for its source: `1.0` keeps every row once, `2.5` keeps every row twice plus half of them again, and `0.5` keeps half of them. Fractional passes draw without replacement and round up to a whole row. Omitting the weights gives every source one pass.
+
+```python
+from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+
+dataset = DirectHFSFTDatasetConfig(
+    seq_length=4096,
+    source=[
+        HFDatasetSourceConfig(dataset_name="squad"),
+        HFDatasetSourceConfig(dataset_name="gsm8k"),
+    ],
+    source_weights=[1.0, 2.0],
+    blend_seed=1234,
+    validation_source=HFDatasetSourceConfig(dataset_name="squad", split="validation"),
+    do_test=False,
+)
+```
+
+Sources are adapted to canonical SFT rows before mixing, so their raw column layouts do not have to match. A single source still derives its own validation and test splits; a list has no single split to derive from, so set `validation_source` and `test_source` explicitly or disable those splits.
+
+Weights count rows, not tokens. SFT rows vary in length, so sources with equal row counts can still contribute very different token counts.
 
 Known semantic datasets should use their preset name, for example `squad`, `gsm8k`, `openmathinstruct2`, `cord_v2`, `raven`, `rdr`, `medpix`, `cv17`, or `llava_video_178k`. Do not combine `dataset_name` with `path_or_dataset`, `subset`, or `schema_adapter`; a preset owns those coupled fields. `split`, `load_kwargs`, and `adapter_kwargs` remain available for split selection and declarative runtime options such as a video root. Presets validate published split support: `raven`, `rdr`, and `llava_video_178k` are train-only; `medpix` and `squad` have no test split; `gsm8k` has no validation split; and OpenMathInstruct-2 exposes training variants only. Disable unsupported derived validation/test splits or supply explicit compatible sources.
 

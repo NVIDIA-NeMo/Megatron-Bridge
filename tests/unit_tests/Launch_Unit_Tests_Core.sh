@@ -17,6 +17,9 @@ set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 
+: "${SHARD_ID:?SHARD_ID must be set}"
+: "${NUM_SHARDS:?NUM_SHARDS must be set}"
+
 echo "=================================================="
 echo "🧪 UNIT TESTS (core)"
 echo "=================================================="
@@ -31,6 +34,8 @@ CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file="${REPO_ROOT}/.cov
     -o log_cli=true \
     -o log_cli_level=INFO \
     --disable-warnings \
+    --shard-id="${SHARD_ID}" \
+    --num-shards="${NUM_SHARDS}" \
     -vs tests/unit_tests \
     --ignore=tests/unit_tests/diffusion \
     -m "not pleasefixme"

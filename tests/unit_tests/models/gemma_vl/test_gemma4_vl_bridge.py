@@ -735,6 +735,26 @@ class TestGemma4VLBridgeProviderBridgeMoE:
         assert p.vision_config is mock_hf_pretrained_moe.config.vision_config
         assert p.text_config is mock_hf_pretrained_moe.config.text_config
 
+    def test_text_mode_returns_text_moe_provider(self, bridge, mock_hf_pretrained_moe, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
+        p = bridge.provider_bridge(mock_hf_pretrained_moe)
+        assert type(p) is Gemma4ModelProvider
+
+    def test_text_mode_moe_provider_is_bf16(self, bridge, mock_hf_pretrained_moe, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
+        p = bridge.provider_bridge(mock_hf_pretrained_moe)
+        assert p.bf16 is True
+        assert p.params_dtype == torch.bfloat16
+
+    def test_text_mode_moe_provider_config(self, bridge, mock_hf_pretrained_moe, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
+        p = bridge.provider_bridge(mock_hf_pretrained_moe)
+        assert p.num_moe_experts == 128
+        assert p.moe_router_topk == 8
+        assert p.moe_ffn_hidden_size == 704
+        assert p.global_head_dim == 512
+        assert p.num_global_key_value_heads == 2
+
 
 class TestGemma4VLBridgeProviderBridgeDense:
     def test_accepts_dense_with_per_layer_inputs(self, bridge, mock_hf_pretrained_dense):
@@ -946,6 +966,22 @@ class TestGemma4VLBridgeMappingRegistry:
         names = self._collect_names(bridge.mapping_registry())
         lm_keys = [n for n in names if "layers" in n and "vision" not in n and "audio" not in n]
         assert any("language_model" in n for n in lm_keys)
+
+    def test_moe_text_mode_registry_targets_text_model_from_vl_checkpoint(
+        self, bridge, mock_hf_config_moe, monkeypatch
+    ):
+        """MoE text mode: unprefixed Megatron params sourced from model.language_model.* HF weights."""
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
+        bridge.hf_config = mock_hf_config_moe
+        registry = bridge.mapping_registry()
+
+        megatron_params = [str(m.megatron_param) for m in registry.mappings if hasattr(m, "megatron_param")]
+        assert "embedding.word_embeddings.weight" in megatron_params
+        assert all(not n.startswith("language_model.") for n in megatron_params)
+        assert not any("vision_tower" in n or "audio_tower" in n for n in megatron_params)
+
+        hf_targets = self._collect_hf_targets(registry)
+        assert all(n.startswith("model.language_model.") for n in hf_targets)
 
     def test_dense_vl_audio_tower_replicated_mappings(self, bridge, mock_hf_config_dense, monkeypatch):
         monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "vl")
