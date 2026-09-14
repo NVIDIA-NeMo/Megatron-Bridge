@@ -17,9 +17,9 @@
 These compare the TransformerEngine flash-attention path (Gemma2TEDotProductAttention)
 against the unfused Gemma2DotProductAttention oracle on small tensors, covering:
 
-* per-layer forward-output parity (even/SWA layer and odd/causal layer),
-* SWA masking: tokens beyond the window are excluded only on even layers,
-* the 50*tanh softcap being applied pre-softmax.
+* per-layer forward-output parity (odd/SWA layer and even/causal layer),
+* SWA masking: tokens beyond the window are excluded only on odd layers,
+* the tanh softcap being applied pre-softmax.
 
 They require a real GPU and a TransformerEngine build whose DotProductAttention exposes a
 ``softcap`` argument, so they are skipped cleanly otherwise. They are not run in CI on CPU.
@@ -72,7 +72,10 @@ _ATOL = 2e-2
 # Small attention shape kept intentionally light for CI GPUs.
 _NUM_HEADS = 4
 _HEAD_DIM = 64
-_QUERY_PRE_ATTN_SCALAR = 64  # scale = 1/sqrt(64) = 1/8
+# Deliberately != _HEAD_DIM. Gemma2 scales by 1/sqrt(query_pre_attn_scalar), so if these were
+# equal the Gemma2 scale would coincide with the default 1/sqrt(head_dim) and dropping the
+# scale logic entirely would still pass every test here.
+_QUERY_PRE_ATTN_SCALAR = 256  # scale = 1/sqrt(256) = 1/16, vs 1/sqrt(64) = 1/8 for head_dim
 _SOFTCAP = 50.0
 
 
@@ -176,10 +179,10 @@ class TestGemma2TEDotProductAttentionParity:
 
     @pytest.mark.parametrize(
         "layer_number, label",
-        [(2, "even/SWA"), (1, "odd/causal")],
+        [(1, "odd/SWA"), (2, "even/causal")],
     )
     def test_forward_output_parity(self, layer_number, label):
-        """TE flash output must match the unfused oracle on both even (SWA) and odd (causal) layers."""
+        """TE flash output must match the unfused oracle on both odd (SWA) and even (causal) layers."""
         seq, batch = 16, 2
         config = _make_config(window_size=(3, 0))
         oracle = self._make_oracle(config, layer_number)
@@ -198,11 +201,14 @@ class TestGemma2TEDotProductAttentionParity:
             msg=f"TE flash path diverged from the unfused Gemma2 oracle on the {label} layer",
         )
 
-    def test_swa_excludes_tokens_beyond_window_only_on_even_layers(self):
-        """Perturbing a key/value beyond the SWA window must leave an even-layer last-query output
-        unchanged, while an odd-layer (full causal) output must change.
+    def test_swa_excludes_tokens_beyond_window_only_on_odd_layers(self):
+        """Perturbing a key/value beyond the SWA window must leave an odd-layer last-query output
+        unchanged, while an even-layer (full causal) output must change.
 
-        This proves sliding window attention (window_size=(3, 0)) is applied on even layers only.
+        Sliding window attention is applied on odd layers only (1-indexed), matching HuggingFace's
+        layer_types where 0-indexed layer 0 is "sliding_attention". Each layer is checked against
+        the unfused oracle as well as against the absolute convention, so that this test cannot be
+        satisfied by a TE path that is merely self-consistent while disagreeing with the oracle.
         """
         seq, batch = 8, 1
         window_left = 3
@@ -216,36 +222,36 @@ class TestGemma2TEDotProductAttentionParity:
         k_pert[0] += 5.0
         v_pert[0] += 5.0
 
-        even = self._make_te(config, layer_number=2)  # SWA
-        odd = self._make_te(config, layer_number=1)  # full causal
-
         def last_query(attn, key, value):
             out = attn.forward(query=q, key=key, value=value, attention_mask=None)
             return out[-1].float()  # [batch, hidden]
 
-        even_base = last_query(even, k, v)
-        even_pert = last_query(even, k_pert, v_pert)
-        odd_base = last_query(odd, k, v)
-        odd_pert = last_query(odd, k_pert, v_pert)
+        def reacts_to_out_of_window_token(attn):
+            base = last_query(attn, k, v)
+            pert = last_query(attn, k_pert, v_pert)
+            return not torch.allclose(pert, base, rtol=_RTOL, atol=_ATOL)
 
-        # Even/SWA layer: token 0 is outside the window → last-query output is unaffected.
-        torch.testing.assert_close(
-            even_pert,
-            even_base,
-            rtol=_RTOL,
-            atol=_ATOL,
-            msg="Even/SWA layer must ignore tokens beyond the sliding window",
-        )
-        # Odd/causal layer: token 0 is attended → last-query output must change.
-        assert not torch.allclose(odd_pert, odd_base, rtol=_RTOL, atol=_ATOL), (
-            "Odd/causal layer must attend to tokens beyond the (even-only) sliding window"
-        )
+        for layer_number, is_swa in ((1, True), (2, False)):
+            label = "odd/SWA" if is_swa else "even/causal"
+            te_reacts = reacts_to_out_of_window_token(self._make_te(config, layer_number))
+            oracle_reacts = reacts_to_out_of_window_token(self._make_oracle(config, layer_number))
+
+            assert te_reacts == oracle_reacts, (
+                f"TE path disagrees with the unfused oracle on the {label} layer: TE "
+                f"{'attends to' if te_reacts else 'ignores'} a token beyond the sliding window "
+                f"while the oracle {'attends to' if oracle_reacts else 'ignores'} it"
+            )
+            # A SWA layer must ignore the out-of-window token; a causal layer must attend to it.
+            assert te_reacts == (not is_swa), (
+                f"{label} layer (layer_number={layer_number}) has the wrong masking: expected "
+                f"{'SWA to exclude' if is_swa else 'full causal to include'} tokens beyond the window"
+            )
 
     def test_softcap_applied_pre_softmax(self):
         """With large logits, the TE path must saturate via 50*tanh (matching the oracle) and differ
         from an uncapped TE path — proving the softcap is applied pre-softmax."""
         seq, batch = 16, 1
-        layer_number = 1  # causal, isolate the softcap from SWA
+        layer_number = 2  # even layer -> full causal, isolating the softcap from SWA masking
         config = _make_config(window_size=(3, 0), softcap=_SOFTCAP)
 
         # Large scale drives pre-softmax logits well past the +/-50 softcap saturation range.
