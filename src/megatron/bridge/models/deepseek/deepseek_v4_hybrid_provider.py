@@ -15,8 +15,9 @@
 """Provider for DeepSeek-V4 expressed as a Megatron-Core ``HybridModel``.
 
 DeepSeek-V4 is a Multi-Latent-Attention (MLA) model, so it needs every MLA
-configuration field (``q_lora_rank``, ``o_groups``, ``v_head_dim``,
-``rope_type`` / YaRN parameters, …). Those live on :class:`MLAModelProvider`.
+configuration field (``q_lora_rank``, ``output_projection_groups``,
+``v_head_dim``, ``rope_type`` / YaRN parameters, …). Those live on
+:class:`MLAModelProvider`.
 It is also a *hybrid* model: each logical DeepSeek-V4 block is expressed as two
 Megatron hybrid layers — an attention-only layer (``W``/``C``/``H`` symbol) and
 a MoE-only layer (``E`` symbol) — driven by ``hybrid_layer_pattern`` and built

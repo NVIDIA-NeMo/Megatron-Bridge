@@ -767,10 +767,34 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         assert out.num_layers == 8
         assert out.mtp_hybrid_override_pattern == "WE"
         assert out.hybrid_stack_spec is hybrid_dsv4_stack_spec
-        # 3 leading hash-routed logical layers -> first 6 hybrid layers.
-        assert out.moe_n_hash_layers == 6
+        assert out.output_projection_groups == 8
+        assert out.output_projection_lora_rank == 1024
+        # MCore counts MoE positions, so this remains the logical HF layer count.
+        assert out.moe_n_hash_layers == 3
+        assert out.hash_moe_vocab_size == 129280
         # Doubled per-hybrid-layer ratios (main) + one MTP depth [0, 0].
         assert out.csa_compress_ratios == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
+
+    def test_megatron_to_hf_config_restores_renamed_mcore_fields(self):
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="WECEHECE",
+            mtp_num_layers=1,
+            moe_n_hash_layers=3,
+            activation_func_clamp_value=10.0,
+            output_projection_groups=8,
+            output_projection_lora_rank=1024,
+            csa_window_size=128,
+            num_residual_streams=4,
+            mhc_sinkhorn_iterations=20,
+            moe_shared_expert_intermediate_size=1024,
+        )
+
+        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value={}):
+            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["num_hash_layers"] == 3
+        assert hf_config["o_groups"] == 8
+        assert hf_config["o_lora_rank"] == 1024
 
 
 class TestDeepSeekV4HybridMappingLayout:
