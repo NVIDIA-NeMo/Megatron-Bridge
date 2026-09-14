@@ -27,6 +27,7 @@ import torch
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.msc_utils import MultiStorageClientFeature
+from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
     _DIRECT_ITERATION_DIR_SENTINEL,
@@ -70,6 +71,7 @@ from megatron.bridge.training.checkpointing import (
     maybe_save_dataloader_state,
     read_metadata,
     save_checkpoint,
+    schedule_async_save,
 )
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -6076,3 +6078,30 @@ class TestAlignRngStateShardedMetadata:
         result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
 
         assert result is rng_state
+
+
+class TestAsyncCheckpointScheduling:
+    """Test async request handoff to the configured worker strategy."""
+
+    def test_schedule_async_save_normalizes_request_for_mcore_worker(self):
+        """MCore's persistent worker must receive its own nominal request type."""
+        async_queue = Mock()
+        state = Mock()
+        state.async_calls_queue = async_queue
+        state.cfg.checkpoint.async_strategy = "mcore"
+        nvrx_request = NVRxAsyncRequest(
+            async_fn=Mock(),
+            async_fn_args=(0, None, None),
+            finalize_fns=[Mock()],
+            preload_fn=Mock(),
+        )
+
+        schedule_async_save(state, nvrx_request)
+
+        scheduled_request = async_queue.schedule_async_request.call_args.args[0]
+        assert isinstance(scheduled_request, AsyncRequest), (
+            "MCore's persistent worker ignores requests from the nominally distinct NVRx class"
+        )
+        assert scheduled_request.async_fn is nvrx_request.async_fn
+        assert scheduled_request.preload_fn is nvrx_request.preload_fn
+        assert scheduled_request.finalize_fns == nvrx_request.finalize_fns
