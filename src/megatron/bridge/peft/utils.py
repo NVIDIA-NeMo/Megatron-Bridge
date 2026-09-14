@@ -2242,6 +2242,12 @@ class GroupedExpertLinearAdapter(nn.Module):
                     "skip_fp8_weight_update": None,
                     "save_original_input": helper.save_original_input,
                     "debug": False,
+                    # ROCm Transformer Engine unpacks these extra optional fields from
+                    # ``non_tensor_args``; CUDA builds never name them, so the entries
+                    # stay inert there (the tuple is assembled from TE's own field names).
+                    "m_splits_tensor": None,
+                    "actual_m_splits": None,
+                    "unpad_output": False,
                 }
                 unknown_arg_names = set(non_tensor_arg_names) - te_non_tensor_values.keys()
                 if unknown_arg_names:
