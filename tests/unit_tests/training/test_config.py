@@ -1441,38 +1441,18 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_dpo_dataset_pads_to_the_sequence_parallel_multiple(self):
-        """DPO batches are padded dynamically, so SP needs the collate width to be a TP multiple."""
+    @pytest.mark.parametrize(
+        ("tensor_size", "pipeline_size", "expected_pad_mult", "expected_variable_seq"),
+        [(4, 1, 4, False), (1, 2, 1, True)],
+        ids=["sequence-parallel", "pipeline-parallel"],
+    )
+    def test_dpo_dataset_adapts_to_sequence_and_pipeline_parallelism(
+        self, tensor_size, pipeline_size, expected_pad_mult, expected_variable_seq
+    ):
+        """DPO batches are padded dynamically: SP needs a TP-multiple collate width, PP stages must exchange shapes."""
         gpt_model_cfg = create_test_gpt_config(
-            tensor_model_parallel_size=4,
-            sequence_parallel=True,
-            calculate_per_token_loss=True,
-        )
-        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = DPODatasetConfig(
-            tokenizer_name="org/some-model",
-            seq_length=512,
-            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
-        )
-
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=4,
-            model_config=gpt_model_cfg,
-            train_config=train_cfg,
-            dataset_config_override=dataset_cfg,
-        )
-        container.ddp.average_in_collective = False
-
-        try:
-            container.validate()
-            assert dataset_cfg.pad_seq_length_to_mult == 4
-        finally:
-            restore_get_world_size_safe(og_ws, cfg_mod)
-
-    @pytest.mark.parametrize(("pipeline_size", "expected"), [(1, False), (2, True)])
-    def test_dpo_dataset_enables_variable_seq_lengths_only_under_pipeline_parallelism(self, pipeline_size, expected):
-        """Pair batches vary in width per micro batch, so PP stages must exchange shapes."""
-        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=tensor_size,
+            sequence_parallel=tensor_size > 1,
             pipeline_model_parallel_size=pipeline_size,
             calculate_per_token_loss=True,
         )
@@ -1484,7 +1464,7 @@ class TestConfigContainerValidation:
         )
 
         container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=pipeline_size,
+            world_size_override=tensor_size * pipeline_size,
             model_config=gpt_model_cfg,
             train_config=train_cfg,
             dataset_config_override=dataset_cfg,
@@ -1493,7 +1473,8 @@ class TestConfigContainerValidation:
 
         try:
             container.validate()
-            assert gpt_model_cfg.variable_seq_lengths is expected
+            assert dataset_cfg.pad_seq_length_to_mult == expected_pad_mult
+            assert gpt_model_cfg.variable_seq_lengths is expected_variable_seq
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
