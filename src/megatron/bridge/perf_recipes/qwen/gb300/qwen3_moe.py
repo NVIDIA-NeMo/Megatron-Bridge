@@ -602,10 +602,10 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, NVFP4, full-iteration CG and A2A overlap."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    cfg.model.recompute_modules = []
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.model.virtual_pipeline_model_parallel_size = 12
     _enable_hybridep_full_iteration_nvfp4(cfg)
+    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
