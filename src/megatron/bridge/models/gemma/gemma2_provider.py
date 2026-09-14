@@ -412,11 +412,11 @@ class Gemma2TEDotProductAttention(TEDotProductAttention):
     """Gemma2 core attention on the TransformerEngine flash-attention backend.
 
     Mirrors Gemma3TEDotProductAttention: deep-copies the config and rewrites the per-layer
-    sliding-window setting before delegating to TEDotProductAttention. Sliding window attention
-    (window_size=(4095, 0)) is applied on even-numbered layers only; odd-numbered layers use full
-    causal attention — matching the unfused Gemma2DotProductAttention oracle. The softcap (50.0) and
-    the Gemma2 attention scale (1/sqrt(query_pre_attn_scalar)) are activated on the config/kwargs so
-    the fused TE flash kernel reproduces the oracle numerics exactly.
+    sliding-window setting before delegating to TEDotProductAttention. Sliding window attention is
+    applied on odd-numbered layers only (1-indexed); even-numbered layers use full causal attention,
+    matching the unfused Gemma2DotProductAttention oracle and HuggingFace's layer_types. The softcap
+    and the Gemma2 attention scale (1/sqrt(query_pre_attn_scalar)) are read from the config so the
+    fused TE flash kernel reproduces the oracle numerics exactly.
 
     cuDNN attention cannot serve Gemma2 (head_dim=256, and no softcap support), so the provider forces
     AttnBackend.flash.
@@ -434,17 +434,19 @@ class Gemma2TEDotProductAttention(TEDotProductAttention):
     ):
         config = copy.deepcopy(config)
 
-        # Sliding window attention on even layers only (1-indexed), matching the unfused
-        # Gemma2DotProductAttention (`self.layer_number = max(1, layer_number); if ... % 2 == 0`).
-        # Odd layers -> None (full causal); is_layer_window_attention() inside TEDotProductAttention
+        # Sliding window attention on odd layers only (1-indexed), matching the unfused
+        # Gemma2DotProductAttention (`self.layer_number = max(1, layer_number); if ... % 2 == 1`).
+        # HuggingFace builds layer_types as "sliding_attention" when (i + 1) % 2 is truthy over its
+        # 0-indexed i, and mcore's layer_number is i + 1, so HF layer 0 is mcore layer 1.
+        # Even layers -> None (full causal); is_layer_window_attention() inside TEDotProductAttention
         # treats a falsy window_size as "no SWA".
         ln = max(1, layer_number)
-        config.window_size = config.window_size if (ln % 2 == 0) else None
+        config.window_size = config.window_size if (ln % 2 == 1) else None
 
-        # Gemma2 scales scores by 1/sqrt(query_pre_attn_scalar), NOT 1/sqrt(head_dim). The scalar is
-        # size-dependent (256 for 9B, 224 for 2B/27B), so derive it from the runtime config rather
-        # than hardcoding. softmax_scale reaches TE as an explicit kwarg (SelfAttention forwards
-        # config.softmax_scale); default it here when unset and keep the config consistent.
+        # Gemma2 scales scores by 1/sqrt(query_pre_attn_scalar), NOT 1/sqrt(head_dim). The two are
+        # independent config fields and differ on some model sizes, so derive the scale from the
+        # runtime config rather than hardcoding. softmax_scale reaches TE as an explicit kwarg
+        # (SelfAttention forwards config.softmax_scale); default it here when unset.
         if softmax_scale is None:
             softmax_scale = 1.0 / math.sqrt(config.query_pre_attn_scalar)
         config.softmax_scale = softmax_scale
@@ -571,7 +573,7 @@ class Gemma2ModelProvider(GPTModelProvider):
     attn_logit_softcapping: Optional[float] = 50.0
     final_logit_softcapping: float = 30.0
 
-    def __post_init__(self) -> None:
+    def _apply_attention_constraints(self) -> None:
         """Force the flash attention backend only when the TransformerEngine attention path is on.
 
         cuDNN/FusedAttention cannot serve Gemma2 (head_dim=256, no softcap), so the TE path requires
@@ -589,10 +591,24 @@ class Gemma2ModelProvider(GPTModelProvider):
             math.isfinite(self.attn_logit_softcapping) and self.attn_logit_softcapping > 0
         ):
             raise ValueError(
-                "attn_logit_softcapping must be a positive finite value or None, got "
-                f"{self.attn_logit_softcapping}."
+                f"attn_logit_softcapping must be a positive finite value or None, got {self.attn_logit_softcapping}."
             )
+
+    def __post_init__(self) -> None:
+        """Apply the Gemma2 attention constraints at construction time."""
+        self._apply_attention_constraints()
         super().__post_init__()
+
+    def finalize(self) -> None:
+        """Re-apply the attention constraints after any post-construction overrides.
+
+        apply_overrides_and_finalize() setattrs the overrides and then calls finalize(); it never
+        re-runs __post_init__. Without this, enabling use_transformer_engine_attention through the
+        canonical override path would select Gemma2TEDotProductAttention while leaving
+        attention_backend at auto, and would skip the softcap validation entirely.
+        """
+        self._apply_attention_constraints()
+        super().finalize()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Gemma2 model.
