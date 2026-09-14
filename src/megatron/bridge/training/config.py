@@ -1350,8 +1350,6 @@ class ConfigContainer(Container):
                 raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
             if self.ddp.average_in_collective:
                 raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
-            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
-                raise ValueError("Energon native sequence packing does not support MTP.")
             if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
                 self.model, "vision_cuda_graph_impl", None
             ) not in (None, "none"):
