@@ -67,7 +67,6 @@ from torch.distributed.tensor import DTensor
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
-from megatron.bridge.training.checkpoint_compat import _retarget_model_sharded_state_dict_for_load
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -2464,7 +2463,6 @@ def _load_model_weights_from_checkpoint(
     model = unwrap_model(model)
     pg_collection = get_pg_collection(model)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
-    _retarget_model_sharded_state_dict_for_load(model, sharded_state_dict, checkpoint_path)
 
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
@@ -3113,8 +3111,6 @@ def _load_checkpoint_from_path(
                 rerun_state=gen_sd_rerun_state,
                 pg_collection=pg_collection,
             )
-        if ckpt_type != CheckpointType.LOCAL:
-            _retarget_model_sharded_state_dict_for_load(model, load_kwargs["sharded_state_dict"], checkpoint_name)
 
     elif ckpt_format == "fsdp_dtensor":
         # Handle fsdp_dtensor format

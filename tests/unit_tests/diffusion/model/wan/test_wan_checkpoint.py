@@ -23,7 +23,6 @@ from megatron.core.models.common.vision_module.vision_module import VisionModule
 from torch import nn
 
 from megatron.bridge.diffusion.models.wan.wan_model import WanModel
-from megatron.bridge.training.checkpoint_compat import _retarget_model_sharded_state_dict_for_load
 
 
 pytestmark = [pytest.mark.unit]
@@ -53,12 +52,8 @@ def _optimizer_state(model_state, value: float):
     not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
     reason="Gloo is required for the distributed checkpoint round trip",
 )
-@pytest.mark.parametrize(
-    "legacy_prefix",
-    [pytest.param(False, id="current"), pytest.param(True, id="legacy-module-prefix")],
-)
-def test_wan_checkpoint_round_trip_strict(tmp_path, legacy_prefix):
-    """Save and strictly reload current and legacy WAN checkpoint namespaces."""
+def test_wan_checkpoint_round_trip_strict(tmp_path):
+    """Save and strictly reload the canonical WAN checkpoint namespace."""
     checkpoint_dir = tmp_path / "checkpoint"
     checkpoint_dir.mkdir()
     torch.distributed.init_process_group(
@@ -71,13 +66,8 @@ def test_wan_checkpoint_round_trip_strict(tmp_path, legacy_prefix):
     try:
         metadata = {"dp_cp_group": torch.distributed.group.WORLD}
         source = _tiny_wan(7.0)
-        source_model_state = (
-            source.sharded_state_dict(prefix="module.", metadata=metadata)
-            if legacy_prefix
-            else source.sharded_state_dict(metadata=metadata)
-        )
-        if not legacy_prefix:
-            assert source_model_state.keys() == source.state_dict().keys()
+        source_model_state = source.sharded_state_dict(metadata=metadata)
+        assert source_model_state.keys() == source.state_dict().keys()
         source_optimizer_state = _optimizer_state(source_model_state, 3.0)
 
         with patch("torch.cuda.current_device", return_value="cpu"), patch("torch.cuda.synchronize"):
@@ -93,7 +83,6 @@ def test_wan_checkpoint_round_trip_strict(tmp_path, legacy_prefix):
                 "model": destination_model_state,
                 "optimizer": _optimizer_state(destination_model_state, -3.0),
             }
-            _retarget_model_sharded_state_dict_for_load([destination], load_scaffold, str(checkpoint_dir))
             loaded_state = load(load_scaffold, checkpoint_dir)
 
         load_result = destination.load_state_dict(loaded_state["model"], strict=True)
