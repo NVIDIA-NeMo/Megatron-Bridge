@@ -14,7 +14,7 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -50,6 +50,8 @@ class MixedPrecisionConfig:
     fp8_recipe: str = (
         "tensorwise"  # "tensorwise", "delayed", "mxfp8" (for Blackwell only), "blockwise" (for Hopper only)
     )
+    fp8_recipe_attrs: Optional[dict[str, Any]] = None
+    fp8_quantizer_factory: Optional[str] = None
     first_last_layers_bf16: bool = False
     fp8_margin: int = 0
     fp8_amax_history_len: int = 1
@@ -62,6 +64,8 @@ class MixedPrecisionConfig:
     # fp4 related
     fp4: Optional[str] = None
     fp4_recipe: str = "nvfp4"
+    fp4_recipe_attrs: Optional[dict[str, Any]] = None
+    fp4_quantizer_factory: Optional[str] = None
     fp4_param: Optional[bool] = None
     fp4_param_gather: bool = False
     # FP16 Loss scaling
@@ -426,6 +430,19 @@ def nemotron_3_super_bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     cfg = bf16_with_nvfp4_mixed()
     cfg.first_last_layers_bf16 = True
     cfg.num_layers_at_end_in_bf16 = 14
+    return cfg
+
+
+@register
+def nemotron_3_ultra_bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
+    """Create a MixedPrecisionConfig for mixed precision training using BF16 with NVFP4
+    Returns:
+        MixedPrecisionConfig: Configuration for BF16 with NVFP4 mixed precision training
+    """
+    cfg = bf16_with_nvfp4_mixed()
+    cfg.first_last_layers_bf16 = True
+    cfg.num_layers_at_start_in_bf16 = 0
+    cfg.num_layers_at_end_in_bf16 = 16  # last 15% of layers in BF16
     return cfg
 
 

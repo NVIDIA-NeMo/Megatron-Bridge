@@ -61,7 +61,7 @@ from megatron.bridge.peft.multi_lora_layers import (
     load_adapter,
     set_tokens_per_adapter_slot,
 )
-from megatron.bridge.peft.utils import AdapterAttributes
+from megatron.bridge.peft.utils import AdapterAttributes, ParallelLinearAdapter
 
 
 # ======================================================================
@@ -294,6 +294,13 @@ class TestMultiLoRALinearSlots:
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
 
+    def test_dense_layer_records_base_linear_name(self) -> None:
+        # forward's token-span guard formats this name in its diagnostic; only
+        # the MoE subclass assigned it, so the dense guard raised AttributeError
+        # instead of the intended RuntimeError.
+        layer = _build_multi_lora_linear(full_name="decoder.layers.0.mlp.linear_fc1")
+        assert layer.base_linear_name == "decoder.layers.0.mlp.linear_fc1"
+
     def test_constructor_forwards_wrapped_module_runtime_config(self) -> None:
         """Adapter construction mirrors the single-LoRA path (LoRA.transform)."""
         base = nn.Linear(16, 32)
@@ -435,6 +442,30 @@ class TestMultiLoRALinearSlots:
 
         assert torch.all(layer.adapters[1].linear_out.weight == 0)
 
+    def test_reset_adapter_preserves_full_fan_xavier_initialization(self) -> None:
+        """A reused TP-sharded slot must match construction-time initialization."""
+        in_features = 4096
+        rank = 32
+        tensor_parallel_size = 4
+        layer = _build_multi_lora_linear(in_features=in_features, dim=rank)
+        adapter = layer.adapters[0]
+        adapter.linear_in.weight = nn.Parameter(torch.empty(rank, in_features // tensor_parallel_size))
+
+        expected = torch.empty_like(adapter.linear_in.weight)
+        full_fan_xavier = ParallelLinearAdapter._get_init_fn(
+            None,
+            "xavier",
+            fan_in=in_features,
+            fan_out=rank,
+        )
+        torch.manual_seed(1234)
+        full_fan_xavier(expected)
+
+        torch.manual_seed(1234)
+        layer.reset_adapter(0)
+
+        torch.testing.assert_close(adapter.linear_in.weight, expected)
+
     def test_state_dict_contains_base_and_all_adapter_slots(self) -> None:
         layer = _build_multi_lora_linear(n_adapters=2, dim=8)
 
@@ -509,6 +540,20 @@ class TestMultiLoRAModelHelpers:
             assert module.tokens_per_adapter is tokens
             assert module.tokens_per_adapter_splits == (3, 5)
             assert module.tokens_per_adapter_total == 8
+
+    def test_set_tokens_per_adapter_slot_validates_input(self) -> None:
+        # A wrong length silently mis-groups the grouped GEMM; negative counts
+        # produce non-monotonic (out-of-bounds) offsets; floats break the
+        # int32 cumsum contract -- all must fail loudly at the setter.
+        container = _MultiLoRAContainer(n_layers=1)
+        with pytest.raises(ValueError, match="1-D"):
+            set_tokens_per_adapter_slot(container, torch.tensor([[3, 5]], dtype=torch.int32))
+        with pytest.raises(ValueError, match="integer"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3.0, 5.0]))
+        with pytest.raises(ValueError, match="nonnegative"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3, -1], dtype=torch.int32))
+        with pytest.raises(ValueError, match="n_adapters"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3, 5, 7], dtype=torch.int32))
 
     def test_init_and_clear_adapter_slot_across_model(self) -> None:
         container = _MultiLoRAContainer(n_layers=2)

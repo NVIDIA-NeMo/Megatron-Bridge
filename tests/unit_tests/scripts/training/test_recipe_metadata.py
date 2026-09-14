@@ -134,6 +134,7 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("glm_45v_sft_config", "vlm_step"),
         ("kimi_k25_vl_sft_config", "vlm_step"),
         ("ministral3_8b_sft_config", "vlm_step"),
+        ("muse_glimmer_30b_sft_32gpu_h100_bf16_config", "vlm_step"),
         ("step37_sft_flickr8k_config", "step37_flickr8k_step"),
         ("flux_12b_pretrain_config", "flux_step"),
         ("wan_14b_pretrain_config", "wan_step"),

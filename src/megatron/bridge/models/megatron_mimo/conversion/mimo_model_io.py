@@ -87,7 +87,6 @@ def save_megatron_mimo_model(
             # Async NVRx + block below: the sync mcore path deadlocks on
             # disjoint per-component state dicts at multi-billion-param scale.
             async_save=True,
-            async_strategy="nvrx",
             use_persistent_ckpt_worker=False,
             save=str(path),
             save_optim=False,

@@ -42,6 +42,7 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
@@ -58,6 +59,14 @@ except ImportError:
 
 
 ModelT = TypeVar("ModelT", bound=MegatronModule)
+
+
+def _finalize_model_quantization(model: torch.nn.Module) -> None:
+    """Finalize module quantization against paths in the assembled model."""
+    for name, module in model.named_modules():
+        if hasattr(module, "finish_init"):
+            quant_config = get_quant_config_or_none(name, module.config.quant_recipe)
+            module.finish_init(quant_config)
 
 
 def _apply_mixed_precision_wrapper(
@@ -194,7 +203,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         use_torch_fsdp2: bool = False,
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = False,
-        use_cpu_initialization: None | bool = False,
+        use_cpu_initialization: bool | None = None,
         init_model_with_meta_device: bool | None = None,
         pre_wrap_hook: Union[
             Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -222,7 +231,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
             wrap_with_ddp: Whether to wrap model with DDP.
             data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-            use_cpu_initialization: Initialize model on CPU.
+            use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
             init_model_with_meta_device: Initialize model on meta device.
             pre_wrap_hook: A single callable or list of callables to modify the model before it's wrapped.
                 If provided, this will override all hooks registered via `register_pre_wrap_hook`.
@@ -509,7 +518,7 @@ class GetModelKwargs(TypedDict, total=False):
         use_torch_fsdp2: Use PyTorch FSDP2 instead of custom DDP.
         wrap_with_ddp: Whether to wrap model with DDP.
         data_parallel_random_init: Initialize parameters randomly across data parallel ranks.
-        use_cpu_initialization: Initialize model on CPU.
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting.
         init_model_with_meta_device: Initialize model on meta device.
         pre_wrap_hook: A single callable or list of callables that overrides all registered pre-wrap hooks.
         post_wrap_hook: A single callable that overrides all registered post-wrap hooks.
@@ -570,7 +579,7 @@ def get_model(
     use_torch_fsdp2: bool = False,
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = False,
-    use_cpu_initialization: None | bool = False,
+    use_cpu_initialization: bool | None = None,
     init_model_with_meta_device: bool | None = None,
     pre_wrap_hook: Union[
         Callable[[list[MegatronModule]], list[MegatronModule]],
@@ -605,7 +614,7 @@ def get_model(
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
-        use_cpu_initialization: Whether to initialize model on CPU to save GPU memory
+        use_cpu_initialization: Override CPU initialization. None preserves the provider setting
         init_model_with_meta_device: Whether to initialize the model on the meta device
         pre_wrap_hook: A callable or list of callables that takes a list of `MegatronModule`
             and returns a modified list, or `None` to clear the hook. If a list is provided,
@@ -643,7 +652,8 @@ def get_model(
             if hasattr(model_provider, field_name):
                 setattr(model_provider, field_name, selected_dtype)
 
-    model_provider.use_cpu_initialization = use_cpu_initialization if use_cpu_initialization else False
+    if use_cpu_initialization is not None:
+        model_provider.use_cpu_initialization = use_cpu_initialization
     if init_model_with_meta_device:
         model_provider.init_model_with_meta_device = True
         with torch.device("meta"):
@@ -666,6 +676,9 @@ def get_model(
             _model = pre_wrap_hook(model)
             if _model is not None:
                 model = _model
+
+    for model_module in model:
+        _finalize_model_quantization(model_module)
 
     # Set tensor model parallel attributes if not set
     # In case pre_wrap_hook augmented the model (e.g. adding PEFT adapters)
