@@ -1270,9 +1270,9 @@ def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(
 ):
     """Qwen3.5-VL library recipes fuse the GatedDeltaNet pre-gated-delta-rule path.
 
-    The flag is set in ``_qwen35_vl_provider``, the single construction point for
-    every Qwen3.5-VL recipe in the module, so it applies to pretrain, SFT and PEFT
-    alike rather than only to the perf recipes.
+    ``_enable_gdn_conv_fusion`` is applied from ``_qwen35_vl_provider``, the single
+    construction point for every Qwen3.5-VL recipe in the module, so it applies to
+    pretrain, SFT and PEFT alike rather than only to the perf recipes.
     """
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
