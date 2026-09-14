@@ -2052,7 +2052,12 @@ class TestLoadCheckpoint:
             patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
             patch("megatron.bridge.training.checkpointing._load_model_state_dict"),
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.load_content_metadata", return_value={}),
-            patch("megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}
+            ) as mock_generate_state_dict,
+            patch(
+                "megatron.bridge.training.checkpointing._retarget_model_sharded_state_dict_for_load"
+            ) as mock_retarget,
             patch("megatron.bridge.training.checkpointing.torch.distributed.is_initialized", return_value=False),
             patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache"),
             patch("megatron.bridge.training.checkpointing.wandb_utils.on_load_checkpoint_success"),
@@ -2081,6 +2086,11 @@ class TestLoadCheckpoint:
             )
 
         assert result == (0, 0)
+        mock_retarget.assert_called_once_with(
+            load_checkpoint_fixtures["mock_model"],
+            mock_generate_state_dict.return_value,
+            "/checkpoints/iter_0000003",
+        )
         optimizer.load_state_dict.assert_not_called()
         scheduler.load_state_dict.assert_not_called()
 
@@ -3134,6 +3144,9 @@ class TestLoadModelWeightsFromCheckpoint:
             patch("megatron.bridge.training.checkpointing.gc.collect") as mock_gc_collect,
             patch("megatron.bridge.training.checkpointing.torch.cuda.is_available", return_value=True),
             patch("megatron.bridge.training.checkpointing.torch.cuda.empty_cache") as mock_empty_cache,
+            patch(
+                "megatron.bridge.training.checkpointing._retarget_model_sharded_state_dict_for_load"
+            ) as mock_retarget,
         ):
             _load_model_weights_from_checkpoint(
                 checkpoint_path="/test/checkpoint",
@@ -3150,6 +3163,11 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_generate_state_dict.assert_called_once()
         call_args = mock_generate_state_dict.call_args
         assert call_args[0][1] == {"metadata": mock_metadata}
+        mock_retarget.assert_called_once_with(
+            mock_model,
+            mock_generate_state_dict.return_value,
+            "/test/checkpoint",
+        )
         mock_strategy_cls.assert_called_once_with()
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
         mock_gc_collect.assert_called_once_with()

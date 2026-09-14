@@ -21,7 +21,9 @@ import torch
 import torch.nn as nn
 from diffusers.models.embeddings import Timesteps
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.dist_checkpointing.mapping import ShardedStateDict
+from megatron.core.dist_checkpointing.dict_utils import nested_values
+from megatron.core.dist_checkpointing.mapping import ShardedBase, ShardedStateDict
+from megatron.core.dist_checkpointing.utils import add_prefix_for_sharding
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import ModelType
@@ -284,7 +286,7 @@ class WanModel(VisionModule):
         self.decoder.set_input_tensor(input_tensor[0])
 
     def sharded_state_dict(
-        self, prefix: str = "module.", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
     ) -> ShardedStateDict:
         """Sharded state dict implementation for GPTModel backward-compatibility (removing extra state).
 
@@ -307,6 +309,16 @@ class WanModel(VisionModule):
                         self._set_embedder_weights_replica_id(param, sharded_state_dict, weight_key)
 
         return sharded_state_dict
+
+    def _retarget_sharded_state_dict_for_load(
+        self, sharded_state_dict: ShardedStateDict, checkpoint_keys: set[str]
+    ) -> None:
+        """Retarget an unprefixed load scaffold to legacy ``module.*`` WAN keys."""
+        sharded_keys = {value.key for value in nested_values(sharded_state_dict) if isinstance(value, ShardedBase)}
+        has_current_keys = any(key in checkpoint_keys for key in sharded_keys)
+        has_legacy_keys = any(f"module.{key}" in checkpoint_keys for key in sharded_keys)
+        if not has_current_keys and has_legacy_keys:
+            add_prefix_for_sharding(sharded_state_dict, "module.")
 
     def _mark_trainable_params_for_tp_grad_avg(self, modules: Optional[list] = None) -> None:
         """Mark selected modules' trainable parameters to average gradients across TP domain."""
