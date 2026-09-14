@@ -112,6 +112,9 @@ def make_default_model_config():
         moe_router_load_balancing_threshold=None,
         moe_z_loss_scale=None,
         is_hybrid_model=False,
+        cuda_graph_impl="none",
+        cuda_graph_warmup_steps=3,
+        vision_cuda_graph_impl=None,
     )
 
 
@@ -220,6 +223,7 @@ class TestTrainingLog:
 
         # Optimizer config
         config.optimizer.decoupled_lr = None
+        config.optimizer.optimizer_cuda_graph = False
 
         # Data parallel size
         config.data_parallel_size = 4
@@ -951,6 +955,27 @@ class TestTrainingLog:
         mock_report_theoretical.assert_called_once()
         mock_report_memory.assert_called_once()
 
+    @pytest.mark.parametrize(
+        (
+            "cuda_graph_impl",
+            "optimizer_cuda_graph",
+            "vision_cuda_graph_impl",
+            "iteration",
+            "expected_report_memory_flag",
+        ),
+        [
+            pytest.param("none", False, None, 1, True, id="eager-first-iteration"),
+            pytest.param("none", False, None, 2, False, id="eager-second-iteration"),
+            pytest.param("transformer_engine", False, None, 3, True, id="te-before-capture"),
+            pytest.param("transformer_engine", False, None, 4, False, id="te-after-capture"),
+            pytest.param("local", False, None, 3, True, id="local-before-capture"),
+            pytest.param("local", False, None, 4, False, id="local-after-capture"),
+            pytest.param("none", True, None, 2, True, id="optimizer-before-capture"),
+            pytest.param("none", True, None, 4, False, id="optimizer-after-capture"),
+            pytest.param("none", False, "transformer_engine", 2, True, id="vision-before-capture"),
+            pytest.param("none", False, "transformer_engine", 4, False, id="vision-after-capture"),
+        ],
+    )
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -958,7 +983,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
     @mock.patch("torch.distributed.get_rank")
-    def test_memory_reporting_kept_on_second_iteration(
+    def test_memory_reporting_cutoff(
         self,
         mock_get_rank,
         mock_report_theoretical,
@@ -970,8 +995,13 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        cuda_graph_impl,
+        optimizer_cuda_graph,
+        vision_cuda_graph_impl,
+        iteration,
+        expected_report_memory_flag,
     ):
-        """Test memory flag is kept on the second iteration to capture optimizer state peak."""
+        """Test memory reporting includes optimizer initialization and CUDA graph capture."""
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         mock_get_microbatches.return_value = 8
@@ -979,8 +1009,10 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
         mock_get_rank.return_value = 0
 
-        # Iteration 1 with loaded_iteration=0: flag should be kept
-        mock_global_state.train_state.step = 1
+        mock_config.model.cuda_graph_impl = cuda_graph_impl
+        mock_config.model.vision_cuda_graph_impl = vision_cuda_graph_impl
+        mock_config.optimizer.optimizer_cuda_graph = optimizer_cuda_graph
+        mock_global_state.train_state.step = iteration
         mock_config.logger.log_interval = 1
 
         result = training_log(
@@ -1001,8 +1033,7 @@ class TestTrainingLog:
             loaded_iteration=0,
         )
 
-        # Flag should remain True (iteration 1 <= loaded_iteration + 1)
-        assert result is True
+        assert result is expected_report_memory_flag
         mock_report_memory.assert_called_once()
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
