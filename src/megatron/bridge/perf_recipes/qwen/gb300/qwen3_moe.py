@@ -327,6 +327,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     _enable_hybridep_full_iteration_mxfp8(cfg)
     cfg.model.recompute_modules = []
     cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_rank_capacity_factor = 4
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
