@@ -305,7 +305,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
 
     cfg = deepseek_v4_flash_sft_openmath_thinking_packed_config()
 
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
