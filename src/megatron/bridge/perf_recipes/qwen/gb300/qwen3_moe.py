@@ -328,6 +328,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_modules = []
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_expert_rank_capacity_factor = 4
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
