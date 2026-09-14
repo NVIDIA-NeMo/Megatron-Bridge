@@ -660,6 +660,36 @@ class TestParallelLinearAdapter:
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
 
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_scales_bottleneck_before_output_projection(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """LoRA scaling should not allocate an expanded output-sized temporary."""
+        mock_linear_in = Mock()
+        mock_linear_in.side_effect = lambda x: (x[..., :2], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (torch.cat((x, x, x, x), dim=-1), None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        adapter = ParallelLinearAdapter(
+            in_features=4,
+            out_features=8,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            alpha=1,
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        x = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+
+        output = adapter(x)
+
+        bottleneck = x[..., :2]
+        scale = adapter.alpha / adapter.dim
+        torch.testing.assert_close(mock_linear_out.call_args.args[0], bottleneck * scale)
+        torch.testing.assert_close(output, torch.cat((bottleneck, bottleneck, bottleneck, bottleneck), dim=-1) * scale)
+
     @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
@@ -1921,6 +1951,97 @@ class TestGroupedExpertLinearAdapter:
             ]
         assert len(weights_and_biases) == 4
         helper.prepare_forward.assert_called_once_with(x, num_gemms=3)
+        helper.end_forward.assert_called_once_with()
+
+    def test_grouped_expert_linear_adapter_fp8_te_rocm_contract(self):
+        """FP8 dispatch should supply the extra non-tensor fields ROCm Transformer Engine unpacks."""
+        calls = []
+        expected = torch.randn(3, 2)
+
+        class TEROCmGroupedLinear:
+            @staticmethod
+            def apply(inp, non_tensor_args, *weights_and_biases):
+                calls.append((inp, non_tensor_args, weights_and_biases))
+                return expected
+
+            @staticmethod
+            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
+                (
+                    m_splits,
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                    m_splits_tensor,
+                    actual_m_splits,
+                    unpad_output,
+                ) = non_tensor_args
+                assert ctx is None
+                calls.append((inp, non_tensor_args, weights_and_biases))
+                return expected
+
+        helper = Mock()
+        helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
+        helper._get_quantizers.return_value = tuple([None] * 3 for _ in range(6))
+        helper.apply_bias = False
+        helper.fp8 = True
+        helper.fp8_calibration = False
+        helper.wgrad_store = Mock()
+        helper.fuse_wgrad_accumulation = False
+        helper.sequence_parallel = False
+        helper.activation_dtype = torch.float32
+        helper.save_original_input = False
+
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.randn(3, 2)
+        with (
+            torch.no_grad(),
+            patch.object(adapter, "_get_te_grouped_linear_helper", return_value=helper),
+            patch.object(peft_utils, "TEPytorchGroupedLinearAutograd", TEROCmGroupedLinear),
+            patch.object(peft_utils, "TEPytorchIsCPUOffloadEnabled", return_value=False),
+        ):
+            output = adapter._forward_te_grouped_linear_fp8(
+                x,
+                weight=adapter.linear_in([0, 1]),
+                m_splits=[1, 2],
+                projection="linear_in",
+                active_expert_indices=(0, 1),
+            )
+
+        torch.testing.assert_close(output, expected)
+        assert len(calls) == 1
+        _, non_tensor_args, weights_and_biases = calls[0]
+        assert len(non_tensor_args) == 25
+        assert non_tensor_args[0] == [1, 2]
+        # The three ROCm-only trailing fields take TE's public-wrapper defaults.
+        assert non_tensor_args[22:] == (None, None, False)
+        assert len(weights_and_biases) == 4
         helper.end_forward.assert_called_once_with()
 
     def test_grouped_expert_linear_adapter_fp8_prefers_te_backend(self):

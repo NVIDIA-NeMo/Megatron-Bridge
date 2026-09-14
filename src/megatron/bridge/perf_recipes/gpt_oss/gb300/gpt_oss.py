@@ -190,6 +190,7 @@ def gpt_oss_120b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1280
     cfg.train.micro_batch_size = 4
+    cfg.model.recompute_modules = []
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -226,6 +227,7 @@ def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1280
     cfg.train.micro_batch_size = 4
+    cfg.model.recompute_modules = []
 
     _benchmark_common(cfg)
     _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg)

@@ -17,9 +17,10 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import megatron.core.tensor_parallel as tensor_parallel
 import pytest
 
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -58,6 +59,23 @@ def test_transformer_config_derives_gtp_sizes_from_weight_shards():
     assert config.expert_gtp_weight_remat_size == 3
 
 
+def test_mla_transformer_config_derives_gtp_sizes_from_weight_shards():
+    config = MLATransformerConfig(
+        num_layers=2,
+        hidden_size=64,
+        num_attention_heads=4,
+        tensor_model_parallel_size=2,
+        tensor_parallel_num_weight_shards=8,
+        expert_tensor_parallel_size=2,
+        expert_tensor_parallel_num_weight_shards=6,
+    )
+
+    config.finalize()
+
+    assert config.gtp_weight_remat_size == 4
+    assert config.expert_gtp_weight_remat_size == 3
+
+
 @pytest.mark.parametrize("num_weight_shards", [1, 3])
 def test_transformer_config_rejects_invalid_gtp_weight_shards(num_weight_shards):
     config = TransformerConfig(
@@ -72,9 +90,14 @@ def test_transformer_config_rejects_invalid_gtp_weight_shards(num_weight_shards)
         config.finalize()
 
 
-@patch("megatron.core.tensor_parallel.gtp_api.configure_gtp_remat_from_recipe")
-@patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
-def test_configure_gtp_remat_forwards_transformer_recipe(mock_configure):
+def test_configure_gtp_remat_forwards_transformer_recipe(monkeypatch):
+    mock_configure = MagicMock()
+    monkeypatch.setattr(
+        tensor_parallel,
+        "gtp_api",
+        SimpleNamespace(HAVE_GTP=True, configure_gtp_remat_from_recipe=mock_configure),
+        raising=False,
+    )
     config = _gtp_config()
 
     configure_gtp_remat(config)
@@ -87,8 +110,14 @@ def test_configure_gtp_remat_forwards_transformer_recipe(mock_configure):
     )
 
 
-@patch("megatron.core.tensor_parallel.gtp_api.classify_gtp_remat_chains")
-def test_classify_gtp_remat_chains_receives_all_model_chunks(mock_classify):
+def test_classify_gtp_remat_chains_receives_all_model_chunks(monkeypatch):
+    mock_classify = MagicMock()
+    monkeypatch.setattr(
+        tensor_parallel,
+        "gtp_api",
+        SimpleNamespace(classify_gtp_remat_chains=mock_classify),
+        raising=False,
+    )
     config = _gtp_config()
     model = [MagicMock(), MagicMock()]
 

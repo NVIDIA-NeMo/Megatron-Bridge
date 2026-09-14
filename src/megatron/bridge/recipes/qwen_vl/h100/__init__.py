@@ -36,7 +36,7 @@ __all__ = [
     "qwen35_vl_2b_sft_1gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
-    "qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config",
+    "qwen35_vl_35b_a3b_pretrain_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",

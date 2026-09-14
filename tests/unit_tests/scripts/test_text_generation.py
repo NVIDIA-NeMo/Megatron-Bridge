@@ -43,7 +43,7 @@ class _AttnBackend(Enum):
 class _MambaInferenceStateConfig:
     @classmethod
     def from_model(cls, model):
-        return cls()
+        return getattr(model, "mamba_inference_state_config", None)
 
 
 class _DynamicInferenceContext:
@@ -229,7 +229,7 @@ def test_build_inference_config_caps_auto_sized_server_requests_at_token_budget(
     assert config.kwargs["max_requests"] % 2 == 0
 
 
-def test_build_inference_config_preserves_kv_auto_sizing_without_token_limit(text_generation):
+def test_build_inference_config_caps_auto_sized_server_requests_at_default_token_budget(text_generation):
     model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
 
     config = text_generation.build_inference_config(
@@ -245,7 +245,55 @@ def test_build_inference_config_preserves_kv_auto_sizing_without_token_limit(tex
         enable_chunked_prefill=False,
     )
 
+    assert config.kwargs["max_requests"] == text_generation.DynamicInferenceContext.DEFAULT_MAX_TOKENS
+
+
+def test_build_inference_config_preserves_recurrent_state_auto_sizing(text_generation):
+    mamba_inference_state_config = object()
+    model = types.SimpleNamespace(
+        position_embedding_type="rope",
+        max_sequence_length=8192,
+        mamba_inference_state_config=mamba_inference_state_config,
+    )
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=None,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
     assert config.kwargs["max_requests"] is None
+    assert config.kwargs["mamba_inference_state_config"] is mamba_inference_state_config
+
+
+def test_build_inference_config_caps_recurrent_requests_at_explicit_token_budget(text_generation):
+    model = types.SimpleNamespace(
+        position_embedding_type="rope",
+        max_sequence_length=8192,
+        mamba_inference_state_config=object(),
+    )
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=None,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=128,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    assert config.kwargs["max_requests"] == 128
 
 
 @pytest.mark.parametrize(
