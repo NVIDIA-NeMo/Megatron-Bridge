@@ -1,18 +1,17 @@
 # DPO Training
 
-Direct Preference Optimization on Megatron Bridge, with reference logprobs
-scored **offline** — the trainer never loads reference weights.
+DPO on Megatron Bridge. The reference model is scored once, offline, and the
+trainer reads the scores back from disk, so it only ever holds the policy.
 
 ## Input format
 
-Expected input: rows with two chat-format message-list fields (default field
-names `chosen` / `rejected`, override with `--chosen-key` / `--rejected-key`).
-Both sides must share the same context (all messages except the last) and end
-with an assistant turn.
+Each row has a `chosen` and a `rejected` conversation (rename the fields with
+`--chosen-key` / `--rejected-key`). Both are chat-format message lists that
+share everything except the final assistant turn.
 
-Rows that keep the shared prompt in its own field, with `chosen` / `rejected`
-holding only the completion turns (TRL's *explicit-prompt conversational*
-format), are read by naming that field with `--prompt-key`:
+If your data keeps the prompt in a separate field and `chosen` / `rejected`
+only hold the completion (TRL calls this the explicit-prompt format), pass the
+prompt field with `--prompt-key`:
 
 ```jsonc
 {"messages":  [{"role": "system", ...}, {"role": "user", ...}],
@@ -20,241 +19,132 @@ format), are read by naming that field with `--prompt-key`:
  "rejected":  [{"role": "assistant", "content": "..."}]}
 ```
 
-Each side is assembled into a full conversation before tokenization, so the
-context match holds by construction and everything downstream is unchanged.
-Extra row fields (`preference_margin`, `pairs_metadata`, …) are ignored.
-The scorer's `--prompt-key` and the trainer's `dataset.prompt_key` must agree;
-the trainer refuses to start when it disagrees with the value recorded in the
-artifact.
-
-Any of the three fields may be a plain string instead of a message list (TRL's
-*standard* format, the shape most public preference sets ship in) — the prompt
-becomes one user turn and a completion one assistant turn, matching how NeMo-RL's
-`BinaryPreferenceDataset` reads the same row. String and message-list fields mix
-freely within a row:
+Plain strings work too (TRL's standard format). The prompt becomes a user turn
+and each completion an assistant turn:
 
 ```jsonc
 {"prompt": "What is 2+2?", "chosen": "4", "rejected": "5"}
 ```
 
-A pair is unusable when either side fails: `context_mismatch`,
-`no_assistant_completion`, `empty_completion`, `over_length`. Pairs are never
-dropped (the sampler needs a fixed dataset length) — they become zero-loss stubs.
-The scorer logs one warning per stub, and training reports the live share as the
-`live fraction` metric; check both before letting a run continue.
+Use the same `--prompt-key` when scoring and `dataset.prompt_key` when
+training. The value is recorded in the artifact and the trainer refuses to start
+on a mismatch. Other fields in the row are ignored.
 
-> Reading explicit-prompt rows **without** `--prompt-key` does not crash — every
-> pair becomes a `no_assistant_completion` stub and training gets zero signal.
-> A `live fraction` of 0 at step 0 is the tell.
+Pairs that can't be used (`context_mismatch`, `no_assistant_completion`,
+`empty_completion`, `over_length`) are not dropped, because the sampler needs a
+fixed dataset length. They become stubs with zero loss. The scorer warns once
+per stub and the trainer logs the share of usable pairs as `live fraction`. If
+that reads 0 at step 0, you most likely have explicit-prompt rows and forgot
+`--prompt-key`.
 
 ## Workflow
 
-Two steps, in order. Step 1 runs once per (dataset, tokenizer, max-seq-length,
-reference model); step 2 can then sweep beta, LR, etc. without re-scoring — the
-ref-logprob artifact is beta-free.
-
-### 1. Score reference logprobs (offline, one-time)
+### 1. Score the reference
 
 ```bash
-python scripts/dpo/score_reference_logprobs.py \
-    --model Qwen/Qwen2.5-0.5B-Instruct \
-    --dataset argilla/distilabel-capybara-dpo-7k-binarized \
-    --output msc://profile/bucket/capybara_ref_logprobs --num-pairs 1024
-```
-
-Forwards the reference model (the checkpoint the policy will initialize from)
-over the same dataset and writes the artifact to `--output` — a local
-directory or an `msc://` URL, written in place:
-
-- `ref_logprobs.jsonl` — one record per pair, keyed by `pair_id` (= source row
-  index): completion logprob sums + token counts for both sides.
-- `scoring_metadata.json` — the inputs this artifact is only valid for
-  (see invariants below). Training refuses artifacts that don't match.
-
-The scorer applies the trainer's default `bf16_mixed` precision recipe and disables
-any MTP head, and records the recipe name; `--tp` and
-`--sequence-parallel` are recorded and must match training (MoE models at
-TP > 1 need `--sequence-parallel` — MCore refuses MoE + TP without it in
-train mode).
-
-Multi-GPU: `--nproc_per_node = tp × dp`. `--tp` shards the weights and every
-rank in a TP group computes identical sums (vocab-parallel CE all-reduces
-across the group). The remaining ranks form data-parallel replicas that each
-score a disjoint share of the batches; rank 0 gathers the records and writes
-the artifact. DP is parity-neutral — it only changes which pairs share a
-batch, so it is not recorded and any DP is valid for any training layout. Add
-nodes with the usual torchrun rendezvous; scoring time falls linearly with the
-replica count:
-
-```bash
-python -m torch.distributed.run --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
     scripts/dpo/score_reference_logprobs.py --tp 2 \
     --model Qwen/Qwen2.5-7B-Instruct \
     --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
     --output /data/uf_ref_logprobs
 ```
 
-Training must then run with the same `--tp` (recorded in the artifact's
-metadata and checked at startup): TP changes the vocab-parallel CE reduction
-order, so a mismatch would shift step 0 off ln 2 and hide a real mismatch
-behind it. Pipeline parallelism is free to differ: the scorer always runs at
-PP=1 and its artifact is valid for any training PP, because PP only decides
-which rank runs a layer. Training with PP > 1 turns on
-`model.variable_seq_lengths` automatically, since pair batches are padded to
-their own longest row and the stages must exchange shapes.
+This runs the reference model (the checkpoint you will start training from)
+over the dataset and writes two files to `--output`, which can be a local
+directory or an `msc://` URL:
 
-MoE models can additionally shard experts with `--ep` (experts split *between*
-ranks) and `--etp` (each expert's GEMMs split *within* a rank group). `--etp`
-defaults to `--tp`, so dense models need neither flag. `EP × ETP` must divide
-the world, and replicas beyond the expert mesh are expert-data-parallel, so a
-744B-class MoE scores on 32 GPUs at `--tp 1 --ep 32 --etp 1` with its dense
-layers replicated and its experts sharded 32 ways:
+- `ref_logprobs.jsonl`, one record per pair keyed by `pair_id` (the row index
+  in the source), with the completion logprob sum and token count for both sides.
+- `scoring_metadata.json`, the settings this artifact was scored with. The
+  trainer compares them against its own config at startup, see the table at the
+  end.
+
+The sums are raw, nothing is scaled by beta, so you score once and sweep beta
+and learning rate against the same artifact.
+
+Parallelism: `--nproc_per_node` is `tp × dp`. `--tp` shards the weights and has
+to match training, because TP changes the order of the vocab-parallel
+reduction. Any ranks left over after the TP group become data-parallel replicas.
+Each one scores a slice of the batches and rank 0 gathers and writes. DP is not
+recorded in the metadata, any DP works with any training layout. The scorer
+always runs at PP=1 and the trainer can use whatever PP it likes.
+
+For MoE models add `--ep` and, if needed, `--etp` (defaults to `--tp`).
+`EP × ETP` has to divide the world size. MoE at TP > 1 also needs
+`--sequence-parallel`, which is recorded and checked like TP. If the expert
+layout differs from the trainer's you get a warning, not an error.
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=8 \
-    scripts/dpo/score_reference_logprobs.py --tp 4 --ep 4 --etp 1 \
-    --model <moe-model> \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+    scripts/dpo/score_reference_logprobs.py --tp 4 --ep 4 --etp 1 --sequence-parallel \
+    --model Qwen/Qwen3-30B-A3B \
     --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
     --output /data/uf_ref_logprobs
 ```
 
-`(EP, ETP)` is recorded only when it differs from the implied `EP=1 / ETP=TP`.
-Unlike TP, an expert-layout mismatch against the trainer warns rather than
-fails: it perturbs expert-GEMM numerics without mis-anchoring margins.
-
-By default batches are a fixed pair count (`--micro-batch-size`), padded to
-the longest pair in the batch — at long `--max-seq-length` a batch of long
-pairs can OOM. `--token-budget N` replaces it with length-sorted batches
-capped at `N` *padded* tokens (`2 rows × pairs × batch-max length`): peak
-memory is bounded by construction, short pairs pack densely instead of being
-padded to a long neighbor (typically several times faster). Batching perturbs
-the scored values on MoE models by a few nats per pair (the router amplifies
-batch-shape numerics; dense models are insensitive) — measured to have no
-training effect, so pick whatever fits the hardware. `--micro-batch-size 1`
-only matters if you want step 0 to read ln 2 to the third decimal:
-
-```bash
-python -m torch.distributed.run --nproc_per_node=4 \
-    scripts/dpo/score_reference_logprobs.py --tp 4 --token-budget 16384 \
-    --model <moe-model> --max-seq-length 4096 \
-    --dataset HuggingFaceH4/ultrafeedback_binarized --split train_prefs \
-    --output /data/uf_ref_logprobs
-```
+Batching: by default a batch is `--micro-batch-size` pairs (8), padded to the
+longest pair in it. With long sequences that can OOM on a batch of long pairs.
+`--token-budget N` switches to length-sorted batches capped at `N` padded
+tokens, so memory is bounded and short pairs don't get padded up to a long
+neighbour.
 
 ### 2. Train
-
-Training runs through the shared recipe launcher with `--mode dpo`
-(see `scripts/training/README.md` for the full launcher docs). `--mode dpo`
-selects the model's `<model>_dpo_config` library recipe; point the run at the
-scored source and artifact with trailing overrides, and at the reference
-weights with a local HF model directory:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 \
     scripts/training/run_recipe.py \
     --model qwen3_30b_a3b --mode dpo \
     --pretrained_checkpoint /checkpoints/qwen3-30b-a3b \
-    dataset.source.path_or_dataset=argilla/distilabel-capybara-dpo-7k-binarized \
-    dataset.source.split=train \
-    dataset.ref_artifact=msc://profile/bucket/capybara_ref_logprobs \
-    dataset.num_pairs=1024
+    dataset.source.path_or_dataset=HuggingFaceH4/ultrafeedback_binarized \
+    dataset.source.split=train_prefs \
+    dataset.ref_artifact=/data/uf_ref_logprobs \
+    dataset.num_pairs=8192
 ```
 
-The launcher routes `--mode dpo` through `dpo_train()`
-(`megatron.bridge.training.dpo_train`), the API entry for programmatic
-callers. `dpo_train` fail-fast validates the run config and the artifact
-metadata, then delegates to the stock `finetune` loop with the `dpo_step`
-forward step from the shared registry.
+`--mode dpo` picks the model's `<model>_dpo_config` recipe. The launcher itself
+is documented in `scripts/training/README.md`.
 
-Multi-GPU: `--nproc_per_node = tp × pp × dp`. Pass `-tp` matching the scoring
-run; PP is free, and the remaining ranks form the data-parallel group. Recipes carry their
-model's recompute settings; override via `model.recompute_granularity` if the
-measured headroom allows.
+`--nproc_per_node` is `tp × pp × dp`, with TP equal to the scoring run. PP > 1
+turns on `model.variable_seq_lengths` for you, since pair batches are padded to
+their own longest row and the stages need to exchange shapes. Adding nodes adds
+DP replicas and the artifact stays valid. `train.global_batch_size` has to be a
+multiple of `train.micro_batch_size × dp`; this is checked at startup.
 
-### Multinode
+Look at the first logged iteration. At step 0 the policy is the reference, so
+`preference loss` should be about ln 2 (0.693) with `margin` and `rewards` near
+0. Kernel and layout noise moves these by hundredths. A wrong artifact,
+checkpoint or tokenizer moves them by whole units. Nothing checks this
+automatically, so read the log before you walk away from a long run.
 
-`world_size = nnodes × nproc_per_node = tp × pp × dp`. DP > 1 is what a second
-node buys: the distributed optimizer (already enabled) shards the fp32 Adam
-state — the largest per-GPU resident — across the DP replicas. DP is
-parity-neutral: it only deals different *pairs* to different replicas, so
-existing ref artifacts stay valid.
+### Validation
 
-Launch with any standard torchrun rendezvous (same command on every node,
-varying `--node_rank`). Every node needs the same code tree, the run-critical
-env (`CUDA_DEVICE_MAX_CONNECTIONS=1`, the allocator conf, any model-specific
-vars), the HF cache/token, the pretrained-checkpoint
-directory, and the ref artifacts readable at the same path. Batch math:
-`train.global_batch_size % (train.micro_batch_size × dp) == 0` — checked at
-startup.
+Validation runs the same metrics on a held-out split every
+`validation.eval_interval` steps. It needs its own artifact: run step 1 again on
+the validation rows with the same model, tokenizer and `--max-seq-length`. Then
+set `dataset.validation_source` and `dataset.validation_ref_artifact` in the
+recipe and turn it on with `validation.eval_interval` and
+`validation.eval_iters`. Eval settings without a validation split are rejected
+at startup.
 
-**World size and step 0:** step 0 reads exactly `ln 2` only when the
-trainer's world size equals the scoring run's — NCCL reduction order shifts
-with topology, and MoE routers amplify it into a fixed, reproducible offset
-(measured on gemma-4 26B: world 8 → 0.6931; world 16, same artifact →
-0.8507). Same noise class as batching, same verdict: harmless. For multinode
-runs against a single-node-scored artifact, the step-0 health signal is a
-*stable* opening value, not ln 2 itself.
+## What has to match between scoring and training
 
-### Optional: validation
+The margins only mean something if both runs saw the same tokens.
 
-Validation runs the same DPO metrics (`dpo loss`, `margin`, `accuracy`,
-`rewards chosen/rejected`, `live fraction`) over a held-out split at every
-`eval_interval` steps. The validation split needs its **own** scored artifact —
-repeat step 1 over the validation rows (same model, tokenizer, and
-`--max-seq-length` as the train scoring run).
-
-Enable it by setting `dataset.validation_source` (an `HFDatasetSourceConfig`
-or a `JSONLSourceConfig`) plus `dataset.validation_ref_artifact` — in the
-model's DPO recipe or from a programmatic caller — and turn it on with
-`validation.eval_interval` / `validation.eval_iters`. `eval_global_batch_size` /
-`eval_micro_batch_size` default to the train sizes and are row-denominated
-(even) like everything else. All invariants below apply to the validation
-artifact too, checked against the validation source. Semantics match the SFT
-dataset configs: eval settings without a validation split are rejected at
-startup, while a configured validation split with `eval_iters=0` is simply not
-built — validation toggles via `validation.eval_iters` alone.
-
-**Step-0 sanity check (read the log):** at step 0 the policy equals the
-reference, so every pair's margin should be 0 and the first logged iteration
-shows `preference loss ≈ ln 2 ≈ 0.6931`, `margin ≈ 0`, `rewards ≈ 0`. Kernel
-and layout noise moves these by hundredths; a wrong artifact, wrong pretrained
-checkpoint, or tokenization mismatch moves them by whole units. There is no
-automatic gate on this — the same posture as TRL's precomputed reference
-logprobs — so look at iteration 1 before letting a long run continue.
-
-## Invariants: scorer run == training run
-
-The margins are only meaningful if both jobs compute logprobs over the exact
-same token streams. These must match between the scoring run and the training run:
-
-| Invariant | Enforced by |
+| Setting | Checked how |
 |---|---|
-| Dataset source + split | `scoring_metadata.json` check at startup |
-| Tokenizer | `scoring_metadata.json` check at startup |
-| Sequence length (`dataset.seq_length`, stored as `max_seq_length` in the artifact) | `scoring_metadata.json` check at startup |
-| Row layout (`dataset.prompt_key` / `--prompt-key`) | `scoring_metadata.json` check at startup |
-| TP size and sequence parallelism | `scoring_metadata.json` check at startup (PP may differ) |
-| `num_pairs` (same rows, same order) | artifact coverage check: ref logprobs must cover `pair_id 0..N-1` exactly |
-| Reference model == `pretrained_checkpoint` | not checked — visible as step-0 `preference loss` ≠ ln 2 in the log |
+| Dataset source and split | metadata check at startup |
+| Tokenizer | metadata check at startup |
+| Sequence length (`dataset.seq_length`, stored as `max_seq_length`) | metadata check at startup |
+| Row layout (`dataset.prompt_key` / `--prompt-key`) | metadata check at startup |
+| TP and sequence parallelism | metadata check at startup (PP and DP may differ) |
+| `num_pairs`, same rows in the same order | artifact must cover `pair_id 0..N-1` exactly |
+| Reference model is `pretrained_checkpoint` | not checked, shows up as step-0 loss far from ln 2 |
 | No MTP head | `validate_dpo_run_config` |
-| bf16 forward | not checked; the scorer pins it and the recipes default to `bf16_mixed` |
-
-A mismatch in any of these silently mis-anchors every margin, which is why
-each one is either rejected at startup or worth a glance at the step-0 log.
+| bf16 forward | not checked, the scorer pins it and the recipes default to `bf16_mixed` |
 
 ## Batch sizes are rows, not pairs
 
-`micro_batch_size` / `global_batch_size` / consumed-sample counters are
-denominated in **rows** everywhere (config, train state, logs), and one pair
-is two rows — chosen at even row indices, rejected at odd. Both batch sizes
-must therefore be even. The row→pair halving happens in exactly one place
-(`build_preference_data_loader`) so the shared training loop, LR scheduler
-increments, and checkpoint resume accounting all stay row-denominated and
-unmodified.
-
-
-## Verification tools
-
-- Unit tests: `tests/unit_tests/training/test_dpo*.py`,
-  `tests/unit_tests/data/datasets/test_preference*.py` (includes a NeMo-RL
-  reference-implementation parity test for the loss).
+`micro_batch_size`, `global_batch_size` and the consumed-sample counters all
+count rows, in the config, the train state and the logs. A pair is two rows,
+chosen at the even index and rejected right after it, so both batch sizes must
+be even.
