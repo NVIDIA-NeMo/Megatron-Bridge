@@ -56,6 +56,12 @@ def _tokenizer_config_from_args(args: argparse.Namespace) -> TokenizerConfig:
         if hasattr(args, f.name):
             kw_args[f.name] = getattr(args, f.name)
 
+    if (
+        getattr(args, "tokenizer_type", None) == "SFTTokenizer"
+        and getattr(args, "sft_tokenizer_prompt_format", None) is not None
+    ):
+        kw_args["tokenizer_prompt_format"] = args.sft_tokenizer_prompt_format
+
     return TokenizerConfig(**kw_args)
 
 

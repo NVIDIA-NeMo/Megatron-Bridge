@@ -161,9 +161,10 @@ items:
         final_loss: 5.511951
         last_10_steps_step_time_ms_avg: 26775.11
         last_10_steps_model_tflops_per_gpu_avg: 402.51
+        last_10_steps_tokens_per_second_per_gpu_avg: 19581.171
       expected_result: >
         The uninterrupted bounded random-initialization RP2 reference finishes
-        all 100 steps at recipe-owned GBS/MBS 1024/1 with the four recorded
+        all 100 steps at recipe-owned GBS/MBS 1024/1 with the five recorded
         metrics, finite loss, and no skipped or NaN iterations. It reaches peak
         learning rate 3e-4 at step 40 and completes cosine decay to 3e-5 at step
         100. Both iter_0000050 and iter_0000100 contain all eight distributed
@@ -201,6 +202,7 @@ items:
         final_loss: 1.234906
         last_10_steps_step_time_ms_avg: 627.0
         last_10_steps_model_tflops_per_gpu_avg: 262.89
+        last_10_steps_tokens_per_second_per_gpu_avg: 13065.391
       expected_result: >
         Pad-1 offline packing is 99.27% efficient. The TP1/DP8 run uses four
         microbatches per optimizer step and completes all 100 steps with the four
@@ -272,10 +274,11 @@ items:
         final_loss: 1.100197
         last_10_steps_step_time_ms_avg: 5575.59
         last_10_steps_model_tflops_per_gpu_avg: 142.06
+        last_10_steps_tokens_per_second_per_gpu_avg: 5877.046
       expected_result: >
         Pad-4 offline packing is 99.35% efficient. The TP2/CP2/SP-on/DP2 run uses
         four microbatches per optimizer step and completes all 100 32K steps with
-        the four recorded metrics, finite loss, and no skipped or NaN iterations.
+        the five recorded metrics, finite loss, and no skipped or NaN iterations.
         Across 26,214,400 token slots, assistant-only loss masks contain
         16,734,347 supervised tokens. The complete eight-shard iter_0000100
         checkpoint is saved and reloads at the same topology.
@@ -310,6 +313,7 @@ items:
         final_loss: 1.256916
         last_10_steps_step_time_ms_avg: 381.69
         last_10_steps_model_tflops_per_gpu_avg: 431.90
+        last_10_steps_tokens_per_second_per_gpu_avg: 21462.443
       expected_result: >
         Pad-4 offline packing is 99.36% efficient. The frozen-base LoRA run uses
         rank 8, alpha 16, zero dropout, and linear_qkv/linear_proj targets. Its
@@ -349,6 +353,7 @@ items:
         final_loss: 5.512038
         last_10_steps_step_time_ms_avg: 26943.07
         last_10_steps_model_tflops_per_gpu_avg: 400.11
+        last_10_steps_tokens_per_second_per_gpu_avg: 19459.104
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -358,7 +363,7 @@ items:
       expected_result: >
         The continuation restores optimizer, scheduler, data-order, and RNG state
         directly from iter_0000050 and executes exactly steps 51 through 100 into
-        a distinct output root with the four recorded metrics, finite loss, and
+        a distinct output root with the five recorded metrics, finite loss, and
         no skipped or NaN iterations. Step 51 matches the uninterrupted reference
         exactly at 6.173212. At step 100, resumed loss 5.512038 differs from
         reference loss 5.511951 by 0.000087 (0.00158%), inside the declared 1%

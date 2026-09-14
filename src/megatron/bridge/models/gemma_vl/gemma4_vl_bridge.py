@@ -21,10 +21,14 @@ Usage::
 
   AutoBridge.from_hf_pretrained("google/gemma-4-E4B-it")
     └─ Gemma4VLBridge (registered for Gemma4ForConditionalGeneration)
-         ├─ provider_bridge()  text mode → Gemma4DenseProvider (pretraining)
-         │                     auto/vl   → Gemma4DenseVLProvider (full VL)
-         └─ mapping_registry()  Dense → _dense_vl_mapping_registry()
-                                 MoE   → _moe_vl_mapping_registry()
+         ├─ provider_bridge()  Dense: text mode → Gemma4DenseProvider (pretraining)
+         │                            auto/vl   → Gemma4DenseVLProvider (full VL)
+         │                     MoE:   text mode → Gemma4ModelProvider (text-only training)
+         │                            auto/vl   → Gemma4VLModelProvider (full VL)
+         └─ mapping_registry()  Dense: text → _dense_mapping_registry("")
+                                        vl   → _dense_vl_mapping_registry()
+                                 MoE:   text → _moe_mapping_registry()
+                                        vl   → _moe_vl_mapping_registry()
 """
 
 import os
@@ -45,6 +49,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
 )
 from megatron.bridge.models.gemma.gemma4_bridge import (
     Gemma4Bridge,
+    _attention_config_value,
     _Gemma4QKVMapping,
     _infer_attn_pattern,
 )
@@ -91,8 +96,16 @@ class Gemma4VLBridge(Gemma4Bridge):
             return self._build_dense_vl_provider(hf_config, text_config, vision_config)
 
         self._is_dense = False
+        if self._conversion_mode() == "text":
+            return self._build_moe_provider(text_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        provider_kwargs["num_query_groups"] = _attention_config_value(
+            text_config,
+            "sliding_attention",
+            "num_key_value_heads",
+            4,
+        )
         provider = Gemma4VLModelProvider(**provider_kwargs)
 
         provider.window_size = getattr(text_config, "sliding_window", 1024)
@@ -101,13 +114,25 @@ class Gemma4VLBridge(Gemma4Bridge):
             rope_theta_from_hf(text_config),
         )
 
-        head_dim = getattr(text_config, "head_dim", 256)
+        head_dim = _attention_config_value(text_config, "sliding_attention", "head_dim", 256)
         provider.softmax_scale = 1.0
         provider.kv_channels = head_dim
         provider.qk_layernorm = True
 
-        provider.global_head_dim = getattr(text_config, "global_head_dim", 512)
-        provider.num_global_key_value_heads = getattr(text_config, "num_global_key_value_heads", 2)
+        provider.global_head_dim = _attention_config_value(
+            text_config,
+            "full_attention",
+            "head_dim",
+            512,
+            legacy_field_name="global_head_dim",
+        )
+        provider.num_global_key_value_heads = _attention_config_value(
+            text_config,
+            "full_attention",
+            "num_key_value_heads",
+            2,
+            legacy_field_name="num_global_key_value_heads",
+        )
         provider.attention_k_eq_v = getattr(text_config, "attention_k_eq_v", False)
 
         rope_params = getattr(text_config, "rope_parameters", {})
@@ -226,6 +251,8 @@ class Gemma4VLBridge(Gemma4Bridge):
             if self._conversion_mode() == "text":
                 return self._dense_mapping_registry(megatron_prefix="")
             return self._dense_vl_mapping_registry()
+        if self._conversion_mode() == "text":
+            return self._moe_mapping_registry()
         return self._moe_vl_mapping_registry()
 
     def _dense_vl_mapping_registry(self) -> MegatronMappingRegistry:

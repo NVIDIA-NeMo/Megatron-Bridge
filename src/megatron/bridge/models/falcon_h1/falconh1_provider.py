@@ -56,6 +56,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
     # Model configuration
     seq_length: int = 4096
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = False
     params_dtype: torch.dtype = torch.bfloat16
@@ -145,6 +146,7 @@ class FalconH1ModelProvider(FalconH1Config, ModelProviderMixin[FalconH1Model]):
             falconh1_ratio=self.falconh1_ratio,
             hybrid_override_pattern=self.hybrid_override_pattern,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+            logit_dtype=self.logit_dtype,
             parallel_output=self.parallel_output,
             share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
             position_embedding_type=self.position_embedding_type,

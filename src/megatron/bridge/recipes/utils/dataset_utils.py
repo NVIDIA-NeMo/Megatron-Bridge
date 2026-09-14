@@ -179,6 +179,37 @@ def default_tulu3_config(
     )
 
 
+def default_coderforge_config(
+    seq_length: int = 4096,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the default CoderForge Preview SWE-Rebench SFT dataset.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        A chat SFT configuration for the CoderForge Preview SWE-Rebench split.
+    """
+    offline_packing_specs = None
+    if enable_offline_packing:
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="coderforge"),
+        preprocessing=ChatSFTPreprocessingConfig(),
+        seq_length=seq_length,
+        do_validation=False,
+        do_test=False,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        num_workers=2,
+    )
+
+
 def default_openmathinstruct2_config(
     seq_length: int = 4096,
     enable_offline_packing: bool = False,
@@ -452,6 +483,11 @@ def _tulu3_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
     return default_tulu3_config(seq_length=_resolve_seq_length(config))
 
 
+def _coderforge_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the CoderForge Preview SWE-Rebench chat SFT preset."""
+    return default_coderforge_config(seq_length=_resolve_seq_length(config))
+
+
 def _openmathinstruct2_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
     """Build the OpenMathInstruct-2 prompt-completion preset."""
     return default_openmathinstruct2_config(seq_length=_resolve_seq_length(config))
@@ -544,6 +580,7 @@ DATASET_PRESETS: dict[str, DatasetPreset] = {
     "energon": _energon_dataset_config,
     "squad": _squad_dataset_config,
     "tulu3": _tulu3_dataset_config,
+    "coderforge": _coderforge_dataset_config,
     "openmathinstruct2": _openmathinstruct2_dataset_config,
     "openmathinstruct2-thinking": _openmathinstruct2_thinking_dataset_config,
     "gsm8k": _gsm8k_dataset_config,

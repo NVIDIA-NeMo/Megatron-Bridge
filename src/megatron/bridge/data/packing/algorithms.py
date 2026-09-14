@@ -215,7 +215,7 @@ def create_hist(dataset: np.array, truncate_seq_len: int) -> Tuple[Dict[int, Lis
     logger.info("Creating histogram from tokenized dataset...")
 
     sequences = collections.defaultdict(list)
-    counts = [0] * (truncate_seq_len + 1)
+    histogram = [0] * (truncate_seq_len + 1)
     num_skipped = 0
 
     for item_dict in dataset:
@@ -229,7 +229,7 @@ def create_hist(dataset: np.array, truncate_seq_len: int) -> Tuple[Dict[int, Lis
             num_skipped += 1
             continue
         sequences[seq_len].append(item_dict)
-        counts[seq_len] += 1
+        histogram[seq_len] += 1
 
     if num_skipped:
         logger.warning(
@@ -239,11 +239,7 @@ def create_hist(dataset: np.array, truncate_seq_len: int) -> Tuple[Dict[int, Lis
         )
 
     logger.debug("Histogram of sequence lengths")
-    logger.debug(counts)
-
-    histogram = []
-    for seq_len in range(truncate_seq_len + 1):
-        histogram.append(len(sequences[seq_len]))
+    logger.debug(histogram)
 
     return sequences, histogram
 

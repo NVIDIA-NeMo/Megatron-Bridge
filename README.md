@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [08/19/2026] **Megatron Bridge 0.6.0 released!** Highlights include GLM-5.2 with cuDNN fused DSA for 128K THD-packed context-parallel training, new LLM/VLM/diffusion models, more reliable VLM data and sequence packing, improved checkpoint and LoRA workflows, unified training and conversion launchers, and refreshed performance recipes. Huge thanks to our community contributors! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.6.0).
+
 - [08/11/2026] **NVIDIA Nemotron 3.5 Lightning is released!** Read the technical blog [here](https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/). See the [Nemotron 3.5 Lightning README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3/lightning/README.md) for details.
 
 - [07/31/2026] **[K-EXAONE-2](https://huggingface.co/LGAI-EXAONE/K-EXAONE-2.0-750B-A37B) is now supported**! Day-0 support for LG AI Research's K-EXAONE-2 (750B-A37B MoE) is now available on the [k-exaone-2 branch](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/k-exaone-2). Users can convert checkpoints, run inference, fine-tune with SFT or PEFT (LoRA), and use the NVFP4 inference-optimized checkpoint released alongside the model. See the branch documentation for setup instructions and examples.

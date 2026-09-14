@@ -294,7 +294,7 @@ def megatron_generate(
         torch.distributed.broadcast_object_list(
             generated_logits,
             group=parallel_state.get_pipeline_model_parallel_group(),
-            group_src=parallel_state.get_pipeline_model_parallel_last_rank(),
+            src=parallel_state.get_pipeline_model_parallel_last_rank(),
         )
 
     generated_text = tokenizer.detokenize(generated_ids[0])

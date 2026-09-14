@@ -52,6 +52,7 @@ def _fsdp_metrics():
         "final_loss": 3.913218,
         "last_10_steps_step_time_ms_avg": 13917.0,
         "last_10_steps_model_tflops_per_gpu_avg": 795.39,
+        "last_10_steps_tokens_per_second_per_gpu_avg": 28254.365,
         "peak_allocated_memory_gib": 169.54,
         "peak_reserved_memory_gib": 173.86,
     }
@@ -227,6 +228,45 @@ def test_verified_fsdp_metrics_are_valid():
     )
 
     assert errors == []
+
+
+def test_verified_training_metrics_require_tps_per_gpu():
+    module = _load_validator()
+    item = {"metrics": _fsdp_metrics()}
+    del item["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"]
+    errors = []
+
+    module._validate_metrics(
+        item,
+        item_name="pretrain",
+        item_path=("items", "pretrain", "GB200"),
+        status="verified",
+        errors=errors,
+    )
+
+    assert (
+        "/items/pretrain/GB200/metrics/last_10_steps_tokens_per_second_per_gpu_avg: required key is missing" in errors
+    )
+
+
+def test_verified_fsdp_variant_requires_positive_tps_per_gpu():
+    module = _load_validator()
+    metrics = _fsdp_metrics()
+    metrics["last_10_steps_tokens_per_second_per_gpu_avg"] = 0
+    errors = []
+
+    module._validate_metrics(
+        {"metrics": metrics},
+        item_name="pretrain_fsdp",
+        item_path=("items", "pretrain_fsdp", "GB200", "variants", "fp8_mx"),
+        status="verified",
+        errors=errors,
+    )
+
+    assert (
+        "/items/pretrain_fsdp/GB200/variants/fp8_mx/metrics/"
+        "last_10_steps_tokens_per_second_per_gpu_avg: verified performance metrics must be positive"
+    ) in errors
 
 
 def test_fsdp_hardware_leaf_accepts_multiple_precision_variants():

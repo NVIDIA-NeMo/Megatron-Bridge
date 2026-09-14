@@ -134,6 +134,7 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("glm_45v_sft_config", "vlm_step"),
         ("kimi_k25_vl_sft_config", "vlm_step"),
         ("ministral3_8b_sft_config", "vlm_step"),
+        ("muse_glimmer_30b_sft_32gpu_h100_bf16_config", "vlm_step"),
         ("step37_sft_flickr8k_config", "step37_flickr8k_step"),
         ("flux_12b_pretrain_config", "flux_step"),
         ("wan_14b_pretrain_config", "wan_step"),
@@ -232,6 +233,16 @@ def test_known_cross_package_collisions_have_explicit_benchmark_precedence():
     for recipe_name in module.LIBRARY_RECIPE_PRECEDENCE_COLLISIONS:
         assert module.available_benchmark_recipe_metadata(recipe_name) is not None
         assert module.resolved_benchmark_recipe_metadata(recipe_name) is None
+
+
+def test_qwen3_30b_gb200_mxfp8_collision_selects_library_recipe():
+    module = _load_module()
+    recipe_name = "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"
+
+    assert recipe_name in module.LIBRARY_RECIPE_PRECEDENCE_COLLISIONS
+    assert module.available_benchmark_recipe_metadata(recipe_name) is not None
+    assert module.resolved_benchmark_recipe_metadata(recipe_name) is None
+    assert module.selected_benchmark_recipe(["--recipe", recipe_name]) is None
 
 
 def test_unregistered_recipe_family_is_rejected():

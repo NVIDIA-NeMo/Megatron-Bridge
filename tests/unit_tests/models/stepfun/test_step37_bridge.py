@@ -17,11 +17,15 @@
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from torch import nn
+
 from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.stepfun import step37_bridge as _step37_bridge_mod
-from megatron.bridge.models.stepfun.configuration_step37 import Step37Config
+from megatron.bridge.models.stepfun.configuration_step37 import Step37Config, Step37VisionConfig
 from megatron.bridge.models.stepfun.modelling_step37 import transformer_block as _step37_block_mod
+from megatron.bridge.models.stepfun.modelling_step37.image_insert_embedding import ImageInsertEmbedding
 from megatron.bridge.models.stepfun.modelling_step37.transformer_block import get_step37_text_layer_spec
+from megatron.bridge.models.stepfun.modelling_step37.vision_model import Step37VisionModel
 from megatron.bridge.models.stepfun.step35_bridge import build_step35_layer_spec
 from megatron.bridge.models.stepfun.step37_bridge import Step37Bridge
 
@@ -95,6 +99,74 @@ class TestStep37BridgeReverseConfig:
         synthesized_config = Step37Config(**exported_config)
 
         assert synthesized_config.text_config.num_nextn_predict_layers == 0
+
+    def test_projector_bias_schema_roundtrips(self):
+        reference_config = Step37Config(projector_bias=False)
+        provider = SimpleNamespace(projector_bias=True)
+
+        biased_projector = ImageInsertEmbedding(nn.Identity(), 4, 2, projector_bias=provider.projector_bias)
+        unbiased_projector = ImageInsertEmbedding(nn.Identity(), 4, 2, projector_bias=False)
+        assert biased_projector.align_projector.bias is not None
+        assert unbiased_projector.align_projector.bias is None
+
+        mapping = (
+            Step37Bridge().mapping_registry().megatron_to_hf_lookup("image_insert_embedding.align_projector.bias")
+        )
+        checkpoint_config = Step37Bridge.megatron_to_hf_config(provider)
+        exported_config = conform_config_to_reference(checkpoint_config, reference_config.to_dict())
+        synthesized_config = Step37Config(**exported_config)
+
+        assert (
+            mapping.hf_param if mapping is not None else None,
+            synthesized_config.projector_bias,
+        ) == ("vit_large_projector.bias", True)
+
+
+class TestStep37VisionMappings:
+    def test_optional_vision_parameters_have_checkpoint_mappings(self):
+        vision_config = Step37VisionConfig(
+            width=8,
+            layers=0,
+            heads=1,
+            image_size=14,
+            patch_size=14,
+            mlp_ratio=1,
+            use_cls_token=True,
+            use_ln_pre=False,
+            use_ln_post=True,
+        )
+        vision_model = Step37VisionModel(vision_config)
+        parameter_names = set(dict(vision_model.named_parameters()))
+        assert {"class_embedding", "ln_post.weight", "ln_post.bias"} <= parameter_names
+
+        disabled_model = Step37VisionModel(
+            Step37VisionConfig(
+                width=8,
+                layers=0,
+                heads=1,
+                image_size=14,
+                patch_size=14,
+                mlp_ratio=1,
+                use_cls_token=False,
+                use_ln_pre=False,
+                use_ln_post=False,
+            )
+        )
+        disabled_parameter_names = set(dict(disabled_model.named_parameters()))
+        assert "class_embedding" not in disabled_parameter_names
+        assert "ln_post.weight" not in disabled_parameter_names
+        assert "ln_post.bias" not in disabled_parameter_names
+
+        bridge = Step37Bridge()
+        bridge.hf_config = SimpleNamespace(
+            text_config=SimpleNamespace(num_hidden_layers=0, num_nextn_predict_layers=0)
+        )
+        registry = bridge.mapping_registry()
+        for parameter_name in ("class_embedding", "ln_post.weight", "ln_post.bias"):
+            megatron_name = f"vision_model.{parameter_name}"
+            mapping = registry.megatron_to_hf_lookup(megatron_name)
+            assert mapping is not None
+            assert mapping.hf_param == megatron_name
 
 
 class TestGetStep37TextLayerSpec:

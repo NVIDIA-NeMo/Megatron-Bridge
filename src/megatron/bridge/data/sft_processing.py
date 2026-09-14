@@ -142,18 +142,21 @@ class TokenizedPromptCompletion:
 _CONVERSATION_KEYS = ("messages", "conversation", "conversations")
 _CANONICAL_PROMPT_KEY = "prompt"
 _CANONICAL_COMPLETION_KEY = "completion"
+_PLURAL_MEDIA_KEYS = (
+    "images",
+    "image_paths",
+    "videos",
+    "video_paths",
+    "audio_paths",
+)
 _MEDIA_KEYS = (
     "image",
-    "images",
     "image_path",
-    "image_paths",
     "video",
-    "videos",
     "video_path",
-    "video_paths",
     "audio",
     "audio_path",
-    "audio_paths",
+    *_PLURAL_MEDIA_KEYS,
 )
 
 
@@ -169,6 +172,8 @@ def _canonical_prompt_completion_values(example: Mapping[str, Any]) -> tuple[str
         return None
     prompt = example[_CANONICAL_PROMPT_KEY]
     completion = example[_CANONICAL_COMPLETION_KEY]
+    if prompt is None and completion is None:
+        return None
     if not isinstance(prompt, str) or not isinstance(completion, str):
         raise ValueError("Canonical prompt and completion values must be strings.")
     return prompt, completion
@@ -188,7 +193,10 @@ def normalize_sft_example(
     validate_sft_preprocessing_config(preprocessing)
     row = dict(example)
     canonical_pair = _canonical_prompt_completion_values(row)
-    has_conversation = any(row.get(key) is not None for key in _CONVERSATION_KEYS)
+    conversation_keys = set(_CONVERSATION_KEYS)
+    if isinstance(preprocessing, PromptCompletionSFTPreprocessingConfig):
+        conversation_keys -= {preprocessing.prompt_column, preprocessing.completion_column}
+    has_conversation = any(row.get(key) is not None for key in conversation_keys)
 
     if canonical_pair is not None and has_conversation:
         raise ValueError("SFT rows must select exactly one schema: structured chat or prompt-completion.")
@@ -199,7 +207,7 @@ def normalize_sft_example(
             metadata = {
                 key: value
                 for key, value in row.items()
-                if key not in {_CANONICAL_PROMPT_KEY, _CANONICAL_COMPLETION_KEY}
+                if key not in {*_CONVERSATION_KEYS, _CANONICAL_PROMPT_KEY, _CANONICAL_COMPLETION_KEY}
             }
             return {
                 "conversation": [
@@ -209,7 +217,11 @@ def normalize_sft_example(
                 **metadata,
             }
         conversation = normalize_chat_conversation(row)
-        metadata = {key: value for key, value in row.items() if key not in _CONVERSATION_KEYS}
+        metadata = {
+            key: value
+            for key, value in row.items()
+            if key not in {*_CONVERSATION_KEYS, _CANONICAL_PROMPT_KEY, _CANONICAL_COMPLETION_KEY}
+        }
         # Keep the canonical singular key expected by registered VLM/audio
         # collators; shared text preprocessing accepts it as well.
         return {"conversation": conversation, **metadata}
@@ -266,7 +278,10 @@ def is_text_only_prompt_completion_example(
     preprocessing: PromptCompletionSFTPreprocessingConfig,
 ) -> bool:
     """Return whether a row is a text-only prompt-completion example."""
-    if any(example.get(key) is not None for key in _MEDIA_KEYS):
+    for key in _MEDIA_KEYS:
+        value = example.get(key)
+        if value is None or (key in _PLURAL_MEDIA_KEYS and isinstance(value, list) and not value):
+            continue
         return False
     try:
         normalize_sft_example(example, preprocessing)
@@ -460,6 +475,8 @@ def tokenize_prompt_completion_example(
         loss_mask = torch.ones(input_ids.numel(), dtype=torch.bool)
     if skipped_tokens is not None and skipped_tokens.numel() > 0:
         loss_mask &= ~torch.isin(input_ids, skipped_tokens.to(device=input_ids.device, dtype=torch.long))
+    if preprocessing.loss_mode == "completion" and completion_value and not loss_mask[1:].any():
+        raise ValueError("Prompt-completion preprocessing must retain a supervised token for a non-empty completion.")
     return TokenizedPromptCompletion(
         input_ids=input_ids,
         loss_mask=loss_mask,

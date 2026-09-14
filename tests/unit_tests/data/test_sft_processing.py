@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import sentencepiece
+from datasets import Dataset, concatenate_datasets
 from megatron.core.tokenizers.megatron_tokenizer import MegatronTokenizer
 
 from megatron.bridge.data.base import DatasetBuildContext
@@ -23,6 +24,7 @@ from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,
     normalize_sft_example,
+    normalize_sft_examples,
     tokenize_prompt_completion_example,
 )
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
@@ -191,12 +193,41 @@ def test_chat_preprocessing_promotes_canonical_pair():
     }
 
 
+def test_chat_preprocessing_accepts_nullable_union_columns():
+    paired = Dataset.from_list([{"prompt": "question", "completion": "answer"}])
+    chat = Dataset.from_list([{"conversation": [{"role": "assistant", "content": "response"}]}])
+    rows = adapt_hf_dataset(concatenate_datasets([paired, chat]), adapter_name=None)
+
+    normalized = normalize_sft_examples(rows, ChatSFTPreprocessingConfig())
+
+    assert normalized == [
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        {"conversation": [{"role": "assistant", "content": "response"}]},
+    ]
+
+
 def test_prompt_completion_rejects_structured_conversation():
     with pytest.raises(ValueError, match="structured conversations"):
         normalize_sft_example(
             {"messages": [{"role": "assistant", "content": "answer"}]},
             PromptCompletionSFTPreprocessingConfig(),
         )
+
+
+def test_prompt_completion_honors_explicit_chat_named_text_column():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {"messages": "question", "answer": "answer"}
+    adapted = adapt_hf_dataset([row], adapter_name=None)[0]
+
+    assert normalize_sft_example(adapted, preprocessing) == row
 
 
 def test_prompt_completion_tokenizes_separately_and_masks_prompt():
@@ -268,6 +299,24 @@ def test_prompt_completion_full_loss_and_truncation_preserve_special_tokens():
         tokenizer.eos_token_id,
     ]
     assert tokenized.loss_mask.tolist() == [True] * 5
+
+
+def test_prompt_completion_rejects_truncation_without_supervision():
+    tokenizer = _Tokenizer()
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        add_bos=True,
+        add_sep=True,
+        add_eos=False,
+    )
+
+    with pytest.raises(ValueError, match="supervised token"):
+        tokenize_prompt_completion_example(
+            {"prompt": "P", "completion": "A"},
+            tokenizer,
+            preprocessing,
+            max_length=2,
+            sep_token_id=103,
+        )
 
 
 @pytest.mark.parametrize(

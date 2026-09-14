@@ -50,6 +50,7 @@ skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL
 skills/nemo-mbridge-perf-megatron-fsdp/SKILL
 skills/nemo-mbridge-perf-sequence-packing/SKILL
 skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL
+skills/nemo-mbridge-perf-vision-dp-over-cp/SKILL
 skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL
 skills/nemo-mbridge-perf-moe-comm-overlap/SKILL
 skills/nemo-mbridge-perf-activation-recompute/SKILL

@@ -24,13 +24,15 @@ jobs:
   auto-review:
     name: Claude Review (auto)
     needs: [pre-flight]
-    # Auto-review non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
+    # Auto-review same-repository, non-draft PRs from NVIDIA authors on open / reopen / ready-for-review.
+    # Fork pull_request workflows cannot access the secrets or OIDC token required by the review action.
     # Subsequent commits do not re-trigger; re-request a review by commenting
     # "/claude review" (handled by the manual-review job below).
     # Skip bot-generated PRs: dependency bumps (`bump-ci-container-*`) and
     # auto cherry-picks (`cherry-pick-*`).
     if: |
       github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
       needs.pre-flight.outputs.is_member == 'true' &&
       github.event.pull_request.draft == false &&
       !startsWith(github.event.pull_request.head.ref, 'bump-ci-container-') &&

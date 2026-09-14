@@ -49,6 +49,7 @@ def qwen2_audio_7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
         pipeline_model_parallel_size=1,
         peft=None,
         finetune_lr=5e-6,
+        min_lr=5e-7,
     )
 
     # Keep the complete process environment visible on the recipe.

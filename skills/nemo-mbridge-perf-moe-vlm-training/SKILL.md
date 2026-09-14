@@ -72,23 +72,69 @@ The smaller Qwen3.5-style multimodal experiments reinforce the same lessons:
 
 ## Key Tuning Knobs
 
-1. **Freeze the vision stack when appropriate**: if the work is decoder-focused,
+1. **Keep TP as small as memory permits**: prefer activation recompute over
+   increasing TP when activations, rather than model weights, are the reason the
+   run does not fit. Lower TP keeps GEMMs larger and avoids unnecessary TP
+   communication. TP may still be required for dense weights, the vocabulary
+   head, or a workable PP boundary; verify the actual memory limiter before
+   removing it.
+
+2. **Make EP large enough to shard expert weights effectively**: for an MoE
+   model whose expert count is divisible by the rank count, start with EP8 on an
+   8-GPU allocation and EP32 on a 32-GPU allocation. Treat these as starting
+   points, not unconditional rules: EP does not shard dense, vision, embedding,
+   or output-layer weights, and the final choice must respect PP/DP rank layout
+   and the hardware topology.
+
+3. **Prefer selective activation recompute after fit is established**: use full
+   recompute to get a memory-constrained configuration running, then replace it
+   with the narrowest supported selective modules. This usually recovers more
+   throughput than adding TP solely for activation memory.
+
+   Qwen3.5/Qwen3.6 requires special care. Megatron-Core supports the targeted
+   `gdn_norm_out` recompute module, but that does not checkpoint the complete GDN
+   recurrence. If `core_attn`, `gdn_norm_out`, and `moe_act` still do not provide
+   enough headroom—commonly with smaller EP such as EP8—retain full recompute
+   rather than claiming unsupported GDN selective coverage. Larger EP, such as
+   EP32, can reduce expert-weight pressure enough to retry the selective policy.
+
+4. **Prefer HybridEP, then measure against AllToAll**: HybridEP is the default
+   candidate when the topology supports it. Within one 8-GPU NVLink domain in
+   BF16, HybridEP and conventional AllToAll can be close; benchmark both with
+   identical work instead of assuming HybridEP must win.
+
+5. **Freeze the vision stack when appropriate**: if the work is decoder-focused,
    freezing the vision side often gives a small but real throughput gain and
    reduces memory pressure.
 
-2. **Sweep MBS aggressively**: VLMs are more MBS-sensitive than text-only MoE
+6. **Sweep MBS aggressively**: VLMs are more MBS-sensitive than text-only MoE
    runs because the vision path changes the compute-to-overhead balance.
 
-3. **Prefer selective recompute once the model fits**: full recompute is a
-   useful bring-up tool, but selective recompute is usually the better steady
-   state.
-
-4. **Match CUDA-graph scope to the workload**: `attn moe_router moe_preprocess`
+7. **Match CUDA-graph scope to the workload**: `attn moe_router moe_preprocess`
    is the safer MoE default, while narrower scopes can still be useful for
    controlled experiments.
 
-5. **Use ETP only when EP alone is insufficient**: it can unlock a layout, but
+8. **Use ETP only when EP alone is insufficient**: it can unlock a layout, but
    it also introduces more communication and more tuning surface.
+
+## Fit-First Tuning Order
+
+Use this order so each measurement answers one question:
+
+1. Select the largest topology-compatible EP that usefully shards the experts.
+2. Minimize TP while retaining enough memory for non-expert weights.
+3. Start with full recompute if needed to obtain a stable real-data run.
+4. Replace full recompute with supported selective modules and remeasure memory.
+5. Inspect per-rank peak allocated and reserved memory in the experiment logger.
+6. If there is headroom, increase MBS; if TP was used for activation pressure,
+   lower TP and remeasure. Change one of these two controls at a time.
+7. Compare HybridEP with AllToAll on the same topology and precision.
+8. Add communication overlap and CUDA graphs only after the memory and batch
+   operating point is stable.
+
+At every step, keep the dataset, sequence/image shapes, global batch, precision,
+trainable parameters, and useful-work accounting fixed. A configuration that
+fits is the baseline; it is not automatically the performance recipe.
 
 ## Representative Config Families
 
@@ -134,3 +180,12 @@ CUDA Graph: start narrow, then widen only after the real-data path is stable
 
 5. **Recompute and CUDA-graph choices are coupled**: the setting that gets the
    model to fit is often not the setting that gives the best steady-state speed.
+
+6. **Qwen3.5 GDN recompute coverage is easy to overstate**: `gdn_norm_out`
+   checkpoints the normalization/output portion, not the full GDN recurrence.
+   Confirm the supported module names in the pinned Megatron-Core before
+   replacing full recompute.
+
+7. **High EP does not solve every memory problem**: it reduces expert-weight
+   pressure but does not shard the vision encoder, embeddings, dense attention,
+   or output head.

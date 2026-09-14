@@ -29,7 +29,13 @@ import torch
 from megatron.energon.savable_loader import SavableDataLoaderState
 from megatron.energon.state import FlexState
 
-from megatron.bridge.utils.safe_pickle import energon_torch_load, safe_load_npy, safe_pickle_load, safe_pickle_loads
+from megatron.bridge.utils.safe_pickle import (
+    energon_torch_load,
+    safe_load_npy,
+    safe_pickle_load,
+    safe_pickle_loads,
+    safe_torch_tensor_pickle_loads,
+)
 
 
 class _BucketKey(Enum):
@@ -262,6 +268,34 @@ class TestSafePickleRejectsUnsafe:
             codecs.unregister(search)
 
         assert not hook_called
+
+
+class TestSafeTorchTensorPickle:
+    """Raw WebDataset tensor pickles allow data but reject executable globals."""
+
+    def test_plain_tensor_container_round_trip(self):
+        value = {
+            "embedding": torch.arange(6, dtype=torch.float32).reshape(2, 3),
+            "mask": torch.tensor([True, False]),
+        }
+
+        restored = safe_torch_tensor_pickle_loads(pickle.dumps(value))
+
+        assert restored.keys() == value.keys()
+        assert torch.equal(restored["embedding"], value["embedding"])
+        assert torch.equal(restored["mask"], value["mask"])
+
+    def test_rejects_reduce_payload_without_executing_it(self, tmp_path):
+        marker = tmp_path / "pickle-executed"
+
+        class Payload:
+            def __reduce__(self):
+                return os.system, (f"touch {marker}",)
+
+        with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
+            safe_torch_tensor_pickle_loads(pickle.dumps(Payload()))
+
+        assert not marker.exists()
 
 
 class TestAllowlistImmutability:

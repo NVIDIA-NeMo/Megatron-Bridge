@@ -17,7 +17,6 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _enable_overlap_param_gather_with_optimizer_step,
     _llama_benchmark_common,
     _perf_precision,
     _with_global_batch_size,
@@ -160,6 +159,8 @@ def llama3_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× GB200, NVFP4."""
     cfg = llama3_8b_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    # NVFP4BlockScaling takes fp8_dpa from this field, so DPA runs in FP8 under the FP4 recipe.
+    cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.tokenizer.vocab_size = 128256
     cfg.model.should_pad_vocab = True
 
@@ -193,6 +194,8 @@ def llama3_8b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+        # FP8 recipe TE uses for the DPA enabled above.
+        "NVTE_DPA_FP8_RECIPE": "Float8CurrentScaling",
     }
     return cfg
 
@@ -511,7 +514,6 @@ def llama3_70b_sft_32gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.wgrad_deferral_limit = 22
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -564,7 +566,6 @@ def llama3_70b_sft_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.wgrad_deferral_limit = 22
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -621,7 +622,6 @@ def llama3_70b_peft_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -671,7 +671,6 @@ def llama3_70b_peft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -768,8 +767,6 @@ def llama3_70b_sft_32gpu_gb200_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 70B SFT: 32× GB200, FP8-MX (same layout as FP8-CS)."""
     cfg = llama3_70b_sft_32gpu_gb200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
