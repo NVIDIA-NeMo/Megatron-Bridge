@@ -129,6 +129,10 @@ class _FakeModelCfg:
         self.freeze_language_model = False
         self.freeze_vision_model = False
         self.freeze_vision_projection = False
+        # Present on a Megatron-Core that carries the GDN conv/L2-norm fusion.
+        # The recipe guards on this field existing, so a fake without it models
+        # an older core -- see _FakeModelCfgNoGdnFusion below.
+        self.gdn_pre_gated_delta_rule_fusion = False
 
     def finalize(self):
         return None
@@ -1229,3 +1233,64 @@ def test_qwen35_vl_pretrain_mock_rng_seed(monkeypatch: pytest.MonkeyPatch):
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
     assert cfg.rng.seed == 1234
+
+
+class _FakeModelCfgNoGdnFusion(_FakeModelCfg):
+    """Model config from a Megatron-Core predating gdn_pre_gated_delta_rule_fusion."""
+
+    def __init__(self):
+        super().__init__()
+        del self.gdn_pre_gated_delta_rule_fusion
+
+
+class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
+    """AutoBridge yielding a provider without the GDN fusion field."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        return _FakeAutoBridgeNoGdnFusion()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfgNoGdnFusion()
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen35_vl_9b_pretrain_mock_config",
+        "qwen35_vl_35b_a3b_pretrain_config",
+        "qwen35_vl_397b_a17b_pretrain_mock_config",
+        # SFT too: the default lives at the shared construction point, so it is
+        # not confined to pretraining recipes.
+        "qwen35_vl_397b_a17b_sft_config",
+    ],
+)
+def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(
+    monkeypatch: pytest.MonkeyPatch, recipe_name: str
+):
+    """Qwen3.5-VL library recipes fuse the GatedDeltaNet pre-gated-delta-rule path.
+
+    The flag is set in ``_qwen35_vl_provider``, the single construction point for
+    every Qwen3.5-VL recipe in the module, so it applies to pretrain, SFT and PEFT
+    alike rather than only to the perf recipes.
+    """
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = getattr(_qwen35_vl_module, recipe_name)()
+
+    assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
+
+
+def test_qwen35_vl_gdn_conv_fusion_skipped_on_older_core(monkeypatch: pytest.MonkeyPatch):
+    """On a core without the field the recipe must not invent the attribute.
+
+    Assigning an unknown field would not raise -- it would silently create an
+    unused attribute, leaving the recipe looking enabled while running unfused.
+    """
+    patch_recipe_module_global(
+        monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridgeNoGdnFusion
+    )
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+
+    assert not hasattr(cfg.model, "gdn_pre_gated_delta_rule_fusion")
