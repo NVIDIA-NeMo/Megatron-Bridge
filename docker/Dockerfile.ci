@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.08-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
-ARG APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH=True
+ARG APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH=False
 
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
     if [ "$APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH" != "True" ]; then exit 0; fi; \

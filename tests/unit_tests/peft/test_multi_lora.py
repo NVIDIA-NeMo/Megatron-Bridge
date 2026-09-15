@@ -338,6 +338,14 @@ class TestMultiLoRATransform:
         with pytest.raises(NotImplementedError, match=flag):
             peft(MoEModel(), training=True)
 
+    def test_lora_dtype_rejected(self) -> None:
+        # The field exists for argument-surface parity with single-LoRA but the
+        # grouped-GEMM path never honored it; silently ignoring it violates the
+        # class's own reject-don't-diverge policy.
+        peft = MultiLoRA(target_modules=["linear_fc1"], lora_dtype=torch.float32)
+        with pytest.raises(NotImplementedError, match="lora_dtype"):
+            peft(MoEModel(), training=True)
+
     def test_transform_skips_topk_router(self) -> None:
         router = _DummyTopKRouter()
         model = RouterModel(router)

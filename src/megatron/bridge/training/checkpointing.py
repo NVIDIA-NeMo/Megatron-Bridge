@@ -38,7 +38,6 @@ import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
 from megatron.core.dist_checkpointing.serialization import StateDict
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
@@ -455,7 +454,7 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
 # ============================================================================
 
 
-def schedule_async_save(global_state: GlobalState, async_request: AsyncRequest) -> None:
+def schedule_async_save(global_state: GlobalState, async_request: NVRxAsyncRequest) -> None:
     """Schedule the async save request.
 
     Args:
@@ -608,6 +607,50 @@ def get_rng_state(
         rng_state_list = {f"({pp_rank}, {tp_rank})": rng_state_list}
 
     return rng_state_list
+
+
+def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject | None:
+    """Align RNG load metadata with the layout stored in a torch-dist checkpoint.
+
+    Newer MCore checkpoints shard RNG state across PP, TP, and DP/CP, while
+    older checkpoints encode DP as a replica ID. Keep the generated metadata
+    when its exact key exists; otherwise adopt a unique stored layout whose
+    PP/TP prefix matches this rank. Return ``None`` when this rank is outside
+    the stored DP/CP extent so the caller can keep its freshly initialized RNG.
+    """
+    checkpoint_path = Path(checkpoint_name)
+    if not (checkpoint_path / ".metadata").is_file():
+        return rng_state
+
+    sharded_metadata = TorchDistLoadShardedStrategy().load_sharded_metadata(checkpoint_path)
+    if rng_state.unique_key in sharded_metadata:
+        return rng_state
+
+    prefix = rng_state.global_offset[:2]
+    compatible_layouts = [
+        metadata
+        for metadata in sharded_metadata.values()
+        if isinstance(metadata, ShardedObject)
+        and metadata.key == rng_state.key
+        and metadata.global_offset[:2] == prefix
+        and len(metadata.global_offset) == len(rng_state.global_offset) + 1
+        and metadata.replica_id == 0
+    ]
+    matches = [metadata for metadata in compatible_layouts if metadata.global_offset[-1] == rng_state.replica_id]
+    if len(matches) != 1:
+        if compatible_layouts and all(
+            rng_state.replica_id >= metadata.global_shape[-1] for metadata in compatible_layouts
+        ):
+            return None
+        return rng_state
+
+    stored = matches[0]
+    return replace(
+        rng_state,
+        global_shape=stored.global_shape,
+        global_offset=stored.global_offset,
+        replica_id=stored.replica_id,
+    )
 
 
 class CheckpointType(Enum):
@@ -1447,7 +1490,6 @@ def save_checkpoint(
                 dist_save_target,
                 save_strategy,
                 async_sharded_save=ckpt_cfg.async_save,
-                async_strategy=ckpt_cfg.async_strategy,
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
                 content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
@@ -2974,6 +3016,11 @@ def _load_checkpoint_from_path(
                 pg_collection=pg_collection,
                 module_name=module_name,
             )
+            if ckpt_type != CheckpointType.LOCAL:
+                gen_sd_rng_state = _align_rng_state_sharded_metadata(gen_sd_rng_state, checkpoint_name)
+                if gen_sd_rng_state is None:
+                    ignore_rng_state = True
+                    print_rank_0("RNG state has no shard for this DP/CP rank; using freshly initialized RNG state")
         else:
             ignore_rng_state = True
             gen_sd_rng_state = None

@@ -20,6 +20,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.training.models.base import ModelConfig
 
@@ -184,17 +186,11 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_gloo(self, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    @patch("megatron.bridge.training.model_load_save.tempfile.TemporaryDirectory")
+    def test_temporary_distributed_context_gloo(self, mock_tmpdir, mock_parallel_state, mock_dist):
         """Test temporary distributed context with gloo backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
+        rendezvous_dir = Path(tempfile.gettempdir()) / "bridge-rendezvous"
+        mock_tmpdir.return_value.name = str(rendezvous_dir)
 
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
@@ -204,50 +200,122 @@ class TestTemporaryDistributedContext:
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="gloo", init_method="tcp://localhost:12345", world_size=1, rank=0
+            backend="gloo", init_method=(rendezvous_dir / "rendezvous").as_uri(), world_size=1, rank=0
         )
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
         mock_seed.assert_not_called()
+        mock_tmpdir.return_value.cleanup.assert_called_once()
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_with_env_vars(self, mock_os, mock_parallel_state, mock_dist):
-        """Test temporary distributed context when env vars are already set."""
-        mock_os.environ = {"MASTER_ADDR": "localhost", "MASTER_PORT": "12345"}
+    @patch("megatron.bridge.training.model_load_save.tempfile.TemporaryDirectory")
+    def test_temporary_distributed_context_uses_isolated_rendezvous(self, mock_tmpdir, mock_parallel_state, mock_dist):
+        """Test that the standalone context does not reuse an ambient torchrun store."""
+        rendezvous_dir = Path(tempfile.gettempdir()) / "bridge-rendezvous"
+        mock_tmpdir.return_value.name = str(rendezvous_dir)
 
         with temporary_distributed_context(backend="gloo"):
             pass
 
-        mock_dist.init_process_group.assert_called_once_with(backend="gloo", init_method=None, world_size=1, rank=0)
+        mock_dist.init_process_group.assert_called_once_with(
+            backend="gloo", init_method=(rendezvous_dir / "rendezvous").as_uri(), world_size=1, rank=0
+        )
+        mock_tmpdir.return_value.cleanup.assert_called_once()
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
+    @patch("megatron.bridge.training.model_load_save.tempfile.TemporaryDirectory")
     @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
-    def test_temporary_distributed_context_nccl(self, mock_seed, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_nccl(self, mock_seed, mock_tmpdir, mock_parallel_state, mock_dist):
         """Test temporary distributed context with nccl backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
+        rendezvous_dir = Path(tempfile.gettempdir()) / "bridge-rendezvous"
+        mock_tmpdir.return_value.name = str(rendezvous_dir)
 
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
-
-        with temporary_distributed_context(backend="nccl"):
+        with (
+            patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True),
+            patch("megatron.bridge.training.model_load_save.torch.cuda.device_count", return_value=1),
+            temporary_distributed_context(backend="nccl"),
+        ):
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="nccl", init_method="tcp://localhost:12345", world_size=1, rank=0
+            backend="nccl", init_method=(rendezvous_dir / "rendezvous").as_uri(), world_size=1, rank=0
         )
         mock_seed.assert_called_once_with(0)
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
+        mock_tmpdir.return_value.cleanup.assert_called_once()
+
+
+class TestGetOrInitializePgCollection:
+    """Test shared model-parallel process-group setup for Bridge model configs."""
+
+    @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
+    @patch("megatron.bridge.training.model_load_save.torch.cuda.device_count", return_value=1)
+    @patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True)
+    @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
+    @patch("megatron.bridge.training.model_load_save.parallel_state")
+    def test_initializes_model_parallel_and_cuda_rng(
+        self,
+        mock_parallel_state,
+        mock_pg_collection,
+        mock_cuda_available,
+        mock_cuda_device_count,
+        mock_seed,
+    ):
+        """Initialize missing MPU state before returning its process groups."""
+        model_cfg = SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=4,
+            virtual_pipeline_model_parallel_size=2,
+            context_parallel_size=0,
+            expert_model_parallel_size=None,
+            expert_tensor_parallel_size=1,
+        )
+        expected_pg_collection = Mock()
+        mock_parallel_state.is_initialized.return_value = False
+        mock_pg_collection.use_mpu_process_groups.return_value = expected_pg_collection
+
+        result = model_load_save._get_or_initialize_pg_collection(model_cfg)
+
+        assert result is expected_pg_collection
+        mock_parallel_state.initialize_model_parallel.assert_called_once_with(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=4,
+            virtual_pipeline_model_parallel_size=2,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=1,
+        )
+        mock_seed.assert_called_once_with(0)
+        mock_pg_collection.use_mpu_process_groups.assert_called_once_with()
+
+    @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
+    @patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True)
+    @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
+    @patch("megatron.bridge.training.model_load_save.parallel_state")
+    def test_reuses_initialized_model_parallel_state(
+        self,
+        mock_parallel_state,
+        mock_pg_collection,
+        mock_cuda_available,
+        mock_seed,
+    ):
+        """Do not reinitialize or reseed an existing MPU state."""
+        model_cfg = Mock()
+        expected_pg_collection = Mock()
+        mock_parallel_state.is_initialized.return_value = True
+        mock_pg_collection.use_mpu_process_groups.return_value = expected_pg_collection
+
+        result = model_load_save._get_or_initialize_pg_collection(model_cfg)
+
+        assert result is expected_pg_collection
+        mock_parallel_state.initialize_model_parallel.assert_not_called()
+        mock_seed.assert_not_called()
+        mock_pg_collection.use_mpu_process_groups.assert_called_once_with()
 
 
 class TestLoadMegatronModel:
@@ -311,6 +379,57 @@ class TestLoadMegatronModel:
 
         assert built_layer_count == provider.num_layers
 
+    @pytest.mark.parametrize(
+        ("mp_overrides", "expect_saved_layout"),
+        [
+            ({"pipeline_model_parallel_size": 2}, True),
+            ({"pipeline_model_parallel_size": 4}, False),
+            (
+                {
+                    "pipeline_model_parallel_size": 2,
+                    "pipeline_model_parallel_layout": None,
+                },
+                False,
+            ),
+        ],
+        ids=["same-pp", "changed-pp", "explicit-clear"],
+    )
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_pipeline_override_does_not_reuse_incompatible_saved_layout(
+        self,
+        mock_load_model_config,
+        mock_build_and_load_model,
+        mp_overrides,
+        expect_saved_layout,
+    ):
+        """A saved PP layout is retained only for a compatible requested topology."""
+        provider = GPTModelProvider(
+            num_layers=4,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=[
+                ["embedding", "decoder", "decoder"],
+                ["decoder", "decoder", "loss"],
+            ],
+        )
+        mock_load_model_config.return_value = (provider, None)
+
+        def _finalized_layout(checkpoint_path, model_cfg, *args):
+            model_cfg.finalize()
+            return model_cfg.pipeline_model_parallel_layout
+
+        mock_build_and_load_model.side_effect = _finalized_layout
+
+        result = load_megatron_model("/ckpt", mp_overrides=mp_overrides)
+
+        if expect_saved_layout:
+            assert isinstance(result, PipelineParallelLayerLayout)
+        else:
+            assert result is None
+
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
@@ -327,6 +446,7 @@ class TestLoadMegatronModel:
         mock_instantiate,
         mock_load_weights,
         mock_temp_dist,
+        mock_get_pg_collection,
     ):
         # Setup mocks
         mock_dist.is_available.return_value = False
@@ -344,6 +464,8 @@ class TestLoadMegatronModel:
         mock_model_cfg.use_cpu_initialization = False
 
         mock_instantiate.return_value = mock_model_cfg
+        expected_pg_collection = Mock()
+        mock_get_pg_collection.return_value = expected_pg_collection
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 
@@ -358,7 +480,12 @@ class TestLoadMegatronModel:
         mock_run_config.assert_called_once()
         mock_instantiate.assert_called_once_with(mock_run_cfg_dict["model"])
         mock_cpu_context.assert_called_once()
-        mock_model_cfg.provide_distributed_model.assert_called_once()
+        mock_get_pg_collection.assert_called_once_with(mock_model_cfg)
+        mock_model_cfg.provide_distributed_model.assert_called_once_with(
+            wrap_with_ddp=False,
+            use_cpu_initialization=True,
+            pg_collection=expected_pg_collection,
+        )
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
@@ -366,24 +493,24 @@ class TestLoadMegatronModel:
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
-    @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
     @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
     def test_load_mbridge_saved_model_config(
         self,
         mock_from_dict,
-        mock_pg_collection,
         mock_dist,
         mock_cpu_context,
         mock_run_config_fname,
         mock_run_config,
         mock_load_weights,
         mock_temp_dist,
+        mock_get_pg_collection,
     ):
         """Test loading a model when config yaml contains a serialized ModelConfig instance."""
         # Setup mocks
@@ -414,7 +541,7 @@ class TestLoadMegatronModel:
         mock_from_dict.return_value = mock_model_cfg
 
         mock_mpu_pgs = Mock()
-        mock_pg_collection.use_mpu_process_groups.return_value = mock_mpu_pgs
+        mock_get_pg_collection.return_value = mock_mpu_pgs
 
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
@@ -432,6 +559,7 @@ class TestLoadMegatronModel:
         mock_cpu_context.assert_called_once()
         mock_model_cfg.finalize.assert_called_once()
         mock_model_cfg.get_builder_cls.assert_called_once()
+        mock_get_pg_collection.assert_called_once_with(mock_model_cfg)
         mock_builder_cls.assert_called_once_with(mock_model_cfg)
         mock_builder.build_distributed_models.assert_called_once_with(
             mock_mpu_pgs,
@@ -443,6 +571,53 @@ class TestLoadMegatronModel:
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_builder_config_initializes_model_parallel_with_existing_default_group(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+        mock_load_weights,
+        tmp_path,
+    ):
+        """Load a builder checkpoint when the caller owns only the default process group."""
+        mock_run_config_fname.return_value = tmp_path / "run_config.yaml"
+        mock_run_config.return_value = {
+            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+        }
+
+        mock_model = Mock()
+        mock_model_cfg = Mock(spec=GPTModelConfig)
+        mock_model_cfg.params_dtype = torch.float32
+        mock_model_cfg.bf16 = False
+        mock_model_cfg.fp16 = False
+        mock_model_cfg.use_cpu_initialization = False
+        mock_model_cfg.finalize = Mock()
+        mock_builder = Mock()
+        mock_builder.build_distributed_models.return_value = [mock_model]
+        mock_model_cfg.get_builder_cls.return_value = Mock(return_value=mock_builder)
+        mock_from_dict.return_value = mock_model_cfg
+
+        (tmp_path / "run_config.yaml").touch()
+        rendezvous = tmp_path / "gloo_rendezvous"
+        dist.init_process_group("gloo", init_method=f"file://{rendezvous}", rank=0, world_size=1)
+        try:
+            assert not parallel_state.is_initialized()
+
+            result = load_megatron_model(tmp_path, use_cpu_init=True)
+
+            assert result == [mock_model]
+            assert parallel_state.is_initialized()
+            mock_builder.build_distributed_models.assert_called_once()
+            mock_load_weights.assert_called_once_with(tmp_path, [mock_model], return_state_dict=False)
+        finally:
+            if parallel_state.is_initialized():
+                parallel_state.destroy_model_parallel()
+            dist.destroy_process_group()
 
     @pytest.mark.parametrize("model_type", ["gpt", "hybrid", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
@@ -532,6 +707,7 @@ class TestLoadMegatronModel:
             with pytest.raises(AssertionError, match=f"model type {model_type} not supported."):
                 load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
 
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
@@ -548,6 +724,7 @@ class TestLoadMegatronModel:
         mock_instantiate,
         mock_load_weights,
         mock_temp_dist,
+        mock_get_pg_collection,
     ):
         """Test loading model when distributed is already initialized."""
 
@@ -567,6 +744,7 @@ class TestLoadMegatronModel:
         mock_model_cfg.use_cpu_initialization = False
 
         mock_instantiate.return_value = mock_model_cfg
+        mock_get_pg_collection.return_value = Mock()
 
         with tempfile.TemporaryDirectory() as ckpt_path:
             config_file = Path(ckpt_path) / "run_config.yaml"
@@ -576,6 +754,7 @@ class TestLoadMegatronModel:
         assert result == mock_model
         mock_temp_dist.assert_not_called()
 
+    @patch("megatron.bridge.training.model_load_save._get_or_initialize_pg_collection")
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.post_training.checkpointing.load_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.has_modelopt_state")
@@ -596,6 +775,7 @@ class TestLoadMegatronModel:
         mock_has_modelopt_state,
         mock_load_modelopt_state,
         mock_temp_dist,
+        mock_get_pg_collection,
     ):
         """Test loading model when modelopt state exists and model supports it."""
         # Setup mocks
@@ -615,6 +795,7 @@ class TestLoadMegatronModel:
         mock_model_cfg.restore_modelopt_state = False  # Initially False
 
         mock_instantiate.return_value = mock_model_cfg
+        mock_get_pg_collection.return_value = Mock()
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 

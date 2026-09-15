@@ -595,6 +595,11 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _track_moe_metrics_supports_num_moe_layers() -> bool:
+    """Return whether the active MCore accepts explicit MoE layer counts."""
+    return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
+
+
 def _get_num_moe_layers(model_config: Any) -> int:
     """Count MoE aux-loss contributors for MCore metric averaging."""
     num_layers = model_config.num_layers
@@ -1026,21 +1031,23 @@ def training_log(
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
         # No-op when neither logger is configured: the original writer is returned as-is.
         moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
-        track_moe_metrics(
-            loss_scale=moe_loss_scale,
-            iteration=iteration,
-            writer=moe_metric_writer,
-            wandb_writer=wandb_writer,
-            total_loss_dict=total_loss_dict,
-            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
-            force_initialize=True,
-            track_names=track_names,
-            num_layers=config.model.num_layers,
-            num_moe_layers=_get_num_moe_layers(config.model),
-            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
-            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
-            pg_collection=pg_collection,
-        )
+        track_moe_metrics_kwargs = {
+            "loss_scale": moe_loss_scale,
+            "iteration": iteration,
+            "writer": moe_metric_writer,
+            "wandb_writer": wandb_writer,
+            "total_loss_dict": total_loss_dict,
+            "per_layer_logging": getattr(config.model, "moe_per_layer_logging", False),
+            "force_initialize": True,
+            "track_names": track_names,
+            "num_layers": config.model.num_layers,
+            "moe_layer_freq": getattr(config.model, "moe_layer_freq", None),
+            "mtp_num_layers": getattr(config.model, "mtp_num_layers", None),
+            "pg_collection": pg_collection,
+        }
+        if _track_moe_metrics_supports_num_moe_layers():
+            track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
+        track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
@@ -1181,9 +1188,22 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            if iteration > (loaded_iteration + 1):
-                # Make sure the memory after the second iteration is reported
-                # to include optimizer state memory.
+            cuda_graphs_enabled = (
+                config.model.cuda_graph_impl != "none"
+                or config.optimizer.optimizer_cuda_graph
+                or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
+            )
+            memory_reporting_iterations = 2
+            if cuda_graphs_enabled:
+                # Capture runs at the zero-based warmup-step offset. training_log runs
+                # after that step, so warmup_steps + 1 is the post-capture iteration.
+                memory_reporting_iterations = max(
+                    memory_reporting_iterations,
+                    config.model.cuda_graph_warmup_steps + 1,
+                )
+            if iteration >= loaded_iteration + memory_reporting_iterations:
+                # Always include optimizer state memory and, when enabled, CUDA graph
+                # capture memory before disabling the one-shot report.
                 report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
