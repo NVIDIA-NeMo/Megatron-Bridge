@@ -117,9 +117,9 @@ def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     This preserves the H100 SFT data, objective, optimizer, schedule, batch,
     and trainable-parameter contract while mapping execution to one NVL72
-    domain. The ordinary all-to-all dispatcher and eager execution keep this
-    support-verification recipe independent of topology-sensitive benchmark
-    transport and graph capture.
+    domain. HybridEP keeps the EP64 dispatch path inside that NVLink domain;
+    eager execution remains the correctness-first baseline for subsequent
+    graph and overlap tuning.
 
     Returns:
         The Super-VL GB200 SFT configuration.
@@ -136,7 +136,14 @@ def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = None
+    # The GB200 runtime does not support the H100 fused-chunk contract at
+    # EP64; keep HybridEP's dispatch/permutation ownership explicit.
+    cfg.model.moe_permute_fusion_into_hybridep = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
@@ -152,7 +159,9 @@ def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.async_save = False
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
     }
@@ -164,8 +173,8 @@ def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigCo
 
     The text-only CoderForge workload keeps the checkpoint's native one-layer
     MTP objective while exercising offline sequence packing and context
-    parallelism. TP1/PP2 retains the verified 38/50 pipeline balance, CP8
-    leaves 16K tokens per rank, and EP64 shards one pipeline stage across one
+    parallelism. TP1/PP2 retains the verified 38/50 pipeline balance, CP32
+    leaves 4K tokens per rank, and EP64 shards one pipeline stage across one
     64-GPU NVLink domain when the two stages receive topology-aligned ranks.
 
     Returns:
@@ -180,8 +189,10 @@ def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigCo
     cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 8
-    cfg.model.cp_comm_type = "a2a"
+    cfg.model.context_parallel_size = 32
+    # The checkpoint uses two KV heads. Ulysses-style A2A requires both Q and
+    # KV head counts to be divisible by CP, so CP32 must use ring P2P instead.
+    cfg.model.cp_comm_type = "p2p"
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
@@ -213,7 +224,7 @@ def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigCo
     cfg.dataset = default_coderforge_config(
         seq_length=131072,
         enable_offline_packing=True,
-        pad_seq_to_mult=16,
+        pad_seq_to_mult=64,
     )
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _CODERFORGE_REVISION}
     cfg.dataset.seed = 1234

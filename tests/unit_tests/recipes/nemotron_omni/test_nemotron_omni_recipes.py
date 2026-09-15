@@ -766,7 +766,12 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is True
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms_preprocessing is None
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.recompute_granularity is None
@@ -779,6 +784,9 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.seq_length == 4096
     assert cfg.dataset.seq_length == 4096
     assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
 
@@ -797,7 +805,7 @@ def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor
     assert cfg.dataset.seq_length == 131072
     assert cfg.dataset.enable_offline_packing is True
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
-    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 16
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.dataset.do_validation is False
     assert cfg.dataset.do_test is False
     assert cfg.dataset.seed == 1234
@@ -814,8 +822,8 @@ def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.num_layers_in_first_pipeline_stage == 38
     assert cfg.model.num_layers_in_last_pipeline_stage is None
-    assert cfg.model.context_parallel_size == 8
-    assert cfg.model.cp_comm_type == "a2a"
+    assert cfg.model.context_parallel_size == 32
+    assert cfg.model.cp_comm_type == "p2p"
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
