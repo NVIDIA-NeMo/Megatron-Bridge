@@ -314,6 +314,8 @@ class MegatronQuantizationBridge:
         self,
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
+        *,
+        expand_native_grouped: bool = False,
     ) -> List["WeightConversionTask"]:
         """Build deterministic export tasks for native MXFP8 parameters.
 
@@ -324,6 +326,8 @@ class MegatronQuantizationBridge:
         Args:
             hf_pretrained: Hugging Face model metadata used for mapping validation.
             megatron_model: Virtual-pipeline model chunks on the current rank.
+            expand_native_grouped: Expose native grouped MXFP8 storage as one
+                live task per local expert instead of one aggregate task.
 
         Returns:
             Conversion tasks in global Megatron parameter order.
@@ -373,6 +377,7 @@ class MegatronQuantizationBridge:
         local_by_global_name: dict[str, tuple[int, str, Any, torch.Tensor]] = {}
         local_grouped_storage: dict[str, bool] = {}
         local_grouped_member_counts: dict[str, Optional[int]] = {}
+        local_grouped_members: dict[str, tuple[Any, ...]] = {}
         for vp_stage, model in enumerate(megatron_model):
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
@@ -390,7 +395,10 @@ class MegatronQuantizationBridge:
                     local_grouped_storage[global_name] = uses_native_storage
                     if uses_native_storage and _supports_native_grouped_mxfp8(grouped_mappings[global_name]):
                         members = get_grouped_quantized_members(local_weight, create_if_missing=True)
-                        local_grouped_member_counts[global_name] = None if members is None else len(tuple(members))
+                        members = None if members is None else tuple(members)
+                        local_grouped_member_counts[global_name] = None if members is None else len(members)
+                        if members is not None:
+                            local_grouped_members[global_name] = members
 
         native_grouped_names: set[str] = set()
         for global_name, mapping in grouped_mappings.items():
@@ -432,7 +440,8 @@ class MegatronQuantizationBridge:
                         f"{global_name}: grouped MXFP8 storage has {member_count} local members, "
                         f"expected {local_expert_count}"
                     )
-                native_grouped_names.add(global_name)
+                if not expand_native_grouped:
+                    native_grouped_names.add(global_name)
 
         grouped_expansions: dict[str, list[str]] = {}
         ordered_names: list[str] = []
@@ -470,7 +479,10 @@ class MegatronQuantizationBridge:
             vp_stage, local_name, local_module, local_weight = local
             expanded_names = grouped_expansions.get(global_name)
             if expanded_names is not None:
-                members = list(local_weight.unbind(0))
+                if local_grouped_storage.get(global_name, False):
+                    members = list(local_grouped_members[global_name])
+                else:
+                    members = list(local_weight.unbind(0))
                 if len(members) != len(expanded_names):
                     raise ValueError(
                         f"Grouped expert parameter {global_name!r} has {len(members)} local members, "
