@@ -48,6 +48,7 @@ def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDataset
         num_workers=2,
         task_encoder=NemotronOmniEnergonTaskEncoderConfig(
             hf_processor_path=_DEFAULT_HF_PATH,
+            hf_processor_revision=_DEFAULT_HF_REVISION,
             max_audio_duration=10.0,
             num_mel_bins=128,
             visual_keys=("pixel_values",),
@@ -56,6 +57,7 @@ def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDataset
             video_nframes=8,
             use_temporal_video_embedder=True,
             patch_dim=16,
+            temporal_video_resize_mode="processor",
             trust_remote_code=True,
         ),
         enable_in_batch_packing=False,

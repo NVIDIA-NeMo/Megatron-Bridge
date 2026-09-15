@@ -6081,14 +6081,16 @@ class TestAlignRngStateShardedMetadata:
 
 
 class TestAsyncCheckpointScheduling:
-    """Test async request handoff to the configured worker strategy."""
+    """Test async request handoff to the NVRx worker."""
 
-    def test_schedule_async_save_normalizes_request_for_mcore_worker(self):
-        """MCore's persistent worker must receive its own nominal request type."""
+    def test_schedule_async_save_forwards_nvrx_request(self):
+        """The NVRx queue must ignore the inherited stale strategy value."""
         async_queue = Mock()
         state = Mock()
         state.async_calls_queue = async_queue
-        state.cfg.checkpoint.async_strategy = "mcore"
+        state.cfg.checkpoint = CheckpointConfig()
+        assert state.cfg.checkpoint.async_strategy == "mcore"
+        state.cfg.checkpoint.async_save = True
         nvrx_request = NVRxAsyncRequest(
             async_fn=Mock(),
             async_fn_args=(0, None, None),
@@ -6099,9 +6101,4 @@ class TestAsyncCheckpointScheduling:
         schedule_async_save(state, nvrx_request)
 
         scheduled_request = async_queue.schedule_async_request.call_args.args[0]
-        assert isinstance(scheduled_request, AsyncRequest), (
-            "MCore's persistent worker ignores requests from the nominally distinct NVRx class"
-        )
-        assert scheduled_request.async_fn is nvrx_request.async_fn
-        assert scheduled_request.preload_fn is nvrx_request.preload_fn
-        assert scheduled_request.finalize_fns == nvrx_request.finalize_fns
+        assert scheduled_request is nvrx_request
