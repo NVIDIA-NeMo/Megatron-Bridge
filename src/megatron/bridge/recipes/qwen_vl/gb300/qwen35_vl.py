@@ -166,10 +166,6 @@ def qwen35_vl_397b_a17b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-# =============================================================================
-# Qwen3.5-VL Dense SFT Configurations (800M, 2B, 4B, 9B, 27B)
-# =============================================================================
-
 __all__ = [
     "qwen35_vl_397b_a17b_pretrain_config",
 ]
