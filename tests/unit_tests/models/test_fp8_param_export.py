@@ -1844,7 +1844,10 @@ class TestFp8ParamExport:
         parameter = torch.nn.Parameter(torch.zeros(2, 8, 16))
         members = [_FakeNativeMXFP8Tensor(), _FakeNativeMXFP8Tensor()]
         mappings = {
-            f"{grouped}{expert_id}": _IdentityMapping(f"hf.grouped.{expert_id}", f"{grouped}{expert_id}")
+            f"{grouped}{expert_id}": FusedGatedExpertMapping(
+                f"{grouped}{expert_id}",
+                "hf.grouped.gate_up_proj",
+            )
             for expert_id in range(2)
         }
 
