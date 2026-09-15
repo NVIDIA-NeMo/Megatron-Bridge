@@ -1031,6 +1031,22 @@ class TestMTPFlatteningQKVMapping:
 class TestNemotronHBridgeMTPIntegration:
     """Test NemotronHBridge methods related to MTP layer handling."""
 
+    def test_list_based_transformers_layer_schema_is_normalized(self):
+        hf_config = SimpleNamespace(
+            layers_block_type=["linear_attention", "moe", "full_attention", "mlp"],
+            num_nextn_predict_layers=1,
+            mtp_layers_block_type=["attention", "moe"],
+        )
+
+        assert NemotronHBridge._hf_hybrid_pattern(hf_config) == "ME*-"
+        assert NemotronHBridge._hf_mtp_config(hf_config) == (1, "*E")
+
+    def test_list_based_transformers_layer_schema_rejects_unknown_types(self):
+        hf_config = SimpleNamespace(layers_block_type=["mamba", "unknown"])
+
+        with pytest.raises(ValueError, match="Unknown layers_block_type entry at index 1"):
+            NemotronHBridge._hf_hybrid_pattern(hf_config)
+
     @pytest.mark.parametrize(
         ("hf_config", "expected_mtp_mappings"),
         [

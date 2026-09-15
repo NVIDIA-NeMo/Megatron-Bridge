@@ -20,6 +20,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -75,11 +76,39 @@ class _Processor(_Tokenizer):
         self.tokenizer = _Tokenizer()
 
 
+class _SeparateImageProcessor(_Processor):
+    image_token = "<image>"
+
+    def __call__(self, *, text, images, return_tensors):
+        self.direct_text = text
+        self.direct_images = images
+        assert return_tensors == "pt"
+        return _Batch(
+            input_ids=torch.tensor([[1, 2, 3]]),
+            pixel_values=torch.tensor([1]),
+            num_patches=torch.tensor([1]),
+            num_tokens=torch.tensor([4]),
+            imgs_sizes=torch.tensor([[2, 2]]),
+        )
+
+
 class _Model:
     device = "cpu"
 
     def __init__(self):
         self.calls = []
+        self.to_calls = []
+
+    def to(self, device):
+        self.to_calls.append(device)
+        self.device = device
+        return self
+
+    def eval(self):
+        return self
+
+    def modules(self):
+        return iter((self,))
 
     def generate(self, **kwargs):
         self.calls.append(kwargs)
@@ -194,6 +223,64 @@ def test_loading_info_requires_strict_reload():
         )
 
 
+@pytest.mark.parametrize(
+    ("device_map", "expected_device_map", "expected_to_calls"),
+    [
+        (None, None, ["cuda"]),
+        ("balanced_low_0", "balanced_low_0", []),
+    ],
+)
+def test_runtime_supports_explicit_multi_gpu_device_map(
+    monkeypatch, device_map, expected_device_map, expected_to_calls
+):
+    module = _load_module()
+    processor = _Processor()
+    model = _Model()
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(model_path, *, trust_remote_code):
+            assert model_path == "exported-model"
+            assert trust_remote_code
+            return processor
+
+    class _AutoModel:
+        @staticmethod
+        def from_pretrained(model_path, **kwargs):
+            assert model_path == "exported-model"
+            if expected_device_map is None:
+                assert "device_map" not in kwargs
+            else:
+                assert kwargs["device_map"] == expected_device_map
+            return model, {
+                "missing_keys": [],
+                "unexpected_keys": [],
+                "mismatched_keys": [],
+                "error_msgs": [],
+            }
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(AutoModelForImageTextToText=_AutoModel, AutoProcessor=_AutoProcessor),
+    )
+    args = SimpleNamespace(
+        device="cuda",
+        device_map=device_map,
+        dtype="bfloat16",
+        hf_model="exported-model",
+        image="image.png",
+        trust_remote_code=True,
+        require_gpu_only=False,
+    )
+
+    _, loaded_model, loaded_processor = module._load_runtime(args)
+
+    assert loaded_model is model
+    assert loaded_processor is processor
+    assert model.to_calls == expected_to_calls
+
+
 def test_image_requires_chat_template(monkeypatch):
     module = _load_module()
     monkeypatch.setattr(
@@ -214,6 +301,53 @@ def test_image_requires_chat_template(monkeypatch):
 
     with pytest.raises(SystemExit):
         module._parse_args()
+
+
+def test_separate_image_processing_requires_image(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_hf_inference.py",
+            "--hf-model",
+            "model",
+            "--prompt",
+            "prompt",
+            "--max-new-tokens",
+            "2",
+            "--separate-image-processing",
+        ],
+    )
+
+    with pytest.raises(SystemExit):
+        module._parse_args()
+
+
+def test_separate_image_processing_renders_text_then_passes_pil(monkeypatch):
+    module = _load_module()
+    processor = _SeparateImageProcessor()
+    image = object()
+    monkeypatch.setattr(module, "_load_pil_image", lambda _: image)
+    args = SimpleNamespace(
+        image="work/data/example.png",
+        prompt="Describe the image.",
+        disable_thinking=True,
+        separate_image_processing=True,
+    )
+
+    inputs = module._prepare_inputs(processor, args)
+
+    assert inputs["pixel_values"].tolist() == [1]
+    assert set(inputs) == {"input_ids", "pixel_values"}
+    assert processor.messages == [{"role": "user", "content": "<image>\nDescribe the image."}]
+    assert processor.template_kwargs == {
+        "tokenize": False,
+        "add_generation_prompt": True,
+        "enable_thinking": False,
+    }
+    assert processor.direct_text == ["formatted text prompt"]
+    assert processor.direct_images == [image]
 
 
 def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypatch):

@@ -270,8 +270,43 @@ class NemotronHBridge(MegatronModelBridge):
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
-    @staticmethod
-    def _hf_mtp_config(hf_config) -> tuple[int, Optional[str]]:
+    _HF_LAYER_TYPE_TO_PATTERN = {
+        "mamba": "M",
+        "linear_attention": "M",
+        "attention": "*",
+        "full_attention": "*",
+        "moe": "E",
+        "mlp": "-",
+    }
+
+    @classmethod
+    def _layer_types_to_hybrid_pattern(cls, layer_types, *, field_name: str) -> str:
+        """Convert Transformers' list-based Nemotron-H layer schema to MCore symbols."""
+        pattern = []
+        for index, layer_type in enumerate(layer_types):
+            try:
+                pattern.append(cls._HF_LAYER_TYPE_TO_PATTERN[layer_type])
+            except KeyError as exc:
+                expected = ", ".join(sorted(cls._HF_LAYER_TYPE_TO_PATTERN))
+                raise ValueError(
+                    f"Unknown {field_name} entry at index {index}: {layer_type!r}. Expected one of: {expected}."
+                ) from exc
+        return "".join(pattern)
+
+    @classmethod
+    def _hf_hybrid_pattern(cls, hf_config) -> Optional[str]:
+        """Return the main hybrid pattern from either supported HF config schema."""
+        pattern = getattr(hf_config, "hybrid_override_pattern", None)
+        if pattern:
+            return pattern
+
+        layer_types = getattr(hf_config, "layers_block_type", None)
+        if layer_types:
+            return cls._layer_types_to_hybrid_pattern(layer_types, field_name="layers_block_type")
+        return None
+
+    @classmethod
+    def _hf_mtp_config(cls, hf_config) -> tuple[int, Optional[str]]:
         """Return the normalized MTP depth and block pattern from an HF config."""
         mtp_num_layers = int(getattr(hf_config, "num_nextn_predict_layers", 0) or 0)
         if mtp_num_layers < 0:
@@ -281,8 +316,29 @@ class NemotronHBridge(MegatronModelBridge):
 
         mtp_pattern = getattr(hf_config, "mtp_hybrid_override_pattern", None)
         if not mtp_pattern:
-            raise ValueError("An HF config with num_nextn_predict_layers > 0 must define mtp_hybrid_override_pattern.")
+            layer_types = getattr(hf_config, "mtp_layers_block_type", None)
+            if layer_types:
+                mtp_pattern = cls._layer_types_to_hybrid_pattern(
+                    layer_types,
+                    field_name="mtp_layers_block_type",
+                )
+        if not mtp_pattern:
+            raise ValueError(
+                "An HF config with num_nextn_predict_layers > 0 must define "
+                "mtp_hybrid_override_pattern or mtp_layers_block_type."
+            )
         return mtp_num_layers, mtp_pattern
+
+    @classmethod
+    def _configure_mtp_provider(cls, provider: HybridModelProvider, hf_config) -> None:
+        """Apply shared Nemotron-H MTP settings to a text or multimodal provider."""
+        mtp_num_layers, mtp_pattern = cls._hf_mtp_config(hf_config)
+        provider.mtp_num_layers = mtp_num_layers
+        provider.mtp_hybrid_override_pattern = mtp_pattern
+        provider.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True))
+        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
+        if mtp_num_layers:
+            provider.mtp_loss_scaling_factor = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
         """Convert HuggingFace Nemotron-H config to HybridModelProvider."""
@@ -301,6 +357,10 @@ class NemotronHBridge(MegatronModelBridge):
         provider.attention_softmax_in_fp32 = False
         provider.first_last_layers_bf16 = True
         provider.is_hybrid_model = True
+
+        hybrid_pattern = self._hf_hybrid_pattern(hf_config)
+        if hybrid_pattern is not None:
+            provider.hybrid_layer_pattern = hybrid_pattern
 
         # Handle kv_channels from head_dim or attention_head_dim
         kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
@@ -321,13 +381,7 @@ class NemotronHBridge(MegatronModelBridge):
             provider.moe_latent_size = hf_config.moe_latent_size
         if hasattr(hf_config, "moe_shared_expert_overlap"):
             provider.moe_shared_expert_overlap = hf_config.moe_shared_expert_overlap
-        mtp_num_layers, mtp_pattern = self._hf_mtp_config(hf_config)
-        provider.mtp_num_layers = mtp_num_layers
-        provider.mtp_hybrid_override_pattern = mtp_pattern
-        provider.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True))
-        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
-        if mtp_num_layers:
-            provider.mtp_loss_scaling_factor = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
+        self._configure_mtp_provider(provider, hf_config)
 
         return provider
 

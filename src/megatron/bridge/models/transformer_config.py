@@ -123,6 +123,7 @@ def _enable_safe_hybridep_dispatch(config: MCoreTransformerConfig, *, uses_thd: 
         or getattr(config, "moe_token_dispatcher_type", None) != "flex"
         or getattr(config, "moe_flex_dispatcher_backend", None) != "hybridep"
         or cuda_graphs_enabled
+        or getattr(config, "moe_hybridep_assume_equal_dispatch_inputs", False)
     ):
         return
 
@@ -154,6 +155,9 @@ class TransformerConfig(MCoreTransformerConfig):
         # Finalize to compute derived fields
         config.finalize()
     """
+
+    moe_hybridep_assume_equal_dispatch_inputs: bool = False
+    """Keep HybridEP uneven-input padding disabled for fixed-shape eager workloads."""
 
     _NO_COPY_KEYS = {"_pg_collection"}
 

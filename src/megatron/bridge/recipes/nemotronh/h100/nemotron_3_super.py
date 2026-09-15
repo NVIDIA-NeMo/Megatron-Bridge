@@ -157,23 +157,24 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
-    """Return the convergence-oriented Nemotron 3 Super config for 64 H100 GPUs.
+def _apply_nemotron_3_super_64gpu_h100_training_stack(cfg: ConfigContainer) -> ConfigContainer:
+    """Apply the 64-H100 Nemotron 3 Super execution and batch configuration.
 
-    The public hardware-agnostic ``nemotron_3_super_pretrain_config`` alias
-    exposes this configuration. Its execution layout matches the canonical
-    H100 performance recipe while it retains natural routing, runtime checks,
-    and checkpointing for real-data training evidence.
+    This helper owns the language-stack settings that are reusable by the
+    multimodal Super variant. It deliberately does not replace ``cfg.model``
+    or its model-native MTP configuration.
+
+    Args:
+        cfg: A Nemotron 3 Super-family training configuration.
 
     Returns:
-        BF16 pretraining configuration for 64 H100 GPUs.
+        The updated training configuration.
     """
-    cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config()
-
     # The measured H100 layout avoids TP communication while using PP to fit
     # the dense layers and EP to shard the experts across all 64 GPUs.
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.pipeline_model_parallel_layout = None
@@ -228,9 +229,14 @@ def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.optimizer_offload_fraction = 0.0
     cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
 
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
     # Keep DDP collectives ordered with PP and expert communication.
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
     # Retain enough watchdog headroom for first-step bring-up of the 120B model.
     cfg.dist.distributed_timeout_minutes = 15
 
@@ -245,6 +251,21 @@ def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
+
+
+def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the convergence-oriented Nemotron 3 Super config for 64 H100 GPUs.
+
+    The public hardware-agnostic ``nemotron_3_super_pretrain_config`` alias
+    exposes this configuration. Its execution layout matches the canonical
+    H100 performance recipe while it retains natural routing, runtime checks,
+    and checkpointing for real-data training evidence.
+
+    Returns:
+        BF16 pretraining configuration for 64 H100 GPUs.
+    """
+    cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config()
+    return _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
 
 
 # =============================================================================
