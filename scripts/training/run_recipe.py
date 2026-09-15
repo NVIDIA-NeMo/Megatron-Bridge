@@ -397,6 +397,34 @@ def _apply_benchmark_runtime_defaults(
     return recipe
 
 
+def _sync_benchmark_topology_environment(
+    recipe: ConfigContainer,
+    metadata: BenchmarkRecipeMetadata,
+    cli_overrides: list[str],
+    *,
+    base_env_vars: dict,
+    base_expert_model_parallel_size: int,
+) -> ConfigContainer:
+    """Keep derived HybridEP environment aligned with an EP override."""
+    if getattr(getattr(recipe, "model", None), "expert_model_parallel_size", 1) == base_expert_model_parallel_size:
+        return recipe
+
+    if not hasattr(recipe, "env_vars"):
+        recipe.env_vars = {}
+    performance_script_dir = SCRIPT_DIR.parent / "performance"
+    if str(performance_script_dir) not in sys.path:
+        sys.path.insert(0, str(performance_script_dir))
+    from utils.utils import apply_target_topology_environment, explicit_environment_override_names
+
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    apply_target_topology_environment(
+        recipe,
+        gpu=metadata.hardware,
+        protected_env_names=protected_env_names,
+    )
+    return recipe
+
+
 def _apply_benchmark_dataset_defaults(
     recipe: ConfigContainer,
     metadata: BenchmarkRecipeMetadata,
@@ -482,6 +510,10 @@ def main(argv: list[str] | None = None) -> None:
 
     recipe = _load_selected_recipe(args)
     if benchmark_metadata is not None:
+        benchmark_base_env_vars = dict(getattr(recipe, "env_vars", {}))
+        benchmark_base_expert_model_parallel_size = getattr(
+            getattr(recipe, "model", None), "expert_model_parallel_size", 1
+        )
         recipe = _apply_benchmark_dataset_defaults(recipe, benchmark_metadata)
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
@@ -491,6 +523,14 @@ def main(argv: list[str] | None = None) -> None:
         benchmark_canonical_topology = topology_from_config(getattr(recipe, "model", None))
         benchmark_canonical_global_batch_size = getattr(getattr(recipe, "train", None), "global_batch_size", 1)
     recipe = apply_cli_overrides(recipe, cli_overrides)
+    if benchmark_metadata is not None:
+        recipe = _sync_benchmark_topology_environment(
+            recipe,
+            benchmark_metadata,
+            cli_overrides,
+            base_env_vars=benchmark_base_env_vars,
+            base_expert_model_parallel_size=benchmark_base_expert_model_parallel_size,
+        )
     recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
     benchmark_world_size = None
     if benchmark_metadata is not None:
