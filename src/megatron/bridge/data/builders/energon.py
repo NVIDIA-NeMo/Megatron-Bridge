@@ -102,11 +102,17 @@ class NemotronOmniEnergonTaskEncoderConfig:
 
     ``visual_keys`` is retained for configuration compatibility, but Omni owns
     its visual input contract and supports only ``("pixel_values",)``.
+    ``hf_processor_revision`` optionally pins the processor artifact load.
+    ``temporal_video_resize_mode="processor"`` is the default and applies the
+    public aspect-preserving video grid with exact per-tubelet token counts.
+    ``"fixed_512"`` preserves the previous square policy for compatibility.
     ``collapse_image_tokens=True`` selects the deprecated LLaVA compatibility
-    path; the default ``False`` selects the canonical expanded-sequence path.
+    path and cannot be combined with processor-driven temporal sizing. The
+    default ``False`` selects the canonical expanded-sequence path.
     """
 
     hf_processor_path: str
+    hf_processor_revision: str | None = None
     max_audio_duration: float
     num_mel_bins: int
     visual_keys: tuple[str, ...]
@@ -115,12 +121,17 @@ class NemotronOmniEnergonTaskEncoderConfig:
     video_nframes: int
     use_temporal_video_embedder: bool
     patch_dim: int
+    temporal_video_resize_mode: Literal["fixed_512", "processor"] = "processor"
     collapse_image_tokens: bool = False
     trust_remote_code: bool | None = None
 
     def validate(self) -> None:
         """Validate Nemotron Omni task-encoder settings."""
         _validate_hf_path(self.hf_processor_path, field_name="hf_processor_path")
+        if self.hf_processor_revision is not None and (
+            not isinstance(self.hf_processor_revision, str) or not self.hf_processor_revision.strip()
+        ):
+            raise ValueError("hf_processor_revision must be a non-empty string when set.")
         if self.max_audio_duration <= 0:
             raise ValueError("max_audio_duration must be greater than 0.")
         for field_name in ("num_mel_bins", "temporal_patch_size", "video_nframes", "patch_dim"):
@@ -128,6 +139,16 @@ class NemotronOmniEnergonTaskEncoderConfig:
                 raise ValueError(f"{field_name} must be greater than 0.")
         if self.video_fps <= 0:
             raise ValueError("video_fps must be greater than 0.")
+        if self.temporal_video_resize_mode not in ("fixed_512", "processor"):
+            raise ValueError("temporal_video_resize_mode must be either 'fixed_512' or 'processor'.")
+        if (
+            self.use_temporal_video_embedder
+            and self.collapse_image_tokens
+            and self.temporal_video_resize_mode == "processor"
+        ):
+            raise ValueError(
+                "temporal_video_resize_mode='processor' requires the canonical expanded-sequence contract."
+            )
         if not self.visual_keys or tuple(self.visual_keys) != ("pixel_values",):
             raise ValueError("Nemotron Omni visual_keys must be exactly ('pixel_values',).")
 
@@ -294,6 +315,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
 
     processor = AutoProcessor.from_pretrained(
         task_config.hf_processor_path,
+        revision=task_config.hf_processor_revision,
         trust_remote_code=trust_remote_code,
     )
     return NemotronOmniTaskEncoder(
@@ -307,6 +329,7 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
         video_nframes=task_config.video_nframes,
         use_temporal_video_embedder=task_config.use_temporal_video_embedder,
         patch_dim=task_config.patch_dim,
+        temporal_video_resize_mode=task_config.temporal_video_resize_mode,
         collapse_image_tokens=task_config.collapse_image_tokens,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,
