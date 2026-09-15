@@ -38,7 +38,6 @@ import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
 from megatron.core.dist_checkpointing.serialization import StateDict
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 from megatron.core.dist_checkpointing.strategies.fully_parallel import (
     FullyParallelLoadStrategyWrapper,
     FullyParallelSaveStrategyWrapper,
@@ -455,7 +454,7 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
 # ============================================================================
 
 
-def schedule_async_save(global_state: GlobalState, async_request: AsyncRequest) -> None:
+def schedule_async_save(global_state: GlobalState, async_request: NVRxAsyncRequest) -> None:
     """Schedule the async save request.
 
     Args:
@@ -464,10 +463,6 @@ def schedule_async_save(global_state: GlobalState, async_request: AsyncRequest) 
     """
     async_queue = global_state.async_calls_queue
     if async_queue is not None:
-        if global_state.cfg.checkpoint.async_strategy == "mcore" and not isinstance(async_request, AsyncRequest):
-            # MCore's persistent worker accepts requests by nominal type. FSDP
-            # DTensor saves originate from NVRx even when the worker is MCore.
-            async_request = AsyncRequest(**async_request._asdict())
         async_queue.schedule_async_request(async_request)
 
 
