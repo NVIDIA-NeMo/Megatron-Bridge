@@ -394,6 +394,19 @@ class TestAdapterWrapper:
 
         assert torch.allclose(model(x), enabled_output, atol=1e-6)
 
+    def test_peft_disable_adapter_context_manager_preserves_disabled_state(self, mock_linear_simple, simple_adapter):
+        """Test PEFT.disable_adapter preserves an already disabled model."""
+        peft = DummyPEFT()
+        model = AdapterModel(mock_linear_simple, simple_adapter)
+        x = torch.randn(5, 10)
+        base_output, _ = mock_linear_simple(x)
+        model.lora.disable_adapter_layers()
+
+        with peft.disable_adapter(model):
+            assert torch.allclose(model(x), base_output, atol=1e-6)
+
+        assert torch.allclose(model(x), base_output, atol=1e-6)
+
     def test_lora_linear_combines_outputs_without_modifying_branch_storage(self, mock_linear_simple, simple_adapter):
         """Combining the LoRA branches must not modify either branch output."""
         wrapper = LoRALinear(mock_linear_simple, simple_adapter)
