@@ -138,6 +138,8 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("step37_sft_flickr8k_config", "step37_flickr8k_step"),
         ("flux_12b_pretrain_config", "flux_step"),
         ("wan_14b_pretrain_config", "wan_step"),
+        ("qwen3_30b_a3b_dpo_config", "dpo_step"),
+        ("qwen3_30b_a3b_dpo_8gpu_h100_bf16_config", "dpo_step"),
     ],
 )
 def test_recipe_step_is_source_agnostic(recipe_name, step_name):

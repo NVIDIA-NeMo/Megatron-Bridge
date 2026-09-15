@@ -796,6 +796,7 @@ def tokenize_chat_example(
     warn_on_all_masked: bool = True,
     loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
     return_final_assistant_start: bool = False,
+    final_assistant_span: Literal["content", "turn"] = "content",
 ) -> TokenizedConversation:
     """Render, tokenize, and construct the assistant mask for one chat row.
 
@@ -807,6 +808,8 @@ def tokenize_chat_example(
     """
     if loss_mode not in {"assistant", "last_turn", "full"}:
         raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
+    if final_assistant_span not in {"content", "turn"}:
+        raise ValueError("final_assistant_span must be content or turn.")
     conversation = normalize_chat_conversation(example_or_conversation)
     template_kwargs = chat_template_kwargs_from_example(example_or_conversation)
     if not template_kwargs.get("tools") and tool_schemas is not None:
@@ -847,12 +850,21 @@ def tokenize_chat_example(
     generation_assistant_start = None
     last_turn_start = None
     if return_final_assistant_start and selected_template_owner is not None and selected_tokenize_kwargs is not None:
-        generation_assistant_start = _infer_terminal_assistant_content_start(
-            selected_template_owner,
-            conversation,
-            selected_tokenize_kwargs,
-            input_ids.tolist(),
-        )
+        if final_assistant_span == "turn":
+            generation_assistant_start = _infer_final_assistant_start(
+                selected_template_owner,
+                conversation,
+                selected_tokenize_kwargs,
+                input_ids.tolist(),
+                terminal_only=True,
+            )
+        else:
+            generation_assistant_start = _infer_terminal_assistant_content_start(
+                selected_template_owner,
+                conversation,
+                selected_tokenize_kwargs,
+                input_ids.tolist(),
+            )
     if loss_mode == "last_turn" and selected_template_owner is not None and selected_tokenize_kwargs is not None:
         last_turn_start = _infer_final_assistant_start(
             selected_template_owner,

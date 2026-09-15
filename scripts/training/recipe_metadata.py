@@ -72,7 +72,7 @@ LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset(
     }
 )
 
-PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
+PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora", "dpo"})
 TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
 
 # Exact source-specific overrides take precedence over family defaults. The
@@ -201,6 +201,9 @@ def recipe_step(recipe_name: str, *, native_energon_packing: bool = False) -> st
         return "vlm_step"
     if recipe_name in RECIPE_FORWARD_STEPS:
         return RECIPE_FORWARD_STEPS[recipe_name]
+    # DPO computes its pair loss inside the forward step, so DPO recipes never use a modality step.
+    if infer_recipe_mode(recipe_name) == "dpo":
+        return "dpo_step"
     for prefix, step_name in RECIPE_FORWARD_STEP_PREFIXES:
         if recipe_name.startswith(prefix):
             return step_name
@@ -226,6 +229,8 @@ def infer_recipe_mode(recipe_name: str) -> str | None:
         return "pretrain"
     if "_sft_" in normalized_name or "_finetune_" in normalized_name:
         return "sft"
+    if "_dpo_" in normalized_name:
+        return "dpo"
     if "_dora_" in normalized_name:
         return "dora"
     if "_peft_" in normalized_name or "_lora_" in normalized_name:
