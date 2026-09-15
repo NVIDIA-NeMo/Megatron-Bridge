@@ -1,4 +1,4 @@
-# Copyright (c) 2025-2026, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,11 +15,6 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
-
-ARG NSYS_VERSION=2026.5.1.161
-ENV NSIGHT_SYSTEMS_VERSION=${NSYS_VERSION}
-RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_nsys.sh \
-    bash /opt/install_nsys.sh --NSYS_VERSION=${NSYS_VERSION}
 
 RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
     TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \

@@ -91,11 +91,11 @@ FROM fw_dep_builder AS fw_toolkit_builder
 ## Reinstall CUDA toolkit packages
 ##############################################################################
 
-ARG REINSTALL_NSYS=True
-ARG NSYS_VERSION=2026.5.1.161
+ARG REINSTALL_NSYS
+ARG NSYS_VERSION=2026.5.1.161-265138896106v0
 ARG REINSTALL_CUDNN
 ARG CUDNN_VERSION
-ENV NSIGHT_SYSTEMS_VERSION=${NSYS_VERSION}
+ENV NSIGHT_SYSTEMS_VERSION $NSYS_VERSION
 ARG REINSTALL_NCCL
 ARG NCCL_VERSION=2.30.7-1+cuda13.3
 ARG REINSTALL_CUBLAS
@@ -105,8 +105,8 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
     --mount=type=bind,source=docker/common/install_cudnn.sh,target=/opt/install_cudnn.sh \
     --mount=type=bind,source=docker/common/install_nccl.sh,target=/opt/install_nccl.sh \
     --mount=type=bind,source=docker/common/install_cublas.sh,target=/opt/install_cublas.sh \
-    if [ "$REINSTALL_NSYS" = "True" ]; then \
-    bash /opt/install_nsys.sh --NSYS_VERSION="$NSYS_VERSION"; \
+    if [ $REINSTALL_NSYS = "True" ]; then \
+    bash /opt/install_nsys.sh --NSYS_VERSION=$NSYS_VERSION; \
     fi && \
     if [ $REINSTALL_CUDNN = "True" ]; then \
     bash /opt/install_cudnn.sh --CUDNN_VERSION=$CUDNN_VERSION --DEVEL; \
