@@ -348,6 +348,11 @@ def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
         hidden_size=4,
         attention_output_gate=False,
         num_moe_experts=0,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=2,
+        linear_value_head_dim=2,
+        kda_two_stage_gates=False,
     )
     megatron_model = [SimpleNamespace(config=config)]
     converted = {
@@ -374,6 +379,21 @@ def test_merge_lora_adapter_weights_qkv_split(monkeypatch):
     torch.testing.assert_close(updated["q_proj.weight"], q_weight)
     torch.testing.assert_close(updated["k_proj.weight"], k_weight)
     torch.testing.assert_close(updated["v_proj.weight"], v_weight)
+
+
+@pytest.mark.parametrize("trailing_shape", [(), (4,)])
+def test_split_kda_qkv_linear_out_weight(trailing_shape):
+    config = SimpleNamespace(
+        kda_two_stage_gates=True,
+        linear_num_key_heads=2,
+        linear_num_value_heads=2,
+        linear_key_head_dim=2,
+        linear_value_head_dim=2,
+    )
+    sections = [torch.full((4, *trailing_shape), value) for value in (1.0, 2.0, 3.0)]
+    actual = DummyBridge()._split_qkv_linear_out_weight([SimpleNamespace(config=config)], torch.cat(sections))
+    for name, expected in zip(("q_proj", "k_proj", "v_proj"), sections, strict=True):
+        torch.testing.assert_close(actual[name], expected)
 
 
 def test_merge_lora_adapter_weights_grouped_expert_missing_expert_idx(monkeypatch):
