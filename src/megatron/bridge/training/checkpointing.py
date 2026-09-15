@@ -1533,7 +1533,7 @@ def save_checkpoint(
                 state_dict,
                 algo=algo,
                 cached_metadata=cached_metadata,
-                parallelization_group=pg_collection.dp_cp,
+                parallelization_group=_checkpoint_dp_cp_group(pg_collection),
             )
             async_save_request = checkpointing_context["local_checkpoint_manager"].save(
                 state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
@@ -3688,7 +3688,7 @@ def _load_non_persistent_base_checkpoint(
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
             algo=ckpt_cfg.non_persistent_local_ckpt_algo,
-            parallelization_group=pg_collection.dp_cp,
+            parallelization_group=_checkpoint_dp_cp_group(pg_collection),
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
