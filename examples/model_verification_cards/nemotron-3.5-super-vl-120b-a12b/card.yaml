@@ -14,11 +14,12 @@ summary: >
   pinned eight-GPU BF16 import and distributed export are verified:
   the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
   the immutable HF source bitwise, and the exported package reloaded natively
-  through Transformers on eight H100s. CPU conversion, deterministic
-  generation and post-SFT export remain pending. SFT, PEFT, and checkpoint
-  resume are verified on both H100 and GB200. The training recipes reuse the
-  Nemotron Omni image/video stack without audio and retain the checkpoint's
-  separate temporal embedder and one-layer MTP configuration.
+  through Transformers on eight H100s. Model-level deterministic generation
+  remains pending. Post-SFT distributed export and
+  dynamic-image inference are verified on four GB200s. SFT, PEFT, and
+  checkpoint resume are verified on both H100 and GB200. The training recipes
+  reuse the Nemotron Omni image/video stack without audio and retain the
+  checkpoint's separate temporal embedder and one-layer MTP configuration.
 verification_index:
   model_level:
     verified:
@@ -32,36 +33,28 @@ verification_index:
   training:
     H100:
       verified: [pretrain, sft, peft, checkpoint_resume]
-      unverified: [sft_export_inference]
-      unsupported: [sft_long_context]
+      unverified: [sft_export_inference, sft_long_context]
     GB200:
-      verified: [pretrain, sft, peft, checkpoint_resume]
-      unverified: [sft_export_inference]
-      unsupported: [sft_long_context]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
   hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
   architecture: NemotronH_Omni_Reasoning_V3
   min_transformers_version: "5.12.1"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.08.rc5
+  base_container: nvcr.io/nvidia/nemo:26.08
   bridge_commit: f375ef553a06b782f5129c1bc9a060a55259da4f  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
     status: unverified
     precision: bf16
-    command: >
-      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
-      --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
-      --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/cpu-megatron
-      --torch-dtype bfloat16 --trust-remote-code
+    command: null
     last_verified: null
     expected_result: >
-      The pinned CPU import must exit successfully, create a reloadable
-      iter_0000000 checkpoint, and map the complete 43,078-tensor source
-      checkpoint without missing or unexpected model parameters.
+      CPU-only import is not claimed in this card; the distributed GPU import
+      below is the verified conversion path for this checkpoint.
 
   hf_to_megatron_gpu:
     status: verified
@@ -85,19 +78,11 @@ items:
   megatron_to_hf_cpu:
     status: unverified
     precision: bf16
-    command: >
-      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
-      --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
-      --megatron-path
-      work/model-verification/nemotron-3.5-super-vl-120b-a12b/cpu-megatron/iter_0000000
-      --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/cpu-hf-export
-      --torch-dtype bfloat16 --trust-remote-code
+    command: null
     last_verified: null
     expected_result: >
-      Strict CPU export must exit successfully, reproduce all 43,078 source
-      tensors with exact keys, shapes, dtypes, and values, and reload natively
-      through Transformers at the pinned revision.
+      CPU-only export is not claimed in this card; the distributed GPU export
+      below is the verified conversion path for this checkpoint.
 
   megatron_to_hf_gpu:
     status: verified
@@ -338,10 +323,50 @@ items:
         successfully, with the literal completion and actual generated-token
         count recorded under the 32-token maximum.
 
+    GB200:
+      status: verified
+      precision: bf16
+      bridge_commit: 215e20e596cb9fedb60fa3f8a7c4e8f618905aab  # pragma: allowlist secret
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 1 --gpus-per-node 4
+          --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+          --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
+          --megatron-path
+          work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft/iter_0000100
+          --hf-path
+          work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-hf-export
+          --torch-dtype bfloat16 --export-weight-dtype bfloat16
+          --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code
+          --distributed-save --save-every-n-ranks 1
+        - >
+          uv run python
+          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          --hf-model
+          work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-hf-export
+          --prompt "Describe the image." --image docs/images/tp1.png
+          --max-new-tokens 32 --chat-template --separate-image-processing
+          --trust-remote-code --device cuda --device-map balanced_low_0
+          --dtype bfloat16
+      last_verified: 2026-08-30
+      expected_result: >
+        The step-100 full-SFT checkpoint exports as a native BF16 Transformers
+        package with 43,079 indexed tensors. The post-weight-derived
+        vision_model.summary_idxs tensor is stored as int64 [0, 1] in its own
+        deterministic shard. The HF export reloads natively through strict
+        Transformers loading with no missing or unexpected keys, the
+        dynamic-resolution image processor succeeds, and greedy generation
+        emits exactly 32 new tokens under a 32-token maximum.
+        The literal completion is "The user wants a description of the provided
+        image.\n\n1.  **Identify the main subject:** The image is a diagram
+        illustrating a \"Pre-Layern".
+
   sft_long_context:
-    all:
-      status: unsupported
-      precision: null
+    H100:
+      status: unverified
+      precision: bf16
       enabled_features: {}
       command: null
       last_verified: null
@@ -352,8 +377,22 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        No long-context multimodal SFT recipe with context parallelism and
-        sequence packing is published for this exact model variant yet.
+        No H100 long-context SFT result is claimed in this card.
+
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        No GB200 long-context SFT result is claimed in this card.
 
   peft:
     H100:
