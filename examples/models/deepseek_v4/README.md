@@ -19,12 +19,15 @@ the requested Megatron training dtype.
 
 ## Runtime Requirements
 
-DeepSeek V4 training requires a compatible Megatron-LM `dev` revision; the
-Megatron-LM revision pinned for the Megatron Bridge `main` branch is not a
-supported training runtime. Switch the submodule before syncing the environment:
+DeepSeek V4 training uses Megatron-LM `main` with the native feature series from
+[#6402](https://github.com/NVIDIA/Megatron-LM/pull/6402),
+[#6403](https://github.com/NVIDIA/Megatron-LM/pull/6403),
+[#6404](https://github.com/NVIDIA/Megatron-LM/pull/6404), and
+[#6405](https://github.com/NVIDIA/Megatron-LM/pull/6405). Use the Megatron Bridge
+`main`-branch MCore pin once it contains that series, then sync the environment:
 
 ```bash
-./scripts/switch_mcore.sh dev
+./scripts/switch_mcore.sh main
 uv sync
 ```
 
