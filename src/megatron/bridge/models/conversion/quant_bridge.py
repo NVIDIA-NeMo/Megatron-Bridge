@@ -175,6 +175,22 @@ def _supports_native_grouped_mxfp8(mapping: "MegatronParamMapping") -> bool:
     return type(mapping) in (FusedGatedExpertMapping, FusedExpertMapping)
 
 
+def _split_grouped_export_members(param: Any, global_param_name: str) -> list[Any]:
+    """Return per-expert views from tensor or Transformer Engine grouped storage."""
+    splitter = getattr(param, "split_into_quantized_tensors", None)
+    if callable(splitter):
+        members = getattr(param, "quantized_tensors", None)
+        if members is None:
+            members = splitter()
+            param.quantized_tensors = members
+        return list(members)
+    if isinstance(param, torch.Tensor):
+        return list(param.unbind(0))
+    raise ValueError(
+        f"Grouped expert parameter {global_param_name!r} does not expose per-expert members"
+    )
+
+
 def _supports_native_mxfp8_mapping(mapping: "MegatronParamMapping") -> bool:
     """Return whether a mapping class explicitly implements the native contract."""
     from megatron.bridge.models.conversion.param_mapping import (
@@ -482,7 +498,7 @@ class MegatronQuantizationBridge:
                 if local_grouped_storage.get(global_name, False):
                     members = list(local_grouped_members[global_name])
                 else:
-                    members = list(local_weight.unbind(0))
+                    members = _split_grouped_export_members(local_weight, global_name)
                 if len(members) != len(expanded_names):
                     raise ValueError(
                         f"Grouped expert parameter {global_name!r} has {len(members)} local members, "

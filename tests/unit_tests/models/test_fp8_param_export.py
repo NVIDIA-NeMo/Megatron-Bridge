@@ -1901,8 +1901,19 @@ class TestFp8ParamExport:
     def test_build_export_mxfp8_tasks_expands_bf16_grouped_members(self, monkeypatch):
         bridge = DummyBridge()
         grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
-        members = torch.arange(2 * 8 * 16, dtype=torch.bfloat16).view(2, 8, 16)
-        parameter = torch.nn.Parameter(members.clone())
+        members = list(
+            torch.arange(2 * 8 * 16, dtype=torch.bfloat16)
+            .view(2, 8, 16)
+            .unbind(0)
+        )
+
+        class GroupedWeight:
+            quantized_tensors: list[torch.Tensor] | None = None
+
+            def split_into_quantized_tensors(self) -> list[torch.Tensor]:
+                return members
+
+        parameter = GroupedWeight()
         mappings = {
             f"{grouped}{expert_id}": _IdentityMapping(f"hf.grouped.{expert_id}", f"{grouped}{expert_id}")
             for expert_id in range(2)
@@ -1947,6 +1958,7 @@ class TestFp8ParamExport:
         assert [task.global_param_name for task in tasks] == [f"{grouped}0", f"{grouped}1"]
         torch.testing.assert_close(tasks[0].param_weight, members[0])
         torch.testing.assert_close(tasks[1].param_weight, members[1])
+        assert parameter.quantized_tensors is members
 
     def test_build_export_mxfp8_tasks_uses_global_expert_ids_for_bf16_members(self, monkeypatch):
         bridge = DummyBridge()
