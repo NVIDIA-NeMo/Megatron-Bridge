@@ -19,6 +19,7 @@ import tempfile
 from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, mock_open, patch
 
 import numpy as np
@@ -42,6 +43,8 @@ from megatron.bridge.training.checkpointing import (
     _clear_auto_bridge_cache,
     _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
+    _generate_model_state_dict,
+    _get_checkpoint_dp_cp_group,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
     _get_run_config_tp_pp,
@@ -80,6 +83,64 @@ from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 class _DummyClass:
     save_sharded_modelopt_state = None
+
+
+def test_checkpoint_group_includes_gtp_and_supports_older_collections():
+    replica_group = Mock()
+    distribution_group = Mock()
+    pg = SimpleNamespace(dp_cp=replica_group, dp_cp_gtp_remat=distribution_group)
+    assert _get_checkpoint_dp_cp_group(pg) is distribution_group
+    pg.dp_cp_gtp_remat = None
+    assert _get_checkpoint_dp_cp_group(pg) is replica_group
+    del pg.dp_cp_gtp_remat
+    assert _get_checkpoint_dp_cp_group(pg) is replica_group
+
+
+def test_model_checkpoint_metadata_includes_gtp_without_mutating_caller():
+    pg = SimpleNamespace(dp_cp=Mock(), dp_cp_gtp_remat=Mock())
+    model = [Mock(), Mock()]
+    kwargs = {"metadata": {"other": "preserved"}}
+    _generate_model_state_dict(model, kwargs, pg_collection=pg)
+    assert kwargs == {"metadata": {"other": "preserved"}}
+    for chunk in model:
+        chunk.sharded_state_dict.assert_called_once_with(
+            metadata={"other": "preserved", "dp_cp_group": pg.dp_cp_gtp_remat}
+        )
+
+
+@pytest.mark.parametrize("gtp_axis", ["gtp_remat", "expt_gtp_remat"])
+@pytest.mark.parametrize("random_init", [False, True])
+def test_gtp_rng_streams_are_shards_not_replicas(gtp_axis, random_init):
+    def group(size, rank):
+        return SimpleNamespace(size=lambda: size, rank=lambda: rank)
+
+    pg = SimpleNamespace(
+        pp=group(1, 0),
+        tp=group(1, 0),
+        ep=group(1, 0),
+        dp_cp=group(1, 0),
+        dp_cp_gtp_remat=group(2, 1),
+        gtp_remat=None,
+        expt_gtp_remat=None,
+    )
+    setattr(pg, gtp_axis, group(2, 1))
+    with (
+        patch("torch.cuda.get_rng_state", return_value=torch.tensor([1], dtype=torch.uint8)),
+        patch("megatron.bridge.training.checkpointing.tensor_parallel") as tensor_parallel_mock,
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("torch.distributed.all_gather_object") as gather,
+    ):
+        tensor_parallel_mock.get_cuda_rng_tracker.return_value.get_states.return_value = {"tracker": "rank1"}
+        rng = get_rng_state(random_init, "torch_dist", pg_collection=pg)
+    assert rng.global_shape == (1, 1, 2)
+    assert rng.global_offset == (0, 0, 1)
+    assert rng.replica_id == 0
+    if random_init:
+        assert len(rng.data) == 2
+        assert gather.call_args.kwargs["group"] is pg.dp_cp_gtp_remat
+    else:
+        assert rng.data[0]["rng_tracker_states"] == {"tracker": "rank1"}
+        gather.assert_not_called()
 
 
 _dummy_obj = _DummyClass()
@@ -372,12 +433,14 @@ class TestRNGState:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 1
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
-        mock_pg_collection.dp_cp.rank.return_value = 0
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 1
         mock_pg_collection.ep.size.return_value = 1  # EP = 1 (no expert parallelism)
 
         result = get_rng_state(
@@ -424,12 +487,14 @@ class TestRNGState:
 
         # Create mock pg_collection with EP > 1 configuration
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.pp.rank.return_value = 1
         mock_pg_collection.pp.size.return_value = 2
         mock_pg_collection.tp.rank.return_value = 3
         mock_pg_collection.tp.size.return_value = 4
-        mock_pg_collection.dp_cp.rank.return_value = 5
-        mock_pg_collection.dp_cp.size.return_value = 6
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 5
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 6
 
         result = get_rng_state(
             data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
@@ -477,12 +542,14 @@ class TestRNGState:
 
         # Create mock pg_collection with EP = 1 configuration
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.pp.rank.return_value = 1
         mock_pg_collection.pp.size.return_value = 2
         mock_pg_collection.tp.rank.return_value = 3
         mock_pg_collection.tp.size.return_value = 4
-        mock_pg_collection.dp_cp.rank.return_value = 5
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 5
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 1
 
         result = get_rng_state(
             data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
@@ -530,12 +597,14 @@ class TestRNGState:
 
         # Create mock pg_collection with ep=None
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 2
         mock_pg_collection.tp.rank.return_value = 1
         mock_pg_collection.tp.size.return_value = 4
-        mock_pg_collection.dp_cp.rank.return_value = 3
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 3
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 1
         mock_pg_collection.ep = None  # Explicitly None
 
         result = get_rng_state(
@@ -757,6 +826,8 @@ class TestSaveCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.expt_dp.rank.return_value = 0
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
@@ -1451,6 +1522,10 @@ class TestSaveCheckpoint:
         mock_gen_state.return_value = full_state_dict
 
         mock_pg_collection = Mock()
+
+        mock_pg_collection.gtp_remat = None
+
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.expt_dp.rank.return_value = 0
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
@@ -1570,6 +1645,10 @@ class TestSaveCheckpoint:
         mock_apply_peft_filter.return_value = filtered_state_dict
 
         mock_pg_collection = Mock()
+
+        mock_pg_collection.gtp_remat = None
+
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.expt_dp.rank.return_value = 0
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
@@ -1679,6 +1758,10 @@ class TestSaveCheckpoint:
         }
 
         mock_pg_collection = Mock()
+
+        mock_pg_collection.gtp_remat = None
+
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.expt_dp.rank.return_value = 0
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
@@ -2234,12 +2317,14 @@ class TestLoadCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 1
         mock_pg_collection.dp.rank.return_value = 0
-        mock_pg_collection.dp_cp.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Mock dist_checkpointing
@@ -2560,8 +2645,10 @@ class TestLoadBaseCheckpoint:
     def mock_pg_collection(self):
         """Fixture for mock pg_collection."""
         mock_pg = Mock()
-        mock_pg.dp_cp.rank.return_value = 0
-        mock_pg.dp_cp.size.return_value = 1
+        mock_pg.gtp_remat = None
+        mock_pg.expt_gtp_remat = None
+        mock_pg.dp_cp_gtp_remat.rank.return_value = 0
+        mock_pg.dp_cp_gtp_remat.size.return_value = 1
         mock_pg.pp.rank.return_value = 0
         mock_pg.pp.size.return_value = 1
         mock_pg.tp.rank.return_value = 0
@@ -3124,7 +3211,9 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat = Mock()
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Call the function
@@ -3227,7 +3316,9 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat = Mock()
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Call the function
@@ -3285,8 +3376,10 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_dp_cp_group = Mock()
-        mock_pg_collection.dp_cp = mock_dp_cp_group
+        mock_pg_collection.dp_cp_gtp_remat = mock_dp_cp_group
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Call the function
@@ -3332,7 +3425,9 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat = Mock()
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Call the function and expect assertion error
@@ -3379,7 +3474,9 @@ class TestLoadModelWeightsFromCheckpoint:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat = Mock()
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Call the function
@@ -3552,8 +3649,10 @@ class TestMegatronLMCompatibility:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp.rank.return_value = 0
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 1
 
         # Mock file existence: NeMo-LM tracker doesn't exist, legacy tracker does
         def mock_file_exists_side_effect(path):
@@ -3699,11 +3798,13 @@ class TestMegatronLMCompatibility:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 2
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 1
-        mock_pg_collection.dp_cp.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Legacy checkpoints predate content metadata in the common state.
@@ -4260,8 +4361,10 @@ class TestFSDPDTensorFunctionality:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp.rank.return_value = 0
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 1
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.pp.rank.return_value = 0
@@ -4292,8 +4395,10 @@ class TestFSDPDTensorFunctionality:
 
         # Create mock pg_collection
         mock_pg_collection = Mock()
-        mock_pg_collection.dp_cp.rank.return_value = 0
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.gtp_remat = None
+        mock_pg_collection.expt_gtp_remat = None
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.size.return_value = 1
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.pp.rank.return_value = 0
@@ -4612,6 +4717,8 @@ class TestCheckpointPathOverride:
 
         mock_dist_ckpt.load_common_state_dict.return_value = {"test": "data"}
         mock_pg = Mock()
+        mock_pg.gtp_remat = None
+        mock_pg.expt_gtp_remat = None
 
         state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
             load_dir="/should/not/be/used",
@@ -4638,7 +4745,9 @@ class TestCheckpointPathOverride:
         mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.load.return_value = {"model": "sharded_data"}
         mock_pg = Mock()
-        mock_pg.dp_cp = Mock()
+        mock_pg.gtp_remat = None
+        mock_pg.expt_gtp_remat = None
+        mock_pg.dp_cp_gtp_remat = Mock()
 
         sharded_sd = {"weight": "placeholder"}
         state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
@@ -4706,7 +4815,9 @@ class TestLoadCheckpointFromPathDirectIterDir:
         mock_model = Mock()
         mock_unwrap.return_value = [mock_model]
         mock_pg = Mock()
-        mock_pg.dp_cp = Mock()
+        mock_pg.gtp_remat = None
+        mock_pg.expt_gtp_remat = None
+        mock_pg.dp_cp_gtp_remat = Mock()
         mock_get_pg.return_value = mock_pg
 
         mock_cfg = Mock()
@@ -4786,7 +4897,9 @@ class TestLoadCheckpointFromPathDirectIterDir:
         mock_model = Mock()
         mock_unwrap.return_value = [mock_model]
         mock_pg = Mock()
-        mock_pg.dp_cp = Mock()
+        mock_pg.gtp_remat = None
+        mock_pg.expt_gtp_remat = None
+        mock_pg.dp_cp_gtp_remat = Mock()
         mock_get_pg.return_value = mock_pg
 
         mock_cfg = Mock()
@@ -4850,7 +4963,9 @@ class TestLoadCheckpointFromPathDirectIterDir:
         mock_model = Mock()
         mock_unwrap.return_value = [mock_model]
         mock_pg = Mock()
-        mock_pg.dp_cp = Mock()
+        mock_pg.gtp_remat = None
+        mock_pg.expt_gtp_remat = None
+        mock_pg.dp_cp_gtp_remat = Mock()
         mock_get_pg.return_value = mock_pg
 
         mock_cfg = Mock()
@@ -5301,6 +5416,10 @@ class TestLayerWiseOptimizerCheckpointing:
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
 
         mock_pg_collection = Mock()
+
+        mock_pg_collection.gtp_remat = None
+
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.expt_dp.rank.return_value = 0
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
@@ -5391,12 +5510,16 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_rerun_machine.return_value.state_dict.return_value = {}
 
         mock_pg_collection = Mock()
+
+        mock_pg_collection.gtp_remat = None
+
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 1
         mock_pg_collection.dp.rank.return_value = 2  # non-zero to verify path construction
-        mock_pg_collection.dp_cp.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
         mock_get_pg_collection.return_value = mock_pg_collection
 
         mock_train_state = Mock()
@@ -5505,12 +5628,16 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_rerun_machine.return_value.state_dict.return_value = {}
 
         mock_pg_collection = Mock()
+
+        mock_pg_collection.gtp_remat = None
+
+        mock_pg_collection.expt_gtp_remat = None
         mock_pg_collection.tp.rank.return_value = 0
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 1
         mock_pg_collection.dp.rank.return_value = 0
-        mock_pg_collection.dp_cp.rank.return_value = 0
+        mock_pg_collection.dp_cp_gtp_remat.rank.return_value = 0
         mock_get_pg_collection.return_value = mock_pg_collection
 
         mock_train_state = Mock()

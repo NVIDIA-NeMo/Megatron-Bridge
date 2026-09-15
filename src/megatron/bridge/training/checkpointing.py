@@ -521,6 +521,21 @@ def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> NVRxAsyncReq
     return NVRxAsyncRequest(save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn)
 
 
+def _get_checkpoint_dp_cp_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
+    """Include GTP peers when distributing checkpoint work and electing replicas."""
+    group = getattr(pg_collection, "dp_cp_gtp_remat", None)
+    return pg_collection.dp_cp if group is None else group
+
+
+def _checkpoint_has_gtp_remat(pg_collection: ProcessGroupCollection) -> bool:
+    """Check both dense and expert weight-rematerialization axes."""
+    for name in ("gtp_remat", "expt_gtp_remat"):
+        group = getattr(pg_collection, name, None)
+        if group is not None and group.size() > 1:
+            return True
+    return False
+
+
 def get_rng_state(
     data_parallel_random_init: bool,
     ckpt_format: str = "torch_dist",
@@ -534,9 +549,9 @@ def get_rng_state(
     Optionally gathers states across data parallel ranks.
     Returns format depends on checkpoint format.
 
-    For torch_dist format with Expert Parallelism (EP > 1), RNG states are sharded
-    by (PP, TP, DP) dimensions since different EP ranks may have different RNG states.
-    Without EP, states are sharded by (PP, TP) with DP rank as replica_id.
+    For torch_dist with EP or GTP, RNG states are sharded by (PP, TP, DP/CP/GTP)
+    because those ranks have distinct tracker streams. Without EP or GTP, the
+    legacy (PP, TP) layout with DP/CP rank as replica_id is retained.
 
     Args:
         data_parallel_random_init: If True, gathers RNG states across data parallel ranks.
@@ -549,7 +564,7 @@ def get_rng_state(
 
     Returns:
         For torch_dist: A ShardedObject containing the RNG states, sharded by
-            (PP, TP, DP) when EP > 1, or (PP, TP) with DP as replica_id otherwise.
+            (PP, TP, DP/CP/GTP) with EP or GTP, or (PP, TP) with DP as replica_id otherwise.
         For fsdp_dtensor: A dict mapping (pp_rank, tp_rank) to RNG state lists.
     """
     rng_state = {
@@ -560,10 +575,11 @@ def get_rng_state(
         "rng_tracker_states": tensor_parallel.get_cuda_rng_tracker().get_states(),
     }
 
+    dp_cp_group = _get_checkpoint_dp_cp_group(pg_collection)
     rng_state_list = None
-    if torch.distributed.is_initialized() and pg_collection.dp_cp.size() > 1 and data_parallel_random_init:
-        rng_state_list = [None for i in range(pg_collection.dp_cp.size())]
-        torch.distributed.all_gather_object(rng_state_list, rng_state, group=pg_collection.dp_cp)
+    if torch.distributed.is_initialized() and dp_cp_group.size() > 1 and data_parallel_random_init:
+        rng_state_list = [None for i in range(dp_cp_group.size())]
+        torch.distributed.all_gather_object(rng_state_list, rng_state, group=dp_cp_group)
     else:
         rng_state_list = [rng_state]
 
@@ -579,13 +595,11 @@ def get_rng_state(
         # (pp_rank, tp_rank) from their module-local process groups.
         key = f"rng_state.{module_name}" if module_name else "rng_state"
 
-        if ep_size > 1:
-            # Shard RNG by PP, TP, DP when using expert parallelism.
-            # With EP, different EP ranks within the same DP group may have different
-            # RNG states for their respective experts, so DP rank must be part of
-            # the sharding dimensions rather than replica_id.
-            dp_rank = pg_collection.dp_cp.rank()
-            dp_size = pg_collection.dp_cp.size()
+        if ep_size > 1 or _checkpoint_has_gtp_remat(pg_collection):
+            # EP and GTP peers have distinct RNG streams. The full data-distribution
+            # coordinate must be a shard dimension, rather than a replica ID.
+            dp_rank = dp_cp_group.rank()
+            dp_size = dp_cp_group.size()
             rng_state_list = ShardedObject(
                 key,
                 rng_state_list,
@@ -599,7 +613,7 @@ def get_rng_state(
                 rng_state_list,
                 (pp_size, tp_size),
                 (pp_rank, tp_rank),
-                replica_id=pg_collection.dp_cp.rank(),
+                replica_id=dp_cp_group.rank(),
             )
     elif ckpt_format == "fsdp_dtensor":
         pp_rank = pg_collection.pp.rank()
@@ -1331,7 +1345,7 @@ def save_checkpoint(
 
     # Collect cfg, model, RNG.
     sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
-    sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
+    sharded_sd_metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
     if cfg.optimizer.use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
@@ -1471,7 +1485,7 @@ def save_checkpoint(
                 if ckpt_cfg.fully_parallel_save:
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        pg_collection.dp_cp,
+                        _get_checkpoint_dp_cp_group(pg_collection),
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # MegatronMIMO + torch_dist can hit known access-pattern validation failures
@@ -1533,7 +1547,7 @@ def save_checkpoint(
                 state_dict,
                 algo=algo,
                 cached_metadata=cached_metadata,
-                parallelization_group=pg_collection.dp_cp,
+                parallelization_group=_get_checkpoint_dp_cp_group(pg_collection),
             )
             async_save_request = checkpointing_context["local_checkpoint_manager"].save(
                 state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
@@ -2203,6 +2217,11 @@ def _generate_model_state_dict(
         A dictionary containing the model state to be saved.
     """
     state_dict = {}
+    if ckpt_format == "torch_dist" and pg_collection is not None:
+        model_sd_kwargs = dict(model_sd_kwargs or {})
+        metadata = dict(model_sd_kwargs.get("metadata") or {})
+        metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
+        model_sd_kwargs["metadata"] = metadata
 
     if len(model) == 1:
         if ckpt_format == "torch_dist":
@@ -2462,7 +2481,7 @@ def _load_model_weights_from_checkpoint(
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _get_checkpoint_dp_cp_group(pg_collection))
     state_dict = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
@@ -3086,7 +3105,7 @@ def _load_checkpoint_from_path(
 
         if sharded_sd_metadata is None:
             sharded_sd_metadata = {}
-        sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
+        sharded_sd_metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
@@ -3385,14 +3404,14 @@ def _load_checkpoint_from_path(
                         print_rank_0("WARNING: RNG state not found for current TP/PP rank")
                         rng_state_list = next(iter(state_dict["rng_state"].values()))
                     rng_state = (
-                        rng_state_list[pg_collection.dp.rank()]
+                        rng_state_list[_get_checkpoint_dp_cp_group(pg_collection).rank()]
                         if cfg.rng.data_parallel_random_init
                         else rng_state_list[0]
                     )
                 else:
                     # torch_dist format: ShardedObject
                     rng_state = (
-                        state_dict["rng_state"][pg_collection.dp.rank()]
+                        state_dict["rng_state"][_get_checkpoint_dp_cp_group(pg_collection).rank()]
                         if cfg.rng.data_parallel_random_init
                         else state_dict["rng_state"][0]
                     )
@@ -3688,7 +3707,7 @@ def _load_non_persistent_base_checkpoint(
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
             algo=ckpt_cfg.non_persistent_local_ckpt_algo,
-            parallelization_group=pg_collection.dp_cp,
+            parallelization_group=_get_checkpoint_dp_cp_group(pg_collection),
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
@@ -3735,7 +3754,7 @@ def _load_global_dist_base_checkpoint(
     )
     load_strategy = TorchDistLoadShardedStrategy()
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _get_checkpoint_dp_cp_group(pg_collection))
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     validate_sharding_integrity = True

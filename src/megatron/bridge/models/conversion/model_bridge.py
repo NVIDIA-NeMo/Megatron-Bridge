@@ -54,6 +54,7 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.common import ModelConfigOverrideMixin
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight, _get_mapping_shape, _slice_gtp_weight
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     LocalHFParam,
@@ -1497,7 +1498,8 @@ class MegatronModelBridge(
                     continue
 
                 # Check shape compatibility before copying
-                if converted_weights.shape != task.param_weight.shape:
+                expected_shape = _get_mapping_shape(task.param_weight)
+                if converted_weights.shape != expected_shape:
                     # Check whitelist
                     is_whitelisted = False
                     if allowed_mismatched_params:
@@ -1516,11 +1518,12 @@ class MegatronModelBridge(
 
                     raise ValueError(
                         f"Shape mismatch for megatron param {task.mapping.megatron_param}:\n"
-                        f"  Expected shape: {task.param_weight.shape}\n"
+                        f"  Expected shape: {expected_shape}\n"
                         f"  Got shape: {converted_weights.shape}\n"
                         f"  Bridge type: {type(task.mapping).__name__}\n"
                         f"  HF mapping: {task.mapping.hf_param}"
                     )
+                converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
                 if capture_unquantized_state_dict:
                     vp_stage = task.vp_stage if task.vp_stage is not None else 0
                     chunk_key = f"model{vp_stage}"
@@ -1649,6 +1652,7 @@ class MegatronModelBridge(
             hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
             if converted_weights is not None:
+                converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
@@ -1768,7 +1772,7 @@ class MegatronModelBridge(
 
                 megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
             else:
-                megatron_weights = task.param_weight
+                megatron_weights = _gather_gtp_weight(task.param_weight)
             megatron_module = task.megatron_module
             if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
                 megatron_weights = None
