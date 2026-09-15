@@ -171,8 +171,8 @@ def nemotron_35_super_vl_sft_64gpu_gb200_bf16_config() -> ConfigContainer:
 def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigContainer:
     """Return the 128-GB200 BF16 128K CoderForge SFT configuration.
 
-    The text-only CoderForge workload keeps the checkpoint's native one-layer
-    MTP objective while exercising offline sequence packing and context
+    The text-only CoderForge workload uses two prediction depths with a shared
+    MTP block while exercising offline sequence packing and context
     parallelism. TP1/PP2 retains the verified 38/50 pipeline balance, CP32
     leaves 4K tokens per rank, and EP64 shards one pipeline stage across one
     64-GPU NVLink domain when the two stages receive topology-aligned ranks.

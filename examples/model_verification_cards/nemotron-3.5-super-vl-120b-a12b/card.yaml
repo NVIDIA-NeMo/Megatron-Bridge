@@ -3,9 +3,13 @@
 
 title: nemotron_3_5_super_vl_120b_a12b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  The recorded results below used one MTP prediction depth. Verification is
+  being refreshed for the corrected two-depth shared-block configuration;
+  these historical results do not verify that new training objective.
+  Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
   uses DataComp image-caption samples, natural dropless expert routing, and a
   learned vision-pretrained checkpoint; both 120-step runs and their final
   checkpoints are verified. The H100 and GB200 workloads use different
@@ -19,7 +23,8 @@ summary: >
   dynamic-image inference are verified on four GB200s. SFT, PEFT, and
   checkpoint resume are verified on both H100 and GB200. The training recipes
   reuse the Nemotron Omni image/video stack without audio and retain the
-  checkpoint's separate temporal embedder and one-layer MTP configuration.
+  checkpoint's separate temporal embedder. The current Bridge represents one
+  serialized HF attention+MoE block as two shared MTP prediction depths.
 verification_index:
   model_level:
     verified:

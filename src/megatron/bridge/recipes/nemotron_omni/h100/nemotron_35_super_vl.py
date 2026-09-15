@@ -195,8 +195,8 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
 
     The model and audio-free image/video Energon data path reuse the Nemotron
     Omni stack. The language decoder reuses the measured Nemotron 3 Super
-    TP1/PP2/EP32 HybridEP training stack without replacing this checkpoint's
-    native one-layer MTP or separate temporal video embedder configuration.
+    TP1/PP2/EP32 HybridEP training stack with two MTP prediction depths sharing
+    one attention+MoE block and a separate temporal video embedder.
 
     The Energon shard path must be set with ``dataset.path=<path>``. Samples
     may contain text, images, and videos, but must not contain audio.
