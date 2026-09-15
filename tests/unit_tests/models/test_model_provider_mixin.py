@@ -92,6 +92,31 @@ def test_apply_overrides_rejects_unknown_attributes(provider):
     provider.finalize.assert_not_called()
 
 
+def test_initialize_model_parallel_forwards_gtp_sizes(provider):
+    provider.gtp_weight_remat_size = 2
+    provider.expert_gtp_weight_remat_size = 4
+    with (
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("megatron.bridge.training.gtp.configure_gtp_remat") as configure,
+        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as initialize,
+    ):
+        provider.initialize_model_parallel()
+    configure.assert_called_once_with(provider)
+    assert initialize.call_args.kwargs["gtp_remat_size"] == 2
+    assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 4
+
+
+def test_initialize_model_parallel_preserves_explicit_gtp_overrides(provider):
+    provider.gtp_weight_remat_size = 2
+    with (
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("megatron.bridge.training.gtp.configure_gtp_remat"),
+        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as initialize,
+    ):
+        provider.initialize_model_parallel(gtp_remat_size=4)
+    assert initialize.call_args.kwargs["gtp_remat_size"] == 4
+
+
 @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")
 @patch("megatron.bridge.models.model_provider.get_model")
 @patch("megatron.bridge.models.model_provider.torch.distributed")

@@ -329,6 +329,11 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")
 
+        from megatron.bridge.training.gtp import configure_gtp_remat
+
+        configure_gtp_remat(self)
+        model_parallel_kwargs.setdefault("gtp_remat_size", getattr(self, "gtp_weight_remat_size", 1))
+        model_parallel_kwargs.setdefault("expert_gtp_remat_size", getattr(self, "expert_gtp_weight_remat_size", 1))
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),
             pipeline_model_parallel_size=getattr(self, "pipeline_model_parallel_size", 1),
@@ -555,12 +560,14 @@ class ModelParallelKwargs(TypedDict, total=False):
     """
 
     tensor_model_parallel_size: int
+    tensor_parallel_num_weight_shards: int
     pipeline_model_parallel_size: int
     num_layers_in_first_pipeline_stage: int | None
     num_layers_in_last_pipeline_stage: int | None
     context_parallel_size: int
     expert_model_parallel_size: int
     expert_tensor_parallel_size: int
+    expert_tensor_parallel_num_weight_shards: int
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None

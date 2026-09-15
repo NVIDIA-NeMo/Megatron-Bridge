@@ -191,6 +191,34 @@ checkpoint = CheckpointConfig(
 
 **Important**: When using Megatron FSDP (`use_megatron_fsdp=True`), you must set `ckpt_format="fsdp_dtensor"`. Other formats are not compatible with FSDP's sharded parameter layout. See {doc}`megatron-fsdp` for complete FSDP configuration details.
 
+### Generalized Tensor Parallelism (GTP)
+
+Use `torch_dist` checkpoints for BF16 GTP models with TransformerEngine 2.19 or newer.
+Checkpoint metadata and fully parallel save/load include the GTP rematerialization
+axis. RNG checkpoint entries preserve distinct streams on dense and expert GTP ranks.
+
+HF import splits each mapped TP-local tensor into its stored GTP row shard. HF export
+gathers those rows and removes alignment padding before applying the existing TP/EP/PP
+mappings. Use `AutoBridge.export_hf_weights()` or `save_hf_weights()` for this export;
+the local HF parameter-view API cannot describe the extra GTP shard axis.
+
+When loading a native GTP checkpoint with `load_megatron_model()`, pass `mp_overrides`
+with the saved dense/expert TP sizes and `tensor_parallel_num_weight_shards` /
+`expert_tensor_parallel_num_weight_shards`. Changing that weight-sharding topology is
+rejected because the current Megatron-Core SwiGLU checkpoint layout can reorder
+gate/up rows. To change layouts, export HF weights from the original topology first,
+then import the HF weights into the new topology.
+
+The focused two-GPU regression covers exact BF16 HF round-trips and model/RNG resume,
+with fully parallel checkpoint I/O enabled and disabled:
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=2 -m pytest \
+  tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py -q
+```
+
+This coverage does not validate native MXFP8, Muon optimizer state, or dataloader resume.
+
 ## Performance Optimizations
 
 | Parameter | Type | Default | Description |

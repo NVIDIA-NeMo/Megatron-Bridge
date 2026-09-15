@@ -253,6 +253,29 @@ class TestTemporaryDistributedContext:
 class TestGetOrInitializePgCollection:
     """Test shared model-parallel process-group setup for Bridge model configs."""
 
+    def test_initializes_gtp_groups(self):
+        model_cfg = SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=1,
+            gtp_weight_remat_size=2,
+            expert_gtp_weight_remat_size=4,
+        )
+        with (
+            patch("megatron.bridge.training.gtp.configure_gtp_remat") as configure,
+            patch("megatron.bridge.training.model_load_save.parallel_state") as parallel_state,
+            patch("megatron.bridge.training.model_load_save.ProcessGroupCollection"),
+            patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
+        ):
+            parallel_state.is_initialized.return_value = False
+            model_load_save._get_or_initialize_pg_collection(model_cfg)
+        configure.assert_called_once_with(model_cfg)
+        assert parallel_state.initialize_model_parallel.call_args.kwargs["gtp_remat_size"] == 2
+        assert parallel_state.initialize_model_parallel.call_args.kwargs["expert_gtp_remat_size"] == 4
+
     @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
     @patch("megatron.bridge.training.model_load_save.torch.cuda.device_count", return_value=1)
     @patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True)
@@ -289,6 +312,8 @@ class TestGetOrInitializePgCollection:
             context_parallel_size=1,
             expert_model_parallel_size=1,
             expert_tensor_parallel_size=1,
+            gtp_remat_size=1,
+            expert_gtp_remat_size=1,
         )
         mock_seed.assert_called_once_with(0)
         mock_pg_collection.use_mpu_process_groups.assert_called_once_with()
@@ -320,6 +345,25 @@ class TestGetOrInitializePgCollection:
 
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
+
+    @pytest.mark.parametrize("preserve_gtp", [False, True])
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_gtp_checkpoint_requires_matching_weight_topology(self, load_config, build_model, preserve_gtp):
+        cfg = Mock()
+        cfg.tensor_model_parallel_size = 1
+        cfg.expert_tensor_parallel_size = 1
+        cfg.tensor_parallel_num_weight_shards = 2
+        cfg.gtp_weight_remat_size = 1  # Derived field has not been finalized after deserialization.
+        cfg.expert_gtp_weight_remat_size = 1
+        load_config.return_value = (cfg, None)
+        if preserve_gtp:
+            load_megatron_model("/ckpt", mp_overrides={"tensor_parallel_num_weight_shards": 2})
+            build_model.assert_called_once()
+        else:
+            with pytest.raises(ValueError, match="Resharding a GTP checkpoint"):
+                load_megatron_model("/ckpt")
+            build_model.assert_not_called()
 
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
@@ -903,6 +947,10 @@ class TestLoadMegatronModel:
         # Prepare a config object with non-default values that should be reset
         cfg = Mock()
         cfg.tensor_model_parallel_size = 8
+        cfg.tensor_parallel_num_weight_shards = 8
+        cfg.expert_tensor_parallel_num_weight_shards = 2
+        cfg.gtp_weight_remat_size = 1
+        cfg.expert_gtp_weight_remat_size = 1
         cfg.pipeline_model_parallel_size = 4
         cfg.context_parallel_size = 2
         cfg.expert_model_parallel_size = 2
@@ -922,6 +970,10 @@ class TestLoadMegatronModel:
 
         # After resets (no overrides), the following should hold
         assert cfg.tensor_model_parallel_size == 1
+        assert cfg.tensor_parallel_num_weight_shards is None
+        assert cfg.expert_tensor_parallel_num_weight_shards is None
+        assert cfg.gtp_weight_remat_size == 1
+        assert cfg.expert_gtp_weight_remat_size == 1
         assert cfg.pipeline_model_parallel_size == 1
         assert cfg.context_parallel_size == 1
         assert cfg.expert_model_parallel_size == 1
@@ -1017,6 +1069,8 @@ class TestLoadMegatronModel:
 
         overrides = {
             "tensor_model_parallel_size": 2,
+            "tensor_parallel_num_weight_shards": 4,
+            "expert_tensor_parallel_num_weight_shards": 2,
             "pipeline_model_parallel_size": 3,
             "sequence_parallel": True,
             "virtual_pipeline_model_parallel_size": 4,
@@ -1025,6 +1079,8 @@ class TestLoadMegatronModel:
         _ = load_megatron_model("/ckpt", mp_overrides=overrides)
 
         assert cfg.tensor_model_parallel_size == 2
+        assert cfg.tensor_parallel_num_weight_shards == 4
+        assert cfg.expert_tensor_parallel_num_weight_shards == 2
         assert cfg.pipeline_model_parallel_size == 3
         assert cfg.sequence_parallel is True
         assert cfg.virtual_pipeline_model_parallel_size == 4
