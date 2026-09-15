@@ -6,7 +6,7 @@ import megatron.bridge.training.dpo_step as dpo_step_module
 from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 from megatron.bridge.data.datasets.preference import preference_collate_fn
 from megatron.bridge.training.dpo import DPOLossConfig
-from megatron.bridge.training.dpo_step import _SEQ_DIM_KEYS, dpo_forward_step, trim_dpo_batch_padding
+from megatron.bridge.training.dpo_step import _SEQ_DIM_KEYS, forward_step, trim_dpo_batch_padding
 
 
 def make_pair_record(pair_id: int, ctx_len: int, chosen_comp: int, rejected_comp: int) -> dict:
@@ -83,7 +83,7 @@ def test_dpo_forward_step_wires_forward_and_loss_closure(monkeypatch):
         forward_calls.append((input_ids, position_ids, attention_mask, labels))
         return torch.full(labels.shape, 0.5)
 
-    output_tensor, loss_closure = dpo_forward_step(make_state(), iter([batch]), fake_model)
+    output_tensor, loss_closure = forward_step(make_state(), iter([batch]), fake_model)
 
     assert forward_calls == [(batch["tokens"], batch["position_ids"], None, batch["labels"])]
     loss, num_live_pairs, metrics = loss_closure(output_tensor)

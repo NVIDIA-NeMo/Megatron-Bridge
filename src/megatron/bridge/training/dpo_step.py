@@ -103,7 +103,7 @@ def dpo_loss_with_checks(
     return loss, num_live_pairs, metrics
 
 
-def dpo_forward_step(
+def forward_step(
     state: "GlobalState",
     data_iterator: Iterator[dict[str, torch.Tensor]],
     model: "GPTModel",
