@@ -35,7 +35,7 @@ ARCH=$(uname -m)
 if [ "$ARCH" = "amd64" ]; then ARCH="x86_64"; fi
 if [ "$ARCH" = "aarch64" ]; then ARCH="sbsa"; fi
 
-# Extract year.major for package name (e.g., "2026.1.0.1085" -> "nsight-systems-2026.1")
+# Extract year.major for package name (e.g., "2026.5.1" -> "nsight-systems-2026.5")
 NSYS_YEAR_MAJOR=$(echo "$NSYS_VERSION" | cut -d. -f1,2)
 NSYS_PKG="nsight-systems-${NSYS_YEAR_MAJOR}"
 

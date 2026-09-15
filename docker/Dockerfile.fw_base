@@ -92,7 +92,7 @@ FROM fw_dep_builder AS fw_toolkit_builder
 ##############################################################################
 
 ARG REINSTALL_NSYS
-ARG NSYS_VERSION
+ARG NSYS_VERSION=2026.5.1
 ARG REINSTALL_CUDNN
 ARG CUDNN_VERSION
 ENV NSIGHT_SYSTEMS_VERSION $NSYS_VERSION
