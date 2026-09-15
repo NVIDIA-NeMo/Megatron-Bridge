@@ -132,7 +132,7 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a
+      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -173,7 +173,7 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522
+      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
         cuda_graph:
@@ -213,7 +213,7 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981
+      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -255,7 +255,7 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981
+      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
@@ -398,7 +398,7 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: b1d2932f32839aa5244edbb342fefc4a88714068
+      bridge_commit: b1d2932f32839aa5244edbb342fefc4a88714068  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
@@ -438,7 +438,7 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981
+      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
@@ -479,7 +479,7 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a
+      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
@@ -524,7 +524,7 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522
+      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
