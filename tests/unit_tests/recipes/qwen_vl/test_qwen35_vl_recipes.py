@@ -1293,9 +1293,7 @@ class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
         "qwen35_vl_397b_a17b_sft_config",
     ],
 )
-def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(
-    monkeypatch: pytest.MonkeyPatch, recipe_name: str
-):
+def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
     """Qwen3.5-VL library recipes fuse the GatedDeltaNet pre-gated-delta-rule path.
 
     ``_enable_gdn_conv_fusion`` is applied from ``_qwen35_vl_provider``, the single
@@ -1315,9 +1313,7 @@ def test_qwen35_vl_gdn_conv_fusion_skipped_on_older_core(monkeypatch: pytest.Mon
     Assigning an unknown field would not raise -- it would silently create an
     unused attribute, leaving the recipe looking enabled while running unfused.
     """
-    patch_recipe_module_global(
-        monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridgeNoGdnFusion
-    )
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridgeNoGdnFusion)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 

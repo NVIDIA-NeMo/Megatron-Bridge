@@ -241,4 +241,3 @@ def test_qwen35_vl_perf_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.Monke
         pytest.skip("Megatron-Core does not expose gdn_pre_gated_delta_rule_fusion")
 
     assert config.model.gdn_pre_gated_delta_rule_fusion is True
-

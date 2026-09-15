@@ -53,9 +53,7 @@ def _enable_gdn_conv_fusion(model) -> None:
     silently create an unused attribute, leaving the recipe looking enabled
     while running unfused -- so the guard is deliberate.
     """
-    if hasattr(type(model), "gdn_pre_gated_delta_rule_fusion") or hasattr(
-        model, "gdn_pre_gated_delta_rule_fusion"
-    ):
+    if hasattr(type(model), "gdn_pre_gated_delta_rule_fusion") or hasattr(model, "gdn_pre_gated_delta_rule_fusion"):
         model.gdn_pre_gated_delta_rule_fusion = True
 
 
