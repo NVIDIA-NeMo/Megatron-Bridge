@@ -561,6 +561,54 @@ class TestGetBatch:
         assert torch.equal(inner_model.forward_kwargs["labels"], labels)
         assert state._flops_seqlen_sum == 0
 
+    def test_forward_common_passes_loss_mask_to_model(self, monkeypatch):
+        """The model must receive loss_mask so MCore's MTP loss excludes padding / masked prompt tokens.
+
+        Without it ``process_mtp_loss`` falls back to ``torch.ones_like(labels)`` and the MTP loss
+        and gradient are computed over every position, while the LM loss stays masked in loss_func.
+        """
+        _set_distributed_initialized(monkeypatch)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
+            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+        )
+        tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4, 1, 1]]))
+        labels = _as_nocuda(torch.tensor([[2, 3, 4, 1, 1, 1]]))
+        # answer-only SFT sample padded with pad id 1: only positions 2-3 carry loss
+        loss_mask = _as_nocuda(torch.tensor([[0.0, 0.0, 1.0, 1.0, 0.0, 0.0]]))
+        position_ids = _as_nocuda(torch.arange(6).unsqueeze(0))
+        batch = {
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": None,
+            "position_ids": position_ids,
+        }
+        model = _RecordingModel()
+        state = Mock()
+        state.cfg = _make_cfg(mtp_num_layers=1)
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 1,
+                "overlap_moe_expert_parallel_comm": False,
+            },
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
+
+        output, returned_loss_mask = _forward_step_common(state, _Iterator(batch), model)
+
+        assert torch.equal(output, torch.tensor(1.0))
+        assert model.forward_kwargs is not None
+        assert "loss_mask" in model.forward_kwargs
+        assert torch.equal(model.forward_kwargs["loss_mask"], loss_mask)
+        assert torch.equal(returned_loss_mask, loss_mask)
+
     def test_forward_common_uses_model_chunk_vp_stage_instead_of_global_vpp_rank(self, monkeypatch):
         """The model chunk VP stage must override stale global VPP rank state."""
         _set_last_pp_stage(monkeypatch)
@@ -679,6 +727,7 @@ class TestGetBatch:
             position_ids=position_ids,
             attention_mask=None,
             labels=labels,
+            loss_mask=loss_mask,
             packed_seq_params=sentinel_packed_seq_params,
         )
         get_packed_seq_params_mock.assert_called_once_with(packed_seq_metadata)
