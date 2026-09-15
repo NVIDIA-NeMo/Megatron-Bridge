@@ -759,12 +759,15 @@ def get_gemma4_layer_spec(
         from megatron.core.models.backends import get_backend
 
         backend = get_backend("transformer_engine")
-        # Gemma-4 needs its own TE attention for the per-layer sliding-window handling; this
-        # mirrors what gemma4_block_spec does for the MoE layers.
-        core_attention = Gemma4TEDotProductAttention
     else:
         backend = LocalSpecProvider()
-        core_attention = backend.core_attention()
+    # No Gemma-4-specific core attention here. Gemma4TEDotProductAttention exists to set the
+    # per-layer window from the MoE config field interleaved_attn_pattern, which the dense
+    # provider does not have; it uses window_attn_skip_freq instead, and MCore's own
+    # TEDotProductAttention already applies that per layer (extensions/transformer_engine.py,
+    # is_layer_window_attention). Using the MoE class here raises AttributeError on
+    # interleaved_attn_pattern, and duplicating the logic would risk the two disagreeing.
+    core_attention = backend.core_attention()
 
     submodules = Gemma4DenseTransformerLayerSubmodules(
         input_layernorm=RMSNorm,

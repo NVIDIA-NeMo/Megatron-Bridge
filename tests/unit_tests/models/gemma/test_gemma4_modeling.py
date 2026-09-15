@@ -179,9 +179,11 @@ class TestGemma4LayerSpec:
         local spec ever gained a CP-capable attention, that guard should be revisited rather
         than left in place.
         """
+        from megatron.core.extensions.transformer_engine import TEDotProductAttention
+
         core_attn = get_gemma4_layer_spec().submodules.self_attention.submodules.core_attention
 
-        assert core_attn is not Gemma4TEDotProductAttention
+        assert core_attn is not TEDotProductAttention
 
     def test_get_gemma4_layer_spec_te_uses_te_attention(self):
         """use_transformer_engine=True must route attention through TE.
@@ -190,6 +192,10 @@ class TestGemma4LayerSpec:
         global layers reach a backend that can serve them. Asserting on the module identity
         keeps this honest: a spec that silently fell back to the local attention would still
         build, and would then fail only once CP was switched on.
+
+        MCore's own TEDotProductAttention is the right class here, not
+        Gemma4TEDotProductAttention: the latter reads the MoE-only interleaved_attn_pattern,
+        while MCore already applies the dense provider's window_attn_skip_freq per layer.
         """
         pytest.importorskip("transformer_engine")
 
@@ -198,7 +204,9 @@ class TestGemma4LayerSpec:
 
         assert layer_spec.module is Gemma4DenseTransformerLayer
         assert attn.module is Gemma4DenseSelfAttention
-        assert attn.submodules.core_attention is Gemma4TEDotProductAttention
+        from megatron.core.extensions.transformer_engine import TEDotProductAttention
+
+        assert attn.submodules.core_attention is TEDotProductAttention
 
     def test_double_wide_mlp_only_applies_to_shared_kv_layers(self, monkeypatch):
         mlp_builders = []
