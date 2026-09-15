@@ -20,6 +20,7 @@ modules with adapters in Parameter-Efficient Fine-Tuning scenarios.
 """
 
 import os
+import weakref
 from unittest.mock import Mock, patch
 
 import pytest
@@ -392,6 +393,90 @@ class TestAdapterWrapper:
                 raise RuntimeError("boom")
 
         assert torch.allclose(model(x), enabled_output, atol=1e-6)
+
+    def test_peft_disable_adapter_context_manager_preserves_disabled_state(self, mock_linear_simple, simple_adapter):
+        """Test PEFT.disable_adapter preserves an already disabled model."""
+        peft = DummyPEFT()
+        model = AdapterModel(mock_linear_simple, simple_adapter)
+        x = torch.randn(5, 10)
+        base_output, _ = mock_linear_simple(x)
+        model.lora.disable_adapter_layers()
+
+        with peft.disable_adapter(model):
+            assert torch.allclose(model(x), base_output, atol=1e-6)
+
+        assert torch.allclose(model(x), base_output, atol=1e-6)
+
+    def test_lora_linear_combines_outputs_without_modifying_branch_storage(self, mock_linear_simple, simple_adapter):
+        """Combining the LoRA branches must not modify either branch output."""
+        wrapper = LoRALinear(mock_linear_simple, simple_adapter)
+        base_outputs = []
+        adapter_outputs = []
+        mock_linear_simple.register_forward_hook(lambda _module, _inputs, output: base_outputs.append(output[0]))
+        simple_adapter.register_forward_hook(lambda _module, _inputs, output: adapter_outputs.append(output))
+        x = torch.randn(5, 10, requires_grad=True)
+
+        output, _ = wrapper(x)
+        output.square().sum().backward()
+
+        assert output.data_ptr() != base_outputs[0].data_ptr()
+        assert output.data_ptr() != adapter_outputs[0].data_ptr()
+        assert x.grad is not None
+        assert torch.isfinite(x.grad).all()
+        assert mock_linear_simple.weight.grad is not None
+        assert simple_adapter.weight.grad is not None
+
+    def test_lora_linear_does_not_modify_custom_autograd_views(self):
+        """Both linear branches can return views that forbid in-place updates."""
+
+        base_output_refs = []
+        base_storage_refs = []
+
+        class ViewOutput(torch.autograd.Function):
+            """Return a custom-autograd view like grouped linear."""
+
+            @staticmethod
+            def forward(ctx, tensor):
+                """Return a view of the custom function input."""
+                return tensor.view_as(tensor)
+
+            @staticmethod
+            def backward(ctx, grad_output):
+                """Propagate the view gradient."""
+                return grad_output
+
+        class ViewLinear(MockLinear):
+            """Mock grouped linear whose custom autograd function returns a view."""
+
+            def forward(self, x, *args, **kwargs):
+                """Return a Megatron-style tuple containing a custom-autograd view."""
+                output, bias = super().forward(x, *args, **kwargs)
+                output = ViewOutput.apply(output)
+                base_output_refs.append(weakref.ref(output))
+                base_storage_refs.append(weakref.ref(output.untyped_storage()))
+                return output, bias
+
+        class ViewAdapter(nn.Linear):
+            """Mock adapter whose output projection returns a custom-autograd view."""
+
+            def forward(self, x):
+                """Return a custom-autograd view of the adapter output."""
+                assert base_output_refs[-1]() is None
+                assert base_storage_refs[-1]() is None
+                return ViewOutput.apply(super().forward(x))
+
+        base = ViewLinear("simple")
+        adapter = ViewAdapter(10, 10)
+        wrapper = LoRALinear(base, adapter)
+        x = torch.randn(5, 10, requires_grad=True)
+
+        output, _ = wrapper(x)
+        output.square().sum().backward()
+
+        assert x.grad is not None
+        assert torch.isfinite(x.grad).all()
+        assert base.weight.grad is not None
+        assert adapter.weight.grad is not None
 
     def test_peft_enable_disable_adapter_layers_manual(self, mock_linear_simple, simple_adapter):
         """Test manual adapter enable/disable via PEFT helpers."""

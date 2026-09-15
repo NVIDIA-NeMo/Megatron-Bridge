@@ -175,8 +175,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--nodes must be at least 1.")
     if args.gpus_per_node is None or args.gpus_per_node < 1:
         raise ValueError("--gpus-per-node is required and must be at least 1.")
-    if args.tasks_per_node is not None and args.tasks_per_node < 1:
-        raise ValueError("--tasks-per-node must be at least 1.")
+    if args.tasks_per_node is not None and not 1 <= args.tasks_per_node <= args.gpus_per_node:
+        raise ValueError("--tasks-per-node must be between 1 and --gpus-per-node.")
     if args.cpus_per_task is not None and args.cpus_per_task < 1:
         raise ValueError("--cpus-per-task must be at least 1.")
     if any(not value.strip() for value in args.srun_args):

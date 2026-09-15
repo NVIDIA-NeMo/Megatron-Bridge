@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import GlmMoeDsaForCausalLM
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -309,3 +312,27 @@ class GLM5Bridge(MegatronModelBridge):
                 )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: str | dict[str, str],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Dequantize block-scaled FP8 checkpoint weights during import."""
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        scale_key = param_name + "_scale_inv"
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))

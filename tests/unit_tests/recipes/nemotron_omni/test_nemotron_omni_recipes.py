@@ -427,6 +427,7 @@ def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_process
     assert cfg.dataset.enable_in_batch_packing is False
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.hf_processor_path == _TEST_HF_ID
+    assert cfg.dataset.task_encoder.hf_processor_revision == _PUBLIC_HF_REVISION
     assert cfg.dataset.task_encoder.max_audio_duration == 10.0
     assert cfg.dataset.task_encoder.num_mel_bins == 128
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
@@ -447,6 +448,7 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, EnergonDatasetConfig)
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.hf_processor_revision == _PUBLIC_HF_REVISION
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.dataset.task_encoder.temporal_video_resize_mode == "processor"
     assert cfg.peft is not None

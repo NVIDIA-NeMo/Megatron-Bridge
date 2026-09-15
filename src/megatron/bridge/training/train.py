@@ -429,6 +429,8 @@ def train(
 
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
+            if global_state.train_state.step == start_iteration + 1:
+                start_iteration = global_state.train_state.step
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             handle_profiling_stop(
                 config.profiling,
@@ -545,6 +547,18 @@ def train(
             )
         if should_exit:
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
+            if (
+                prof_config is not None
+                and global_state.train_state.step < prof_config.profile_step_end
+                and (prof is not None or nsys_nvtx_context is not None)
+            ):
+                handle_profiling_stop(
+                    prof_config,
+                    prof_config.profile_step_end,
+                    torch.distributed.get_rank(),
+                    prof,
+                    nsys_nvtx_context,
+                )
             break
 
         # Enable forward pre-hooks after first set of forward and backward passes.
@@ -796,10 +810,10 @@ def train(
     if pre_hook_enabled:
         disable_forward_pre_hook(model, optimizer=optimizer)
 
-    # This will finalize all unfinalized async request and terminate
-    # a persistent async worker if persistent ckpt worker is enabled
+    # Finalize pending saves here, but leave manager termination to the outer
+    # lifecycle on normal completion or the exit branch below.
     fault_tolerance.on_checkpointing_start(global_state)
-    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=True)
+    checkpoint_manager.finalize_async_saves(state=global_state, blocking=True, terminate=False)
     fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
     # Shutdown NVRx straggler detection if enabled
@@ -1472,7 +1486,7 @@ def checkpoint_and_decide_exit(
             callback_manager=callback_manager,
             module_name=module_name,
         )
-        saved_checkpoint = True
+        saved_checkpoint = state.cfg.checkpoint.non_persistent_ckpt_type == "global"
 
     # Exit based on duration.
     if state.cfg.train.exit_duration_in_mins:
@@ -1560,6 +1574,9 @@ def _finish_train(global_state: GlobalState, checkpoint_manager: CheckpointManag
         global_state._comet_logger.end()
 
     _delete_cuda_graphs(None)
+    if global_state._signal_handler is not None:
+        global_state._signal_handler.release()
+        global_state._signal_handler = None
     destroy_global_state()
 
 

@@ -38,11 +38,12 @@ from tests.functional_tests.utils import (
 
 def _to_legacy_provider(model_config: BridgeGPTModelConfig) -> GPTModelProvider:
     """Adapt a builder config to the legacy provider required by distillation."""
-    provider_fields = {field.name for field in fields(GPTModelProvider)}
     provider_kwargs = {
-        field_name: getattr(model_config, field_name)
-        for field_name in provider_fields
-        if field_name not in {"transformer_layer_spec", "_pg_collection"} and hasattr(model_config, field_name)
+        field.name: getattr(model_config, field.name)
+        for field in fields(GPTModelProvider)
+        if field.init
+        and field.name not in {"transformer_layer_spec", "_pg_collection"}
+        and hasattr(model_config, field.name)
     }
     metadata = model_config.extra_checkpoint_metadata or {}
     provider_kwargs["hf_model_id"] = metadata.get("hf_model_id")

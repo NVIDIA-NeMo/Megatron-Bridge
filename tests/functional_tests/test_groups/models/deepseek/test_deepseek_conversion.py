@@ -42,7 +42,9 @@ HF_DEEPSEEK_V3_TOY_MODEL_CONFIG = {
     "num_attention_heads": 32,
     "num_experts_per_tok": 4,
     "num_hidden_layers": 2,
-    "num_key_value_heads": 4,
+    # DeepSeek MLA expands compressed KV latents to every attention head before
+    # dispatching to the HF attention backend, so it uses MHA rather than GQA.
+    "num_key_value_heads": 32,
     "num_nextn_predict_layers": 0,
     "q_lora_rank": 512,
     "topk_group": 2,

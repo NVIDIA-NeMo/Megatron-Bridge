@@ -15,11 +15,15 @@
 from typing import Any, Dict, List, Optional
 
 import torch
-from megatron.core.inference.config import MediaPromptSpec, MultimodalPromptConfig
+from megatron.core.inference import config as mcore_inference_config
 from megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper import (
     AbstractModelInferenceWrapper,
 )
 from megatron.core.inference_params import InferenceParams
+
+
+_MEDIA_PROMPT_SPEC = getattr(mcore_inference_config, "MediaPromptSpec", None)
+_MULTIMODAL_PROMPT_CONFIG = getattr(mcore_inference_config, "MultimodalPromptConfig", None)
 
 
 def _to_cuda_optional(t: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
@@ -43,18 +47,15 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
     supports_video = False
     supports_audio = False
 
-    multimodal_prompt_config = MultimodalPromptConfig(
-        image_spec=MediaPromptSpec(
-            model_token="<|image_pad|>",
-            prefix="<|vision_start|>",
-            suffix="<|vision_end|>",
-        ),
-        video_spec=MediaPromptSpec(
-            model_token="<|video_pad|>",
-            prefix="<|vision_start|>",
-            suffix="<|vision_end|>",
-        ),
-    )
+    if _MEDIA_PROMPT_SPEC is not None and _MULTIMODAL_PROMPT_CONFIG is not None:
+        multimodal_prompt_config = _MULTIMODAL_PROMPT_CONFIG(
+            image_spec=_MEDIA_PROMPT_SPEC(
+                model_token="<|image_pad|>", prefix="<|vision_start|>", suffix="<|vision_end|>"
+            ),
+            video_spec=_MEDIA_PROMPT_SPEC(
+                model_token="<|video_pad|>", prefix="<|vision_start|>", suffix="<|vision_end|>"
+            ),
+        )
 
     def __init__(self, model, inference_context=None):
         super().__init__(model, inference_context=inference_context)

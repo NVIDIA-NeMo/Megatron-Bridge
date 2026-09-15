@@ -27,7 +27,6 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 from torch import nn
@@ -129,6 +128,16 @@ class _RecordingProjection(nn.Module):
     def forward(self, hidden_states):
         self.input_shape = hidden_states.shape
         return hidden_states * 2
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
 
 
 @dataclass
@@ -304,7 +313,7 @@ def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config(
     provider._pg_collection = pg_collection
 
     def create_model(**kwargs):
-        copied_config = AttentionLayerConfig.from_config(kwargs["language_transformer_config"])
+        copied_config = _copy_attention_config(kwargs["language_transformer_config"])
         assert copied_config._pg_collection is None
         return Mock()
 

@@ -14,6 +14,8 @@
 
 """Unit tests for flop_utils module."""
 
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -22,6 +24,7 @@ import pytest
 import torch
 
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.flop_utils import (
     GlobalFlopsRuntimeStats,
     _lora_seq_stats_cache,
@@ -710,6 +713,39 @@ class TestGDNLayerFlops:
         )
         defaults.update(overrides)
         return MockModelConfig(**defaults)
+
+    def test_flop_utils_imports_without_mcore_gdn_helper(self) -> None:
+        code = """
+import importlib
+import sys
+
+from megatron.core.models.gpt import experimental_attention_variant_module_specs
+from megatron.bridge.training import utils
+
+import megatron.bridge.training.utils.flop_utils
+
+experimental_attention_variant_module_specs.__dict__.pop("is_gated_delta_net_variant", None)
+del sys.modules["megatron.bridge.training.utils.flop_utils"]
+del utils.flop_utils
+flop_utils = importlib.import_module("megatron.bridge.training.utils.flop_utils")
+
+assert flop_utils._mcore_is_gated_delta_net_variant is None
+assert flop_utils._is_gated_delta_net_variant("gdn") is True
+"""
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        ("variant", "expected"),
+        [("gated_delta_net", True), ("gdn", True), ("gdn2", True), ("mamba", False), (None, False)],
+    )
+    def test_gdn_variant_fallback_supports_older_mcore_dev(
+        self, monkeypatch: pytest.MonkeyPatch, variant: str | None, expected: bool
+    ) -> None:
+        monkeypatch.setattr(flop_utils, "_mcore_is_gated_delta_net_variant", None)
+
+        assert flop_utils._is_gated_delta_net_variant(variant) is expected
 
     def test_gdn_flops_differ_from_pure_attention(self):
         """GDN-enabled config should produce different FLOPs than pure-attention baseline."""

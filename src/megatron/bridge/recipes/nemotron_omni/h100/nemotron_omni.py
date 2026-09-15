@@ -42,7 +42,8 @@ _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowl
 def _make_nemotron_omni_energon_dataset(
     micro_batch_size: int,
     *,
-    hf_processor_path: str,
+    hf_processor_path: str = _DEFAULT_HF_PATH,
+    hf_processor_revision: str | None = _DEFAULT_HF_REVISION,
 ) -> EnergonDatasetConfig:
     """Create the declarative temporal-video Energon config used by Omni recipes."""
     return EnergonDatasetConfig(
@@ -52,6 +53,7 @@ def _make_nemotron_omni_energon_dataset(
         num_workers=2,
         task_encoder=NemotronOmniEnergonTaskEncoderConfig(
             hf_processor_path=hf_processor_path,
+            hf_processor_revision=hf_processor_revision,
             max_audio_duration=10.0,
             num_mel_bins=128,
             visual_keys=("pixel_values",),

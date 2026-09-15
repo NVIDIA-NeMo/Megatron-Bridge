@@ -602,6 +602,9 @@ class NemotronOmniModel(MegatronModule):
         """
 
         patch_features = 3 * self.patch_dim * self.patch_dim
+
+        if images.ndim == 2 and images.shape[-1] == patch_features:
+            return images.unsqueeze(0)
         if images.ndim == 3 and images.shape[0] == 1:
             if images.shape[-1] != patch_features:
                 raise ValueError(

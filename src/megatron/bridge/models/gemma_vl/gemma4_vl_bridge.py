@@ -49,6 +49,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
 )
 from megatron.bridge.models.gemma.gemma4_bridge import (
     Gemma4Bridge,
+    _attention_config_value,
     _Gemma4QKVMapping,
     _infer_attn_pattern,
 )
@@ -99,6 +100,12 @@ class Gemma4VLBridge(Gemma4Bridge):
             return self._build_moe_provider(text_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        provider_kwargs["num_query_groups"] = _attention_config_value(
+            text_config,
+            "sliding_attention",
+            "num_key_value_heads",
+            4,
+        )
         provider = Gemma4VLModelProvider(**provider_kwargs)
 
         provider.window_size = getattr(text_config, "sliding_window", 1024)
@@ -107,13 +114,25 @@ class Gemma4VLBridge(Gemma4Bridge):
             rope_theta_from_hf(text_config),
         )
 
-        head_dim = getattr(text_config, "head_dim", 256)
+        head_dim = _attention_config_value(text_config, "sliding_attention", "head_dim", 256)
         provider.softmax_scale = 1.0
         provider.kv_channels = head_dim
         provider.qk_layernorm = True
 
-        provider.global_head_dim = getattr(text_config, "global_head_dim", 512)
-        provider.num_global_key_value_heads = getattr(text_config, "num_global_key_value_heads", 2)
+        provider.global_head_dim = _attention_config_value(
+            text_config,
+            "full_attention",
+            "head_dim",
+            512,
+            legacy_field_name="global_head_dim",
+        )
+        provider.num_global_key_value_heads = _attention_config_value(
+            text_config,
+            "full_attention",
+            "num_key_value_heads",
+            2,
+            legacy_field_name="num_global_key_value_heads",
+        )
         provider.attention_k_eq_v = getattr(text_config, "attention_k_eq_v", False)
 
         rope_params = getattr(text_config, "rope_parameters", {})

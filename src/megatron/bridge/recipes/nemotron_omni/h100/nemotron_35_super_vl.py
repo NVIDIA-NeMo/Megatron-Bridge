@@ -215,6 +215,7 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset = _make_nemotron_omni_energon_dataset(
         cfg.train.micro_batch_size,
         hf_processor_path=NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+        hf_processor_revision=NEMOTRON_35_SUPER_VL_HF_REVISION,
     )
     return _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
 
@@ -303,6 +304,7 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
     cfg.dataset = _make_nemotron_omni_energon_dataset(
         cfg.train.micro_batch_size,
         hf_processor_path=NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+        hf_processor_revision=NEMOTRON_35_SUPER_VL_HF_REVISION,
     )
     cfg.dataset.pad_to_max_length = True
     cfg.dataset.do_validation = False
