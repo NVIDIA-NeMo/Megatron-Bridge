@@ -132,16 +132,17 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
-def test_deepseek_v4_flash_128gpu_vr200_fp8mx_uses_grouped_tensor_fallback() -> None:
+def test_deepseek_v4_flash_128gpu_vr200_fp8mx_disables_clamp_for_cutedsl() -> None:
     vr200_cfg = deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config()
     gb300_cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
 
-    assert vr200_cfg.model.use_transformer_engine_op_fuser is False
+    assert vr200_cfg.model.activation_func_clamp_value is None
+    assert vr200_cfg.model.use_transformer_engine_op_fuser is True
     assert vr200_cfg.model.moe_use_grouped_tensor is True
-    assert vr200_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 0
+    assert vr200_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert is_full_iteration_cuda_graph(vr200_cfg.model)
 
-    gb300_cfg.model.use_transformer_engine_op_fuser = False
-    gb300_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 0
+    gb300_cfg.model.activation_func_clamp_value = None
     assert vr200_cfg == gb300_cfg
 
 

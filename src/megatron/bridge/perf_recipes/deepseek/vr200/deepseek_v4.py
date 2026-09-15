@@ -24,8 +24,10 @@ def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× VR200, MXFP8 (alias of GB300)."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
 
-    # Rubin's grouped GLU kernel rejects the runtime clamp parameters required by DeepSeek V4.
-    cfg.model.use_transformer_engine_op_fuser = False
+    # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
+    # benchmark-only override that preserves the lower-memory CutDSL fusion and full CUDA graph.
+    cfg.model.activation_func_clamp_value = None
+    cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_use_grouped_tensor = True
 
     # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
@@ -41,7 +43,7 @@ def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 0,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
