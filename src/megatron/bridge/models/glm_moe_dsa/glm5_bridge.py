@@ -145,6 +145,21 @@ class GLM5Bridge(MegatronModelBridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
+        """Convert a GLM-5 provider to an HF config dict without leaking training-only context length.
+
+        The generic ``CONFIG_MAPPING`` maps HF ``max_position_embeddings`` from Megatron ``seq_length``. For a
+        fine-tuned checkpoint that is the *training* sequence length (e.g. 8192), not the model's context
+        capability (1048576 for ``zai-org/GLM-5.2``), and ``conform_config_to_reference`` keeps the
+        Megatron-derived value because the key exists in the reference config. Drop it here so the reference
+        HF config supplies it; when no reference config is available the key is simply absent and transformers
+        falls back to the ``GlmMoeDsaConfig`` default.
+        """
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config.pop("max_position_embeddings", None)
+        return hf_config
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
             # Embed
