@@ -31,6 +31,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
+    from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -708,6 +709,32 @@ class AutoBridge(Generic[MegatronModelT]):
             model = [model]
         return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
+    def get_export_mxfp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask]:
+        """Build native MXFP8 export tasks, including singular grouped-expert weights."""
+        if not isinstance(model, list):
+            model = [model]
+        return self._model_bridge.build_export_mxfp8_tasks(self.hf_pretrained, model)
+
+    def iter_local_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:
+        """Yield local native MXFP8 projections through the public bridge API."""
+        return self._model_bridge.iter_local_mxfp8_params(tasks)
+
+    def iter_local_hf_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalHFParam"]:
+        """Yield local unquantized BF16 parameters as canonical HF views.
+
+        Args:
+            tasks: Reusable tasks from :meth:`get_conversion_tasks` in the
+                deterministic order they should be exported.
+
+        Returns:
+            An iterator over live local parameter views and their shard metadata.
+
+        Raises:
+            ValueError: If a locally owned task is quantized, is not BF16, or
+                cannot be represented without Bridge conversion collectives.
+        """
+        return self._model_bridge.iter_local_hf_params(tasks)
+
     def export_hf_weights(
         self,
         model: list[MegatronModelT],
@@ -866,6 +893,7 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        stack_3d_moe: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -881,6 +909,11 @@ class AutoBridge(Generic[MegatronModelT]):
                 skip before resolving HuggingFace parameter mappings.
             expand_shared_outer: Replicate the shared factor across experts under per-expert
                 names (vLLM 2D ``pack_moe``) instead of a shared ``[1, ...]`` tensor (SGLang).
+                Default ``False``; no effect for non-shared-outer adapters.
+            stack_3d_moe: Emit shared-outer routed-expert LoRA as the two stacked 3D
+                tensors vLLM's 3D-MoE consumer (``FusedMoE3DWithLoRA``) looks up
+                (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
+                down_proj), instead of the per-expert 2D ``pack_moe`` layout.
                 Default ``False``; no effect for non-shared-outer adapters.
 
         Yields:
@@ -899,6 +932,7 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
+            stack_3d_moe=stack_3d_moe,
         )
 
     def save_hf_adapter(
@@ -910,12 +944,14 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        allow_serving_layout: bool = False,
     ) -> None:
         """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
 
         The output directory contains ``adapter_config.json`` and
         ``adapter_model.safetensors`` and can be loaded directly with
-        ``peft.PeftModel.from_pretrained(base_model, path)``.
+        ``peft.PeftModel.from_pretrained(base_model, path)`` -- except when
+        ``allow_serving_layout`` is used, which writes a serving-only layout.
 
         Args:
             model: Megatron model instance or list of instances.
@@ -928,8 +964,15 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress: Display progress bar during export.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
-            expand_shared_outer: Replicate the shared factor across experts under per-expert
-                names (vLLM 2D ``pack_moe``). Default ``False`` keeps the PEFT shared ``[1, ...]`` layout.
+            expand_shared_outer: Replicate the shared factor of a shared-outer MoE LoRA across
+                experts under per-expert names (vLLM 2D ``pack_moe``); this is the PEFT-loadable
+                form of such an adapter. Default ``False`` keeps the shared ``[1, ...]`` factor as
+                exported, which then requires ``allow_serving_layout``.
+            allow_serving_layout: Write shared-outer MoE LoRA pairs in the serving layout (the
+                shared factor once as ``[1, ...]`` under the expert-agnostic name, next to its
+                per-expert partner) instead of raising. Serving stacks keyed on the leading
+                expert dim (SGLang ``experts_shared_outer_loras``) read this layout; it is not
+                loadable by ``PeftModel.from_pretrained``. Default ``False``.
 
         Example:
             >>> bridge.save_hf_adapter(
@@ -980,6 +1023,7 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
             raw_adapter_weights,
+            allow_serving_layout=allow_serving_layout,
         )
         rank_pattern = infer_rank_pattern_from_adapter_weights(
             raw_adapter_weights,
@@ -1406,7 +1450,9 @@ class AutoBridge(Generic[MegatronModelT]):
             - The model architecture must match the bridge configuration
         """
         try:
+            from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
             from megatron.bridge.training.model_load_save import load_megatron_model
+            from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
@@ -1416,6 +1462,10 @@ class AutoBridge(Generic[MegatronModelT]):
             register_allowed_target_prefix("transformers_modules.")
 
         checkpoint_path = Path(path)
+
+        iteration, release = _resolve_checkpoint_iteration(str(checkpoint_path), None)
+        if iteration >= 0 or release:
+            checkpoint_path = Path(get_checkpoint_name(str(checkpoint_path), iteration, release))
 
         # Check for iter_* folders
         iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
@@ -1433,10 +1483,13 @@ class AutoBridge(Generic[MegatronModelT]):
         # else: checkpoint_path remains as the input path (no iter folders found)
 
         skip_temp_dist_context = dist.is_initialized()
+        use_cpu_init = kwargs.get("use_cpu_initialization")
+        if use_cpu_init is None:
+            use_cpu_init = skip_temp_dist_context and dist.get_backend() == "gloo"
         # Load the state dict
         model = load_megatron_model(
             str(checkpoint_path),
-            use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
+            use_cpu_init=use_cpu_init,
             skip_temp_dist_context=skip_temp_dist_context,
             mp_overrides=mp_overrides,
         )

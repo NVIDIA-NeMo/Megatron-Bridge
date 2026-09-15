@@ -151,6 +151,9 @@ class MultiLoRALinear(AdapterWrapper):
         self._adapter_enabled = True
         self.n_adapters = n_adapters
         self.max_rank = dim
+        # Read by forward's diagnostics (and by callers that route on the wrapped
+        # module's name), like MultiLoRAGroupedExpertLinear already does.
+        self.base_linear_name = full_name
         # Kept so a slot re-init (reset_adapter) mirrors the construction-time
         # init methods instead of hardcoding xavier/zero.
         self._column_init_method = column_init_method
@@ -171,6 +174,8 @@ class MultiLoRALinear(AdapterWrapper):
         self.base_linear_is_parallel = attrs.base_linear_is_parallel
         self.replicate_adapter = attrs.replicate_adapter
         self.use_a2a = a2a_experimental
+        self._adapter_in_features = attrs.in_features
+        self._adapter_out_features = attrs.out_features
         # Row-parallel adapters gather their output to full width; column-parallel
         # adapters keep an output shard; replicated adapters already produce full width.
         self._gather_output = not self.replicate_adapter and (
@@ -315,8 +320,18 @@ class MultiLoRALinear(AdapterWrapper):
         from megatron.bridge.peft.utils import ParallelLinearAdapter
 
         adapter = self.adapters[idx]
-        col_fn = ParallelLinearAdapter._get_init_fn(None, self._column_init_method)
-        row_fn = ParallelLinearAdapter._get_init_fn(None, self._row_init_method)
+        col_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._column_init_method,
+            fan_in=self._adapter_in_features,
+            fan_out=self.max_rank,
+        )
+        row_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._row_init_method,
+            fan_in=self.max_rank,
+            fan_out=self._adapter_out_features,
+        )
         rng_context = (
             get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name())
             if self.replicate_adapter
@@ -700,11 +715,35 @@ def set_tokens_per_adapter_slot(model, tokens_per_adapter: torch.Tensor) -> None
     upcoming forward that belong to adapter slot ``i``. Must sum to the total
     token count of the micro-batch.
     """
+    if tokens_per_adapter.dim() != 1:
+        raise ValueError(
+            f"tokens_per_adapter must be a 1-D tensor of per-slot counts; got shape {tuple(tokens_per_adapter.shape)}"
+        )
+    if tokens_per_adapter.is_floating_point() or tokens_per_adapter.is_complex():
+        raise ValueError(f"tokens_per_adapter must be an integer tensor; got dtype {tokens_per_adapter.dtype}")
     # One host sync per micro-batch: cache immutable split sizes for every
     # layer's fallback and any sequence-parallel narrowing.
     token_splits = tuple(int(count) for count in tokens_per_adapter.tolist())
+    if any(count < 0 for count in token_splits):
+        raise ValueError(
+            f"tokens_per_adapter must be nonnegative (negative counts produce non-monotonic grouped-GEMM "
+            f"offsets); got {list(token_splits)}"
+        )
     total = sum(token_splits)
-    for module in _iter_multi_lora_modules(model):
+    modules = list(_iter_multi_lora_modules(model))
+    if modules:
+        n_adapters = modules[0].n_adapters
+        if len(token_splits) != n_adapters:
+            raise ValueError(
+                f"tokens_per_adapter has {len(token_splits)} entries but the model was built with "
+                f"n_adapters={n_adapters}"
+            )
+        # The dense grouped GEMM consumes the counts on the model's device; move them
+        # once here rather than per layer.
+        first_param = next(modules[0].parameters(), None)
+        if first_param is not None and tokens_per_adapter.device != first_param.device:
+            tokens_per_adapter = tokens_per_adapter.to(first_param.device)
+    for module in modules:
         module.tokens_per_adapter = tokens_per_adapter
         module.tokens_per_adapter_splits = token_splits
         module.tokens_per_adapter_total = total
