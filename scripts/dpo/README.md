@@ -62,17 +62,10 @@ directory or an `msc://` URL:
 The sums are raw, nothing is scaled by beta, so you score once and sweep beta
 and learning rate against the same artifact.
 
-Parallelism: `--nproc_per_node` is `tp × dp`. `--tp` shards the weights and has
-to match training, because TP changes the order of the vocab-parallel
-reduction. Any ranks left over after the TP group become data-parallel replicas.
-Each one scores a slice of the batches and rank 0 gathers and writes. DP is not
-recorded in the metadata, any DP works with any training layout. The scorer
-always runs at PP=1 and the trainer can use whatever PP it likes.
-
-For MoE models add `--ep` and, if needed, `--etp` (defaults to `--tp`).
-`EP × ETP` has to divide the world size. MoE at TP > 1 also needs
-`--sequence-parallel`, which is recorded and checked like TP. If the expert
-layout differs from the trainer's you get a warning, not an error.
+Parallelism: `--tp` and `--sequence-parallel` change the logprobs, so both are
+recorded and checked against the training config. `--ep` and `--etp` are
+recorded too, but a mismatch there only warns. PP and DP change nothing: the
+scorer runs at PP=1 and its artifact is valid at any training PP and DP.
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 \
@@ -104,11 +97,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
 `--mode dpo` picks the model's `<model>_dpo_config` recipe. The launcher itself
 is documented in `scripts/training/README.md`.
 
-`--nproc_per_node` is `tp × pp × dp`, with TP equal to the scoring run. PP > 1
-turns on `model.variable_seq_lengths` for you, since pair batches are padded to
-their own longest row and the stages need to exchange shapes. Adding nodes adds
-DP replicas and the artifact stays valid. `train.global_batch_size` has to be a
-multiple of `train.micro_batch_size × dp`; this is checked at startup.
+PP > 1 turns on `model.variable_seq_lengths` for you, since pair batches are
+padded to their own longest row.
 
 Look at the first logged iteration. At step 0 the policy is the reference, so
 `preference loss` should be about ln 2 (0.693) with `margin` and `rewards` near
