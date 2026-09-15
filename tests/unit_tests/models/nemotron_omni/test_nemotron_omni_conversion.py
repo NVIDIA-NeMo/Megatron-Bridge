@@ -543,7 +543,7 @@ def test_nemotron_35_super_vl_provider_reuses_omni_with_list_based_mtp():
     assert isinstance(provider, NemotronOmniModelProvider)
     assert provider.hybrid_layer_pattern == "ME*E"
     assert provider.mtp_hybrid_override_pattern == "*E"
-    assert provider.mtp_num_layers == 1
+    assert provider.mtp_num_layers == 2
     assert provider.mtp_use_repeated_layer is True
     assert provider.has_sound is False
     assert provider.sound_config is None
@@ -554,6 +554,25 @@ def test_nemotron_35_super_vl_provider_reuses_omni_with_list_based_mtp():
 
     vision_config = provider._build_vision_config(provider)
     assert vision_config.mtp_num_layers == 1
+
+
+def test_nemotron_35_super_vl_export_preserves_shared_mtp_serialization():
+    provider = Nemotron35SuperVLBridge().provider_bridge(
+        SimpleNamespace(config=_mock_nemotron_35_super_vl_hf_config())
+    )
+
+    hf_config = Nemotron35SuperVLBridge.megatron_to_hf_config(provider)
+
+    assert "num_nextn_predict_layers" not in hf_config
+    assert hf_config["llm_config"]["num_nextn_predict_layers"] == 1
+
+
+def test_nemotron_35_super_vl_rejects_unexpected_serialized_mtp_depth():
+    hf_config = _mock_nemotron_35_super_vl_hf_config()
+    hf_config.llm_config.num_nextn_predict_layers = 2
+
+    with pytest.raises(ValueError, match="exactly one serialized shared MTP block"):
+        Nemotron35SuperVLBridge().provider_bridge(SimpleNamespace(config=hf_config))
 
 
 def test_nemotron_35_super_vl_mapping_uses_nested_mtp_and_vision_final_norm():

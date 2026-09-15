@@ -88,7 +88,7 @@ class _FakeAutoBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         _FakeAutoBridge.load_weights = load_weights
         is_super_vl = _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID
-        return _FakeModelCfg(has_sound=not is_super_vl, mtp_num_layers=1 if is_super_vl else 0)
+        return _FakeModelCfg(has_sound=not is_super_vl, mtp_num_layers=2 if is_super_vl else 0)
 
 
 @pytest.fixture
@@ -486,7 +486,7 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
 
     assert cfg.model.has_sound is False
     assert cfg.model.dynamic_resolution is True
-    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_num_layers == 2
     assert cfg.model.separate_video_embedder is True
     assert cfg.model.temporal_ckpt_compat is False
     assert cfg.model.temporal_patch_dim == 2
@@ -552,7 +552,7 @@ def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_pr
     assert cfg.peft.dropout == 0.0
 
     assert cfg.model.has_sound is False
-    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_num_layers == 2
     assert cfg.model.separate_video_embedder is True
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
@@ -608,7 +608,7 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor
     assert cfg.dataset.pad_to_max_length is True
     assert cfg.model.has_sound is False
     assert cfg.model.separate_video_embedder is True
-    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_num_layers == 2
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_vision_projection is False
@@ -760,7 +760,7 @@ def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is False
-    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_num_layers == 2
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 64
@@ -817,7 +817,7 @@ def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor
     }
     assert cfg.rng.seed == 5678
 
-    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_num_layers == 2
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.num_layers_in_first_pipeline_stage == 38
@@ -882,7 +882,7 @@ def test_super_vl_peft_recipe_uses_gb200_support_topology(fake_processor):
     ]
     assert cfg.peft.dim == 32
     assert cfg.peft.alpha == 32
-    assert cfg.model.mtp_num_layers == 1
+    assert cfg.model.mtp_num_layers == 2
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.num_layers_in_first_pipeline_stage is None

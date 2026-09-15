@@ -375,6 +375,8 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
 
     _HF_SUMMARY_IDXS_BUFFER = "vision_model.summary_idxs"
+    _HF_SHARED_MTP_BLOCKS = 1
+    _MCORE_MTP_PREDICTION_DEPTHS = 2
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""
@@ -388,6 +390,18 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         hf_config = hf_pretrained.config
         temporal_patch_dim = int(getattr(hf_config, "video_temporal_patch_size", 1) or 1)
 
+        # Super-VL serializes one shared MTP block in HF. Megatron training applies
+        # that block at two prediction depths, with the attention+MoE parameters
+        # shared across both applications.
+        serialized_mtp_blocks = int(getattr(hf_config.llm_config, "num_nextn_predict_layers", 0) or 0)
+        if serialized_mtp_blocks != self._HF_SHARED_MTP_BLOCKS:
+            raise ValueError(
+                f"Nemotron 3.5 Super VL requires exactly one serialized shared MTP block; got {serialized_mtp_blocks}."
+            )
+        if provider.mtp_hybrid_override_pattern != "*E" or not provider.mtp_use_repeated_layer:
+            raise ValueError("Nemotron 3.5 Super VL requires a repeated attention+MoE MTP block.")
+        provider.mtp_num_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+
         provider.temporal_patch_dim = temporal_patch_dim
         provider.separate_video_embedder = temporal_patch_dim > 1
         # The Super-VL checkpoint carries a trained video embedder. Do not
@@ -395,6 +409,21 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         provider.temporal_ckpt_compat = False
         provider.vision_final_layernorm = bool(provider.mtp_num_layers)
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Preserve HF's single-block serialization for the repeated MTP head."""
+        if (
+            provider.mtp_num_layers != cls._MCORE_MTP_PREDICTION_DEPTHS
+            or provider.mtp_hybrid_override_pattern != "*E"
+            or not provider.mtp_use_repeated_layer
+        ):
+            raise ValueError("Nemotron 3.5 Super VL export requires two repeated attention+MoE MTP depths.")
+
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config.pop("num_nextn_predict_layers", None)
+        hf_config["llm_config"] = {"num_nextn_predict_layers": cls._HF_SHARED_MTP_BLOCKS}
+        return hf_config
 
     def postprocess_hf_export_weights(self, path: Path) -> None:
         """Add the deterministic RADIO summary buffer omitted by the source index."""
