@@ -1148,6 +1148,7 @@ class TestSaveMegatronModel:
         mock_global_state,
         mock_get_model_config,
         mock_save_checkpoint,
+        mock_save_tokenizer_assets,
     ):
         """Builder-backed checkpoints serialize the complete outer model config."""
         mock_model = Mock()
