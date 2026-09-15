@@ -155,7 +155,7 @@ url = "https://pypi.nvidia.com"
 
 [[tool.uv.index]]
 name = "flashinfer"
-url = "https://flashinfer.ai/whl/"
+url = "https://flashinfer.ai/whl"
 explicit = true
 
 # flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
