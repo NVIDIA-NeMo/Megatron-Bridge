@@ -139,6 +139,8 @@ class LocalAdapterWeight:
     hf_param_names: tuple[str, ...]
     component: Literal["linear_in", "linear_out"]
     transform: Literal["identity", "replicate", "split_qkv", "split_gated_mlp"]
+    alpha: int
+    effective_rank: int
     weight: torch.Tensor
     tensor_parallel_axis: int | None
     tensor_parallel_rank: int
@@ -1111,6 +1113,8 @@ class MegatronPeftBridge:
             hf_param_names=tuple(hf_param_names),
             component=component,
             transform=transform,
+            alpha=adapter_task.alpha,
+            effective_rank=adapter_task.dim,
             weight=tensor,
             tensor_parallel_axis=tensor_parallel_axis,
             tensor_parallel_rank=mapping.tp_rank,

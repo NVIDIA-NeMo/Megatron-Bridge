@@ -2771,6 +2771,8 @@ def test_build_local_adapter_weight_snapshots_fp32_and_replication_metadata() ->
 
     assert result.component == "linear_in"
     assert result.transform == "replicate"
+    assert result.alpha == 32
+    assert result.effective_rank == 32
     assert result.weight.dtype is torch.float32
     assert result.weight.data_ptr() != source.data_ptr()
     assert result.tensor_parallel_axis is None
