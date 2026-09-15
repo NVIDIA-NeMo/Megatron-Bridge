@@ -519,6 +519,19 @@ class TestQKVMapping:
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
 
+    def test_megatron_to_hf_scale_uses_explicit_mxfp8_row_block_size(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
+        megatron_module = MockModule(transformer_config, weight_shape=(64, 32))
+        packed_scale = torch.arange(64, dtype=torch.uint8).reshape(64, 1)
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"qkv.weight": packed_scale}):
+            result = mapping.megatron_to_hf_scale(packed_scale, megatron_module, row_block_size=1)
+
+        torch.testing.assert_close(result["q.weight"], torch.cat((packed_scale[:16], packed_scale[32:48])))
+        torch.testing.assert_close(result["k.weight"], torch.cat((packed_scale[16:24], packed_scale[48:56])))
+        torch.testing.assert_close(result["v.weight"], torch.cat((packed_scale[24:32], packed_scale[56:64])))
+
 
 class TestKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
