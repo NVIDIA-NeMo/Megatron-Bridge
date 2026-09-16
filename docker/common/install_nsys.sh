@@ -35,7 +35,7 @@ ARCH=$(dpkg --print-architecture)
 
 # Extract year.major.patch for the devtools package name.
 NSYS_RELEASE=$(echo "$NSYS_VERSION" | cut -d. -f1-3)
-NSYS_PKG="nsight-systems-${NSYS_RELEASE}"
+NSYS_PKG="nsight-systems-cli-${NSYS_RELEASE}"
 
 NSYS_REPO="https://developer.download.nvidia.com/devtools/repos/ubuntu2404/${ARCH}"
 curl -fsSL "${NSYS_REPO}/nvidia.pub" -o /usr/share/keyrings/nvidia-devtools.asc
