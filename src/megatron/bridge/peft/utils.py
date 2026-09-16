@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import ast
+import copy
 import inspect
 import logging
 import math
@@ -1184,6 +1185,7 @@ class ParallelLinearAdapter(nn.Module):
         replicate_adapter: bool = False,
         pg_collection: ProcessGroupCollection | None = None,
         sequence_parallel_input_regather: bool = False,
+        params_dtype: torch.dtype | None = None,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
 
@@ -1206,6 +1208,7 @@ class ParallelLinearAdapter(nn.Module):
             disable_sequence_parallel_comm: Disable sequence parallel communication.
             replicate_adapter: Duplicate both low-rank matrices across TP ranks.
             sequence_parallel_input_regather: Re-gather eligible LoRA-A sequence-parallel inputs in backward.
+            params_dtype: Adapter parameter dtype. Uses the model configuration when unset.
         """
         super().__init__()
         self.base_linear_name = base_linear_name
@@ -1226,6 +1229,11 @@ class ParallelLinearAdapter(nn.Module):
         # in case this arg is not provided, use the dummy default config.
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
+        if params_dtype is not None:
+            model_parallel_config = copy.copy(model_parallel_config)
+            model_parallel_config.params_dtype = params_dtype
+            model_parallel_config.bf16 = False
+            model_parallel_config.fp16 = False
         # TODO: When the PEFT transform API has explicit PG plumbing, pass the
         # model-level collection here instead of relying on config/default discovery.
         self.pg_collection = _get_pg_collection(
@@ -1492,6 +1500,9 @@ class ParallelLinearAdapter(nn.Module):
         """
         del args, kwargs
 
+        input_dtype = x.dtype
+        x = x.to(dtype=self.linear_in.weight.dtype)
+
         if self.dropout_position == "pre":
             x = self.dropout(x)
 
@@ -1553,7 +1564,7 @@ class ParallelLinearAdapter(nn.Module):
             # Remove MoE padding.
             x = unpad_seq_to_mult(x, pad_len)
 
-        return x
+        return x.to(dtype=input_dtype)
 
     def local_experts_per_rank(self) -> int:
         """Return the number of global expert slots owned by this EP rank."""

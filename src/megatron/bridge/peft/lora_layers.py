@@ -85,6 +85,7 @@ class LoRALinear(AdapterWrapper):
         del linear_output
         adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
         adapter_output = adapter_output.reshape(combined_output.shape)
+        adapter_output = adapter_output.to(dtype=combined_output.dtype)
         combined_output.add_(adapter_output)
         if not self._base_returns_tuple:
             return combined_output
