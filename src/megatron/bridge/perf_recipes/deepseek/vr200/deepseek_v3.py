@@ -328,7 +328,7 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
 
