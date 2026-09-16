@@ -14,30 +14,45 @@
 
 """Offline materialization of packed GPT SFT artifacts."""
 
+import gc
 import json
 import logging
-import resource
+import multiprocessing
+import shutil
+import tempfile
 from collections.abc import Callable
-from multiprocessing import Pool
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
-from megatron.bridge.data.packing.algorithms import create_hist, create_packing_strategy, fill_packing_strategy
+from megatron.bridge.data.packing.algorithms import (
+    create_hist_from_lengths,
+    create_packing_strategy,
+    fill_packing_strategy_ragged,
+)
+from megatron.bridge.data.packing.ragged_store import RaggedStore, RaggedStoreWriter
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
 
+# Number of items to process per chunk. Smaller values reduce peak memory
+# at the cost of more I/O overhead.
+_MATERIALIZE_CHUNK_SIZE = 5000
+
+# Columns consumed by the packing algorithms. context_ids/answer_ids are not
+# used downstream of materialization, so they are not persisted.
+_STORE_SCHEMA = ("input_ids", "loss_mask", "answer_start_idx")
+
 _shared_dataset = None
 
 
-def _get_shared_dataset_item(i):
-    return _shared_dataset[i]
+def _get_shared_dataset_item_arrays(i):
+    item = _shared_dataset[i]
+    return {key: item.get(key) for key in _STORE_SCHEMA}
 
 
 def _init_shared_dataset_worker(dataset):
@@ -45,34 +60,69 @@ def _init_shared_dataset_worker(dataset):
     _shared_dataset = dataset
 
 
-def _materialize_dataset_items(dataset, num_workers):
-    if num_workers <= 1:
-        return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
+def _materialize_dataset_items(dataset, num_workers, item_transform=None) -> RaggedStore:
+    """Materialize all items from a dataset into a ragged on-disk store.
 
-    # File-backed tensor sharing avoids one descriptor per returned tensor; the pool still needs descriptors.
-    previous_sharing_strategy = torch.multiprocessing.get_sharing_strategy()
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    Items are processed in fixed-size chunks; each chunk is appended to a
+    ``RaggedStoreWriter`` which flushes bounded segments to disk, so neither
+    the items nor the token data are ever held in host memory all at once.
 
-    previous_nofile_limit = None
+    For parallel processing (num_workers > 1) a fork-based multiprocessing
+    pool is used; child processes inherit the dataset via copy-on-write and
+    return plain numpy arrays, avoiding torch.multiprocessing's shared-memory
+    reduction (which leaks and causes OOM on large datasets).
+
+    Args:
+        dataset: A sized, indexable dataset of tokenized samples.
+        num_workers: Number of worker processes. Values <= 1 run serially.
+        item_transform: Optional callable applied to each item before it is
+            stored (used for pre-padding).
+
+    Returns:
+        A ``RaggedStore``. Callers must invoke ``store.close()`` when done to
+        remove the backing temporary directory.
+    """
+    total = len(dataset)
+    tmpdir = Path(tempfile.mkdtemp(prefix="mb_materialize_"))
+    writer = RaggedStoreWriter(tmpdir, schema=_STORE_SCHEMA, chunk_size=_MATERIALIZE_CHUNK_SIZE)
+
     try:
-        soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
-        if soft_limit != hard_limit:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (hard_limit, hard_limit))
-            previous_nofile_limit = (soft_limit, hard_limit)
-    except (ValueError, OSError) as error:
-        logger.warning("Unable to raise the file-descriptor limit for tokenizer workers: %s", error)
+        if num_workers and num_workers > 1:
+            ctx = multiprocessing.get_context("fork")
 
-    try:
-        with Pool(num_workers, initializer=_init_shared_dataset_worker, initargs=(dataset,)) as pool:
-            items = tqdm(pool.imap(_get_shared_dataset_item, range(len(dataset))), total=len(dataset))
-            return np.array(list(items))
-    finally:
-        if previous_nofile_limit is not None:
-            try:
-                resource.setrlimit(resource.RLIMIT_NOFILE, previous_nofile_limit)
-            except (ValueError, OSError) as error:
-                logger.warning("Unable to restore the file-descriptor limit after tokenization: %s", error)
-        torch.multiprocessing.set_sharing_strategy(previous_sharing_strategy)
+            for start in tqdm(range(0, total, _MATERIALIZE_CHUNK_SIZE), desc="Chunked materialize"):
+                end = min(start + _MATERIALIZE_CHUNK_SIZE, total)
+                indices = list(range(start, end))
+
+                # Create a fresh pool per chunk so worker processes (and their
+                # memory) are released after each chunk.
+                with ctx.Pool(
+                    num_workers,
+                    initializer=_init_shared_dataset_worker,
+                    initargs=(dataset,),
+                ) as pool:
+                    items = pool.map(_get_shared_dataset_item_arrays, indices)
+
+                for item in items:
+                    if item_transform is not None:
+                        item_transform(item)
+                    writer.append(item)
+
+                del items
+                gc.collect()
+        else:
+            for start in tqdm(range(0, total, _MATERIALIZE_CHUNK_SIZE), desc="Chunked materialize"):
+                end = min(start + _MATERIALIZE_CHUNK_SIZE, total)
+                for index in range(start, end):
+                    item = dataset[index]
+                    if item_transform is not None:
+                        item_transform(item)
+                    writer.append({key: item.get(key) for key in _STORE_SCHEMA})
+
+        return writer.finalize()
+    except BaseException:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        raise
 
 
 def _pre_pad_data_point(data: dict, max_seq_length: int, max_stored_length_to_pad: int, pad_id: int) -> None:
@@ -145,7 +195,8 @@ def tokenize_dataset(
         dataset_builder: Builder-owned callable that constructs one unpacked GPT SFT split.
 
     Returns:
-        np.ndarray: A NumPy array containing the tokenized data.
+        RaggedStore: A ragged store containing the tokenized data. Callers
+            must invoke ``close()`` on it when done.
     """
     if not dataset_kwargs:
         dataset_kwargs = {}
@@ -199,20 +250,19 @@ def tokenize_dataset(
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
     max_seq_length = runtime_max_seq_length
 
-    dataset = _materialize_dataset_items(dataset, num_tokenizer_workers)
+    def ceil_to_nearest(n, m):
+        return (n + m - 1) // m * m
 
+    item_transform = None
     if max_runtime_pad_cap is not None:
 
-        def ceil_to_nearest(n, m):
-            return (n + m - 1) // m * m
-
-        for data in dataset:
+        def item_transform(data):
             runtime_len = max(len(data["input_ids"]) - 1, 0)
             runtime_length_to_pad = min(max_runtime_pad_cap, ceil_to_nearest(runtime_len, pad_seq_length_to_mult))
             max_stored_length_to_pad = runtime_length_to_pad + 1
             _pre_pad_data_point(data, max_seq_length, max_stored_length_to_pad, pad_id)
 
-    return dataset
+    return _materialize_dataset_items(dataset, num_tokenizer_workers, item_transform=item_transform)
 
 
 def prepare_gpt_sft_packed_data(
@@ -255,7 +305,7 @@ def prepare_gpt_sft_packed_data(
         None: Saves the packed sequence data to the specified output path.
     """
     logger.info(f"Preparing packed sequence from {input_path}")
-    dataset = tokenize_dataset(
+    store = tokenize_dataset(
         input_path,
         tokenizer,
         max_seq_length,
@@ -265,15 +315,23 @@ def prepare_gpt_sft_packed_data(
         num_tokenizer_workers=num_tokenizer_workers,
         dataset_builder=dataset_builder,
     )
-    sequences, histogram = create_hist(dataset, max_seq_length)
 
-    random_state = np.random.get_state()
-    np.random.seed(seed)
     try:
-        assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)
-        output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
+        # runtime length = stored length - 1 (labels are shifted by one token for next-token prediction)
+        runtime_lengths = store.input_ids_lengths() - 1
+        groups, histogram = create_hist_from_lengths(runtime_lengths, max_seq_length)
+
+        random_state = np.random.get_state()
+        np.random.seed(seed)
+        try:
+            assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)
+            output_data = fill_packing_strategy_ragged(
+                assignments, store, groups, packed_sequence_size, tokenizer.eos_id
+            )
+        finally:
+            np.random.set_state(random_state)
     finally:
-        np.random.set_state(random_state)
+        store.close()
 
     # save output data
     output_path_str = str(output_path)
