@@ -86,6 +86,11 @@ from megatron.bridge.training.profiling import (
     initialize_pytorch_profiler,
     should_profile_rank,
 )
+from megatron.bridge.training.sequence_packing import (
+    sequence_packing_enabled,
+    set_scheduled_num_microbatches,
+    wrap_data_iterator_for_sequence_packing,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     tensor_inspect_end_if_enabled,
@@ -488,6 +493,8 @@ def train(
         global_state._flops_cross_seqlen_sum = 0
         global_state._flops_cross_seqlen_product_sum = 0
         global_state._flops_requires_global_reduce = False
+        global_state._flops_global_seqlen_override = None
+        set_scheduled_num_microbatches(None)
 
         (
             loss_dict,
@@ -894,7 +901,11 @@ def train_step(
     optim_config = cfg.optimizer
 
     rerun_state_machine = get_rerun_state_machine()
-    while rerun_state_machine.should_run_forward_backward(data_iterator):
+    packing_enabled = sequence_packing_enabled(model_config)
+    packed_data_iterator = None
+    packed_num_microbatches = None
+    rerun_data_iterator = data_iterator
+    while rerun_state_machine.should_run_forward_backward(rerun_data_iterator):
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -911,7 +922,27 @@ def train_step(
         seq_length = getattr(model_config, "seq_length", cfg.model.seq_length)  # Default for pretraining
         forward_backward_data_iterator = data_iterator  # Default for pretraining
 
-        if cfg.dataset.dataloader_type == "batch":
+        if packing_enabled:
+            # Megatron-Core packs this step's samples into THD microbatches. Wrap once per
+            # step, after the rerun state machine has observed the raw iterator, and replay
+            # the packed iterator on reruns.
+            if packed_data_iterator is None:
+                (
+                    packed_data_iterator,
+                    packed_num_microbatches,
+                    seqlen_sum_this_global_batch,
+                    seqlen_squared_sum_this_global_batch,
+                ) = wrap_data_iterator_for_sequence_packing(
+                    data_iterator, model_config, get_num_microbatches(), pg_collection
+                )
+                rerun_data_iterator = packed_data_iterator
+                set_scheduled_num_microbatches(packed_num_microbatches)
+                global_state._flops_global_seqlen_override = (
+                    seqlen_sum_this_global_batch,
+                    seqlen_squared_sum_this_global_batch,
+                )
+            forward_backward_data_iterator = packed_data_iterator
+        elif cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
             from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
@@ -925,8 +956,9 @@ def train_step(
         # Forward-backward pass.
         # Convert to list of iterators for virtual pipeline parallelism
         # With virtual PP, each model chunk needs independent access to the same microbatch.
-        if len(model) > 1:
+        if len(model) > 1 and not packing_enabled:
             # As MLM, expects a list of iterators for virtual pipeline parallelism. One iterator per model chunk.
+            # (The packing scheduler already returns one iterator per virtual stage.)
             forward_backward_data_iterator = make_data_iterator_list(
                 model=model,
                 data_iterator=forward_backward_data_iterator,
@@ -948,7 +980,7 @@ def train_step(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
             model=model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=packed_num_microbatches if packing_enabled else get_num_microbatches(),
             seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,
@@ -1636,7 +1668,12 @@ def _dummy_train_step(
 
     while rerun_state_machine.should_run_forward_backward(train_data_iterator):
         pp_group = pg_collection.pp
-        if is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
+        if sequence_packing_enabled(cfg.model):
+            # The packing scheduler pulls samples on TP rank 0 of every pipeline stage.
+            if train_data_iterator is not None and pg_collection.tp.rank() == 0:
+                for _ in range(num_microbatches):
+                    _ = next(train_data_iterator)
+        elif is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group):
             if train_data_iterator is not None:
                 if cfg.dataset.dataloader_type == "batch":
                     # Finetuning: Consume global batch once

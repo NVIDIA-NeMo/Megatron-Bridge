@@ -24,6 +24,7 @@ from megatron.bridge.data.builders.mock_vlm_sft import (
     MockVLMSFTDatasetConfig,
     mock_vlm_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.synthetic_varlen import SyntheticVarlenDatasetConfig
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,
@@ -53,6 +54,7 @@ __all__ = [
     "NemotronOmniEnergonTaskEncoderConfig",
     "MockVLMSFTDatasetBuilder",
     "MockVLMSFTDatasetConfig",
+    "SyntheticVarlenDatasetConfig",
     "PromptCompletionSFTPreprocessingConfig",
     "SFTPreprocessingConfig",
     "gpt_sft_train_valid_test_datasets_provider",

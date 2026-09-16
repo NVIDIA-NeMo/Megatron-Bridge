@@ -20,6 +20,7 @@ import torch
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.builders.synthetic_varlen import SyntheticVarlenDatasetConfig
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -188,4 +189,81 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         overlap_grad_reduce=False,
         overlap_param_gather=False,
     )
+    return cfg
+
+
+def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_dynamic_cp_config() -> ConfigContainer:
+    """Return a Qwen3.5-35B-A3B long-context config with online sequence packing and dynamic CP.
+
+    Starts from :func:`qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config` and switches
+    the data path to Megatron-Core's online sequence-packing scheduler: samples with
+    variable lengths are packed into THD bins once per step, and every bin runs on
+    a context-parallel group sized for its longest sequence (``default_dynamic_cp``)
+    instead of the static CP4 that a 32k cap would otherwise force on every sample.
+
+    Topology: TP1 PP1 CP4 EP8 on eight GB200 GPUs (a DPxCP pool of 8 ranks). A sample
+    of at most ``max_seqlen_per_dp_cp_rank`` tokens runs on one GPU, up to twice that
+    on CP2, and so on up to the full pool. The synthetic dataset has a lognormal
+    length distribution so all CP classes occur; replace ``cfg.dataset`` with a real
+    variable-length provider for actual training.
+
+    Requires the Megatron-Core ``dev`` submodule pin (``./scripts/switch_mcore.sh dev``);
+    ``ConfigContainer.validate`` reports a clear error on the ``main`` pin. Qwen3.5 attention
+    uses 256-wide heads, which Transformer Engine only trains with FlashAttention; until
+    Megatron-Core derives ``pad_between_seqs`` from the actual ``cu_seqlens``
+    (https://github.com/NVIDIA/Megatron-LM/pull/7417), FlashAttention also needs bins without padding between sequences, which the
+    dataset's ``fold_padding_into_sequence`` provides. See
+    ``docs/training/dynamic-context-parallel.md`` for the backend and memory notes.
+    """
+    cfg = qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    seq_length = 32768
+    context_parallel_size = 4
+    cfg.model.seq_length = seq_length
+    cfg.dataset = SyntheticVarlenDatasetConfig(
+        seq_length=seq_length,
+        min_seq_length=64,
+        median_seq_length=4096,
+        lognormal_sigma=1.0,
+        # Qwen3.5 attention heads are 256 wide, which Transformer Engine only trains with
+        # FlashAttention; report the CP alignment padding as part of each sequence so the
+        # packed bins carry no padding between sequences (padding stays loss-masked).
+        fold_padding_into_sequence=True,
+        random_seed=1234,
+        num_workers=2,
+    )
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = context_parallel_size
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.sequence_parallel = False
+
+    # Online packing + dynamic CP.
+    cfg.model.sequence_packing_scheduler = "default_dynamic_cp"
+    cfg.model.dynamic_context_parallel = True
+    cfg.model.min_dynamic_context_parallel_size = 1
+    cfg.model.max_seqlen_per_dp_cp_rank = seq_length // context_parallel_size
+    cfg.model.calculate_per_token_loss = True
+    cfg.ddp.average_in_collective = False
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 256
+
+    # Packed THD microbatches have data-dependent shapes: no CUDA graphs, and the
+    # all-to-all MoE dispatcher (the scheduler supports alltoall and flex).
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = None
+    cfg.model.cuda_graph_modules = None
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_hybridep_num_sms = None
+
+    # Long packed bins: recompute every layer and keep optimizer moments in bf16.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg

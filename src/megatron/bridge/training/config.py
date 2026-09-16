@@ -1627,6 +1627,11 @@ class ConfigContainer(Container):
 
         self._validate_cp_comm_type()
 
+        # Online sequence packing / dynamic context parallelism (Megatron-Core scheduler).
+        from megatron.bridge.training.sequence_packing import validate_sequence_packing_config
+
+        validate_sequence_packing_config(self)
+
         if enable_offline_packing:
             assert offline_packing_specs is not None
             if offline_packing_specs.packed_sequence_size <= 0:

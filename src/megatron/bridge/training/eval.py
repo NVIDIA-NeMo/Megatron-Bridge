@@ -35,6 +35,10 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.gtp import get_data_distribution_group
+from megatron.bridge.training.sequence_packing import (
+    sequence_packing_enabled,
+    wrap_data_iterator_for_sequence_packing,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
@@ -212,7 +216,20 @@ def evaluate(
             seq_length = default_seq_length  # Default for pretraining
             eval_data_iterator = data_iterator  # Default for pretraining
 
-            if state.cfg.dataset.dataloader_type == "batch":
+            scheduled_eval_num_microbatches = eval_num_microbatches
+            if sequence_packing_enabled(model_config):
+                try:
+                    eval_data_iterator, scheduled_eval_num_microbatches, _, _ = (
+                        wrap_data_iterator_for_sequence_packing(
+                            data_iterator, model_config, eval_num_microbatches, pg_collection
+                        )
+                    )
+                except StopIteration:
+                    # Validation iterator exhausted on TP rank 0: stop evaluating early, as Megatron-LM
+                    # does. Size validation splits so this never triggers with TP > 1: other ranks are
+                    # already inside the scheduler's collectives and cannot observe the exhaustion.
+                    break
+            elif state.cfg.dataset.dataloader_type == "batch":
                 # Finetuning path: prepare batch and extract dynamic seq_length
                 eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
@@ -221,7 +238,7 @@ def evaluate(
                     seq_key="tokens",
                 )
 
-            if len(model) > 1:
+            if len(model) > 1 and not sequence_packing_enabled(model_config):
                 # Convert to list of iterators for virtual pipeline parallelism
                 # With virtual PP, each model chunk needs independent access to the same microbatch
                 eval_data_iterator = make_data_iterator_list(
@@ -252,7 +269,7 @@ def evaluate(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
                 model=model,
-                num_microbatches=eval_num_microbatches,
+                num_microbatches=scheduled_eval_num_microbatches,
                 seq_length=seq_length,
                 micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
