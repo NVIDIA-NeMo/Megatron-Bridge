@@ -650,7 +650,7 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
             "master_param": saved_master.clone(),
             "exp_avg": torch.tensor([0.2, -0.3]),
             "exp_avg_sq": torch.tensor([0.4, 0.5]),
-            "step": torch.tensor(float(step)),
+            "step": torch.tensor(1.0),  # LocalNonpersistentObject from Core's loading scaffold.
         }
         inner = _FakeHDO()
         inner.state = {model_param: saved_state}
@@ -676,12 +676,14 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
         expected_adam.state[expected_param] = {
             key: value.clone() for key, value in saved_state.items() if key != "master_param"
         }
+        expected_adam.state[expected_param]["step"].fill_(step)
         with patch("megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer", _FakeHDO):
             assert sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
 
         assert torch.equal(working, saved_master)
         assert "step" not in inner.param_groups[0]
         assert adam.param_groups[0]["step"] == step
+        assert adam.state[working]["step"].item() == step
         assert not torch.equal(working, model_param.float())
         assert adam.state[working]["exp_avg"] is saved_state["exp_avg"]
         assert adam.state[working]["exp_avg_sq"] is saved_state["exp_avg_sq"]
@@ -755,11 +757,33 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
         saved_model = [param.detach().clone() for param in params]
         resumed_params, resumed = build()
         resumed.load_state_dict(resumed.state_dict())  # Loading scaffold, including Core's dummy step.
+        # dp_reshardable keeps these scalar counters as LocalNonpersistentObject
+        # values from the scaffold, so loading does not replace them from disk.
+        scaffold_steps = [
+            {"step": resumed.optimizer.state[param]["step"].clone()}
+            if "step" in resumed.optimizer.state[param]
+            else {}
+            for param in resumed_params
+        ]
         for target, source in zip(resumed_params, saved_model):
             target.data.copy_(source)
-        resumed.load_state_dict(saved_common)
-        for param, tensors in zip(resumed_params, saved_tensors):
-            resumed._set_main_param_and_optimizer_states(param, tensors)
+        resumed.gbuf_ranges = [{torch.bfloat16: [{"param_map": dict.fromkeys(resumed_params)}]}]
+        resumed.load_state_dict(
+            {
+                **saved_common,
+                "param_state_sharding_type": "dp_reshardable",
+                "param_state": {
+                    0: {
+                        torch.bfloat16: [
+                            [
+                                {**tensors, **local_step, "padding": False}
+                                for tensors, local_step in zip(saved_tensors, scaffold_steps)
+                            ]
+                        ]
+                    }
+                },
+            }
+        )
         assert sync_hybrid_device_optimizer_fp32_master_copies(resumed)
 
         for step in range(51, 54):

@@ -393,6 +393,17 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
             return False
 
         if getattr(inner, "state", None):
+            # The dp_reshardable loader restores each per-parameter "step"
+            # from a LocalNonpersistentObject in its loading scaffold. For
+            # CPU Adam this overwrites the checkpoint counter with the dummy
+            # initialization step. The saved group counter is authoritative.
+            for group in inner.param_groups:
+                if "step" not in group:
+                    continue
+                for param in group["params"]:
+                    step = inner.state.get(param, {}).get("step")
+                    if isinstance(step, torch.Tensor):
+                        step.fill_(group["step"])
             # Full-state resume, including iteration-zero checkpoints. This
             # binds loaded moments to the sub-optimizers and copies the saved
             # FP32 masters into the parameters their next step will update.
