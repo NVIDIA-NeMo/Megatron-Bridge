@@ -391,7 +391,6 @@ class MegatronQuantizationBridge:
         local_by_global_name: dict[str, tuple[int, str, Any, torch.Tensor]] = {}
         local_grouped_storage: dict[str, bool] = {}
         local_grouped_member_counts: dict[str, Optional[int]] = {}
-        local_grouped_members: dict[str, tuple[Any, ...]] = {}
         for vp_stage, model in enumerate(megatron_model):
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
                 if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
@@ -411,8 +410,6 @@ class MegatronQuantizationBridge:
                         members = get_grouped_quantized_members(local_weight, create_if_missing=True)
                         members = None if members is None else tuple(members)
                         local_grouped_member_counts[global_name] = None if members is None else len(members)
-                        if members is not None:
-                            local_grouped_members[global_name] = members
 
         native_grouped_names: set[str] = set()
         for global_name, mapping in grouped_mappings.items():
@@ -493,16 +490,46 @@ class MegatronQuantizationBridge:
             vp_stage, local_name, local_module, local_weight = local
             expanded_names = grouped_expansions.get(global_name)
             if expanded_names is not None:
-                if local_grouped_storage.get(global_name, False):
-                    members = list(local_grouped_members[global_name])
-                else:
-                    members = _split_grouped_export_members(local_weight, global_name)
+
+                def resolve_members(
+                    *,
+                    uses_native_storage: bool = local_grouped_storage.get(global_name, False),
+                    grouped_weight: Any = local_weight,
+                    grouped_name: str = global_name,
+                ) -> list[Any]:
+                    if uses_native_storage:
+                        current = get_grouped_quantized_members(
+                            grouped_weight,
+                            create_if_missing=True,
+                        )
+                        return [] if current is None else list(current)
+                    return _split_grouped_export_members(grouped_weight, grouped_name)
+
+                members = resolve_members()
                 if len(members) != len(expanded_names):
                     raise ValueError(
                         f"Grouped expert parameter {global_name!r} has {len(members)} local members, "
                         f"expected {len(expanded_names)}"
                     )
                 for expert_id, expanded_name in enumerate(expanded_names):
+
+                    def resolve_member(
+                        *,
+                        expert_id: int = expert_id,
+                        expanded_name: str = expanded_name,
+                        grouped_name: str = global_name,
+                        expected_count: int = len(expanded_names),
+                        member_resolver: Callable[[], list[Any]] = resolve_members,
+                    ) -> Any:
+                        current = member_resolver()
+                        if len(current) != expected_count:
+                            raise ValueError(
+                                f"Grouped expert parameter {grouped_name!r} has "
+                                f"{len(current)} local members, expected "
+                                f"{expected_count} while resolving {expanded_name!r}"
+                            )
+                        return current[expert_id]
+
                     tasks_by_name[expanded_name] = WeightConversionTask(
                         pp_rank=pp_rank,
                         vp_stage=vp_stage,
@@ -510,6 +537,7 @@ class MegatronQuantizationBridge:
                         global_param_name=expanded_name,
                         megatron_module=local_module,
                         param_weight=members[expert_id],
+                        param_weight_resolver=resolve_member,
                         mapping=mappings[expanded_name],
                     )
             elif global_name in mappings:

@@ -1843,6 +1843,7 @@ class TestFp8ParamExport:
         grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
         parameter = torch.nn.Parameter(torch.zeros(2, 8, 16))
         members = [_FakeNativeMXFP8Tensor(), _FakeNativeMXFP8Tensor()]
+        current_members = [members]
         mappings = {
             f"{grouped}{expert_id}": FusedGatedExpertMapping(
                 f"{grouped}{expert_id}",
@@ -1885,7 +1886,7 @@ class TestFp8ParamExport:
         monkeypatch.setattr(f"{_QUANT_MB}.is_grouped_mxfp8tensor", lambda weight: weight is parameter)
         monkeypatch.setattr(
             f"{_QUANT_MB}.get_grouped_quantized_members",
-            lambda _weight, *, create_if_missing: members,
+            lambda _weight, *, create_if_missing: current_members[0],
         )
 
         tasks = bridge.build_export_mxfp8_tasks(
@@ -1895,8 +1896,13 @@ class TestFp8ParamExport:
         )
 
         assert [task.global_param_name for task in tasks] == [f"{grouped}0", f"{grouped}1"]
-        assert tasks[0].param_weight is members[0]
-        assert tasks[1].param_weight is members[1]
+        assert tasks[0].resolve_param_weight() is members[0]
+        assert tasks[1].resolve_param_weight() is members[1]
+
+        replacement = [_FakeNativeMXFP8Tensor(), _FakeNativeMXFP8Tensor()]
+        current_members[0] = replacement
+        assert tasks[0].resolve_param_weight() is replacement[0]
+        assert tasks[1].resolve_param_weight() is replacement[1]
 
     def test_build_export_mxfp8_tasks_expands_bf16_grouped_members(self, monkeypatch):
         bridge = DummyBridge()
@@ -2006,7 +2012,8 @@ class TestFp8ParamExport:
         torch.testing.assert_close(tasks[0].param_weight, members[0])
         torch.testing.assert_close(tasks[1].param_weight, members[1])
 
-    def test_get_export_mxfp8_tasks_uses_public_auto_bridge_api(self):
+    @pytest.mark.parametrize("expand_native_grouped", [False, True])
+    def test_get_export_mxfp8_tasks_uses_public_auto_bridge_api(self, expand_native_grouped):
         mock_hf = Mock(spec=PreTrainedCausalLM)
         mock_model_bridge = Mock()
         model = Mock()
@@ -2015,10 +2022,17 @@ class TestFp8ParamExport:
 
         with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
             bridge = AutoBridge(mock_hf)
-            tasks = bridge.get_export_mxfp8_tasks(model)
+            tasks = bridge.get_export_mxfp8_tasks(
+                model,
+                expand_native_grouped=expand_native_grouped,
+            )
 
         assert tasks == expected_tasks
-        mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(mock_hf, [model])
+        mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(
+            mock_hf,
+            [model],
+            expand_native_grouped=expand_native_grouped,
+        )
 
     def test_iter_local_mxfp8_params_uses_public_auto_bridge_api(self):
         mock_hf = Mock(spec=PreTrainedCausalLM)

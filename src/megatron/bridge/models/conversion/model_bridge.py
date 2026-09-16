@@ -207,6 +207,8 @@ class WeightConversionTask(Generic[MappingT]):
             dtype; bridges that requantize on export skip it (no scale companions).
         export_hook: Export-only transformation applied after mapping conversion and
             before final device placement.
+        param_weight_resolver: Export-only callback used when a task's source is a
+            live view that can be invalidated and recreated after task construction.
         required_hf_param_names: Import-only source tensors consumed by the loading
             hook. Defaults to the parameter names declared by ``mapping.hf_param``.
 
@@ -223,7 +225,16 @@ class WeightConversionTask(Generic[MappingT]):
     export_hook: Optional[Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]] = field(
         default=None, compare=False, repr=False
     )
+    param_weight_resolver: Optional[Callable[[], Optional[torch.Tensor]]] = field(
+        default=None, compare=False, repr=False
+    )
     required_hf_param_names: tuple[str, ...] | None = field(default=None, compare=False)
+
+    def resolve_param_weight(self) -> Optional[torch.Tensor]:
+        """Return the current export source, refreshing invalidated live views."""
+        if self.param_weight_resolver is not None:
+            return self.param_weight_resolver()
+        return self.param_weight
 
     @property
     def hf_param_names(self) -> tuple[str, ...]:
@@ -1761,14 +1772,15 @@ class MegatronModelBridge(
         _grouped_sources: Optional[Dict[str, List[str]]] = {} if with_megatron_names else None
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            if isinstance(task.param_weight, DTensor):
+            param_weight = task.resolve_param_weight()
+            if isinstance(param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
                     uneven_dtensor_to_full_tensor,
                 )
 
-                megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
+                megatron_weights = uneven_dtensor_to_full_tensor(param_weight)
             else:
-                megatron_weights = task.param_weight
+                megatron_weights = param_weight
             megatron_module = task.megatron_module
             if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
                 megatron_weights = None
