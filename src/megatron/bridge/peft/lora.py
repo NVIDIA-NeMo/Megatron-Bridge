@@ -21,6 +21,7 @@ import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig, ParamKey, get_standard_config_overrides
 from megatron.core.optimizer_param_scheduler import ParamGroupOverride
+from megatron.core.transformer.module import mark_keep_in_fp32
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
@@ -184,6 +185,7 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_A_init_method=self.lora_A_init_method,
                     lora_dtype=self.lora_dtype,
                 )
+                self._preserve_adapter_dtype(adapter)
                 return LoRALinear(module, adapter)
 
             is_expert = is_expert_linear(full_name)
@@ -243,7 +245,7 @@ class LoRA(PEFT, ModuleMatcher):
                 adapter_kwargs.update(
                     num_local_experts=module.num_gemms,
                     params_device=first_param.device,
-                    params_dtype=first_param.dtype,
+                    params_dtype=self.lora_dtype if self.lora_dtype is not None else first_param.dtype,
                 )
             else:
                 adapter_kwargs.update(
@@ -256,6 +258,7 @@ class LoRA(PEFT, ModuleMatcher):
                     params_dtype=self.lora_dtype,
                 )
             adapter = adapter_cls(attrs.in_features, attrs.out_features, dim, **adapter_kwargs)
+            self._preserve_adapter_dtype(adapter)
             if isinstance(module, TopKRouter):
                 return LoRATopKRouter(module, adapter)
             if enable_op_fuser:
@@ -263,6 +266,12 @@ class LoRA(PEFT, ModuleMatcher):
             else:
                 return LoRALinear(module, adapter)
         return module
+
+    def _preserve_adapter_dtype(self, adapter: nn.Module) -> None:
+        """Keep explicitly FP32 adapters intact through the model precision wrapper."""
+        if self.lora_dtype is torch.float32:
+            for parameter in adapter.parameters():
+                mark_keep_in_fp32(parameter)
 
 
 @dataclass
