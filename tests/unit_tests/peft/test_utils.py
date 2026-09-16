@@ -639,7 +639,7 @@ class TestParallelLinearAdapter:
     def test_parallel_linear_adapter_forward_basic(self, mock_row_linear, mock_col_linear, mock_config):
         """Test basic forward pass."""
         # Mock the linear layers
-        mock_linear_in = Mock()
+        mock_linear_in = Mock(weight=torch.nn.Parameter(torch.empty(16, 20)))
         mock_linear_out = Mock()
         mock_linear_in.return_value = (torch.randn(5, 16), None)
         mock_linear_out.return_value = (torch.randn(5, 10), None)
@@ -742,7 +742,7 @@ class TestParallelLinearAdapter:
         self, mock_row_linear, mock_col_linear, mock_config
     ):
         """LoRA scaling should not allocate an expanded output-sized temporary."""
-        mock_linear_in = Mock()
+        mock_linear_in = Mock(weight=torch.nn.Parameter(torch.empty(2, 4)))
         mock_linear_in.side_effect = lambda x: (x[..., :2], None)
         mock_linear_out = Mock()
         mock_linear_out.side_effect = lambda x: (torch.cat((x, x, x, x), dim=-1), None)
@@ -941,7 +941,7 @@ class TestParallelLinearAdapter:
         mock_config.tensor_model_parallel_size = 4
         mock_config.expert_tensor_parallel_size = 4
 
-        mock_linear_in = Mock()
+        mock_linear_in = Mock(weight=torch.nn.Parameter(torch.empty(16, 20)))
         mock_linear_out = Mock()
         mock_linear_in.return_value = (torch.randn(8, 16), None)  # Will be padded
         mock_linear_out.return_value = (torch.randn(8, 10), None)
