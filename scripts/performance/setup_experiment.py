@@ -50,6 +50,7 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     import wandb
+    from wandb.sdk.lib.runid import generate_id
 
     HAVE_WANDB = True
 except (ImportError, ModuleNotFoundError):
@@ -765,9 +766,7 @@ def main(
     while n_attempts <= max_retries:
         while is_finished_experiment is False:
             if HAVE_WANDB:
-                wandb_run_id = (
-                    (wandb_run_id or wandb.util.generate_id()) if is_long_convergence_run else wandb.util.generate_id()
-                )
+                wandb_run_id = (wandb_run_id or generate_id()) if is_long_convergence_run else generate_id()
                 executor.env_vars.update(
                     {
                         "WANDB_RUN_ID": wandb_run_id,

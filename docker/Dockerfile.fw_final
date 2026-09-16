@@ -101,8 +101,8 @@ RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
 
 # Patch wandb-core with fixed gRPC-Go and Go standard-library versions.
 ARG TARGETARCH
-RUN GRPC_VERSION=1.82.1 && \
-    GO_VERSION=1.26.5 && \
+RUN GRPC_VERSION=1.83.2 && \
+    GO_VERSION=1.27.0 && \
     WANDB_VERSION=$(python3 -c "import wandb; print(wandb.__version__)") && \
     WANDB_CORE_BIN=/opt/venv/lib/python3.12/site-packages/wandb/bin/wandb-core && \
     curl -fsSL "https://dl.google.com/go/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /tmp -xz && \
