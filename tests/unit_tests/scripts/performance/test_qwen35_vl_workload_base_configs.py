@@ -245,6 +245,8 @@ def test_qwen35_vl_perf_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.Monke
         pytest.skip("Megatron-Core does not expose gdn_pre_gated_delta_rule_fusion")
 
     assert config.model.gdn_pre_gated_delta_rule_fusion is True
+
+
 def test_qwen35_vl_35b_gb300_fp8mx_enables_cutedsl_grouped_mlp(monkeypatch: pytest.MonkeyPatch) -> None:
     """The GB300 MXFP8 recipe should route the MoE experts through the CuTe DSL grouped MLP.
 
