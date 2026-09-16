@@ -245,7 +245,7 @@ class LoRA(PEFT, ModuleMatcher):
                 adapter_kwargs.update(
                     num_local_experts=module.num_gemms,
                     params_device=first_param.device,
-                    params_dtype=self.lora_dtype if self.lora_dtype is not None else first_param.dtype,
+                    params_dtype=first_param.dtype,
                 )
             else:
                 adapter_kwargs.update(
@@ -271,7 +271,8 @@ class LoRA(PEFT, ModuleMatcher):
         """Keep explicitly FP32 adapters intact through the model precision wrapper."""
         if self.lora_dtype is torch.float32:
             for parameter in adapter.parameters():
-                mark_keep_in_fp32(parameter)
+                if parameter.dtype is torch.float32:
+                    mark_keep_in_fp32(parameter)
 
 
 @dataclass
