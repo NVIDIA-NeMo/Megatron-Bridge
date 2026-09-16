@@ -14,7 +14,6 @@
 
 """Unit tests for the GLM-5 MoE DSA bridge."""
 
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -29,12 +28,30 @@ from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 pytestmark = pytest.mark.unit
 
-_FIXTURES = Path(__file__).parent / "fixtures"
-
 
 def test_glm53_config_loads_through_shared_bridge() -> None:
-    """The published GLM-5.3 config resolves through the existing GLM bridge."""
-    auto_bridge = AutoBridge.from_hf_pretrained(_FIXTURES / "glm53-config.json")
+    """GLM-5.3 architecture settings resolve through the existing GLM bridge."""
+    config = GlmMoeDsaConfig(
+        architectures=["GlmMoeDsaForCausalLM"],
+        num_hidden_layers=78,
+        hidden_size=6144,
+        num_attention_heads=64,
+        n_routed_experts=256,
+        num_experts_per_tok=8,
+        first_k_dense_replace=3,
+        q_lora_rank=2048,
+        kv_lora_rank=512,
+        qk_head_dim=256,
+        qk_nope_head_dim=192,
+        qk_rope_head_dim=64,
+        v_head_dim=256,
+        rope_parameters={"rope_theta": 8_000_000, "rope_type": "default"},
+        index_topk_freq=4,
+        index_skip_topk_offset=3,
+        indexer_rope_interleave=True,
+        num_nextn_predict_layers=1,
+    )
+    auto_bridge = AutoBridge.from_hf_config(config)
     provider = auto_bridge.to_megatron_provider(load_weights=False)
 
     assert isinstance(auto_bridge._model_bridge, GLM5Bridge)
