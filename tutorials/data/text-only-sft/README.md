@@ -7,6 +7,7 @@ You configure the data with `GPTSFTDatasetConfig`; the training framework uses `
 Choose one input setup:
 
 - `dataset_root` for local `training.jsonl`, optional `validation.jsonl`, and optional `test.jsonl` files.
+- `per_split_data_source_manifest_path` for one or more local JSONL files per split, with optional MLM-style blend ratios.
 - `hf_dataset` for a declarative Hugging Face source plus an optional registered schema adapter.
 - `packed_train_data_blend` inside `offline_packing_specs` for a weighted blend of pre-packed Parquet training sources. A standalone blend must set `do_validation=False` and `do_test=False`; pair it with `dataset_root` or `hf_dataset` when that source should provide validation or test data.
 
@@ -79,6 +80,44 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 ```
 
 `model.seq_length` and `dataset.seq_length` must match. SFT and PEFT also need pretrained weights unless resuming a complete native checkpoint.
+
+## Blend local JSONL sources
+
+Use an MLM-compatible per-split data source manifest when the train, validation,
+or test split draws from multiple JSONL files:
+
+```json
+{
+  "train": ["0.8", "/data/domain_a.jsonl", "0.2", "/data/domain_b.jsonl"],
+  "valid": ["0.5", "/data/valid_a.jsonl", "0.5", "/data/valid_b.jsonl"],
+  "test": "/data/test.jsonl"
+}
+```
+
+```python
+cfg.dataset = GPTSFTDatasetConfig(
+    seq_length=4096,
+    per_split_data_source_manifest_path="/data/sft_blend.json",
+    preprocessing=PromptCompletionSFTPreprocessingConfig(),
+)
+```
+
+Each weight is a positive relative row ratio; weights are normalized and need
+not sum to one. If weights are omitted, list the paths directly and each source
+row is used once. The default blended split length is the sum of the source row
+counts. Sampling uses a deterministic low-discrepancy source schedule plus a
+seeded, without-replacement shuffle for each source-local pass. Ratios apply to
+rows rather than tokens.
+
+A split with one path is built through the existing single-file path. With
+offline packing enabled, Bridge blends the raw rows first and then creates one
+packed Parquet cache for the whole train split (and one for validation when
+enabled); it does not pack each source independently. The builder-managed cache
+identity includes the paths, ratios, source file sizes, seed, preprocessing,
+and packing settings. A same-size in-place source rewrite does not invalidate
+the cache; rename the source or clear its derived cache in that case. Explicit
+packed artifact paths bypass the builder-managed cache identity, so their
+invalidation is managed by the caller.
 
 ## Start from a Hugging Face source
 
@@ -168,7 +207,7 @@ For the complete constraints and runtime behavior, see [Packed Sequences](../../
 
 | Area | Knobs | Purpose |
 | --- | --- | --- |
-| Source | `dataset_root`, `hf_dataset`, `packed_train_data_blend` | Local or Hugging Face rows, or pre-packed Parquet training sources |
+| Source | `dataset_root`, `per_split_data_source_manifest_path`, `hf_dataset`, `packed_train_data_blend` | One local-root, local JSONL blend, or Hugging Face raw source; or pre-packed Parquet training sources |
 | Core | `seq_length`, `seed`, `memmap_workers`, `max_train_samples` | Shape, reproducibility, indexing, and train cap |
 | Splits | `do_validation`, `do_test` | Build optional split files |
 | Preprocessing | `ChatSFTPreprocessingConfig`, `PromptCompletionSFTPreprocessingConfig` | Chat rendering and assistant loss, or raw paired-text formatting and completion/full loss |
@@ -183,8 +222,9 @@ Do not repeat config-owned `seed`, `memmap_workers`, `max_num_samples`, or prepr
 
 ## Troubleshooting
 
-- “Exactly one text-only SFT source” means both `dataset_root` and `hf_dataset` were set; choose one for the raw-data splits.
-- “A text-only SFT source must be set” means none of `dataset_root`, `hf_dataset`, or `packed_train_data_blend` was configured. A standalone blend must also disable validation and test.
+- “Exactly one text-only SFT source” means multiple raw source modes were set.
+- “A text-only SFT source must be set” means no raw or packed training source was configured. A standalone packed blend must disable validation and test.
+- A per-split JSONL blend must contain `train` plus every split enabled by `do_validation` and `do_test`; it cannot be combined with `packed_train_data_blend`.
 - A missing split file is expected when its `do_*` flag is false; otherwise verify the exact filenames above.
 - Chat-template errors usually mean `ChatSFTPreprocessingConfig` was selected but the tokenizer lacks a template.
 - Prompt-completion preprocessing never calls `apply_chat_template` and deliberately rejects structured multi-turn rows.

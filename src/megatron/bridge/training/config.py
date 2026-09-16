@@ -529,11 +529,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
     worker thread/process for handling async saves. When disabled, uses temporal workers that are
     created and destroyed for each save operation."""
 
-    async_strategy: str = "nvrx"
-    """Async checkpoint strategy to use. Options: ``"nvrx"`` (default) or ``"mcore"``.
-    The ``"nvrx"`` strategy uses nvidia_resiliency_ext for async checkpointing and falls back
-    to ``"mcore"`` if the package is not installed."""
-
     async_write_results_mp_mode: str = "fork"
     """Multiprocessing start method for the async write results queue.
     Options: ``"fork"`` (default), ``"spawn"``, ``"forkserver"``."""
@@ -645,11 +640,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
                     f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
                     f"Please set checkpoint.load to the base checkpoint directory."
                 )
-
-        if self.dist_ckpt_optim_fully_reshardable:
-            assert not self.distrib_optim_fully_reshardable_mem_efficient, (
-                "distrib_optim_fully_reshardable_mem_efficient requires use_gloo_process_groups"
-            )
 
 
 @dataclass(kw_only=True)
@@ -1355,8 +1345,6 @@ class ConfigContainer(Container):
                 raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
             if self.ddp.average_in_collective:
                 raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
-            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
-                raise ValueError("Energon native sequence packing does not support MTP.")
             if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
                 self.model, "vision_cuda_graph_impl", None
             ) not in (None, "none"):
@@ -1600,6 +1588,11 @@ class ConfigContainer(Container):
                 assert self.checkpoint.ckpt_format in ["torch_dist", "fsdp_dtensor"], (
                     "Legacy checkpointing requires ckpt_format='torch_dist' or 'fsdp_dtensor'"
                 )
+
+        if self.checkpoint.dist_ckpt_optim_fully_reshardable:
+            assert (
+                not self.checkpoint.distrib_optim_fully_reshardable_mem_efficient or self.dist.use_gloo_process_groups
+            ), "distrib_optim_fully_reshardable_mem_efficient requires dist.use_gloo_process_groups=True"
 
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()
