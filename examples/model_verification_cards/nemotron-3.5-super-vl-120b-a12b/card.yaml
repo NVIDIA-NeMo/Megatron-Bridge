@@ -9,6 +9,9 @@ summary: >
   The recorded results below used one MTP prediction depth. Verification is
   being refreshed for the corrected two-depth shared-block configuration;
   these historical results do not verify that new training objective.
+  They also predate the current FP32 optimizer-state and weight-decay defaults
+  and language-only PEFT adapter targets. Each verified status below applies
+  only to its recorded historical Bridge commit, not the current recipes.
   Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
   uses DataComp image-caption samples, natural dropless expert routing, and a
   learned vision-pretrained checkpoint; both 120-step runs and their final
@@ -438,7 +441,9 @@ items:
         produced finite loss with zero skipped or NaN iterations. The
         step-100 adapter contains all 16 distributed shards and two Energon
         states and reloaded successfully. This dataset does not contain video
-        samples.
+        samples. This historical recipe used unqualified adapter targets that
+        also matched vision and projector modules; it does not verify the
+        current language-only adapter placement.
 
     GB200:
       status: verified
@@ -478,7 +483,9 @@ items:
         produced finite loss with zero skipped or NaN iterations. The
         step-100 adapter contains all 16 distributed shards and eight Energon
         states and reloaded successfully. This dataset does not contain video
-        samples.
+        samples. This historical recipe used unqualified adapter targets that
+        also matched vision and projector modules; it does not verify the
+        current language-only adapter placement.
 
   checkpoint_resume:
     H100:

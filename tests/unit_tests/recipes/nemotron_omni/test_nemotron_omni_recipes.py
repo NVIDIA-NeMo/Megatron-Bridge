@@ -29,6 +29,7 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_expanded_collate_fn
+from megatron.bridge.peft.lora_layers import LoRALinear
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.training.optim import _get_scheduler
@@ -526,7 +527,7 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
 
     assert isinstance(cfg, ConfigContainer)
     assert _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID
-    assert _FakeAutoBridge.kwargs == {"trust_remote_code": True}
+    assert _FakeAutoBridge.kwargs == {"revision": _SUPER_VL_HF_REVISION, "trust_remote_code": True}
     assert _FakeAutoBridge.load_weights is False
 
     assert isinstance(cfg.dataset, EnergonDatasetConfig)
@@ -593,12 +594,12 @@ def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_pr
     assert cfg.dataset.pad_to_max_length is True
     assert cfg.dataset.do_validation is False
     assert cfg.peft.target_modules == [
-        "linear_qkv",
-        "linear_proj",
-        "in_proj",
-        "out_proj",
-        "linear_fc1",
-        "linear_fc2",
+        "*language_model.*.linear_qkv",
+        "*language_model.*.linear_proj",
+        "*language_model.*.in_proj",
+        "*language_model.*.out_proj",
+        "*language_model.*.linear_fc1",
+        "*language_model.*.linear_fc2",
     ]
     assert cfg.peft.dim == 32
     assert cfg.peft.alpha == 32
@@ -648,6 +649,46 @@ def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_pr
     assert cfg.ddp.grad_reduce_in_fp32 is True
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe_func",
+    [
+        _super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config,
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_peft_16gpu_gb200_bf16_config,
+    ],
+    ids=["h100", "gb200"],
+)
+@pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "wrapped"])
+def test_super_vl_peft_adapters_only_modify_language_modules(recipe_func, wrapped, fake_processor):
+    cfg = _build_config(recipe_func, fake_processor)
+    target_names = ("linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2")
+
+    def linear_stack():
+        return torch.nn.ModuleDict({name: torch.nn.Linear(4, 4) for name in target_names})
+
+    # Identical leaf names expose accidental unqualified matches in both media
+    # components, while the language MTP path must still receive adapters.
+    model = torch.nn.Module()
+    model.language_model = torch.nn.ModuleDict({"decoder": linear_stack(), "mtp": linear_stack()})
+    model.vision_model = torch.nn.ModuleDict({"decoder": linear_stack()})
+    model.vision_projection = torch.nn.ModuleDict({"encoder": linear_stack()})
+    if wrapped:
+        wrapper = torch.nn.Module()
+        wrapper.module = model
+        model = wrapper
+    base_parameters = list(model.parameters())
+    model = cfg.peft(model)
+
+    prefix = "module." if wrapped else ""
+    expected = {f"{prefix}language_model.{stack}.{name}" for stack in ("decoder", "mtp") for name in target_names}
+    adapted = {name for name, module in model.named_modules() if isinstance(module, LoRALinear)}
+    assert adapted == expected
+    assert all(not parameter.requires_grad for parameter in base_parameters)
+    trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+    assert trainable
+    assert all(name.startswith(f"{prefix}language_model.") and ".adapter." in name for name in trainable)
+
+
 def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor):
     cfg = _build_config(
         _super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
@@ -682,7 +723,6 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor
     assert cfg.model.moe_expert_capacity_factor is None
     assert cfg.model.moe_pad_expert_input_to_capacity is False
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
-    assert cfg.model.moe_hybridep_assume_equal_dispatch_inputs is True
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
@@ -774,7 +814,6 @@ def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
     assert cfg.model.moe_expert_capacity_factor is None
     assert cfg.model.moe_pad_expert_input_to_capacity is False
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
-    assert cfg.model.moe_hybridep_assume_equal_dispatch_inputs is True
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.moe_permute_fusion_into_hybridep is False
@@ -926,12 +965,12 @@ def test_super_vl_peft_recipe_uses_gb200_support_topology(fake_processor):
     assert isinstance(cfg.dataset, EnergonDatasetConfig)
     assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
     assert cfg.peft.target_modules == [
-        "linear_qkv",
-        "linear_proj",
-        "in_proj",
-        "out_proj",
-        "linear_fc1",
-        "linear_fc2",
+        "*language_model.*.linear_qkv",
+        "*language_model.*.linear_proj",
+        "*language_model.*.in_proj",
+        "*language_model.*.out_proj",
+        "*language_model.*.linear_fc1",
+        "*language_model.*.linear_fc2",
     ]
     assert cfg.peft.dim == 32
     assert cfg.peft.alpha == 32

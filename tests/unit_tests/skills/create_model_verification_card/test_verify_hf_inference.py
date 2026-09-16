@@ -224,6 +224,18 @@ def test_loading_info_requires_strict_reload():
 
 
 @pytest.mark.parametrize(
+    ("auto_map", "expected_model_class"),
+    [
+        (None, "multimodal"),
+        ({"AutoModelForMultimodalLM": "modeling.Model"}, "multimodal"),
+        ({"AutoModelForImageTextToText": "modeling.Model"}, "image_text"),
+        (
+            {"AutoModelForMultimodalLM": "modeling.Model", "AutoModelForImageTextToText": "modeling.Model"},
+            "multimodal",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
     ("device_map", "expected_device_map", "expected_to_calls"),
     [
         (None, None, ["cuda"]),
@@ -231,11 +243,20 @@ def test_loading_info_requires_strict_reload():
     ],
 )
 def test_runtime_supports_explicit_multi_gpu_device_map(
-    monkeypatch, device_map, expected_device_map, expected_to_calls
+    monkeypatch, device_map, expected_device_map, expected_to_calls, auto_map, expected_model_class
 ):
     module = _load_module()
     processor = _Processor()
     model = _Model()
+    config = SimpleNamespace() if auto_map is None else SimpleNamespace(auto_map=auto_map)
+    loaded_model_classes = []
+
+    class _AutoConfig:
+        @staticmethod
+        def from_pretrained(model_path, *, trust_remote_code):
+            assert model_path == "exported-model"
+            assert trust_remote_code
+            return config
 
     class _AutoProcessor:
         @staticmethod
@@ -245,9 +266,11 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
             return processor
 
     class _AutoModel:
-        @staticmethod
-        def from_pretrained(model_path, **kwargs):
+        @classmethod
+        def from_pretrained(cls, model_path, **kwargs):
             assert model_path == "exported-model"
+            assert kwargs["config"] is config
+            loaded_model_classes.append(cls.model_class)
             if expected_device_map is None:
                 assert "device_map" not in kwargs
             else:
@@ -259,10 +282,21 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
                 "error_msgs": [],
             }
 
+    class _AutoMultimodalModel(_AutoModel):
+        model_class = "multimodal"
+
+    class _AutoImageTextModel(_AutoModel):
+        model_class = "image_text"
+
     monkeypatch.setitem(
         sys.modules,
         "transformers",
-        SimpleNamespace(AutoModelForImageTextToText=_AutoModel, AutoProcessor=_AutoProcessor),
+        SimpleNamespace(
+            AutoConfig=_AutoConfig,
+            AutoModelForImageTextToText=_AutoImageTextModel,
+            AutoModelForMultimodalLM=_AutoMultimodalModel,
+            AutoProcessor=_AutoProcessor,
+        ),
     )
     args = SimpleNamespace(
         device="cuda",
@@ -279,6 +313,7 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
     assert loaded_model is model
     assert loaded_processor is processor
     assert model.to_calls == expected_to_calls
+    assert loaded_model_classes == [expected_model_class]
 
 
 def test_image_requires_chat_template(monkeypatch):

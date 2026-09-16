@@ -40,6 +40,7 @@ def _nemotron_35_super_vl_base() -> ConfigContainer:
     cfg = _sft_common_vlm()
     cfg.model = AutoBridge.from_hf_pretrained(
         NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
+        revision=NEMOTRON_35_SUPER_VL_HF_REVISION,
         trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
@@ -163,7 +164,6 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_expert_capacity_factor = None
     cfg.model.moe_pad_expert_input_to_capacity = False
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = False
-    cfg.model.moe_hybridep_assume_equal_dispatch_inputs = True
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.ddp.overlap_param_gather = False
     cfg.model.moe_hybridep_num_sms = None
@@ -253,7 +253,12 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
         The Super-VL PEFT configuration.
     """
     cfg = _nemotron_35_super_vl_base()
-    target_modules = ["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"]
+    # Base freeze flags do not prevent PEFT from inserting new adapters. Keep
+    # targets language-qualified so the vision tower and projector stay frozen.
+    target_modules = [
+        f"*language_model.*.{name}"
+        for name in ("linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2")
+    ]
     cfg.peft = default_peft_config(
         peft_scheme,
         target_modules=target_modules,

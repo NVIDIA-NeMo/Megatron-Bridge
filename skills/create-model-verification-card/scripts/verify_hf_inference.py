@@ -210,10 +210,17 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
 
     dtype = getattr(torch, args.dtype)
     if args.image:
-        from transformers import AutoModelForImageTextToText, AutoProcessor
+        from transformers import AutoConfig, AutoModelForImageTextToText, AutoModelForMultimodalLM, AutoProcessor
 
+        config = AutoConfig.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
         processor = AutoProcessor.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        model_cls = AutoModelForImageTextToText
+        auto_map = getattr(config, "auto_map", None) or {}
+        # Keep the broader multimodal loader for built-in models, including Omni.
+        # Some remote-code VLMs register only the image-text auto class.
+        if "AutoModelForImageTextToText" in auto_map and "AutoModelForMultimodalLM" not in auto_map:
+            model_cls = AutoModelForImageTextToText
+        else:
+            model_cls = AutoModelForMultimodalLM
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -224,6 +231,8 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         "trust_remote_code": args.trust_remote_code,
         "output_loading_info": True,
     }
+    if args.image:
+        model_kwargs["config"] = config
     if args.device_map:
         model_kwargs["device_map"] = args.device_map
     model, loading_info = model_cls.from_pretrained(args.hf_model, **model_kwargs)

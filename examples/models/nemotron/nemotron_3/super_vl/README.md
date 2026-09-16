@@ -66,9 +66,10 @@ These settings control whether the pretrained base parameters receive
 gradients. PEFT adapter placement is a separate concern: `peft.target_modules`
 determines which matching modules receive adapters. Freezing a base component
 does not, by itself, prevent an unscoped LoRA target name from adding a
-trainable adapter inside that component. Decoder-only PEFT recipes should use
-language-model-qualified target patterns and verify that no adapter is created
-under `vision_model` or `vision_projection`.
+trainable adapter inside that component. The H100 and GB200 PEFT recipes use
+language-model-qualified target patterns, covering the decoder and MTP while
+excluding `vision_model` and `vision_projection`. Custom PEFT configurations
+must preserve that qualification if language-only adapters are intended.
 
 ## Draft Completion Checklist
 
@@ -76,5 +77,4 @@ under `vision_model` or `vision_projection`.
 - Add deterministic image and video inference examples.
 - Add SFT and PEFT dataset requirements and launch examples.
 - Document dynamic-resolution image and temporal-video preprocessing.
-- Document and test decoder-only PEFT target patterns.
 - Link the completed page from the Nemotron 3 example index.

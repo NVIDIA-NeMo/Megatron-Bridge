@@ -80,7 +80,7 @@ unchanged to the selected repository entry point.
     execution.add_argument(
         "--tasks-per-node",
         type=int,
-        help="Inference tasks per node; defaults to one task per requested GPU.",
+        help="Inference tasks per node; defaults to one task per GPU.",
     )
     execution.add_argument("--cpus-per-task", type=int, help="CPUs allocated to each inference task.")
     execution.add_argument("--mem", help="Optional Slurm memory request, such as 64G.")
@@ -199,7 +199,6 @@ def _validate_task_args(task_name: str, inference_args: list[str]) -> None:
 def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
     """Build the srun-native NeMo-Run Slurm executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
-    tasks_per_node = args.tasks_per_node if args.tasks_per_node is not None else args.gpus_per_node
     # Slurm's --export=NIL removes the site PATH used to find scontrol and srun
     # on clusters where they are not installed in /usr/bin. Always inherit PATH
     # for the generated batch script, but expose it to the container only when
@@ -209,7 +208,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
         account=args.account,
         partition=args.partition,
         nodes=args.nodes,
-        ntasks_per_node=tasks_per_node,
+        ntasks_per_node=args.tasks_per_node or args.gpus_per_node,
         cpus_per_task=args.cpus_per_task,
         mem=args.mem,
         exclusive=True if args.exclusive else None,
