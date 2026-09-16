@@ -71,7 +71,6 @@ from megatron.bridge.models.transformer_config import _enable_safe_hybridep_disp
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -1087,8 +1086,8 @@ class ConfigContainer(Container):
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
-        megatron_fsdp_version = getattr(self.ddp, "megatron_fsdp_version", 1)
-        if not MCORE_HAS_MEGATRON_FSDP_V2 or megatron_fsdp_version == 1:
+        megatron_fsdp_version = self.ddp.megatron_fsdp_version
+        if megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
         elif megatron_fsdp_version == 2:
             self._validate_and_apply_megatron_fsdp_v2_configs()

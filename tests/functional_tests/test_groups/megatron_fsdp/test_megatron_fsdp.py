@@ -422,7 +422,25 @@ class TestMegatronFSDP:
 
     @pytest.mark.run_only_on("GPU")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
-        """Train a dense two-layer HybridModel with the experimental MFSDP V2 path."""
+        """Train a dense two-layer HybridModel with MFSDP V2 in eager mode."""
+        initialize_distributed()
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            optimizer={"use_precision_aware_optimizer": True},
+        )
+        cfg.model = create_dense_hybrid_smoke_model_config()
+        cfg.ddp.megatron_fsdp_version = 2
+
+        pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_dense_hybrid_cuda_graph_pretrain_smoke(self):
+        """Train a dense HybridModel with MFSDP V2 full-iteration and optimizer graphs."""
         initialize_distributed()
         torch.distributed.barrier()
 

@@ -14,19 +14,10 @@
 
 """Megatron-FSDP wrapper compatibility helpers."""
 
-try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-        FullyShardedDataParallelV1,
-        FullyShardedDataParallelV2,
-    )
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+    FullyShardedDataParallelV1,
+    FullyShardedDataParallelV2,
+)
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
-    MEGATRON_FSDP_V2_TYPES = (FullyShardedDataParallelV2,)
-    MCORE_HAS_MEGATRON_FSDP_V2 = True
-except ImportError:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)
-    # Empty, so isinstance() against it is always False on mcore versions without v2.
-    MEGATRON_FSDP_V2_TYPES = ()
-    MCORE_HAS_MEGATRON_FSDP_V2 = False
+MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
