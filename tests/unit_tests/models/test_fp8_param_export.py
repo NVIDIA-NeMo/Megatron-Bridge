@@ -1901,11 +1901,7 @@ class TestFp8ParamExport:
     def test_build_export_mxfp8_tasks_expands_bf16_grouped_members(self, monkeypatch):
         bridge = DummyBridge()
         grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
-        members = list(
-            torch.arange(2 * 8 * 16, dtype=torch.bfloat16)
-            .view(2, 8, 16)
-            .unbind(0)
-        )
+        members = list(torch.arange(2 * 8 * 16, dtype=torch.bfloat16).view(2, 8, 16).unbind(0))
 
         class GroupedWeight:
             quantized_tensors: list[torch.Tensor] | None = None

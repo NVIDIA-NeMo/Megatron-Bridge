@@ -186,9 +186,7 @@ def _split_grouped_export_members(param: Any, global_param_name: str) -> list[An
         return list(members)
     if isinstance(param, torch.Tensor):
         return list(param.unbind(0))
-    raise ValueError(
-        f"Grouped expert parameter {global_param_name!r} does not expose per-expert members"
-    )
+    raise ValueError(f"Grouped expert parameter {global_param_name!r} does not expose per-expert members")
 
 
 def _supports_native_mxfp8_mapping(mapping: "MegatronParamMapping") -> bool:
