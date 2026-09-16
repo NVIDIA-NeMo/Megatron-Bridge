@@ -454,6 +454,8 @@ class TestMegatronFSDP:
         # Full-iteration graphs over a dense model: Megatron-LM #7075 made these work
         # under MFSDP v2. MoE stays out, its dispatch shapes are not capturable.
         cfg.model.cuda_graph_impl = "full_iteration"
+        # Use graph-safe RNG state tracking during capture and replay.
+        cfg.model.use_te_rng_tracker = True
         # The loss NaN check reads a GPU value on the host and cannot be captured.
         cfg.rerun_state_machine.check_for_nan_in_loss = False
         # Capturable TE FusedAdam requires the main-gradient and main-weight dtypes
