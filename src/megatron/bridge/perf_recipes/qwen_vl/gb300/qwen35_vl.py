@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
+    _enable_partial_cuda_graphs,
     _perf_precision,
     _qwen35_vl_common,
     _qwen35_vl_post,
@@ -46,9 +47,6 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
-
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=True,
         overlap_grad_reduce=False,
@@ -57,6 +55,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
+    _enable_partial_cuda_graphs(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -276,9 +275,6 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
-
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=True,
         overlap_grad_reduce=False,
@@ -287,6 +283,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
+    _enable_partial_cuda_graphs(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

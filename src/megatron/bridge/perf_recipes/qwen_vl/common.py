@@ -29,7 +29,7 @@ from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
 
 
 def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
@@ -79,6 +79,28 @@ def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_impl = "none"
     clear_cuda_graph_modules(cfg.model)
     cfg.optimizer.overlap_param_gather = False
+
+
+def _enable_partial_cuda_graphs(cfg: ConfigContainer) -> None:
+    """Re-enable partial (per-layer) CUDA graphs on the language stack, with ``attn``.
+
+    MUST be called AFTER :func:`_qwen35_vl_post`, which sets
+    ``cuda_graph_impl="none"`` and clears the module list for the variable-shape
+    real-data path. These benchmarks run on MOCK data with a fixed
+    ``seq_length`` (4096) and ``moe_router_force_load_balancing=True``, so the
+    variable-length concern that motivates disabling graphs does not apply here.
+
+    ``attn`` is the module that matters: on 397B/64x GB300 under forced load
+    balancing, adding the attention graph moved the step from 390.5 to 580.2
+    TFLOP/s/GPU with GPU kernel time unchanged (+0.5%) and identical per-kernel
+    instance counts -- the entire gain is per-launch CPU overhead that graph
+    replay removes.
+
+    ``set_cuda_graph_modules`` writes ``cuda_graph_modules`` and nulls
+    ``cuda_graph_scope``, so the two never end up set at once (MCore asserts).
+    """
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
 
 
 def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:
