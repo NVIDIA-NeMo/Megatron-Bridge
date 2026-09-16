@@ -207,10 +207,10 @@ class WeightConversionTask(Generic[MappingT]):
             dtype; bridges that requantize on export skip it (no scale companions).
         export_hook: Export-only transformation applied after mapping conversion and
             before final device placement.
-        param_weight_resolver: Export-only callback used when a task's source is a
-            live view that can be invalidated and recreated after task construction.
         required_hf_param_names: Import-only source tensors consumed by the loading
             hook. Defaults to the parameter names declared by ``mapping.hf_param``.
+        param_weight_resolver: Export-only callback used when a task's source is a
+            live view that can be invalidated and recreated after task construction.
 
     """
 
@@ -225,10 +225,10 @@ class WeightConversionTask(Generic[MappingT]):
     export_hook: Optional[Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]] = field(
         default=None, compare=False, repr=False
     )
+    required_hf_param_names: tuple[str, ...] | None = field(default=None, compare=False)
     param_weight_resolver: Optional[Callable[[], Optional[torch.Tensor]]] = field(
         default=None, compare=False, repr=False
     )
-    required_hf_param_names: tuple[str, ...] | None = field(default=None, compare=False)
 
     def resolve_param_weight(self) -> Optional[torch.Tensor]:
         """Return the current export source, refreshing invalidated live views."""
@@ -1263,7 +1263,7 @@ class MegatronModelBridge(
         target_rows = vocab_size
         if is_scale_task:
             scale_block_size = getattr(task.mapping, "scale_block_size", None)
-            local_scale = task.param_weight
+            local_scale = task.resolve_param_weight()
             module_weight = getattr(task.megatron_module, "weight", None)
             if scale_block_size is None:
                 if (
@@ -1581,13 +1581,14 @@ class MegatronModelBridge(
         """
         params = []
         for task in tasks:
-            if task.param_weight is None:
+            param_weight = task.resolve_param_weight()
+            if param_weight is None:
                 continue
             if task.megatron_module is None:
                 raise ValueError(f"{task.global_param_name}: local parameter has no owning Megatron module")
             params.extend(
                 task.mapping.local_hf_params(
-                    task.param_weight,
+                    param_weight,
                     global_param_name=task.global_param_name,
                     megatron_module=task.megatron_module,
                 )

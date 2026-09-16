@@ -742,10 +742,15 @@ class AutoBridge(Generic[MegatronModelT]):
         """Build native MXFP8 export tasks, optionally expanding grouped experts."""
         if not isinstance(model, list):
             model = [model]
+        if not expand_native_grouped:
+            return self._model_bridge.build_export_mxfp8_tasks(
+                self.hf_pretrained,
+                model,
+            )
         return self._model_bridge.build_export_mxfp8_tasks(
             self.hf_pretrained,
             model,
-            expand_native_grouped=expand_native_grouped,
+            expand_native_grouped=True,
         )
 
     def iter_local_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:

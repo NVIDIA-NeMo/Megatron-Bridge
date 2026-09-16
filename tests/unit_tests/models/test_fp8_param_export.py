@@ -16,6 +16,7 @@
 
 import gc
 import logging
+import pickle
 import sys
 import types
 import weakref
@@ -1839,22 +1840,35 @@ class TestFp8ParamExport:
         assert grouped_member_calls == [(native_grouped_weight, True)]
 
     @pytest.mark.parametrize(
-        ("ep_size", "ep_rank", "num_experts", "expected_expert_ids"),
+        (
+            "grouped",
+            "ep_size",
+            "ep_rank",
+            "num_experts",
+            "expected_expert_ids",
+        ),
         [
-            (1, 0, 2, [0, 1]),
-            (2, 1, 4, [2, 3]),
+            ("decoder.layers.0.mlp.experts.linear_fc1.weight", 1, 0, 2, [0, 1]),
+            ("decoder.layers.0.mlp.experts.linear_fc1.weight", 2, 1, 4, [2, 3]),
+            (
+                "mtp.decoder.layers.0.mlp.experts.linear_fc1.weight",
+                1,
+                0,
+                2,
+                [0, 1],
+            ),
         ],
     )
     def test_build_export_mxfp8_tasks_expands_native_grouped_for_bf16_wire(
         self,
         monkeypatch,
+        grouped,
         ep_size,
         ep_rank,
         num_experts,
         expected_expert_ids,
     ):
         bridge = DummyBridge()
-        grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
         parameter = torch.nn.Parameter(torch.zeros(2, 8, 16))
         members = [_FakeNativeMXFP8Tensor(), _FakeNativeMXFP8Tensor()]
         current_members = [members]
@@ -1913,6 +1927,8 @@ class TestFp8ParamExport:
         assert [task.global_param_name for task in tasks] == [
             f"{grouped}{expert_id}" for expert_id in expected_expert_ids
         ]
+        assert tasks[0].param_weight is None
+        assert tasks[1].param_weight is None
         assert tasks[0].resolve_param_weight() is members[0]
         assert tasks[1].resolve_param_weight() is members[1]
 
@@ -1920,6 +1936,33 @@ class TestFp8ParamExport:
         current_members[0] = replacement
         assert tasks[0].resolve_param_weight() is replacement[0]
         assert tasks[1].resolve_param_weight() is replacement[1]
+        restored_resolver = pickle.loads(pickle.dumps(tasks[0].param_weight_resolver))
+        assert restored_resolver() is not None
+
+    def test_iter_local_hf_params_resolves_live_export_source(self):
+        bridge = DummyBridge()
+        current = [torch.ones(2, 2)]
+
+        class Mapping:
+            @staticmethod
+            def local_hf_params(weight, **_kwargs):
+                return (weight,)
+
+        task = WeightConversionTask(
+            param_name="decoder.weight",
+            global_param_name="decoder.weight",
+            mapping=Mapping(),
+            megatron_module=SimpleNamespace(),
+            param_weight=None,
+            param_weight_resolver=lambda: current[0],
+        )
+
+        first = tuple(bridge.iter_local_hf_params([task]))
+        current[0] = torch.full((2, 2), 2.0)
+        second = tuple(bridge.iter_local_hf_params([task]))
+
+        torch.testing.assert_close(first[0], torch.ones(2, 2))
+        torch.testing.assert_close(second[0], torch.full((2, 2), 2.0))
 
     def test_build_export_mxfp8_tasks_expands_bf16_grouped_members(self, monkeypatch):
         bridge = DummyBridge()
@@ -2045,11 +2088,17 @@ class TestFp8ParamExport:
             )
 
         assert tasks == expected_tasks
-        mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(
-            mock_hf,
-            [model],
-            expand_native_grouped=expand_native_grouped,
-        )
+        if expand_native_grouped:
+            mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(
+                mock_hf,
+                [model],
+                expand_native_grouped=True,
+            )
+        else:
+            mock_model_bridge.build_export_mxfp8_tasks.assert_called_once_with(
+                mock_hf,
+                [model],
+            )
 
     def test_iter_local_mxfp8_params_uses_public_auto_bridge_api(self):
         mock_hf = Mock(spec=PreTrainedCausalLM)
