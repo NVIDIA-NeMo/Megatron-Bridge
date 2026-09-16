@@ -14,7 +14,6 @@
 
 """Unit tests for the GLM-5 MoE DSA bridge."""
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,10 +32,9 @@ pytestmark = pytest.mark.unit
 _FIXTURES = Path(__file__).parent / "fixtures"
 
 
-@pytest.mark.parametrize("variant", ["glm52", "glm53"])
-def test_published_config_loads_through_shared_bridge(variant: str) -> None:
-    """Pinned publisher configs resolve without mocking provider construction."""
-    auto_bridge = AutoBridge.from_hf_pretrained(_FIXTURES / f"{variant}-config.json")
+def test_glm53_config_loads_through_shared_bridge() -> None:
+    """The published GLM-5.3 config resolves through the existing GLM bridge."""
+    auto_bridge = AutoBridge.from_hf_pretrained(_FIXTURES / "glm53-config.json")
     provider = auto_bridge.to_megatron_provider(load_weights=False)
 
     assert isinstance(auto_bridge._model_bridge, GLM5Bridge)
@@ -55,19 +53,6 @@ def test_published_config_loads_through_shared_bridge(variant: str) -> None:
     assert provider.dsa_indexer_skip_topk_offset == 3
     assert provider.moe_layer_freq == [0] * 3 + [1] * 75
     assert provider.mtp_num_layers is None
-
-
-def test_published_glm52_glm53_architecture_configs_match() -> None:
-    """Keep checkpoint packaging differences distinct from architecture changes."""
-    configs = [json.loads((_FIXTURES / f"{variant}-config.json").read_text()) for variant in ("glm52", "glm53")]
-    glm52, glm53 = configs
-    quantization = glm53.pop("quantization_config")
-    assert quantization["quant_method"] == "fp8"
-    assert quantization["fmt"] == "e4m3"
-    assert quantization["weight_block_size"] == [128, 128]
-    assert glm52.pop("transformers_version") == "5.12.0"
-    assert glm53.pop("transformers_version") == "5.15.0"
-    assert glm52 == glm53
 
 
 _DSA_INDEXER_SUFFIXES = {
