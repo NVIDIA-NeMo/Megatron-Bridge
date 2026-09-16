@@ -22,6 +22,53 @@ from megatron.core.transformer.moe.moe_utils import apply_random_logits
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.lora_merge import LoRAMerge
+from megatron.bridge.peft.utils import ParallelLinearAdapter
+
+
+class _AddExpertLoRA(torch.autograd.Function):
+    """Accumulate an expert LoRA projection into a consumed grouped-linear output."""
+
+    @staticmethod
+    def forward(
+        ctx,
+        rank_input: torch.Tensor,
+        weight: torch.Tensor,
+        base_output: torch.Tensor,
+        destination: torch.Tensor,
+    ):
+        if (
+            base_output.ndim != 2
+            or rank_input.ndim != 2
+            or not base_output.is_contiguous()
+            or base_output.storage_offset() != 0
+            or base_output.untyped_storage().nbytes() != base_output.numel() * base_output.element_size()
+            or destination.shape != base_output.shape
+            or destination.data_ptr() != base_output.data_ptr()
+            or destination.requires_grad
+        ):
+            raise RuntimeError("Grouped-linear output does not cover one complete contiguous allocation")
+        if rank_input.shape[0] != base_output.shape[0] or weight.shape != (
+            base_output.shape[1],
+            rank_input.shape[1],
+        ):
+            raise RuntimeError("Expert LoRA projection does not match the grouped-linear output")
+        if rank_input.device != base_output.device or weight.device != base_output.device:
+            raise RuntimeError("Expert LoRA projection and grouped-linear output must share a device")
+        if rank_input.dtype != base_output.dtype or weight.dtype != base_output.dtype:
+            raise RuntimeError("Expert LoRA projection and grouped-linear output must share a dtype")
+
+        ctx.save_for_backward(rank_input, weight)
+        ctx.mark_dirty(destination)
+        torch.addmm(destination, rank_input, weight.t(), beta=1, out=destination)
+        return destination
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        rank_input, weight = ctx.saved_tensors
+        grad_rank_input = grad_output @ weight if ctx.needs_input_grad[0] else None
+        grad_weight = grad_output.t() @ rank_input if ctx.needs_input_grad[1] else None
+        grad_base_output = grad_output if ctx.needs_input_grad[2] else None
+        return grad_rank_input, grad_weight, grad_base_output, None
 
 
 class LoRALinear(AdapterWrapper):
@@ -62,6 +109,51 @@ class LoRALinear(AdapterWrapper):
         """Return the wrapped linear bias."""
         return getattr(self.to_wrap, "bias", None)
 
+    def _can_reuse_grouped_expert_output(self, x: torch.Tensor, linear_output: torch.Tensor) -> bool:
+        adapter = self.adapter
+        grouped_linear_type = getattr(te, "GroupedLinear", None)
+        if grouped_linear_type is None or not isinstance(self.to_wrap, grouped_linear_type):
+            return False
+        if not isinstance(adapter, ParallelLinearAdapter) or not adapter.is_expert:
+            return False
+        if not isinstance(adapter.activation, nn.Identity) or not isinstance(adapter.dropout, nn.Identity):
+            return False
+        if not adapter.disable_sequence_parallel_comm:
+            return False
+        if adapter.config.cpu_offloading and adapter.config.cpu_offloading_activations:
+            return False
+        linear_in = adapter.linear_in
+        linear_out = adapter.linear_out
+        surface = adapter.base_linear_name.rsplit(".", maxsplit=1)[-1]
+        if surface == "linear_fc1":
+            if adapter.input_is_parallel:
+                return False
+        elif surface == "linear_fc2":
+            if not adapter.input_is_parallel:
+                return False
+        else:
+            return False
+        return (
+            not adapter.use_a2a
+            and getattr(adapter.config, "expert_tensor_parallel_size", 1) == 1
+            and x.ndim == 2
+            and linear_output.ndim == 2
+            and linear_in.input_size == x.shape[-1]
+            and linear_out.output_size_per_partition == linear_out.output_size
+            and linear_out.weight.shape[0] == linear_output.shape[-1]
+            and linear_out.bias is None
+            and not linear_out.gradient_accumulation_fusion
+            and linear_out.gtp_remat_size == 1
+        )
+
+    def _reuse_grouped_expert_output(self, x: torch.Tensor, linear_output: torch.Tensor) -> torch.Tensor:
+        adapter = self.adapter
+        rank_output, _ = adapter.linear_in(x)
+        rank_output = adapter.activation(rank_output)
+        rank_output = rank_output * (adapter.alpha / adapter.dim)
+        destination = linear_output.detach()
+        return _AddExpertLoRA.apply(rank_output, adapter.linear_out.weight, linear_output, destination)
+
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any):
         """Forward pass that combines the wrapped module output with the adapter output.
 
@@ -80,12 +172,15 @@ class LoRALinear(AdapterWrapper):
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
             return linear_output if not self._base_returns_tuple else (linear_output, bias)
-        # Serialize full-width branch buffers to keep long-context peak at two outputs.
-        combined_output = linear_output.clone()
-        del linear_output
-        adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
-        adapter_output = adapter_output.reshape(combined_output.shape)
-        combined_output.add_(adapter_output)
+        adapter_input = layernorm_output.contiguous()
+        if self._can_reuse_grouped_expert_output(adapter_input, linear_output):
+            combined_output = self._reuse_grouped_expert_output(adapter_input, linear_output)
+        else:
+            combined_output = linear_output.clone()
+            del linear_output
+            adapter_output = self.adapter_forward(self.adapter, adapter_input, *args, **kwargs)
+            adapter_output = adapter_output.reshape(combined_output.shape)
+            combined_output.add_(adapter_output)
         if not self._base_returns_tuple:
             return combined_output
         return combined_output, bias
