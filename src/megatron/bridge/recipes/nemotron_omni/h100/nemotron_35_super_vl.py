@@ -79,6 +79,9 @@ def _nemotron_35_super_vl_base() -> ConfigContainer:
         lr_decay_iters=None,
         max_lr=6e-6,
         min_lr=6e-7,
+        weight_decay=0.1,
+        start_weight_decay=0.1,
+        end_weight_decay=0.1,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -217,7 +220,18 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
         hf_processor_path=NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
         hf_processor_revision=NEMOTRON_35_SUPER_VL_HF_REVISION,
     )
-    return _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
+    cfg = _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
+    # Reuse the execution layout without inheriting reduced-precision Adam
+    # state. Keep both precision settings aligned: setup copies the mixed
+    # precision policy into DDP before training.
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    return cfg
 
 
 def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
@@ -292,6 +306,9 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
         max_lr=1e-4,
         min_lr=0.0,
         adam_beta2=0.95,
+        weight_decay=0.1,
+        start_weight_decay=0.1,
+        end_weight_decay=0.1,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg

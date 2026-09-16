@@ -242,6 +242,9 @@ def nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config() -> ConfigCo
         max_lr=5e-6,
         min_lr=0.0,
         adam_beta2=0.95,
+        weight_decay=0.1,
+        start_weight_decay=0.1,
+        end_weight_decay=0.1,
     )
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32

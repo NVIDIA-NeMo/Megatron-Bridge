@@ -30,6 +30,8 @@ from megatron.bridge.data.builders import (
 from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_expanded_collate_fn
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+from megatron.bridge.training.optim import _get_scheduler
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -468,6 +470,57 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.model.freeze_sound_projection is True
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_func", "expert_capacity"),
+    [
+        (_super_vl_h100_recipe_module.nemotron_35_super_vl_sft_64gpu_h100_bf16_config, 1.10),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_64gpu_gb200_bf16_config, 1.10),
+        (_super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config, None),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config, None),
+        (_super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config, None),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_peft_16gpu_gb200_bf16_config, None),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config, None),
+    ],
+    ids=["sft-h100", "sft-gb200", "pretrain-h100", "pretrain-gb200", "peft-h100", "peft-gb200", "long-context"],
+)
+def test_super_vl_optimizer_precision_and_effective_weight_decay(recipe_func, expert_capacity, fake_processor):
+    cfg = _build_config(recipe_func, fake_processor)
+    precision = get_mixed_precision_config(cfg.mixed_precision)
+    assert precision.bf16 is True
+    assert precision.grad_reduce_in_fp32 is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.optimizer.bf16 is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.scheduler.start_weight_decay == 0.1
+    assert cfg.scheduler.end_weight_decay == 0.1
+    assert cfg.scheduler.weight_decay_incr_style == "constant"
+
+    # Exercise the real scheduler, including parameter groups exempt from WD.
+    optimizer = SimpleNamespace(param_groups=[{"wd_mult": 1.0}, {"wd_mult": 0.0}])
+    scheduler_cfg = replace(cfg.scheduler)
+    scheduler_cfg.lr_warmup_steps = 10
+    scheduler_cfg.lr_decay_steps = 100
+    scheduler_cfg.wd_incr_steps = 100
+    scheduler = _get_scheduler(cfg.optimizer, scheduler_cfg, optimizer)
+    for increment in (0, 50, 50):
+        scheduler.step(increment)
+        assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.1)
+        assert optimizer.param_groups[1]["weight_decay"] == 0.0
+
+    # Capacity policy and loss normalization are deliberately unchanged.
+    assert cfg.model.moe_expert_capacity_factor == expert_capacity
+    assert cfg.model.moe_pad_expert_input_to_capacity is (expert_capacity is not None)
+    assert cfg.model.calculate_per_token_loss is True
+
+
 def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_processor):
     cfg = _build_config(_super_vl_recipe_module.nemotron_35_super_vl_sft_config, fake_processor)
 
@@ -513,15 +566,15 @@ def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_proc
     assert cfg.dataset.seq_length == 4096
     assert cfg.train.global_batch_size == 1280
     assert cfg.train.micro_batch_size == 1
-    assert cfg.optimizer.use_precision_aware_optimizer is True
-    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
-    assert cfg.optimizer.main_params_dtype == torch.float16
-    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.optimizer.optimizer_cpu_offload is False
     assert cfg.mixed_precision.bf16 is True
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
-    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
     assert cfg.ddp.overlap_grad_reduce is False
     assert cfg.ddp.overlap_param_gather is False
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
@@ -675,7 +728,7 @@ def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor
     assert cfg.optimizer.min_lr == 6e-7
     assert cfg.scheduler.lr_decay_style == "cosine"
     assert cfg.mixed_precision.bf16 is True
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
     assert cfg.env_vars == {
         "TORCH_NCCL_HIGH_PRIORITY": 1,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
