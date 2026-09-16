@@ -24,7 +24,7 @@ from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, get_model_bridge
+from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
@@ -300,25 +300,39 @@ def test_canonical_provider_builds_dedicated_model(monkeypatch):
     provider = NemotronOmniModelProvider(
         image_token_index=18,
         nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        transformer_impl="inference_optimized",
     )
     model = SimpleNamespace()
     model_factory = Mock(return_value=model)
     llava_factory = Mock()
+    inference_spec = object()
+    resolve_hybrid_stack_spec = Mock(return_value=inference_spec)
+    projection_submodules = object()
+    get_projection_submodules = Mock(return_value=projection_submodules)
 
+    monkeypatch.setattr(provider, "_resolve_hybrid_stack_spec", resolve_hybrid_stack_spec)
     monkeypatch.setattr(provider_module, "LLaVAModel", llava_factory)
     monkeypatch.setattr(provider_module, "get_vit_layer_with_transformer_engine_spec", Mock(return_value=object()))
-    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", Mock(return_value=object()))
+    monkeypatch.setattr(
+        provider_module,
+        "_get_transformer_engine_projection_submodules",
+        get_projection_submodules,
+    )
     monkeypatch.setattr(provider_module, "NemotronOmniModel", model_factory)
 
     assert provider.provide() is model
     model_factory.assert_called_once()
+    resolve_hybrid_stack_spec.assert_called_once_with()
+    assert model_factory.call_args.kwargs["language_transformer_layer_spec"] is inference_spec
+    assert model_factory.call_args.kwargs["vision_projection_layer_spec"] is projection_submodules
+    get_projection_submodules.assert_called_once_with()
     llava_factory.assert_not_called()
 
 
 def test_nemotron_omni_provider_can_omit_sound_modules():
     provider = NemotronOmniModelProvider(has_sound=False)
 
-    sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
+    sound_model, sound_projection = provider._build_sound_modules(None, add_encoder=True)
 
     assert provider.has_sound is False
     assert sound_model is None
@@ -331,10 +345,14 @@ def test_nemotron_omni_provider_builds_sound_modules_when_enabled(monkeypatch):
     expected_sound_projection = object()
     monkeypatch.setattr(provider, "_build_sound_encoder", lambda: expected_sound_model)
     monkeypatch.setattr(provider, "_build_sound_projection_config", lambda _: object())
-    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", lambda _: object())
+    monkeypatch.setattr(
+        provider_module,
+        "_get_transformer_engine_projection_submodules",
+        lambda: object(),
+    )
     monkeypatch.setattr(provider_module, "MultimodalProjector", lambda **_: expected_sound_projection)
 
-    sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
+    sound_model, sound_projection = provider._build_sound_modules(None, add_encoder=True)
 
     assert sound_model is expected_sound_model
     assert sound_projection is expected_sound_projection
@@ -388,6 +406,27 @@ def test_nemotron_omni_export_preserves_source_only_buffers():
     assert exported_buffers.keys() == source_tensors.keys()
     for name, source_tensor in source_tensors.items():
         assert torch.equal(exported_buffers[name], source_tensor)
+
+
+def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sourceless():
+    bridge = NemotronOmniBridge()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    source_tensors = {
+        name: torch.full((2,), index, dtype=torch.float32) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)
+    }
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = ["language_model.weight", *source_tensors]
+    hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
+    converted = HFSourcedWeightTuple("language_model.weight", torch.ones(1), ("decoder.weight",))
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])) as stream:
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained, with_megatron_names=True))
+
+    assert stream.call_args.kwargs["with_megatron_names"] is True
+    assert exported[0] == converted
+    assert all(type(item) is HFSourcedWeightTuple for item in exported[1:])
+    assert {item.param_name for item in exported[1:]} == set(source_tensors)
+    assert all(item.megatron_param_names == () and item.megatron_param_name is None for item in exported[1:])
 
 
 def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):

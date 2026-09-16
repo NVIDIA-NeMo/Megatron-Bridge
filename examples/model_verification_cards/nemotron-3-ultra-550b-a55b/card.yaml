@@ -3,17 +3,18 @@
 
 title: nemotron_3_ultra_550b_a55b
 summary: >
-  Nemotron 3 Ultra 550B-A55B has public packed full-SFT and packed PEFT recipes.
-  Its large-scale BF16 library pretraining workflows remain unverified because
-  the previously recorded 256-GPU recipe names are not exported on current
-  main. The separately scoped
+  Nemotron 3 Ultra 550B-A55B has exported 256-GPU BF16 library pretraining
+  recipes for H100 and GB200, plus public packed full-SFT and packed PEFT
+  recipes. The checkpoint-initialized GB200 pretraining recipe is verified in
+  the card's current base container; an exact H100 pretraining rerun remains
+  unverified. The separately scoped
   pretrain_performance.GB200 and pretrain_performance.GB300 are verified with
-  their canonical 256-GPU MXFP8 recipes.
-  Its pinned 24-GPU BF16 Hugging Face-to-Megatron-to-Hugging Face round trip,
+  their canonical 256-GPU MXFP8 recipes. Its pinned 24-GPU BF16
+  Hugging Face-to-Megatron-to-Hugging Face round trip,
   single-process CPU export, and checkpoint-backed deterministic inference are
-  verified. CPU import, portable manual-forward, remaining functional
-  training, and checkpoint resume still require completed verification runs
-  before those support claims are promoted.
+  verified. CPU import, portable manual-forward, fine-tuning, and checkpoint
+  resume still require completed verification runs before those support claims
+  are promoted.
 verification_index:
   model_level:
     verified:
@@ -29,7 +30,8 @@ verification_index:
       unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
       unsupported: [sft_long_context]
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      verified: [pretrain]
+      unverified: [sft, sft_export_inference, peft, checkpoint_resume]
       unsupported: [sft_long_context]
   performance:
     GB200: verified
@@ -168,7 +170,24 @@ items:
       status: unverified
       precision: bf16
       enabled_features: {}
-      command: null
+      command: >
+        ./scripts/training/train.sh --nodes 32 --gpus-per-node 8
+        --recipe nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config
+        --mode pretrain --dataset megatron-indexed --max_steps 10 --wait
+        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
+        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-h100
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        scheduler.lr_decay_iters=100
+        checkpoint.load=null checkpoint.save=null checkpoint.async_save=false
+        validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-h100-resolved.yaml
+        logger.tensorboard_dir=null
       last_verified: null
       metrics:
         initial_loss: null
@@ -179,27 +198,68 @@ items:
         peak_allocated_memory_gib: null
         peak_reserved_memory_gib: null
       expected_result: >
-        H100 functional pretraining remains unverified until a currently
-        exported public recipe completes a bounded run with all applicable
-        numerical and artifact checks.
+        In the card's current base container, the public BF16 library recipe
+        must complete all 10 bounded RedPajama2 head_01 optimizer steps at
+        TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192.
+        Megatron-FSDP, natural expert routing, standard all-to-all dispatch,
+        FP32 gradient communication, numerical checks, full-layer block
+        recompute, and the library optimizer and constant-LR schedule must
+        remain active. Every keyed step must have finite loss, throughput, and
+        gradient norm with zero skipped and zero NaN iterations.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 77da7734fa446f6cd348eb046ce3f11076d0bb61  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 64 --gpus-per-node 4
+        --recipe nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config
+        --mode pretrain --dataset megatron-indexed --max_steps 20 --wait
+        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
+        dataset.path_to_cache=work/cache/nemotron-3-ultra-550b-a55b/rp2-gb200-ep16
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        tokenizer.use_tokenizer_vocab_size=false
+        model.moe_router_force_load_balancing=false
+        checkpoint.load=null
+        checkpoint.pretrained_checkpoint=work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron
+        checkpoint.finetune=true checkpoint.load_optim=false
+        checkpoint.load_rng=false checkpoint.dist_ckpt_strictness=log_all
+        checkpoint.save=null checkpoint.async_save=false
+        validation.eval_global_batch_size=256
+        validation.eval_micro_batch_size=1
+        validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true
+        logger.log_device_memory_used=true
+        logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/pretrain-gb200-ep16-resolved.yaml
+        logger.tensorboard_dir=null logger.wandb_project=nemotron-ultra-verification
+        logger.wandb_exp_name=gb200-bf16-ep16-20step
+        logger.wandb_save_dir=work/model-verification/nemotron-3-ultra-550b-a55b/wandb
+      last_verified: 2026-09-03
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 12.256560
+        final_loss: 8.224941
+        last_10_steps_step_time_ms_avg: 10125.530
+        last_10_steps_model_tflops_per_gpu_avg: 291.790
+        last_10_steps_tokens_per_second_per_gpu_avg: 809.044
+        peak_allocated_memory_gib: 178.170
+        peak_reserved_memory_gib: 181.380
       expected_result: >
-        GB200 functional pretraining remains unverified until a currently
-        exported public recipe completes a bounded run with all applicable
-        numerical and artifact checks.
+        In the card's current base container, the public checkpoint-initialized
+        BF16 library recipe completed all 20 bounded RedPajama2 head_01
+        optimizer steps at TP4/PP4/CP1/EP16/ETP1, GBS/MBS 256/1, and sequence
+        length 8192. Natural expert routing, non-FSDP distributed optimizer,
+        HybridEP, targeted expert-activation offload, selective
+        attention/layernorm recompute, numerical checks, and the library
+        optimizer and constant-LR schedule remained active. Every keyed step
+        had finite loss, throughput, and gradient norm with zero skipped and
+        zero NaN iterations, and durable Weights & Biases telemetry was
+        produced.
 
   sft:
     H100:

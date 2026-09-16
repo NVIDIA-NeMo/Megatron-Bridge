@@ -13,7 +13,7 @@ import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any, Dict
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 
@@ -506,6 +506,55 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
     mock_evaluate.assert_called_once()
 
 
+def test_iteration_time_is_logged_once_by_shared_training_logger():
+    """MIMO should not overwrite the shared interval-average timing metric."""
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(save_dir=None, train_iters=2, step=1)
+    state.cfg.logger.skip_train_metrics_log = False
+    state.cfg.logger.log_timers_to_tensorboard = True
+    state.cfg.logger.log_interval = 2
+    state.tensorboard_logger = MagicMock()
+    state.timers.return_value.elapsed.return_value = 5.0
+
+    infra = _make_megatron_mimo_infra()
+
+    def log_interval_average(**_kwargs):
+        state.tensorboard_logger.add_scalar("iteration-time", 2.0, 2)
+        return False
+
+    with (
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+            return_value=Mock(spec=[]),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+            return_value=({}, 0, 0.0, 0),
+        ),
+        patch("megatron.bridge.training.train_megatron_mimo.training_log", side_effect=log_interval_average),
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=iter([object()]),
+            valid_data_iterator=None,
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
+
+    assert state.tensorboard_logger.add_scalar.call_args_list == [call("iteration-time", 2.0, 2)]
+
+
 # ---------------------------------------------------------------------------
 # Tests: checkpoint_and_decide_exit integration in train_megatron_mimo
 # ---------------------------------------------------------------------------
@@ -948,6 +997,7 @@ class TestMimoOptimizerLoadCompat:
             tp=process_group(rank=0),
             gtp_remat=process_group(rank=0),
             pp=process_group(rank=0),
+            dp=process_group(rank=0),
             dp_cp=process_group(rank=0),
         )
 

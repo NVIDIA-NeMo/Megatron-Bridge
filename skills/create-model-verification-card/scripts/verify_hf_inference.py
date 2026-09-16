@@ -50,10 +50,25 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--device", default="cuda", help="Torch device used for inference.")
     parser.add_argument(
+        "--device-map",
+        choices=("auto", "balanced", "balanced_low_0", "sequential"),
+        help="Optional Hugging Face device-map strategy for sharded model loading.",
+    )
+    parser.add_argument(
         "--dtype",
         choices=("bfloat16", "float16", "float32"),
         default="bfloat16",
         help="Model loading dtype.",
+    )
+    parser.add_argument(
+        "--autocast",
+        action="store_true",
+        help="Run generation under autocast using the model loading dtype.",
+    )
+    parser.add_argument(
+        "--require-gpu-only",
+        action="store_true",
+        help="Fail if any model shard is placed on CPU or disk.",
     )
     args = parser.parse_args()
     if args.max_new_tokens <= 0:
@@ -122,6 +137,23 @@ def _validate_loading_info(loading_info: dict[str, Any]) -> None:
         raise RuntimeError(f"Exported Hugging Face checkpoint did not reload strictly: {details}")
 
 
+def _validate_gpu_only_placement(model: Any) -> None:
+    """Require every model shard to be resident on CUDA devices."""
+    device_map = getattr(model, "hf_device_map", None)
+    if device_map is None:
+        if getattr(model.device, "type", str(model.device).split(":", 1)[0]) != "cuda":
+            raise RuntimeError(f"Model is not GPU-only: device={model.device}")
+        return
+
+    non_gpu = {
+        name: str(device)
+        for name, device in device_map.items()
+        if not isinstance(device, int) and str(device).split(":", 1)[0] != "cuda"
+    }
+    if non_gpu:
+        raise RuntimeError(f"Model has non-GPU placements: {non_gpu}")
+
+
 def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
     """Load torch, the selected HF auto-model, and its tokenizer or processor."""
     import torch
@@ -137,15 +169,33 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
 
         processor = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
         model_cls = AutoModelForCausalLM
-    model, loading_info = model_cls.from_pretrained(
-        args.hf_model,
-        dtype=dtype,
-        trust_remote_code=args.trust_remote_code,
-        output_loading_info=True,
-    )
+    model_kwargs = {
+        "dtype": dtype,
+        "trust_remote_code": args.trust_remote_code,
+        "output_loading_info": True,
+    }
+    if args.device_map:
+        model_kwargs["device_map"] = args.device_map
+    model, loading_info = model_cls.from_pretrained(args.hf_model, **model_kwargs)
     _validate_loading_info(loading_info)
-    model = model.to(args.device).eval()
+    if not args.device_map:
+        model = model.to(args.device)
+    model = model.eval()
+    if args.require_gpu_only:
+        _validate_gpu_only_placement(model)
+    LOG.info("Strict HF reload complete (%d model modules)", sum(1 for _ in model.modules()))
     return torch, model, processor
+
+
+def _model_input_device(model: Any) -> Any:
+    """Return the device holding the model's input embeddings."""
+    get_input_embeddings = getattr(model, "get_input_embeddings", None)
+    if get_input_embeddings is not None:
+        embeddings = get_input_embeddings()
+        weight = getattr(embeddings, "weight", None)
+        if weight is not None and getattr(weight.device, "type", None) != "meta":
+            return weight.device
+    return model.device
 
 
 def main() -> int:
@@ -153,11 +203,19 @@ def main() -> int:
     args = _parse_args()
     torch, model, processor = _load_runtime(args)
     tokenizer = getattr(processor, "tokenizer", processor)
-    inputs = _prepare_inputs(processor, args).to(model.device)
+    input_device = _model_input_device(model)
+    inputs = _prepare_inputs(processor, args).to(input_device)
     prompt_length = inputs["input_ids"].shape[1]
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
-    with torch.inference_mode():
+    with (
+        torch.inference_mode(),
+        torch.autocast(
+            device_type=torch.device(input_device).type,
+            dtype=getattr(torch, args.dtype),
+            enabled=args.autocast,
+        ),
+    ):
         output = model.generate(
             **inputs,
             do_sample=False,

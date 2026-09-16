@@ -15,16 +15,17 @@
 """Serializable Bridge extension of Megatron-LM's GPT model config."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
-from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideMixin
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 @dataclass(kw_only=True)
-class BridgeGPTModelConfig(GPTModelConfig):
+class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig):
     """GPT model config with strict overrides and callable serialization.
 
     Outer GPT build fields and nested transformer fields keep one declared
@@ -37,29 +38,7 @@ class BridgeGPTModelConfig(GPTModelConfig):
     ``run_config.yaml`` without adding model-specific config fields.
     """
 
-    def __setattr__(self, name: str, value: Any, /) -> None:
-        """Assign a declared outer or nested field and reject phantom fields."""
-        try:
-            transformer = object.__getattribute__(self, "transformer")
-        except AttributeError:
-            object.__setattr__(self, name, value)
-            return
-
-        model_fields = getattr(type(self), "__dataclass_fields__", {})
-        transformer_fields = getattr(type(transformer), "__dataclass_fields__", {})
-
-        if name == "transformer":
-            object.__setattr__(self, name, value)
-        elif name in model_fields:
-            object.__setattr__(self, name, value)
-        elif name in transformer_fields:
-            setattr(transformer, name, value)
-        elif name == "builder" or name.startswith("_"):
-            object.__setattr__(self, name, value)
-        else:
-            raise AttributeError(
-                f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
-            )
+    transformer_config_class: ClassVar[type[TransformerConfig]] = TransformerConfig
 
     def get_builder_cls(self) -> type:
         """Resolve the configured builder through Bridge's target allowlist."""

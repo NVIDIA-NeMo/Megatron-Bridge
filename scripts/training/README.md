@@ -59,6 +59,8 @@ the Slurm partition must provide the requested hardware:
 `benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
 compatibility paths retain their legacy names.
 
+> **DeepSeek V4:** The 26.08 DeepSeek V4 benchmark recipes require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
+
 ```bash
 ./scripts/training/train.sh \
     --nodes 2 --gpus-per-node 8 \

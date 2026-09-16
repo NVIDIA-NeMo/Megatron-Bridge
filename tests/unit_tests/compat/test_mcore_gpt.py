@@ -18,6 +18,7 @@ import builtins
 import dataclasses
 import importlib
 import inspect
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -241,3 +242,29 @@ def test_fallback_builder_method_signatures_match_upstream(method_name):
 @pytest.mark.skipif(upstream is None, reason="Upstream GPT module is unavailable on Megatron-Core 0.18.x")
 def test_fallback_mtp_block_spec_signature_matches_upstream():
     assert inspect.signature(mcore_gpt_fallback.mtp_block_spec) == inspect.signature(upstream.mtp_block_spec)
+
+
+@pytest.mark.parametrize("supports_pp_rank", [False, True])
+def test_fallback_mtp_forwards_pipeline_rank_when_supported(monkeypatch, supports_pp_rank):
+    from megatron.core.models.gpt import gpt_layer_specs
+
+    calls = []
+    expected_spec = object()
+
+    def old_mtp_spec(config, spec, *, use_transformer_engine, vp_stage):
+        calls.append((spec, vp_stage, None))
+        return expected_spec
+
+    def new_mtp_spec(config, spec, *, use_transformer_engine, vp_stage, pp_rank):
+        calls.append((spec, vp_stage, pp_rank))
+        return expected_spec
+
+    layer_spec = object()
+    monkeypatch.setattr(mcore_gpt_fallback, "_te_or_local_layer_spec", lambda *_args: layer_spec)
+    monkeypatch.setattr(gpt_layer_specs, "get_gpt_mtp_block_spec", new_mtp_spec if supports_pp_rank else old_mtp_spec)
+    config = SimpleNamespace(transformer=SimpleNamespace(transformer_impl="transformer_engine", mtp_num_layers=1))
+
+    result = mcore_gpt_fallback.mtp_block_spec(config, SimpleNamespace(layer_specs=[]), vp_stage=2, pp_rank=3)
+
+    assert result is expected_spec
+    assert calls == [(layer_spec, 2, 3 if supports_pp_rank else None)]

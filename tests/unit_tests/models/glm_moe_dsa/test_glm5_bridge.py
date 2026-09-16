@@ -17,14 +17,60 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 from transformers import GlmMoeDsaConfig
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_glm53_config_loads_through_shared_bridge() -> None:
+    """GLM-5.3 architecture settings resolve through the existing GLM bridge."""
+    config = GlmMoeDsaConfig(
+        architectures=["GlmMoeDsaForCausalLM"],
+        num_hidden_layers=78,
+        hidden_size=6144,
+        num_attention_heads=64,
+        n_routed_experts=256,
+        num_experts_per_tok=8,
+        first_k_dense_replace=3,
+        q_lora_rank=2048,
+        kv_lora_rank=512,
+        qk_head_dim=256,
+        qk_nope_head_dim=192,
+        qk_rope_head_dim=64,
+        v_head_dim=256,
+        rope_parameters={"rope_theta": 8_000_000, "rope_type": "default"},
+        index_topk_freq=4,
+        index_skip_topk_offset=3,
+        indexer_rope_interleave=True,
+        num_nextn_predict_layers=1,
+    )
+    auto_bridge = AutoBridge.from_hf_config(config)
+    provider = auto_bridge.to_megatron_provider(load_weights=False)
+
+    assert isinstance(auto_bridge._model_bridge, GLM5Bridge)
+    assert provider.num_layers == 78
+    assert provider.hidden_size == 6144
+    assert provider.num_attention_heads == 64
+    assert provider.num_moe_experts == 256
+    assert provider.moe_router_topk == 8
+    assert provider.q_lora_rank == 2048
+    assert provider.kv_lora_rank == 512
+    assert provider.qk_head_dim == 192
+    assert provider.qk_pos_emb_head_dim == 64
+    assert provider.v_head_dim == 256
+    assert provider.rotary_base == 8_000_000
+    assert provider.dsa_indexer_topk_freq == 4
+    assert provider.dsa_indexer_skip_topk_offset == 3
+    assert provider.moe_layer_freq == [0] * 3 + [1] * 75
+    assert provider.mtp_num_layers is None
+
 
 _DSA_INDEXER_SUFFIXES = {
     "linear_wq_b.weight": "wq_b.weight",
@@ -80,7 +126,7 @@ def test_hf_config_ignores_upstream_num_experts_default() -> None:
 
     provider_kwargs = GLM5Bridge().hf_config_to_provider_kwargs(hf_config)
 
-    assert hf_config.num_experts == 256
+    assert getattr(hf_config, "num_experts", None) in (None, 256)
     assert provider_kwargs["num_moe_experts"] == hf_config.n_routed_experts == 8
 
 
@@ -282,3 +328,57 @@ def test_mapping_registry_omits_mtp_mappings_without_nextn_layers(
     )
 
     assert all(not mapping.megatron_param.startswith("mtp.") for mapping in bridge.mapping_registry())
+
+
+def test_fp8_checkpoint_weight_is_dequantized_with_its_block_scale() -> None:
+    """GLM-5 import applies the checkpoint's FP8 inverse scale before BF16 conversion."""
+    weight_name = "model.layers.0.self_attn.q_a_proj.weight"
+    weight = torch.tensor([[1.0, -2.0], [4.0, -8.0]], dtype=torch.float8_e4m3fn)
+    scale_inv = torch.tensor([[0.25]], dtype=torch.float32)
+
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(
+        weight_name,
+        {weight_name: weight, weight_name + "_scale_inv": scale_inv},
+    )
+
+    assert converted.dtype == torch.bfloat16
+    torch.testing.assert_close(converted, weight.to(torch.bfloat16) * scale_inv.to(torch.bfloat16))
+
+
+def test_compound_fp8_checkpoint_weights_use_their_own_scales() -> None:
+    """Compound mappings dequantize each source tensor with its matching scale."""
+    names = {"gate": "gate.weight", "up": "up.weight"}
+    state_dict = {
+        "gate.weight": torch.tensor([[2.0]], dtype=torch.float8_e4m3fn),
+        "gate.weight_scale_inv": torch.tensor([[0.5]], dtype=torch.float32),
+        "up.weight": torch.tensor([[4.0]], dtype=torch.float8_e4m3fn),
+        "up.weight_scale_inv": torch.tensor([[0.25]], dtype=torch.float32),
+    }
+
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(names, state_dict)
+
+    torch.testing.assert_close(converted["gate"], torch.tensor([[1.0]], dtype=torch.bfloat16))
+    torch.testing.assert_close(converted["up"], torch.tensor([[1.0]], dtype=torch.bfloat16))
+
+
+@pytest.mark.parametrize(
+    "weight_name",
+    [
+        "model.layers.0.self_attn.indexer.wq_b.weight",
+        "model.layers.0.self_attn.kv_a_proj_with_mqa.weight",
+        "model.layers.3.mlp.experts.0.down_proj.weight",
+    ],
+)
+def test_glm53_fp8_import_uses_separate_128_by_128_block_scales(weight_name: str) -> None:
+    """Exercise multiple published-format blocks, including a partial final block."""
+    weight = torch.ones((192, 256), dtype=torch.float32).to(torch.float8_e4m3fn)
+    scales = torch.tensor([[0.25, 0.5], [1.0, 2.0]], dtype=torch.float32)
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(
+        weight_name, {weight_name: weight, weight_name + "_scale_inv": scales}
+    )
+    expected = torch.empty((192, 256), dtype=torch.bfloat16)
+    expected[:128, :128] = 0.25
+    expected[:128, 128:] = 0.5
+    expected[128:, :128] = 1.0
+    expected[128:, 128:] = 2.0
+    torch.testing.assert_close(converted, expected, rtol=0, atol=0)

@@ -15,9 +15,10 @@
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from functools import cached_property, partial
 from pathlib import Path
@@ -31,6 +32,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 if TYPE_CHECKING:
+    from megatron.bridge.models.conversion.param_mapping import LocalHFParam, LocalMXFP8Param
     from megatron.bridge.peft.base import PEFT
 
 from megatron.core.transformer.module import MegatronModule
@@ -45,6 +47,7 @@ from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
     MegatronModelBridge,
+    MegatronWeightTuple,
     WeightConversionTask,
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
@@ -287,6 +290,29 @@ def _drop_readonly_config_properties(
     if not readonly_properties:
         return config_dict
     return {key: value for key, value in config_dict.items() if key not in readonly_properties}
+
+
+def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: object) -> None:
+    """Fail up front when a bridge's streaming override cannot accept ``with_megatron_names``.
+
+    Bridges that override the streaming export with an explicit signature (rather than
+    ``*args, **kwargs``) have to forward the keyword themselves; without this check the
+    request would only surface as an opaque ``TypeError`` once the generator is consumed.
+    """
+    try:
+        parameters = inspect.signature(stream_fn).parameters
+    except (TypeError, ValueError):
+        # Not introspectable (C callables); let the call itself decide.
+        return
+    if "with_megatron_names" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    ):
+        return
+    raise TypeError(
+        f"{type(owner).__name__}.{getattr(stream_fn, '__name__', 'stream_weights')} does not accept "
+        "'with_megatron_names'; a bridge that overrides the streaming export must forward this flag "
+        "before its exported weights can carry source Megatron parameter names."
+    )
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -701,6 +727,38 @@ class AutoBridge(Generic[MegatronModelT]):
         self.unquantized_state_dict = getattr(bridge, "unquantized_state_dict", None)
         return model
 
+    def get_export_fp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask | None]:
+        """Build physical FP8 data and scale export tasks."""
+        if not isinstance(model, list):
+            model = [model]
+        return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
+
+    def get_export_mxfp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask]:
+        """Build native MXFP8 export tasks, including singular grouped-expert weights."""
+        if not isinstance(model, list):
+            model = [model]
+        return self._model_bridge.build_export_mxfp8_tasks(self.hf_pretrained, model)
+
+    def iter_local_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:
+        """Yield local native MXFP8 projections through the public bridge API."""
+        return self._model_bridge.iter_local_mxfp8_params(tasks)
+
+    def iter_local_hf_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalHFParam"]:
+        """Yield local unquantized BF16 parameters as canonical HF views.
+
+        Args:
+            tasks: Reusable tasks from :meth:`get_conversion_tasks` in the
+                deterministic order they should be exported.
+
+        Returns:
+            An iterator over live local parameter views and their shard metadata.
+
+        Raises:
+            ValueError: If a locally owned task is quantized, is not BF16, or
+                cannot be represented without Bridge conversion collectives.
+        """
+        return self._model_bridge.iter_local_hf_params(tasks)
+
     def export_hf_weights(
         self,
         model: list[MegatronModelT],
@@ -709,6 +767,7 @@ class AutoBridge(Generic[MegatronModelT]):
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
@@ -733,10 +792,17 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
                 tensors during export (defaults to True). Set to False to export only the base tensors.
             weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
-
+            with_megatron_names: Yield ``HFSourcedWeightTuple`` (param_name, weight,
+                megatron_param_names) instead of the two-field tuple, so each exported weight can
+                be traced back to the Megatron parameter(s) it came from (e.g. by RL weight-sync
+                loops): one name for a directly converted weight, one per contributing expert for
+                a grouped-expert export, and none for HF-only passthrough tensors. Bridges that
+                override ``stream_weights_megatron_to_hf`` must accept the flag; otherwise a
+                ``TypeError`` is raised before any weight is streamed.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor)
+            HFWeightTuple: Named tuples of (param_name, weight_tensor), or HFSourcedWeightTuple
+            when ``with_megatron_names`` is set.
 
         Example:
             >>> # Export and process weights
@@ -758,6 +824,8 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks = self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
         bridge = self._model_bridge
+        if with_megatron_names:
+            _check_with_megatron_names_support(bridge.stream_weights_megatron_to_hf, bridge)
         return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
@@ -766,6 +834,8 @@ class AutoBridge(Generic[MegatronModelT]):
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
+            # Only forward the flag when set so bridges with a custom streamer keep working by default.
+            **({"with_megatron_names": True} if with_megatron_names else {}),
         )
 
     def export_hf_weights_modelopt(
@@ -859,6 +929,8 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        stack_3d_moe: bool = False,
+        with_megatron_names: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -875,9 +947,18 @@ class AutoBridge(Generic[MegatronModelT]):
             expand_shared_outer: Replicate the shared factor across experts under per-expert
                 names (vLLM 2D ``pack_moe``) instead of a shared ``[1, ...]`` tensor (SGLang).
                 Default ``False``; no effect for non-shared-outer adapters.
+            stack_3d_moe: Emit shared-outer routed-expert LoRA as the two stacked 3D
+                tensors vLLM's 3D-MoE consumer (``FusedMoE3DWithLoRA``) looks up
+                (``...experts.base_layer`` for gate_up_proj, bare ``...experts`` for
+                down_proj), instead of the per-expert 2D ``pack_moe`` layout.
+                Default ``False``; no effect for non-shared-outer adapters.
+            with_megatron_names: Yield ``HFSourcedWeightTuple`` whose ``megatron_param_names``
+                holds the adapter's ``linear_in`` (lora_A) or ``linear_out`` (lora_B) Megatron
+                weight name. Default ``False`` keeps the two-field tuple.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
+            HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters,
+            or HFSourcedWeightTuple when ``with_megatron_names`` is set
 
         Note:
             With ``expand_shared_outer``, the per-expert copies of the shared factor alias one
@@ -886,12 +967,16 @@ class AutoBridge(Generic[MegatronModelT]):
             first — :meth:`save_hf_adapter` already does.
         """
         bridge = self._model_bridge
+        if with_megatron_names:
+            _check_with_megatron_names_support(bridge.stream_adapter_weights_megatron_to_hf, bridge)
         return bridge.stream_adapter_weights_megatron_to_hf(
             model,
             cpu=cpu,
             show_progress=show_progress,
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
+            stack_3d_moe=stack_3d_moe,
+            **({"with_megatron_names": True} if with_megatron_names else {}),
         )
 
     def save_hf_adapter(
@@ -903,12 +988,14 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
         expand_shared_outer: bool = False,
+        allow_serving_layout: bool = False,
     ) -> None:
         """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
 
         The output directory contains ``adapter_config.json`` and
         ``adapter_model.safetensors`` and can be loaded directly with
-        ``peft.PeftModel.from_pretrained(base_model, path)``.
+        ``peft.PeftModel.from_pretrained(base_model, path)`` -- except when
+        ``allow_serving_layout`` is used, which writes a serving-only layout.
 
         Args:
             model: Megatron model instance or list of instances.
@@ -921,8 +1008,15 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress: Display progress bar during export.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
-            expand_shared_outer: Replicate the shared factor across experts under per-expert
-                names (vLLM 2D ``pack_moe``). Default ``False`` keeps the PEFT shared ``[1, ...]`` layout.
+            expand_shared_outer: Replicate the shared factor of a shared-outer MoE LoRA across
+                experts under per-expert names (vLLM 2D ``pack_moe``); this is the PEFT-loadable
+                form of such an adapter. Default ``False`` keeps the shared ``[1, ...]`` factor as
+                exported, which then requires ``allow_serving_layout``.
+            allow_serving_layout: Write shared-outer MoE LoRA pairs in the serving layout (the
+                shared factor once as ``[1, ...]`` under the expert-agnostic name, next to its
+                per-expert partner) instead of raising. Serving stacks keyed on the leading
+                expert dim (SGLang ``experts_shared_outer_loras``) read this layout; it is not
+                loadable by ``PeftModel.from_pretrained``. Default ``False``.
 
         Example:
             >>> bridge.save_hf_adapter(
@@ -973,6 +1067,7 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         adapter_state, module_adapter_keys, target_parameters = convert_adapter_weights_to_peft_state(
             raw_adapter_weights,
+            allow_serving_layout=allow_serving_layout,
         )
         rank_pattern = infer_rank_pattern_from_adapter_weights(
             raw_adapter_weights,
@@ -1399,7 +1494,9 @@ class AutoBridge(Generic[MegatronModelT]):
             - The model architecture must match the bridge configuration
         """
         try:
+            from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
             from megatron.bridge.training.model_load_save import load_megatron_model
+            from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
@@ -1409,6 +1506,10 @@ class AutoBridge(Generic[MegatronModelT]):
             register_allowed_target_prefix("transformers_modules.")
 
         checkpoint_path = Path(path)
+
+        iteration, release = _resolve_checkpoint_iteration(str(checkpoint_path), None)
+        if iteration >= 0 or release:
+            checkpoint_path = Path(get_checkpoint_name(str(checkpoint_path), iteration, release))
 
         # Check for iter_* folders
         iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
@@ -1426,10 +1527,13 @@ class AutoBridge(Generic[MegatronModelT]):
         # else: checkpoint_path remains as the input path (no iter folders found)
 
         skip_temp_dist_context = dist.is_initialized()
+        use_cpu_init = kwargs.get("use_cpu_initialization")
+        if use_cpu_init is None:
+            use_cpu_init = skip_temp_dist_context and dist.get_backend() == "gloo"
         # Load the state dict
         model = load_megatron_model(
             str(checkpoint_path),
-            use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
+            use_cpu_init=use_cpu_init,
             skip_temp_dist_context=skip_temp_dist_context,
             mp_overrides=mp_overrides,
         )
@@ -1488,8 +1592,18 @@ class AutoBridge(Generic[MegatronModelT]):
 
         model_context = nullcontext() if dist.is_initialized() else temporary_distributed_context(backend="gloo")
         with model_context:
-            # Convert to Megatron model
-            megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
+            # Prefer the native ModelConfig/ModelBuilder path for migrated model
+            # families while preserving the provider path for legacy bridges.
+            if bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION:
+                model_config = bridge.get_model_config()
+                model_config.transformer.use_cpu_initialization = True
+                megatron_model = bridge.get_model(
+                    model_config,
+                    wrap_with_ddp=False,
+                    mixed_precision_wrapper=None,
+                )
+            else:
+                megatron_model = bridge.to_megatron_model(wrap_with_ddp=False, use_cpu_initialization=True)
 
             # Save as Megatron checkpoint
             hf_tokenizer_kwargs = {}
@@ -1871,6 +1985,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
             models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            for model in models:
+                model.model_config = model_config
             succeeded = True
         finally:
             transformer_config.perform_initialization = original_perform_initialization
@@ -2096,6 +2212,25 @@ class AutoBridge(Generic[MegatronModelT]):
             pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
 
         return self._model_bridge.build_conversion_tasks(pre_trained, megatron_model)
+
+    def stream_weights_hf_to_megatron(
+        self,
+        megatron_model: MegatronModelT | list[MegatronModelT],
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        *,
+        hf_state_dict: Mapping[str, torch.Tensor] | None = None,
+    ) -> Iterable[MegatronWeightTuple]:
+        """Stream HF-to-Megatron conversions from the configured or external state."""
+        return self._model_bridge.stream_weights_hf_to_megatron(
+            self._provider_bridge_input,
+            megatron_model,
+            conversion_tasks,
+            hf_state_dict=hf_state_dict,
+        )
+
+    def finalize_hf_import(self, megatron_model: MegatronModelT | list[MegatronModelT]) -> None:
+        """Finalize tied parameters and parameter-derived caches after import."""
+        self._model_bridge.finalize_hf_import(megatron_model)
 
     @property
     def transformer_config(self) -> TransformerConfig:

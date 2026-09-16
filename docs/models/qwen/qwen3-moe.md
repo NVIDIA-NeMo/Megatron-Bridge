@@ -27,5 +27,4 @@ See [`src/megatron/bridge/recipes/qwen/qwen3_moe.py`](https://github.com/NVIDIA-
 ## Related Implementation
 
 - Bridge implementation: [`src/megatron/bridge/models/qwen/qwen3_moe_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen3_moe_bridge.py)
-- Family overview: [qwen.md](qwen.md)
-
+- Family overview: [Qwen model documentation](index.md)

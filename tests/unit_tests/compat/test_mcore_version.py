@@ -95,7 +95,7 @@ def test_pin_matches_megatron_lm_submodule():
 
 def test_pyproject_bound_matches_declared_window():
     pyproject = (REPO_ROOT / "pyproject.toml").read_text()
-    match = re.search(r'"megatron-core\[dev,mlm\](?P<spec>[^"]*)"', pyproject)
+    match = re.search(r'"megatron-core\[dev,inference,mlm,te\](?P<spec>[^"]*)"', pyproject)
     assert match is not None, "megatron-core dependency not found in pyproject.toml"
 
     assert SpecifierSet(match.group("spec")) == SpecifierSet(mcore_version.supported_mcore_specifier())

@@ -18,6 +18,7 @@ import os
 import socket
 from dataclasses import dataclass
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -113,6 +114,16 @@ class _RecordingProjection(nn.Module):
     def forward(self, hidden_states):
         self.input_shape = hidden_states.shape
         return hidden_states * 2
+
+
+def _copy_attention_config(config):
+    try:
+        from megatron.core.transformer.attention_layer_config import AttentionLayerConfig
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.core.transformer.attention_layer_config":
+            raise
+        return copy.deepcopy(config)
+    return AttentionLayerConfig.from_config(config)
 
 
 @dataclass
@@ -231,6 +242,35 @@ def test_canonical_model_advertises_collator_owned_packing():
     assert NemotronOmniModel.model_owns_packing is False
     assert NemotronOmniModel.model_owns_mtp_loss_mask_packing is False
     assert NemotronOmniModel.model_slices_context_parallel_inputs is True
+
+
+def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config():
+    class UncopyableProcessGroupCollection:
+        def __deepcopy__(self, memo):
+            raise TypeError("runtime process groups cannot be copied")
+
+    provider = _TinyOmniProvider()
+    pg_collection = UncopyableProcessGroupCollection()
+    provider._pg_collection = pg_collection
+
+    def create_model(**kwargs):
+        copied_config = _copy_attention_config(kwargs["language_transformer_config"])
+        assert copied_config._pg_collection is None
+        return Mock()
+
+    with (
+        patch.object(_TinyOmniProvider, "_build_vision_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_vision_projection_config", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_resolve_hybrid_stack_spec", return_value=Mock()),
+        patch.object(_TinyOmniProvider, "_build_sound_modules", return_value=(None, None)),
+        patch(
+            "megatron.bridge.models.nemotron_omni.nemotron_omni_provider.NemotronOmniModel",
+            side_effect=create_model,
+        ),
+    ):
+        provider.provide(pre_process=True, post_process=True)
+
+    assert provider._pg_collection is pg_collection
 
 
 def test_canonical_provider_rejects_ambiguous_legacy_class_name():
@@ -823,10 +863,9 @@ def test_text_containing_the_placeholder_trains_with_a_caller_mask():
         media_token_validity_mask=torch.tensor([[True, False, True]]),
     )
 
-    # The spared placeholder keeps the language embedding the forward gave it.
-    # That embedding is of token id 0, because the forward masks media tokens
-    # out of the text before embedding regardless of the validity mask.
-    assert torch.equal(output, torch.tensor([[[7.0] * 3], [[0.0] * 3], [[9.0] * 3]]))
+    # The spared placeholder keeps its own language embedding instead of being
+    # zeroed like a position that will receive a projected media feature.
+    assert torch.equal(output, torch.tensor([[[7.0] * 3], [[18.0] * 3], [[9.0] * 3]]))
 
 
 def test_caller_mask_takes_precedence_over_the_derived_one():
@@ -1065,6 +1104,32 @@ def test_real_radio_multiframe_video_forward(single_rank_model_parallel):
         )
 
     assert output.shape == (1, 4, 128)
+    assert torch.isfinite(output).all()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_real_radio_ragged_rectangular_multiframe_video_forward(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider()
+    provider.finalize()
+    model = provider.provide().cuda().eval()
+    input_ids = torch.tensor([[7, 18, 18, 18, 18, 18, 9, 10]], device="cuda")
+    patch_features = 3 * model.patch_dim**2
+
+    with torch.no_grad():
+        output = model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            pixel_values=torch.randn(1, 40, patch_features, device="cuda"),
+            imgs_sizes=torch.tensor(
+                [[32, 64], [32, 64], [32, 96], [32, 96]],
+                dtype=torch.int32,
+                device="cuda",
+            ),
+            num_frames=torch.tensor([2, 2], dtype=torch.int32, device="cuda"),
+        )
+
+    assert output.shape == (1, 8, 128)
     assert torch.isfinite(output).all()
 
 

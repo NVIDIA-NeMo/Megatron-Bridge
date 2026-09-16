@@ -67,6 +67,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.transformer_config import _enable_safe_hybridep_dispatch
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -528,11 +529,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
     worker thread/process for handling async saves. When disabled, uses temporal workers that are
     created and destroyed for each save operation."""
 
-    async_strategy: str = "nvrx"
-    """Async checkpoint strategy to use. Options: ``"nvrx"`` (default) or ``"mcore"``.
-    The ``"nvrx"`` strategy uses nvidia_resiliency_ext for async checkpointing and falls back
-    to ``"mcore"`` if the package is not installed."""
-
     async_write_results_mp_mode: str = "fork"
     """Multiprocessing start method for the async write results queue.
     Options: ``"fork"`` (default), ``"spawn"``, ``"forkserver"``."""
@@ -644,11 +640,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
                     f"ckpt_step={self.ckpt_step} specified but checkpoint.load is None. "
                     f"Please set checkpoint.load to the base checkpoint directory."
                 )
-
-        if self.dist_ckpt_optim_fully_reshardable:
-            assert not self.distrib_optim_fully_reshardable_mem_efficient, (
-                "distrib_optim_fully_reshardable_mem_efficient requires use_gloo_process_groups"
-            )
 
 
 @dataclass(kw_only=True)
@@ -1163,7 +1154,6 @@ class ConfigContainer(Container):
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
             "context_parallel_size",
-            "expert_model_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1172,11 +1162,11 @@ class ConfigContainer(Container):
         ]
         if configured_parallelisms:
             raise ValueError(
-                "MFSDP V2 currently supports DP-only training; unsupported settings: "
-                + ", ".join(configured_parallelisms)
+                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
             )
-        if self.model.num_moe_experts is not None:
-            raise ValueError("MFSDP V2 does not currently support MoE models.")
+        if self.model.expert_model_parallel_size > 1:
+            if self.model.num_moe_experts is None:
+                raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
         if self.model.virtual_pipeline_model_parallel_size is not None:
             raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
         if self.dist.use_tp_pp_dp_mapping:
@@ -1295,6 +1285,7 @@ class ConfigContainer(Container):
         )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+        uses_thd = enable_offline_packing or enable_in_batch_packing or enable_energon_packing
 
         if enable_offline_packing and enable_in_batch_packing:
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
@@ -1354,8 +1345,6 @@ class ConfigContainer(Container):
                 raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
             if self.ddp.average_in_collective:
                 raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
-            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
-                raise ValueError("Energon native sequence packing does not support MTP.")
             if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
                 self.model, "vision_cuda_graph_impl", None
             ) not in (None, "none"):
@@ -1396,8 +1385,8 @@ class ConfigContainer(Container):
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
+        transformer_config = getattr(self.model, "transformer", self.model)
         if enable_in_batch_packing or enable_energon_packing:
-            transformer_config = getattr(self.model, "transformer", self.model)
             transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
@@ -1409,6 +1398,8 @@ class ConfigContainer(Container):
                 self.dataset.pad_to_multiple_of,
                 collate_padding_multiple,
             )
+
+        _enable_safe_hybridep_dispatch(transformer_config, uses_thd=uses_thd)
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1422,6 +1413,17 @@ class ConfigContainer(Container):
         validate_cuda_graph_configuration(self.model)
         if hasattr(self.model, "finalize"):
             self.model.finalize()
+
+        from megatron.bridge.training.gtp import is_gtp_remat_active
+
+        if is_gtp_remat_active(self.model):
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "GTP is not supported with dist.use_decentralized_pg=True. "
+                    "Set dist.use_decentralized_pg=False to use the standard MCore process-group runtime."
+                )
+            if self.ddp.average_in_collective:
+                raise ValueError("GTP requires ddp.average_in_collective=False.")
 
         self.logger.finalize()
         self.train.finalize()
@@ -1587,6 +1589,11 @@ class ConfigContainer(Container):
                     "Legacy checkpointing requires ckpt_format='torch_dist' or 'fsdp_dtensor'"
                 )
 
+        if self.checkpoint.dist_ckpt_optim_fully_reshardable:
+            assert (
+                not self.checkpoint.distrib_optim_fully_reshardable_mem_efficient or self.dist.use_gloo_process_groups
+            ), "distrib_optim_fully_reshardable_mem_efficient requires dist.use_gloo_process_groups=True"
+
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()
 
@@ -1670,7 +1677,7 @@ class ConfigContainer(Container):
                     f"Sequence length in dataset config: {data_seq_length}"
                 )
 
-        # Validate DeepEP or HybridEP is supported for the current GPU architecture
+        # Validate the selected flex dispatcher backend for the current GPU architecture
         if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:

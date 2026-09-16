@@ -395,6 +395,128 @@ class TestSaveHfAdapter:
             "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight",
         }
 
+    # Shared-outer export in the default layout: gate/up shares lora_A once as [1, r, in]
+    # under the expert-agnostic name, lora_B is emitted per expert as 2D [out, r] slices.
+    _SHARED_OUTER_DEFAULT_LAYOUT = (
+        ("model.layers.0.mlp.experts.gate_proj.lora_A.weight", (1, 2, 4)),
+        ("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", (3, 2)),
+        ("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", (3, 2)),
+    )
+
+    def test_convert_shared_outer_adapter_requires_serving_layout_opt_in(self):
+        """Shared-outer has no PEFT representation: the PEFT-format default must refuse it."""
+        with pytest.raises(ValueError, match="PeftModel.from_pretrained could not load it"):
+            convert_adapter_weights_to_peft_state(
+                [_adapter_export(name, torch.randn(*shape)) for name, shape in self._SHARED_OUTER_DEFAULT_LAYOUT]
+            )
+
+    def test_convert_shared_outer_adapter_serving_layout_keeps_shared_factor_as_module_weight(self):
+        exports = [_adapter_export(name, torch.randn(*shape)) for name, shape in self._SHARED_OUTER_DEFAULT_LAYOUT]
+        adapter_state, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
+            exports, allow_serving_layout=True
+        )
+
+        assert target_parameters == []
+        assert "model.layers.0.mlp.experts.gate_proj.lora_A.weight" in module_keys
+        torch.testing.assert_close(
+            adapter_state["base_model.model.model.layers.0.mlp.experts.gate_proj.lora_A.weight"], exports[0].weight
+        )
+        assert "base_model.model.model.layers.0.mlp.experts.0.gate_proj.lora_B.weight" in adapter_state
+        assert "base_model.model.model.layers.0.mlp.experts.1.gate_proj.lora_B.weight" in adapter_state
+
+    def test_convert_shared_outer_stacked_pair_keeps_both_sides_as_module_weights(self):
+        # Both sides 3D under one expert-agnostic name (SGLang's 3D shared-outer contract):
+        # down shares lora_B as [1, out, r] next to a per-expert lora_A stack [E, r, in].
+        per_expert_a = torch.randn(2, 2, 4)
+        shared_b = torch.randn(1, 3, 2)
+        adapter_state, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
+            [
+                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_A.weight", per_expert_a),
+                _adapter_export("model.layers.0.mlp.experts.down_proj.lora_B.weight", shared_b),
+            ],
+            allow_serving_layout=True,
+        )
+
+        assert target_parameters == []
+        assert module_keys == [
+            "model.layers.0.mlp.experts.down_proj.lora_A.weight",
+            "model.layers.0.mlp.experts.down_proj.lora_B.weight",
+        ]
+        torch.testing.assert_close(
+            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_A.weight"], per_expert_a
+        )
+        torch.testing.assert_close(
+            adapter_state["base_model.model.model.layers.0.mlp.experts.down_proj.lora_B.weight"], shared_b
+        )
+
+    def test_convert_shared_outer_accepts_3d_moe_stems_and_unknown_projections(self):
+        # vLLM 3D-MoE stems: ``experts.base_layer`` is gate_up (shares lora_A), bare
+        # ``experts`` is down (shares lora_B). Unknown projection names are validated
+        # structurally only.
+        _, module_keys, target_parameters = convert_adapter_weights_to_peft_state(
+            [
+                _adapter_export("model.layers.0.mlp.experts.base_layer.lora_A.weight", torch.randn(1, 2, 4)),
+                _adapter_export("model.layers.0.mlp.experts.base_layer.lora_B.weight", torch.randn(2, 6, 2)),
+                _adapter_export("model.layers.0.mlp.experts.lora_A.weight", torch.randn(2, 2, 3)),
+                _adapter_export("model.layers.0.mlp.experts.lora_B.weight", torch.randn(1, 4, 2)),
+                _adapter_export("model.layers.1.mlp.experts.custom_proj.lora_A.weight", torch.randn(2, 2, 4)),
+                _adapter_export("model.layers.1.mlp.experts.custom_proj.lora_B.weight", torch.randn(1, 3, 2)),
+            ],
+            allow_serving_layout=True,
+        )
+
+        assert target_parameters == []
+        assert len(module_keys) == 6
+
+    def test_convert_rejects_unequal_expert_dims_without_a_shared_side(self):
+        with pytest.raises(ValueError, match="lora_A has expert dim 8 but lora_B has 4"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.randn(8, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_B.weight", torch.randn(4, 3, 2)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_rejects_shared_factor_on_the_wrong_side(self):
+        # down shares lora_B in shared-outer; a shared down lora_A is a malformed export.
+        with pytest.raises(ValueError, match="shares lora_A, but a shared-outer adapter shares"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.down_proj.lora_A.weight", torch.randn(1, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.down_proj.lora_B.weight", torch.randn(2, 3, 2)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_rejects_shared_outer_rank_mismatch(self):
+        with pytest.raises(ValueError, match=r"rank 2 on its shared lora_A factor but rank\(s\) \[5\]"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.randn(1, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(3, 5)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_rejects_shared_factor_without_per_expert_partner(self):
+        with pytest.raises(ValueError, match="no per-expert lora_B partner"):
+            convert_adapter_weights_to_peft_state(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.randn(1, 2, 4)),
+                    _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(2, 4)),
+                    _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(4, 2)),
+                ],
+                allow_serving_layout=True,
+            )
+
+    def test_convert_incomplete_target_parameter_still_raises(self):
+        # A lone per-expert 3D side with no partner and no numbered siblings is a broken export.
+        with pytest.raises(ValueError, match="Incomplete adapter export"):
+            convert_adapter_weights_to_peft_state(
+                [_adapter_export("model.layers.0.mlp.experts.gate_up_proj.lora_A.weight", torch.randn(2, 2, 4))]
+            )
+
     def test_infer_rank_pattern_uses_module_names_for_linear_targets(self):
         rank_pattern = infer_rank_pattern_from_adapter_weights(
             [
@@ -581,6 +703,55 @@ class TestSaveHfAdapter:
         assert len(saved) == 2
         for tensor in saved:
             torch.testing.assert_close(tensor, shared)
+
+    def test_save_shared_outer_adapter_requires_serving_layout(self, tmp_path):
+        """save_hf_adapter refuses a shared-outer export unless the serving layout is requested."""
+        from safetensors.torch import load_file
+
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+        from megatron.bridge.peft.lora import LoRA
+
+        def fake_weights():
+            return iter(
+                [
+                    _adapter_export("model.layers.0.mlp.experts.gate_proj.lora_A.weight", torch.ones(1, 2, 4)),
+                    _adapter_export("model.layers.0.mlp.experts.0.gate_proj.lora_B.weight", torch.randn(3, 2)),
+                    _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(3, 2)),
+                ]
+            )
+
+        mock_bridge = MagicMock()
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            mock_bridge.export_adapter_weights.return_value = fake_weights()
+            with pytest.raises(ValueError, match="allow_serving_layout=True"):
+                AutoBridge.save_hf_adapter(
+                    mock_bridge,
+                    model=[MagicMock()],
+                    path=tmp_path / "peft_layout",
+                    peft_config=LoRA(dim=2, alpha=4),
+                    base_model_name_or_path="test/model",
+                )
+            assert not (tmp_path / "peft_layout" / "adapter_model.safetensors").exists()
+
+            output_dir = tmp_path / "serving_layout"
+            mock_bridge.export_adapter_weights.return_value = fake_weights()
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(dim=2, alpha=4),
+                base_model_name_or_path="test/model",
+                allow_serving_layout=True,
+            )
+
+        state = load_file(str(output_dir / "adapter_model.safetensors"))
+        assert state["base_model.model.model.layers.0.mlp.experts.gate_proj.lora_A.weight"].shape == (1, 2, 4)
+        assert "base_model.model.model.layers.0.mlp.experts.1.gate_proj.lora_B.weight" in state
+        config = json.loads((output_dir / "adapter_config.json").read_text())
+        assert "target_parameters" not in config
+        assert "gate_proj" in config["target_modules"]
 
     def test_save_with_nonzero_dropout_keeps_linear_target_modules(self, tmp_path):
         from megatron.bridge.peft.lora import LoRA
@@ -1695,3 +1866,166 @@ class TestStreamSharedOuterAdapterWeights:
         ]
         for _, shape in results[False]:
             assert shape == (2, 4)
+
+    # ------------------------------------------------------------------
+    # stack_3d_moe: vLLM 3D-MoE consumer layout (base_layer / bare 3D)
+    # ------------------------------------------------------------------
+
+    def _mapping_gate_up(self):
+        """Mapping whose HF names are gate_proj/up_proj (FC1 → base_layer).
+
+        Mirrors a ``GatedMLPMapping``: any ``.weightN`` suffix resolves to a dict
+        with both ``gate`` and ``up`` so ``_get_base_hf_param_names_for_adapter``
+        yields both projections.
+        """
+        mapping = MagicMock()
+
+        def lookup(name):
+            idx = name.rsplit(".weight", 1)[1]
+            return SimpleNamespace(
+                hf_param={
+                    "gate": f"model.layers.0.mlp.experts.{idx}.gate_proj.weight",
+                    "up": f"model.layers.0.mlp.experts.{idx}.up_proj.weight",
+                }
+            )
+
+        mapping.megatron_to_hf_lookup.side_effect = lookup
+        return mapping
+
+    def _mapping_down(self):
+        """Mapping whose HF names are down_proj (FC2 → bare)."""
+        mapping = MagicMock()
+
+        def lookup(name):
+            idx = name.rsplit(".weight", 1)[1]
+            return SimpleNamespace(hf_param=f"model.layers.0.mlp.experts.{idx}.down_proj.weight")
+
+        mapping.megatron_to_hf_lookup.side_effect = lookup
+        return mapping
+
+    def _run_3d(self, bridge, linear_in, linear_out, num_experts, mapping_registry, megatron_model=None, cpu=False):
+        task = SimpleNamespace(global_base_prefix="mlp.experts", adapter_key=None)
+        gen = bridge._stream_shared_outer_adapter_weights(
+            megatron_model=megatron_model,
+            mapping_registry=mapping_registry,
+            adapter_task=task,
+            linear_in_tensor=linear_in,
+            linear_out_tensor=linear_out,
+            num_moe_experts=num_experts,
+            cpu=cpu,
+            expand_shared_outer=True,
+            stack_3d_moe=True,
+        )
+        return {t.param_name: t.weight for t in gen}
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_stack_3d_moe_gate_up_emits_base_layer_3d(self, _mock_ep):
+        """FC1 (gate_up): base_layer.lora_A=(E,r,in), lora_B=(2*mi,r,E)."""
+        bridge = self._make_bridge()
+        E, r, hid, mi = 4, 2, 6, 3
+        linear_in = torch.randn(r, hid)  # shared (r, hid)
+        linear_out = torch.randn(E, 2 * mi, r)  # per-expert fused gate_up (E, 2*mi, r)
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run_3d(bridge, linear_in, linear_out, E, self._mapping_gate_up())
+
+        assert set(out.keys()) == {
+            "model.layers.0.mlp.experts.base_layer.lora_A.weight",
+            "model.layers.0.mlp.experts.base_layer.lora_B.weight",
+        }
+        assert out["model.layers.0.mlp.experts.base_layer.lora_A.weight"].shape == (E, r, hid)
+        assert out["model.layers.0.mlp.experts.base_layer.lora_B.weight"].shape == (2 * mi, r, E)
+        # lora_A is the shared factor broadcast across experts.
+        torch.testing.assert_close(
+            out["model.layers.0.mlp.experts.base_layer.lora_A.weight"],
+            linear_in.unsqueeze(0).expand(E, -1, -1).contiguous(),
+        )
+        # lora_B is (out, r, E) = permute(1,2,0) of (E, 2*mi, r).
+        torch.testing.assert_close(
+            out["model.layers.0.mlp.experts.base_layer.lora_B.weight"],
+            linear_out.permute(1, 2, 0).contiguous(),
+        )
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_stack_3d_moe_down_emits_bare_3d(self, _mock_ep):
+        """FC2 (down): bare lora_A=(E,r,mi), lora_B=(hid,r,E)."""
+        bridge = self._make_bridge()
+        E, r, hid, mi = 4, 2, 6, 3
+        linear_in = torch.randn(r, mi)  # shared (r, mi)
+        linear_out = torch.randn(E, hid, r)  # per-expert (E, hid, r)
+
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            out = self._run_3d(bridge, linear_in, linear_out, E, self._mapping_down())
+
+        assert set(out.keys()) == {
+            "model.layers.0.mlp.experts.lora_A.weight",
+            "model.layers.0.mlp.experts.lora_B.weight",
+        }
+        assert out["model.layers.0.mlp.experts.lora_A.weight"].shape == (E, r, mi)
+        assert out["model.layers.0.mlp.experts.lora_B.weight"].shape == (hid, r, E)
+        torch.testing.assert_close(
+            out["model.layers.0.mlp.experts.lora_A.weight"],
+            linear_in.unsqueeze(0).expand(E, -1, -1).contiguous(),
+        )
+        torch.testing.assert_close(
+            out["model.layers.0.mlp.experts.lora_B.weight"],
+            linear_out.permute(1, 2, 0).contiguous(),
+        )
+
+    @patch(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        return_value=1,
+    )
+    def test_stack_3d_moe_matches_vllm_consumer_layout(self, _mock_ep):
+        """The bridge 3D emit matches vLLM's _stack_moe_lora_weights expected layout.
+
+        vLLM's 3D-MoE consumer (``FusedMoE3DWithLoRA``) reshapes the on-disk 3D tensors
+        as ``lora_a.reshape(E, -1, in)`` and ``lora_b.reshape(out, -1, E).permute(2,0,1)``,
+        so the emitted tensors must be ``lora_A=(E, r, in)`` and ``lora_B=(out, r, E)``.
+        This is the layout verl's former ``_restructure_routed_expert_lora`` workaround
+        produced (the two are bit-identical). Here we assert the closed-form reference:
+        the shared ``linear_in`` broadcast to ``(E, r, in)`` and the per-expert
+        ``linear_out`` permuted to ``(out, r, E)``, with gate+up fused on the output dim.
+        """
+        bridge = self._make_bridge()
+        E, r, hid, mi = 4, 2, 6, 3
+        torch.manual_seed(0)
+        gate_up_a_shared = torch.randn(r, hid)
+        down_a_shared = torch.randn(r, mi)
+        gate_b = torch.randn(E, mi, r)
+        up_b = torch.randn(E, mi, r)
+        down_b = torch.randn(E, hid, r)
+
+        # Reference closed-form layout (matches vLLM _stack_moe_lora_weights contract).
+        stem = "model.layers.0.mlp.experts"
+        exp_base_a = gate_up_a_shared.unsqueeze(0).expand(E, -1, -1).contiguous()  # (E,r,hid)
+        exp_base_b = torch.cat([gate_b, up_b], dim=1).permute(1, 2, 0).contiguous()  # (2*mi,r,E)
+        exp_down_a = down_a_shared.unsqueeze(0).expand(E, -1, -1).contiguous()  # (E,r,mi)
+        exp_down_b = down_b.permute(1, 2, 0).contiguous()  # (hid,r,E)
+
+        # --- bridge 3D path (from raw shared-outer tensors) ---
+        # FC1 fused linear_out = cat(gate_b, up_b) per expert on output dim -> (E, 2*mi, r)
+        fc1_linear_out = torch.cat([gate_b, up_b], dim=1)
+        with (
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            gu = self._run_3d(bridge, gate_up_a_shared, fc1_linear_out, E, self._mapping_gate_up())
+            dn = self._run_3d(bridge, down_a_shared, down_b, E, self._mapping_down())
+
+        torch.testing.assert_close(gu[f"{stem}.base_layer.lora_A.weight"], exp_base_a)
+        torch.testing.assert_close(gu[f"{stem}.base_layer.lora_B.weight"], exp_base_b)
+        torch.testing.assert_close(dn[f"{stem}.lora_A.weight"], exp_down_a)
+        torch.testing.assert_close(dn[f"{stem}.lora_B.weight"], exp_down_b)

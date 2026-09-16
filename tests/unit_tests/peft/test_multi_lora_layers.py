@@ -61,7 +61,7 @@ from megatron.bridge.peft.multi_lora_layers import (
     load_adapter,
     set_tokens_per_adapter_slot,
 )
-from megatron.bridge.peft.utils import AdapterAttributes
+from megatron.bridge.peft.utils import AdapterAttributes, ParallelLinearAdapter
 
 
 # ======================================================================
@@ -148,7 +148,11 @@ def adapter_deps_patch() -> ExitStack:
     # has no initialized CUDA state on CPU; stub ``fork()`` to a no-op context.
     tracker = MagicMock()
     tracker.fork.side_effect = lambda *args, **kwargs: nullcontext()
+    tracker.get_states.return_value = {}
     stack.enter_context(patch("megatron.core.tensor_parallel.random.get_cuda_rng_tracker", return_value=tracker))
+    # The seeded re-init follows the model-parallel topology through Megatron-Core's
+    # seeding function, which needs initialized parallel state; stub it on CPU.
+    stack.enter_context(patch.object(multi_lora_layers_module, "_reseed_rng_tracker", lambda seed: None))
     return stack
 
 
@@ -294,6 +298,13 @@ class TestMultiLoRALinearSlots:
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
 
+    def test_dense_layer_records_base_linear_name(self) -> None:
+        # forward's token-span guard formats this name in its diagnostic; only
+        # the MoE subclass assigned it, so the dense guard raised AttributeError
+        # instead of the intended RuntimeError.
+        layer = _build_multi_lora_linear(full_name="decoder.layers.0.mlp.linear_fc1")
+        assert layer.base_linear_name == "decoder.layers.0.mlp.linear_fc1"
+
     def test_constructor_forwards_wrapped_module_runtime_config(self) -> None:
         """Adapter construction mirrors the single-LoRA path (LoRA.transform)."""
         base = nn.Linear(16, 32)
@@ -435,6 +446,30 @@ class TestMultiLoRALinearSlots:
 
         assert torch.all(layer.adapters[1].linear_out.weight == 0)
 
+    def test_reset_adapter_preserves_full_fan_xavier_initialization(self) -> None:
+        """A reused TP-sharded slot must match construction-time initialization."""
+        in_features = 4096
+        rank = 32
+        tensor_parallel_size = 4
+        layer = _build_multi_lora_linear(in_features=in_features, dim=rank)
+        adapter = layer.adapters[0]
+        adapter.linear_in.weight = nn.Parameter(torch.empty(rank, in_features // tensor_parallel_size))
+
+        expected = torch.empty_like(adapter.linear_in.weight)
+        full_fan_xavier = ParallelLinearAdapter._get_init_fn(
+            None,
+            "xavier",
+            fan_in=in_features,
+            fan_out=rank,
+        )
+        torch.manual_seed(1234)
+        full_fan_xavier(expected)
+
+        torch.manual_seed(1234)
+        layer.reset_adapter(0)
+
+        torch.testing.assert_close(adapter.linear_in.weight, expected)
+
     def test_state_dict_contains_base_and_all_adapter_slots(self) -> None:
         layer = _build_multi_lora_linear(n_adapters=2, dim=8)
 
@@ -499,6 +534,34 @@ class TestMultiLoRAModelHelpers:
 
         assert len(found) == 3
 
+    def test_init_adapter_slot_unseeded_keeps_slot_weights(self) -> None:
+        container = _MultiLoRAContainer(n_layers=2)
+        for module in container.mods:
+            with torch.no_grad():
+                module.adapters[0].linear_in.weight.fill_(7.0)
+
+        init_adapter_slot(container, 0, rank=8, alpha=16)
+
+        for module in container.mods:
+            assert torch.all(module.adapters[0].linear_in.weight == 7.0)
+            assert module.alpha_values[0] == 16
+
+    def test_init_adapter_slot_seeded_reinitializes_every_layer(self) -> None:
+        container = _MultiLoRAContainer(n_layers=2)
+        for module in container.mods:
+            with torch.no_grad():
+                module.adapters[0].linear_in.weight.fill_(7.0)
+                module.adapters[0].linear_out.weight.fill_(7.0)
+
+        init_adapter_slot(container, 0, rank=4, alpha=16, seed=123)
+
+        for module in container.mods:
+            # reset_adapter ran: A re-drawn (xavier, so not the fill value), B zero-initialized.
+            assert not torch.all(module.adapters[0].linear_in.weight == 7.0)
+            assert torch.count_nonzero(module.adapters[0].linear_out.weight) == 0
+            assert module.alpha_values[0] == 16
+            assert module.rank_values[0] == 4
+
     def test_set_tokens_per_adapter_slot(self) -> None:
         container = _MultiLoRAContainer(n_layers=2)
         tokens = torch.tensor([3, 5], dtype=torch.int32)
@@ -509,6 +572,20 @@ class TestMultiLoRAModelHelpers:
             assert module.tokens_per_adapter is tokens
             assert module.tokens_per_adapter_splits == (3, 5)
             assert module.tokens_per_adapter_total == 8
+
+    def test_set_tokens_per_adapter_slot_validates_input(self) -> None:
+        # A wrong length silently mis-groups the grouped GEMM; negative counts
+        # produce non-monotonic (out-of-bounds) offsets; floats break the
+        # int32 cumsum contract -- all must fail loudly at the setter.
+        container = _MultiLoRAContainer(n_layers=1)
+        with pytest.raises(ValueError, match="1-D"):
+            set_tokens_per_adapter_slot(container, torch.tensor([[3, 5]], dtype=torch.int32))
+        with pytest.raises(ValueError, match="integer"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3.0, 5.0]))
+        with pytest.raises(ValueError, match="nonnegative"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3, -1], dtype=torch.int32))
+        with pytest.raises(ValueError, match="n_adapters"):
+            set_tokens_per_adapter_slot(container, torch.tensor([3, 5, 7], dtype=torch.int32))
 
     def test_init_and_clear_adapter_slot_across_model(self) -> None:
         container = _MultiLoRAContainer(n_layers=2)
@@ -979,6 +1056,28 @@ class TestMultiLoRALinearGPU:
         b = mlora.adapters[idx].linear_out.weight
         assert not torch.allclose(a, torch.full_like(a, 7.0))  # A re-initialized (xavier)
         assert torch.count_nonzero(b) == 0  # B zero-initialized
+
+    def test_init_adapter_slot_seeded_is_reproducible(self):
+        mlora = self._build()
+        init_adapter_slot([mlora], 0, rank=4, alpha=16, seed=99)
+        first = mlora.adapters[0].linear_in.weight.detach().clone()
+
+        # Perturb the weights and advance the tracker streams arbitrarily.
+        with torch.no_grad():
+            mlora.adapters[0].linear_in.weight.fill_(3.0)
+        mlora.clear_adapter_slot(0)
+
+        init_adapter_slot([mlora], 0, rank=4, alpha=16, seed=99)
+        assert torch.equal(mlora.adapters[0].linear_in.weight, first)
+
+        init_adapter_slot([mlora], 0, rank=4, alpha=16, seed=100)
+        assert not torch.equal(mlora.adapters[0].linear_in.weight, first)
+
+        # The tracker streams were restored: an unseeded re-init still works and differs per call.
+        mlora.clear_adapter_slot(0)
+        after_clear = mlora.adapters[0].linear_in.weight.detach().clone()
+        mlora.clear_adapter_slot(0)
+        assert not torch.equal(mlora.adapters[0].linear_in.weight, after_clear)
 
     def test_reset_adapter_deterministic_via_rng_tracker(self):
         from megatron.core.process_groups_config import ProcessGroupCollection
