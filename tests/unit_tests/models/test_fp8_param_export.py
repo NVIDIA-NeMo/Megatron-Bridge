@@ -1838,7 +1838,21 @@ class TestFp8ParamExport:
         assert tasks[1].param_weight is native_grouped_weight
         assert grouped_member_calls == [(native_grouped_weight, True)]
 
-    def test_build_export_mxfp8_tasks_expands_native_grouped_for_bf16_wire(self, monkeypatch):
+    @pytest.mark.parametrize(
+        ("ep_size", "ep_rank", "num_experts", "expected_expert_ids"),
+        [
+            (1, 0, 2, [0, 1]),
+            (2, 1, 4, [2, 3]),
+        ],
+    )
+    def test_build_export_mxfp8_tasks_expands_native_grouped_for_bf16_wire(
+        self,
+        monkeypatch,
+        ep_size,
+        ep_rank,
+        num_experts,
+        expected_expert_ids,
+    ):
         bridge = DummyBridge()
         grouped = "decoder.layers.0.mlp.experts.linear_fc1.weight"
         parameter = torch.nn.Parameter(torch.zeros(2, 8, 16))
@@ -1849,7 +1863,7 @@ class TestFp8ParamExport:
                 f"{grouped}{expert_id}",
                 "hf.grouped.gate_up_proj",
             )
-            for expert_id in range(2)
+            for expert_id in expected_expert_ids
         }
 
         class Registry:
@@ -1860,9 +1874,9 @@ class TestFp8ParamExport:
                 return mappings.get(name)
 
         config = SimpleNamespace(
-            expert_model_parallel_size=1,
+            expert_model_parallel_size=ep_size,
             moe_single_grouped_weight=True,
-            num_moe_experts=2,
+            num_moe_experts=num_experts,
             share_embeddings_and_output_weights=False,
         )
         model = SimpleNamespace(config=config, named_parameters=lambda: [(grouped, parameter)])
@@ -1876,6 +1890,7 @@ class TestFp8ParamExport:
         )
         monkeypatch.setattr(f"{_MODEL_MB}._get_pp_rank", lambda _models: 0)
         monkeypatch.setattr(f"{_MODEL_MB}._get_pg_collection_from_model", lambda _models: None)
+        monkeypatch.setattr(f"{_PARAM_MB}.get_pg_rank", lambda _group: ep_rank)
         monkeypatch.setattr(f"{_MODEL_MB}.unwrap_model", lambda models: models)
         monkeypatch.setattr(f"{_MODEL_MB}.persistent_buffers", lambda _model: [])
         monkeypatch.setattr(f"{_MODEL_MB}._megatron_local_name_to_global", lambda *_args: grouped)
@@ -1895,7 +1910,9 @@ class TestFp8ParamExport:
             expand_native_grouped=True,
         )
 
-        assert [task.global_param_name for task in tasks] == [f"{grouped}0", f"{grouped}1"]
+        assert [task.global_param_name for task in tasks] == [
+            f"{grouped}{expert_id}" for expert_id in expected_expert_ids
+        ]
         assert tasks[0].resolve_param_weight() is members[0]
         assert tasks[1].resolve_param_weight() is members[1]
 
