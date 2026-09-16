@@ -14,6 +14,7 @@
 
 import datetime
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -21,7 +22,7 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.nn as nn
-from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.module import Float16Module, MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft import canonical_lora as canonical_lora_module
@@ -1658,3 +1659,56 @@ class TestVLMLoRA:
                 )
             for param in model.language_model.parameters():
                 assert param.requires_grad == (not freeze_language), f"Language params wrong for config {test_cases}"
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_explicit_fp32_adapter_survives_real_model_wrapper(monkeypatch, parallel):
+    from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
+
+    class CpuParallelLinear(nn.Linear):
+        def __init__(self, in_features, out_features, *, config, init_method, **kwargs):
+            super().__init__(in_features, out_features, bias=False, dtype=config.params_dtype)
+            init_method(self.weight)
+
+        def forward(self, value):
+            return super().forward(value), None
+
+    lora = LoRA(target_modules=["linear_proj"], dim=2, alpha=2, lora_dtype=torch.float32)
+    if parallel:
+        module = MockMegatronLinear(4, 3).bfloat16()
+        module.config.tensor_model_parallel_size = 1
+        module.config.bf16 = True
+        module.config.fp16 = False
+        module.config.params_dtype = torch.bfloat16
+        attrs = AdapterAttributes(
+            in_features=4,
+            out_features=3,
+            input_is_parallel=False,
+            disable_tensor_parallel_comm=True,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=False,
+        )
+        monkeypatch.setattr(lora_module, "get_adapter_attributes_from_linear", lambda *a, **k: attrs)
+        monkeypatch.setattr(peft_utils, "ColumnParallelLinear", CpuParallelLinear)
+    else:
+        module = nn.Linear(4, 3, dtype=torch.bfloat16)
+    transformed = lora.transform(module, name="linear_proj")
+    with torch.no_grad():
+        for parameter in transformed.adapter.parameters():
+            parameter.fill_(0.123456789)
+    before = {name: value.detach().clone() for name, value in transformed.adapter.named_parameters()}
+    config = SimpleNamespace(bf16=True, fp16=False, virtual_pipeline_model_parallel_size=None)
+    wrapped = _apply_mixed_precision_wrapper([transformed], config, Float16Module)[0]
+    inputs = torch.randn(5, 4, dtype=torch.bfloat16)
+    result = wrapped.module(inputs)
+    if parallel:
+        result = result[0]
+    result.float().sum().backward()
+    assert result.dtype is torch.bfloat16
+    assert all(value.dtype is torch.bfloat16 for value in transformed.to_wrap.parameters())
+    for name, parameter in transformed.adapter.named_parameters():
+        assert parameter.dtype is torch.float32
+        torch.testing.assert_close(parameter, before[name], rtol=0, atol=0)
+        assert parameter.grad.dtype is torch.float32
+        assert torch.isfinite(parameter.grad).all()
+        assert parameter.grad.norm() > 0
