@@ -16,7 +16,7 @@ those examples are batched conventionally, many tokens in each batch are just
 padding. Packed sequences reduce that waste by building longer packs from
 multiple examples and carrying boundary metadata into the attention path.
 
-In Bridge today, there are three distinct packing paths plus long-context
+In Bridge today, there are four distinct packing paths plus long-context
 enablement through context parallelism:
 
 | Path | Use case | Key config |
@@ -24,6 +24,7 @@ enablement through context parallelism:
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
 | Runtime in-batch packing | GPT-SFT JSONL, Direct Hugging Face, and supported VLM finetuning | `enable_in_batch_packing=True` |
 | Energon online packing | Qwen-VL data using the model-owned Energon collator | `packing_buffer_size=<candidate samples per worker>` |
+| Global-batch online packing | Variable-length SFT / pretraining across DP x CP, dynamic context parallel | `enable_global_batch_packing=True` (+ `model.dynamic_context_parallel`) |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
 These are related but they are not the same knob. Offline packed SFT and
@@ -189,6 +190,138 @@ They must provide equal per-rank dispatch shapes. Disable CUDA graphs when packe
 THD token counts can differ so the recipe can enable safe padding. Direct model-
 provider callers must explicitly enable the setting when they supply uneven THD
 inputs because no combined recipe is available to infer their layout.
+
+## Global-Batch Online Packing and Dynamic Context Parallel
+
+The fourth packing mode forms bins **once per training step, after a
+data-parallel all-gather of sample lengths**, using Megatron-Core's
+sequence-packing scheduler. Its candidate pool is the whole global batch across
+DP x CP ranks, the only mode whose pool crosses rank boundaries, which is what
+makes dynamic context parallelism (DCP) possible: every packed bin runs on a
+context-parallel group sized for its longest sequence.
+
+| Mode | Switch | Bins formed | Candidate pool |
+|---|---|---|---|
+| Offline | `enable_offline_packing` + `offline_packing_specs` | ahead of time, to disk | whole dataset |
+| In-batch | `enable_in_batch_packing` | collate time | one microbatch, one rank |
+| Energon | `EnergonDatasetConfig.packing_buffer_size` | dataloader buffer | a local buffer, one rank |
+| Global-batch | `enable_global_batch_packing` (+ `model.dynamic_context_parallel`) | per step, after a DP all-gather | global batch, across DP x CP |
+
+### How it works
+
+Each step Megatron-Core pulls this step's samples on every data-parallel rank,
+all-gathers their lengths, and forms bins of at most
+`model.max_seqlen_per_dp_cp_rank x cp` tokens. Each bin becomes one THD
+microbatch (concatenated tokens, `cu_seqlens` boundaries, per-sequence position
+ids, varlen attention), so the number of microbatches changes from step to step
+and Bridge feeds the scheduled count to the pipeline schedule. Two schedulers
+exist: `dp_balanced` (static CP: every bin is split across the full
+`context_parallel_size` group; next-fit bins in stream order) and
+`default_dynamic_cp` (a sequence of at most `max_seqlen_per_dp_cp_rank` tokens
+runs on one GPU, up to twice that on a two-GPU group, and so on up to the whole
+`dp x cp` pool; longest-first, packing-aware group formation).
+
+Bridge wires the scheduler in through the same points the other modes use:
+`dataset.enable_global_batch_packing` drives `model.sequence_packing_scheduler`
+(`default_dynamic_cp` when `model.dynamic_context_parallel` is set, else
+`dp_balanced`), it joins `uses_thd` so MoE dispatch gets the same safe-padding
+treatment, it shares the runtime-THD constraints below with Energon packing, the
+CP alignment multiple comes from the same `collate_padding_multiple` derivation
+(`2 x dp x cp` under dynamic CP), and it marks the model for variable-length
+pipeline shapes. `train_step` and `evaluate` wrap the raw iterator once per step
+with Megatron-Core's `wrap_data_iterator` and run the scheduled microbatch count;
+`get_batch` delegates to Megatron-Core's packed batch fetch, which returns a
+finished `PackedSeqParams` with the per-microbatch CP group. The scheduler's
+exact per-step token statistics feed the FLOPs accumulators, and MoE/MTP loss
+scaling in the logs divides by the microbatches that actually ran. Helpers:
+`megatron.bridge.data.packing.global_batch` (sample contract) and
+`megatron.bridge.training.global_batch_packing` (loop glue).
+
+### Datasets that yield unpacked samples
+
+The scheduler consumes **unpacked** per-sample dicts delivered through an
+identity collate (one sample per `micro_batch_size = 1` microbatch):
+`tokens`/`labels`/`position_ids` (`int64 [L]`), `loss_mask` (`float32 [L]`),
+`original_seq_len` and `padded_seq_len` (`int32 [1]`). Every `padded_seq_len`
+is a multiple of the CP alignment (`2 x cp`, or `2 x dp x cp` under dynamic CP,
+times TP with sequence parallelism). Datasets declare the capability through
+`yields_unpacked_samples`; two providers implement it:
+
+- `GPTSFTDatasetConfig(enable_global_batch_packing=True)`: real SFT data (for
+  example `default_coderforge_config`) with a per-sample collate that shifts
+  labels, builds the loss mask, and pads to the alignment multiple; use a
+  `single` or `cyclic` dataloader.
+- `GPTDatasetConfig` / `MockGPTDatasetConfig` with `enable_global_batch_packing=True`:
+  Megatron's `VarlenDataset` (JSONL / Parquet / Hugging Face sources via `blend`)
+  or `MockVarlenDataset` (`varlen_mock_dataset_config_json` shapes a lognormal or
+  per-line length distribution), which emit exactly this schema.
+
+`fold_alignment_padding=True` on either config reports the alignment padding as
+part of the sequence (still loss-masked) so bins carry no padding between
+sequences; see the wide-head note below.
+
+### Configuration
+
+```python
+from megatron.bridge.recipes.utils.dataset_utils import default_coderforge_config
+
+cfg.dataset = default_coderforge_config(seq_length=32768)
+cfg.dataset.enable_global_batch_packing = True
+cfg.dataset.dataloader_type = "single"
+cfg.model.context_parallel_size = 4                          # static CP domain
+cfg.model.dynamic_context_parallel = True                    # False for dp_balanced
+cfg.model.max_seqlen_per_dp_cp_rank = cfg.model.seq_length // 4
+cfg.model.calculate_per_token_loss = True
+cfg.ddp.average_in_collective = False
+cfg.train.micro_batch_size = 1
+```
+
+`ConfigContainer.validate` enforces, in addition to the shared runtime-THD
+constraints (micro batch 1, per-token loss with `average_in_collective=False`,
+no CUDA graphs, no pipeline parallelism): a `single`/`cyclic` dataloader, an
+explicit `model.max_seqlen_per_dp_cp_rank` with `pool x max_seqlen_per_dp_cp_rank
+>= seq_length` (`pool` is `cp` for static CP and `dp x cp` for dynamic CP), a
+power-of-two `dp x cp` pool and `min_dynamic_context_parallel_size` under
+dynamic CP, no decentralized process groups with dynamic CP, no virtual pipeline
+parallelism, no Mamba hybrid models, no Megatron FSDP, mutual exclusivity with
+the other packing modes, and a dataset with `yields_unpacked_samples`. It also
+probes the pinned Megatron-Core for the requested scheduler and the dynamic-CP
+entry points and reports `./scripts/switch_mcore.sh dev` when they are missing;
+the scheduler lives in Megatron-Core `dev`.
+
+`qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config` is the reference
+recipe (Qwen3.5-35B-A3B, CoderForge, 32k cap, TP1 PP1 CP4 EP8) and
+`examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py` launches
+it; run it with `model.dynamic_context_parallel=false
+model.sequence_packing_scheduler=dp_balanced` for the static-CP baseline with the
+same bins.
+
+### Notes for wide-head MoE models (Qwen3.5 and similar)
+
+- Transformer Engine disables cuDNN fused attention for training at head
+  dimensions of 256 and above, and FlashAttention rejects THD bins that contain
+  padding between sequences. Megatron-Core currently flags every scheduler bin as
+  padded; until it derives `pad_between_seqs` from the actual `cu_seqlens`
+  ([Megatron-LM #7417](https://github.com/NVIDIA/Megatron-LM/pull/7417)), such
+  models need that change plus `fold_alignment_padding=True`. Head dimensions up
+  to 128 run on cuDNN without either.
+- Transformer Engine's FusedAdam wraps every parameter slice in a handle from a
+  pool of roughly 20k; 256 experts on few expert-parallel ranks exceed it with
+  the precision-aware optimizer. Use more expert-parallel ranks (EP8 in the
+  recipe) or partial optimizer CPU offload (`optimizer.optimizer_cpu_offload`
+  with `use_precision_aware_optimizer=True`); a fully offloaded optimizer can
+  exceed a node's host memory, and `torchrun` pins `OMP_NUM_THREADS=1`, so set it
+  to `cores / local ranks` when offloading.
+- The fused cross-entropy materializes an fp32 `[tokens_per_rank, vocab]` buffer;
+  at a 248k vocabulary this is what makes CP (or TP) mandatory at long caps and
+  what sizes `max_seqlen_per_dp_cp_rank`.
+- The first iteration that introduces a new dynamic CP group size pays
+  communicator and kernel setup; expect a few slow early steps.
+- Dynamic CP pays when static CP is memory-mandatory and the stream has a
+  short-sequence mass; on streams where every sequence needs the full group it is
+  a small scheduling overhead. The scheduler may promote short sequences to larger
+  groups to keep every rank busy, so fewer sequences run at CP1 than the length
+  histogram alone suggests.
 
 ## Relationship to Long-Sequence Training
 

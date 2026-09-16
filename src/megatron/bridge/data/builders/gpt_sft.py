@@ -239,10 +239,23 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     in_batch_packing_pad_to_multiple_of: int = 1
     enable_offline_packing: bool = False
     offline_packing_specs: PackedSequenceSpecs | None = None
+    enable_global_batch_packing: bool = False
+    """Yield unpacked per-sample rows (identity collate) for Megatron-Core's online packing
+    scheduler, which packs the global batch per step across DP x CP ranks and enables dynamic CP."""
+    global_batch_packing_pad_to_multiple_of: int = 1
+    """Per-sequence alignment multiple for CP THD slicing; ``ConfigContainer.validate`` sets it."""
+    fold_alignment_padding: bool = False
+    """Report the alignment padding as part of each sequence (loss-masked) so packed bins carry no
+    padding between sequences; needed for FlashAttention-only head sizes (>= 256)."""
     dataset_kwargs: dict[str, Any] | None = None
     do_validation: bool = True
     do_test: bool = True
     dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "batch"
+
+    @property
+    def yields_unpacked_samples(self) -> bool:
+        """Whether the built datasets yield the per-sample dicts global-batch packing consumes."""
+        return self.enable_global_batch_packing
 
     def validate(self) -> None:
         """Validate source selection and text-only SFT settings."""
@@ -319,6 +332,16 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         if self.enable_in_batch_packing and self.dataloader_type == "batch":
             raise ValueError(
                 "GPT-SFT in-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
+            )
+        if self.enable_global_batch_packing and (self.enable_offline_packing or self.enable_in_batch_packing):
+            raise ValueError(
+                "enable_global_batch_packing is mutually exclusive with enable_offline_packing and enable_in_batch_packing."
+            )
+        if self.global_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("global_batch_packing_pad_to_multiple_of must be greater than 0.")
+        if self.enable_global_batch_packing and self.dataloader_type not in ("single", "cyclic"):
+            raise ValueError(
+                "GPT-SFT global-batch packing does not support dataloader_type='batch'; use 'single' or 'cyclic'."
             )
         if self.enable_offline_packing and self.offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
@@ -599,6 +622,9 @@ def build_gpt_sft_split(
     pad_seq_to_mult: int | None = None,
     enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
+    enable_global_batch_packing: bool = False,
+    global_batch_packing_pad_to_multiple_of: int = 1,
+    fold_alignment_padding: bool = False,
     is_test: bool = False,
     dataset_kwargs: dict[str, Any] | None = None,
 ) -> Any | None:
@@ -617,6 +643,9 @@ def build_gpt_sft_split(
                 pad_seq_to_mult=pad_seq_to_mult,
                 enable_in_batch_packing=enable_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                enable_global_batch_packing=enable_global_batch_packing,
+                global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=fold_alignment_padding,
                 is_test=is_test,
                 dataset_kwargs=dataset_kwargs,
             )
@@ -636,6 +665,9 @@ def build_gpt_sft_split(
                 pad_seq_to_mult=pad_seq_to_mult,
                 enable_in_batch_packing=enable_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+                enable_global_batch_packing=enable_global_batch_packing,
+                global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=fold_alignment_padding,
                 is_test=is_test,
                 dataset_kwargs=blend_options,
             )
@@ -738,12 +770,18 @@ def build_gpt_sft_split(
             tool_schemas=tool_schemas,
             enable_in_batch_packing=enable_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+            enable_global_batch_packing=enable_global_batch_packing,
+            global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+            fold_alignment_padding=fold_alignment_padding,
             **options,
         )
     return GPTSFTDataset(
         **dataset_init_kwargs,
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        enable_global_batch_packing=enable_global_batch_packing,
+        global_batch_packing_pad_to_multiple_of=global_batch_packing_pad_to_multiple_of,
+        fold_alignment_padding=fold_alignment_padding,
         **options,
     )
 
@@ -785,6 +823,9 @@ class GPTSFTDatasetBuilder:
         self.max_train_samples = config.max_train_samples
         self.enable_in_batch_packing = config.enable_in_batch_packing
         self.in_batch_packing_pad_to_multiple_of = config.in_batch_packing_pad_to_multiple_of
+        self.enable_global_batch_packing = config.enable_global_batch_packing
+        self.global_batch_packing_pad_to_multiple_of = config.global_batch_packing_pad_to_multiple_of
+        self.fold_alignment_padding = config.fold_alignment_padding
         self.enable_offline_packing = config.enable_offline_packing
         self.offline_packing_specs = config.offline_packing_specs
         self.packed_sequence_size = (
@@ -989,6 +1030,9 @@ class GPTSFTDatasetBuilder:
             pad_seq_to_mult=self._pad_seq_to_mult,
             enable_in_batch_packing=self.enable_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+            enable_global_batch_packing=self.enable_global_batch_packing,
+            global_batch_packing_pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+            fold_alignment_padding=self.fold_alignment_padding,
             dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
         )
 
@@ -1005,6 +1049,9 @@ class GPTSFTDatasetBuilder:
                 pad_seq_to_mult=self._pad_seq_to_mult,
                 enable_in_batch_packing=self.enable_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+                enable_global_batch_packing=self.enable_global_batch_packing,
+                global_batch_packing_pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=self.fold_alignment_padding,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )
@@ -1021,6 +1068,9 @@ class GPTSFTDatasetBuilder:
                 packed_sequence_size=-1,
                 enable_in_batch_packing=self.enable_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+                enable_global_batch_packing=self.enable_global_batch_packing,
+                global_batch_packing_pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                fold_alignment_padding=self.fold_alignment_padding,
                 is_test=True,
                 dataset_kwargs=self.dataset_kwargs,
             )

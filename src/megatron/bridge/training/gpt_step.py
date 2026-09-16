@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass
 from functools import partial, wraps
 from typing import Iterable
 
@@ -20,6 +21,7 @@ import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -38,6 +40,10 @@ from megatron.core.utils import (
 )
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.global_batch_packing import (
+    get_batch_for_global_batch_packing,
+    global_batch_packing_enabled,
+)
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
@@ -56,7 +62,7 @@ _CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PA
 _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
-_PackedMetadataValue = torch.Tensor | int | None
+_PackedMetadataValue = torch.Tensor | int | PackedSeqParams | None
 _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED = "_mbridge_expert_bias_padding_mask_compatible"
 _MCORE_SCHEDULE_PADDING_MASK_PATCHED = "_mbridge_schedule_padding_mask_compatible"
 
@@ -441,6 +447,22 @@ def get_batch(
     """
     # Determine pipeline stage role via process group collection
     model_cfg = getattr(cfg, "model", None)
+    if global_batch_packing_enabled(model_cfg):
+        # Megatron-Core's scheduler owns the THD metadata, the (static or dynamic) CP
+        # slicing and the TP broadcast; it returns a finished PackedSeqParams.
+        tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask = (
+            get_batch_for_global_batch_packing(
+                data_iterator, model_cfg, pg_collection=pg_collection, vp_stage=vp_stage
+            )
+        )
+        return (
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            {"packed_seq_params": packed_seq_params, "padding_mask": padding_mask},
+        )
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
     is_first = is_pp_first_stage(pg_collection.pp) and (
         vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
@@ -485,6 +507,81 @@ def get_batch(
         batch["position_ids"],
         _packed_metadata_for_forward(batch),
     )
+
+
+@dataclass
+class _ResolvedPackedBatch:
+    """One THD representation for the forward step, whichever packing mode produced the batch."""
+
+    packed_seq_params: PackedSeqParams | None = None
+    padding_mask: torch.Tensor | None = None
+    flops_from_scheduler: bool = False
+    flops_cu_seqlens: torch.Tensor | None = None
+    flops_cu_seqlens_argmin: torch.Tensor | None = None
+    flops_cu_seqlens_unpadded: torch.Tensor | None = None
+    flops_cu_seqlens_unpadded_argmin: torch.Tensor | None = None
+
+
+def _resolve_packed_batch(
+    packed_seq_metadata: dict[str, _PackedMetadataValue] | None,
+    *,
+    config,
+    tokens: torch.Tensor | None,
+    labels: torch.Tensor | None,
+) -> _ResolvedPackedBatch:
+    """Normalize packed-sequence metadata from any packing mode into PackedSeqParams.
+
+    Dataset-level packing (offline, in-batch, Energon) yields ``cu_seqlens`` dicts
+    that :func:`get_packed_seq_params` converts; global-batch packing yields a
+    finished ``PackedSeqParams`` (with its per-microbatch CP group) under the
+    ``packed_seq_params`` key.
+    """
+    if packed_seq_metadata is None:
+        if global_batch_packing_enabled(config):
+            raise ValueError(
+                "model.sequence_packing_scheduler is set but the batch did not come from the packing scheduler; "
+                "global-batch packing is only supported with the GPT forward step (megatron.bridge.training.gpt_step)."
+            )
+        return _ResolvedPackedBatch()
+
+    scheduled = packed_seq_metadata.get("packed_seq_params")
+    if isinstance(scheduled, PackedSeqParams):
+        return _ResolvedPackedBatch(
+            packed_seq_params=scheduled,
+            padding_mask=packed_seq_metadata.get("padding_mask"),
+            flops_from_scheduler=True,
+        )
+    if global_batch_packing_enabled(config):
+        raise ValueError(
+            "model.sequence_packing_scheduler is set but the batch did not come from the packing scheduler; "
+            "global-batch packing is only supported with the GPT forward step (megatron.bridge.training.gpt_step)."
+        )
+
+    resolved = _ResolvedPackedBatch(padding_mask=packed_seq_metadata.get("padding_mask"))
+    if packed_seq_metadata.get("cu_seqlens_q") is not None:
+        cu_seqlens_q = packed_seq_metadata.get("cu_seqlens_q")
+        cu_seqlens_q_padded = packed_seq_metadata.get("cu_seqlens_q_padded")
+        resolved.flops_cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
+        resolved.flops_cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
+    else:
+        resolved.flops_cu_seqlens = packed_seq_metadata.get("cu_seqlens")
+        resolved.flops_cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
+        resolved.flops_cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
+        resolved.flops_cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
+
+    metadata = {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
+    # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
+    # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
+    # transformer models to avoid per-step CUDA overhead.
+    if getattr(config, "is_hybrid_model", False):
+        if tokens is not None:
+            metadata["total_tokens"] = tokens.size(1)
+        elif labels is not None:
+            metadata["total_tokens"] = labels.size(1)
+        else:
+            metadata["total_tokens"] = getattr(config, "seq_length", None)
+    resolved.packed_seq_params = get_packed_seq_params(metadata)
+    return resolved
 
 
 def _forward_step_common(
@@ -532,6 +629,8 @@ def _forward_step_common(
         )
     timers("batch-generator").stop()
 
+    packed = _resolve_packed_batch(packed_seq_metadata, config=config, tokens=tokens, labels=labels)
+
     # Accumulate FLOPS metadata across micro-batches. The THD attention term Σᵢ sᵢ² is
     # derived inline from cu_seqlens (kept on-device, sync-free); see
     # accumulate_flops_metadata. Falls back to BSHD when cu_seqlens is absent.
@@ -542,32 +641,21 @@ def _forward_step_common(
     # follow-up tracked in #4161. Until then, forward cu_seqlens only for CP == 1 so
     # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
     # change), instead of running the not-yet-CP-safe cu_seqlens path.
-    cp_use_thd = pg_collection.cp.size() == 1
-    cu_seqlens = None
-    cu_seqlens_argmin = None
-    cu_seqlens_unpadded = None
-    cu_seqlens_unpadded_argmin = None
-    if packed_seq_metadata is not None:
-        if packed_seq_metadata.get("cu_seqlens_q") is not None:
-            cu_seqlens_q = packed_seq_metadata.get("cu_seqlens_q")
-            cu_seqlens_q_padded = packed_seq_metadata.get("cu_seqlens_q_padded")
-            cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
-            cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
-        else:
-            cu_seqlens = packed_seq_metadata.get("cu_seqlens")
-            cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
-            cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
-            cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
-    accumulate_flops_metadata(
-        state,
-        tokens,
-        vp_stage=vp_stage,
-        config_seq_len=getattr(config, "seq_length", None),
-        cu_seqlens=cu_seqlens if cp_use_thd else None,
-        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
-        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
-        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
-    )
+    # Dataset-level packing derives the THD attention term from cu_seqlens per microbatch
+    # (CP == 1 only, see #4161); global-batch packing already fed the scheduler's exact
+    # per-step totals into the accumulators in train_step.
+    cp_use_thd = pg_collection.cp.size() == 1 and not packed.flops_from_scheduler
+    if not packed.flops_from_scheduler:
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            vp_stage=vp_stage,
+            config_seq_len=getattr(config, "seq_length", None),
+            cu_seqlens=packed.flops_cu_seqlens if cp_use_thd else None,
+            cu_seqlens_argmin=packed.flops_cu_seqlens_argmin if cp_use_thd else None,
+            cu_seqlens_unpadded=packed.flops_cu_seqlens_unpadded if cp_use_thd else None,
+            cu_seqlens_unpadded_argmin=packed.flops_cu_seqlens_unpadded_argmin if cp_use_thd else None,
+        )
 
     forward_args = {
         "input_ids": tokens,
@@ -576,9 +664,9 @@ def _forward_step_common(
         "labels": labels,
     }
 
-    # Add packed sequence support
-    if packed_seq_metadata is not None:
-        padding_mask = packed_seq_metadata.get("padding_mask")
+    # Add packed sequence support (one representation for every packing mode).
+    if packed.packed_seq_params is not None:
+        padding_mask = packed.padding_mask
         # Supported producers make mask presence configuration-driven and stable
         # across DP ranks. Never branch on mask contents here: an all-false local
         # batch must follow the same path as a padded batch on another rank.
@@ -590,18 +678,7 @@ def _forward_step_common(
             model=model,
             pg_collection=pg_collection,
         )
-        packed_seq_metadata = {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
-        # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
-        # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
-        # transformer models to avoid per-step CUDA overhead.
-        if getattr(config, "is_hybrid_model", False):
-            if tokens is not None:
-                packed_seq_metadata["total_tokens"] = tokens.size(1)
-            elif labels is not None:
-                packed_seq_metadata["total_tokens"] = labels.size(1)
-            else:
-                packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
+        forward_args["packed_seq_params"] = packed.packed_seq_params
         if padding_mask is not None:
             forward_args["padding_mask"] = padding_mask
 

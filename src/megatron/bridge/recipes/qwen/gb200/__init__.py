@@ -18,6 +18,7 @@ from megatron.bridge.recipes.qwen.gb200.qwen3_moe import (
 from megatron.bridge.recipes.qwen.gb200.qwen35 import (
     qwen35_text_9b_pretrain_8gpu_gb200_bf16_config,
     qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
+    qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config,
 )
 
 
@@ -25,4 +26,5 @@ __all__ = [
     "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
     "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
     "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
+    "qwen35_text_35b_a3b_sft_8gpu_gb200_bf16_dynamic_cp_config",
 ]

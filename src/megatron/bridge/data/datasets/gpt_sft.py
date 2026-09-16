@@ -35,6 +35,7 @@ from megatron.bridge.data.datasets.utils import (
     _preprocess,
     _tokenize,
 )
+from megatron.bridge.data.packing.global_batch import build_unpacked_sequence_sample, fold_alignment_padding
 from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.sft_processing import (
     PromptCompletionSFTPreprocessingConfig,
@@ -121,6 +122,9 @@ class GPTSFTDataset(Dataset):
         prompt_completion_config: PromptCompletionSFTPreprocessingConfig | None = None,
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
+        enable_global_batch_packing: bool = False,
+        global_batch_packing_pad_to_multiple_of: int = 1,
+        fold_alignment_padding: bool = False,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -206,6 +210,13 @@ class GPTSFTDataset(Dataset):
         self.prompt_completion_config = prompt_completion_config
         self.enable_in_batch_packing = enable_in_batch_packing
         self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
+        self.enable_global_batch_packing = enable_global_batch_packing
+        self.global_batch_packing_pad_to_multiple_of = global_batch_packing_pad_to_multiple_of
+        self.fold_alignment_padding = fold_alignment_padding
+        if self.enable_global_batch_packing and self.enable_in_batch_packing:
+            raise ValueError("enable_global_batch_packing and enable_in_batch_packing are mutually exclusive.")
+        if self.global_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("global_batch_packing_pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
         if self.enable_in_batch_packing and not self.get_attention_mask_from_fusion:
@@ -625,6 +636,37 @@ class GPTSFTDataset(Dataset):
         attention_mask = attention_mask < 0.5
         return attention_mask
 
+    def _collate_unpacked_rows(self, batch: list[dict[str, Any]]) -> list[dict[str, torch.Tensor]]:
+        """Return one unpacked scheduler sample per row for global-batch packing.
+
+        Megatron-Core's online packing scheduler forms the THD bins itself (over the
+        global batch, across DP x CP ranks), so this collate only shifts labels, builds
+        the loss mask, and pads each sequence to the CP alignment multiple.
+        """
+        if not batch:
+            raise ValueError("GPT SFT collation requires at least one sample.")
+        samples = []
+        for item in batch:
+            input_ids = torch.as_tensor(item["input_ids"], dtype=torch.long)
+            if input_ids.dim() != 1:
+                raise ValueError("GPT SFT input_ids must be a 1D sequence.")
+            tokens = input_ids[:-1][: self.max_seq_length]
+            if tokens.numel() == 0:
+                raise ValueError("GPT SFT global-batch packing requires at least two input tokens per sample.")
+            labels = input_ids[1:][: self.max_seq_length]
+            loss_mask = torch.as_tensor(self._build_loss_mask(item)[1:], dtype=torch.float32)[: self.max_seq_length]
+            sample = build_unpacked_sequence_sample(
+                tokens,
+                labels,
+                loss_mask,
+                pad_to_multiple_of=self.global_batch_packing_pad_to_multiple_of,
+                pad_token_id=self.tokenizer.eos_id,
+            )
+            if self.fold_alignment_padding:
+                fold_alignment_padding(sample)
+            samples.append(sample)
+        return samples
+
     def _collate_in_batch(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
         """Collate processed SFT rows into one physical THD batch row."""
         if not batch:
@@ -688,6 +730,8 @@ class GPTSFTDataset(Dataset):
             dict: A dictionary of batched tensors ready for model input. Key tensors include
                   'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
         """
+        if getattr(self, "enable_global_batch_packing", False):
+            return self._collate_unpacked_rows(batch)
         if getattr(self, "enable_in_batch_packing", False):
             return self._collate_in_batch(batch)
 
@@ -1000,6 +1044,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
             dict: A dictionary of batched tensors ready for model input. Key tensors include
                   'tokens', 'labels', 'loss_mask', 'position_ids', and 'attention_mask'.
         """
+        if getattr(self, "enable_global_batch_packing", False):
+            return self._collate_unpacked_rows(batch)
         if getattr(self, "enable_in_batch_packing", False):
             return self._collate_in_batch(batch)
 

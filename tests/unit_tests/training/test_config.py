@@ -5093,3 +5093,160 @@ class TestTokenizerConfig:
                 metadata_path=metadata_path,
                 random_arg=True,
             )
+
+
+class TestGlobalBatchPackingValidation:
+    """Global-batch online packing joins the packing taxonomy in ConfigContainer.validate."""
+
+    @staticmethod
+    def _gpt_varlen_dataset(sequence_length: int) -> GPTDatasetConfig:
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length)
+        dataset_cfg.enable_global_batch_packing = True
+        dataset_cfg.dataloader_type = "single"
+        return dataset_cfg
+
+    @staticmethod
+    def _gpt_sft_unpacked_dataset(sequence_length: int) -> GPTSFTDatasetConfig:
+        return GPTSFTDatasetConfig(
+            seq_length=sequence_length,
+            dataset_root="/tmp/dataset",
+            enable_global_batch_packing=True,
+            dataloader_type="single",
+        )
+
+    @pytest.fixture(autouse=True)
+    def _supported_megatron_core(self, monkeypatch):
+        """Isolate config logic from the pinned Megatron-Core's scheduler inventory."""
+        from megatron.bridge.training import global_batch_packing
+
+        monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", lambda *a, **k: None)
+
+    def test_dataset_switch_selects_static_scheduler_and_records_layout(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2, calculate_per_token_loss=True, max_seqlen_per_dp_cp_rank=256
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_varlen_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.model.sequence_packing_scheduler == "dp_balanced"
+        assert dataset_cfg.data_parallel_size == 4 and dataset_cfg.context_parallel_size == 2
+        assert dataset_cfg.sequence_parallel_size == 0
+        assert getattr(container.model, "_enable_in_batch_packing", False) is True  # variable_seq_lengths path
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_dynamic_cp_selects_dynamic_scheduler_and_pool_padding_multiple(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=64,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
+        # dp 4 x cp 2 = pool 8 -> 2 * pool
+        assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_dynamic_cp_rejects_non_power_of_two_pool(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=6)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=6,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=self._gpt_varlen_dataset(512),
+        )
+        container.ddp.average_in_collective = False
+        try:
+            with pytest.raises(ValueError, match="power-of-two"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_model_scheduler_without_dataset_switch_is_rejected(self):
+        model_cfg = create_test_gpt_config(calculate_per_token_loss=True, sequence_packing_scheduler="dp_balanced")
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=create_test_gpt_dataset_config(512),
+        )
+        try:
+            with pytest.raises(ValueError, match="enable_global_batch_packing"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("model_kwargs", "train_kwargs", "message"),
+        [
+            (
+                {"calculate_per_token_loss": True, "max_seqlen_per_dp_cp_rank": 256},
+                {"micro_batch_size": 2},
+                "micro_batch_size=1",
+            ),
+            ({"calculate_per_token_loss": False, "max_seqlen_per_dp_cp_rank": 256}, {}, "calculate_per_token_loss"),
+            (
+                {
+                    "calculate_per_token_loss": True,
+                    "max_seqlen_per_dp_cp_rank": 256,
+                    "pipeline_model_parallel_size": 2,
+                },
+                {},
+                "pipeline parallelism",
+            ),
+            ({"calculate_per_token_loss": True}, {}, "max_seqlen_per_dp_cp_rank"),
+            ({"calculate_per_token_loss": True, "max_seqlen_per_dp_cp_rank": 8}, {}, "Bin capacity"),
+        ],
+    )
+    def test_shared_and_mode_specific_constraints(self, model_kwargs, train_kwargs, message):
+        model_cfg = create_test_gpt_config(**model_kwargs)
+        train_cfg = create_test_training_config(**{"micro_batch_size": 1, "global_batch_size": 8, **train_kwargs})
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=self._gpt_varlen_dataset(512),
+        )
+        container.ddp.average_in_collective = False
+        try:
+            with pytest.raises(ValueError, match=message):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_global_batch_packing_is_exclusive_with_in_batch_packing(self):
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        dataset_cfg.enable_in_batch_packing = True
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            dataset_cfg.validate()

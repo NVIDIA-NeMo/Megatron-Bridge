@@ -1015,7 +1015,9 @@ def training_log(
 
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
     if num_moe_experts is not None:
-        moe_loss_scale = 1 / get_num_microbatches()
+        moe_loss_scale = 1 / (
+            getattr(global_state, "global_batch_packing_num_microbatches", None) or get_num_microbatches()
+        )
         track_names = []
 
         moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
@@ -1049,7 +1051,9 @@ def training_log(
             track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
         track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
-        mtp_loss_scale = 1 / get_num_microbatches()
+        mtp_loss_scale = 1 / (
+            getattr(global_state, "global_batch_packing_num_microbatches", None) or get_num_microbatches()
+        )
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
