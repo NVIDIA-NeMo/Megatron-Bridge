@@ -162,3 +162,7 @@ RUN echo "This distribution includes open source which is archived at the follow
 
 # Force legacy CPU offload path until llama OOMs with new path are fixed
 # ENV NVTE_CPU_OFFLOAD_V1="1"
+
+RUN rm -rf /usr/local/cuda-13.3/NsightSystems-cli-2026.3.1/
+
+RUN pip install wandb==0.29.0
