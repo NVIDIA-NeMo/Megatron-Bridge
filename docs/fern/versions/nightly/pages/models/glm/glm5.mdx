@@ -20,7 +20,7 @@ For config/provider loading without weights:
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
-    "zai-org/GLM-5.3", revision="aca966e4e02791568aa6a4ced368624b3d897f42"
+    "zai-org/GLM-5.3", revision="aca966e4e02791568aa6a4ced368624b3d897f42"  # pragma: allowlist secret (public HF revision)
 )
 provider = bridge.to_megatron_provider(load_weights=False)
 ```
