@@ -27,7 +27,12 @@ from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import (
+    HFSourcedWeightTuple,
+    HFWeightTuple,
+    MegatronModelBridge,
+    WeightConversionTask,
+)
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -371,7 +376,8 @@ class KimiK3Bridge(MegatronModelBridge):
         conversion_tasks: list[WeightConversionTask] | None = None,
         merge_adapter_weights: bool = True,
         weight_dtype: torch.dtype | None = None,
-    ) -> Iterable[HFWeightTuple]:
+        with_megatron_names: bool = False,
+    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
         """Export the language model and preserve unchanged multimodal weights."""
         yield from super().stream_weights_megatron_to_hf(
             megatron_model,
@@ -381,7 +387,11 @@ class KimiK3Bridge(MegatronModelBridge):
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
         )
+        # Passthrough tensors are copied straight from the HF checkpoint and have no
+        # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
+        passthrough_sources = () if with_megatron_names else None
 
         state = getattr(hf_pretrained, "state", None)
         source = getattr(state, "source", None)
@@ -389,4 +399,6 @@ class KimiK3Bridge(MegatronModelBridge):
             return
         for name in source.get_all_keys():
             if name.startswith(self._HF_PASSTHROUGH_PREFIXES):
-                yield from HFWeightTuple(name, state[name]).iter_finalized(cpu=cpu)
+                yield from HFWeightTuple(name, state[name]).iter_finalized(
+                    cpu=cpu, megatron_param_names=passthrough_sources
+                )
