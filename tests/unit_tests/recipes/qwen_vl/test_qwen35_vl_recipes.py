@@ -35,6 +35,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 _qwen35_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen35_vl")
 _qwen35_vl_h100_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.h100.qwen35_vl")
 _qwen35_vl_gb200_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.gb200.qwen35_vl")
+_qwen35_vl_gb300_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.gb300.qwen35_vl")
 
 # Pretrain mock configs (parameterless fixed configs)
 _QWEN35_VL_PRETRAIN_MOCK_FUNCS = [
@@ -108,6 +109,10 @@ _QWEN35_VL_GB200_FUNCS = [
     _qwen35_vl_gb200_module.qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config,
     _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config,
     _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config,
+]
+
+_QWEN35_VL_GB300_FUNCS = [
+    _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config,
 ]
 
 
@@ -246,7 +251,8 @@ def test_qwen35_vl_model_selector_supports_dora(monkeypatch: pytest.MonkeyPatch)
     + _QWEN35_VL_SFT_FUNCS
     + _QWEN35_VL_H100_SFT_FUNCS
     + [_qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config]
-    + _QWEN35_VL_GB200_FUNCS,
+    + _QWEN35_VL_GB200_FUNCS
+    + _QWEN35_VL_GB300_FUNCS,
 )
 def test_qwen35_vl_recipe_entry_points_are_parameterless(recipe_func: Callable):
     """Qwen3.5-VL public recipe entry points should be fixed configs."""
@@ -430,6 +436,34 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 # ---------------------------------------------------------------------------
 # 35B-A3B MoE defaults
 # ---------------------------------------------------------------------------
+
+
+def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 64-GB300 library pretrain recipe should own the measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    # EP32 measured 370.2 TF against 211.0 TF at EP64 on 64x GB300; the HybridEP
+    # NVLink rank count must track it or the domain is split wrongly.
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.recompute_granularity == "selective"
+    # No "moe_act": the CuTe DSL fused grouped MLP rejects it.
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.vision_cuda_graph_impl == "none"
+    assert cfg.model.vision_cuda_graph_scope == []
+    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.checkpoint.pretrained_checkpoint is None
 
 
 def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPatch):
