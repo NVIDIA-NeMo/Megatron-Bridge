@@ -113,6 +113,15 @@ def parse_args() -> argparse.Namespace:
             "Can be specified multiple times; e.g. `mtp.layers` excludes MTP adapters."
         ),
     )
+    parser.add_argument(
+        "--expand-shared-outer",
+        action="store_true",
+        help=(
+            "For shared-outer MoE LoRA, replicate the shared factor across experts under "
+            "per-expert 2D names (vLLM `pack_moe`) instead of a single shared `[1, ...]` tensor "
+            "(SGLang). Multiplies the shared factor's on-disk size by the expert count."
+        ),
+    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size for distributed GPU export.")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size for distributed GPU export.")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallel size for distributed GPU export.")
@@ -231,6 +240,7 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
             peft_config=lora,
             base_model_name_or_path=args.hf_model_path,
             exclude_adapter_base_prefixes=tuple(args.exclude_adapter_base_prefix),
+            expand_shared_outer=args.expand_shared_outer,
         )
     finally:
         if parallel_state.is_initialized():
@@ -253,6 +263,7 @@ def main() -> None:
             peft_checkpoint=args.lora_checkpoint,
             output_path=args.output,
             exclude_adapter_base_prefixes=tuple(args.exclude_adapter_base_prefix),
+            expand_shared_outer=args.expand_shared_outer,
         )
 
 

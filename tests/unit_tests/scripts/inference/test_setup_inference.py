@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import importlib.util
+import os
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -72,6 +74,38 @@ def _launcher_args(*extra_options: str) -> list[str]:
         "--container-image",
         "image.sqsh",
         *extra_options,
+    ]
+
+
+def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
+    fake_uv = tmp_path / "uv"
+    uv_args = tmp_path / "uv-args.txt"
+    fake_uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$UV_ARGS_FILE"\n', encoding="utf-8")
+    fake_uv.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{tmp_path}:{env['PATH']}",
+            "UV_ARGS_FILE": str(uv_args),
+            "VIRTUAL_ENV": str(tmp_path / "active-environment"),
+        }
+    )
+
+    subprocess.run(
+        [str(REPO_ROOT / "scripts" / "inference" / "infer.sh"), "--help"],
+        check=True,
+        env=env,
+    )
+
+    assert uv_args.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--active",
+        "--no-sync",
+        "--with",
+        "nemo-run==0.10.0",
+        "python",
+        str(REPO_ROOT / "scripts" / "inference" / "setup_inference.py"),
+        "--help",
     ]
 
 
@@ -182,6 +216,8 @@ def test_submission_dry_run_aliases_are_consumed(submission_option):
     [
         (("--nodes", "0"), "--nodes"),
         (("--gpus-per-node", "0"), "--gpus-per-node"),
+        (("--gpus-per-node", "4", "--tasks-per-node", "0"), "--tasks-per-node"),
+        (("--gpus-per-node", "4", "--tasks-per-node", "5"), "--tasks-per-node"),
         (("--cpus-per-task", "0"), "--cpus-per-task"),
         (("--srun-arg=",), "--srun-arg"),
     ],
@@ -256,6 +292,8 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
         _launcher_args(
             "--gpus-per-node",
             "4",
+            "--tasks-per-node",
+            "1",
             "--srun-arg=--mpi=pmix",
             "--srun-arg=--container-writable",
         )
@@ -263,7 +301,7 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
 
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
-    assert executor.kwargs["ntasks_per_node"] == 4
+    assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 4
     assert executor.kwargs["exclusive"] is None
     assert "launcher" not in executor.kwargs
@@ -273,6 +311,25 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
     assert executor.kwargs["container_mounts"] == ["/host:/container"]
     assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
     assert executor.env_vars == {}
+
+
+def test_slurm_executor_defaults_to_one_task_per_gpu(tmp_path, monkeypatch):
+    module = _load_setup_inference_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(_launcher_args("--gpus-per-node", "4"))
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["ntasks_per_node"] == 4
+    assert executor.kwargs["gpus_per_node"] == 4
 
 
 def test_slurm_executor_can_request_exclusive_nodes(tmp_path, monkeypatch):

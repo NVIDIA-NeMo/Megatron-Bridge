@@ -16,7 +16,6 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
-    _enable_overlap_param_gather_with_optimizer_step,
     _llama_benchmark_common,
     _perf_precision,
     llama31_405b_pretrain_config,
@@ -101,7 +100,6 @@ def llama31_405b_pretrain_128gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     _llama_benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

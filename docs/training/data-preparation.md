@@ -99,6 +99,37 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
+To blend independent JSONL files, set `per_split_data_source_manifest_path` to a JSON file
+with the same alternating weight/path form as Megatron-LM:
+
+```json
+{
+  "train": ["0.75", "/data/sft_a.jsonl", "0.25", "/data/sft_b.jsonl"],
+  "valid": ["1.0", "/data/sft_validation.jsonl"],
+  "test": ["1.0", "/data/sft_test.jsonl"]
+}
+```
+
+```python
+dataset = GPTSFTDatasetConfig(
+    seq_length=4096,
+    per_split_data_source_manifest_path="/data/sft_blend.json",
+    preprocessing=PromptCompletionSFTPreprocessingConfig(),
+)
+```
+
+Weights are positive relative row-sampling ratios and need not sum to one.
+Without weights, each source row is used once. A split containing one path uses
+the existing single-JSONL path directly. For a weighted split, the default
+blend length is the sum of its source row counts; source-local rows are shuffled
+without replacement and repeat only when the ratio requires oversampling.
+
+Offline packing consumes this blended raw-row stream and writes one packed
+artifact per enabled train or validation split. Bridge stores these artifacts
+under the NeMo datasets cache in an identity-derived directory based on the
+source paths, weights, and file sizes. Replacing content without changing its
+path or byte size requires renaming the source or clearing the derived cache.
+
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 
 For preparation schemas, offline packing, finite epochs, and a complete knob reference, see the [text-only SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/text-only-sft/README.md).
@@ -188,6 +219,13 @@ dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
 ```
 
 Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
+
+Model-specific Jinja controls can be supplied per row under `chat_template_kwargs`, for example
+`{"truncate_history_thinking": false}` to retain all historical reasoning. Megatron Bridge translates this canonical
+control to model-template-specific parameter names where necessary. The data pipeline owns tokenization,
+truncation, padding, and template selection, so those controls cannot be overridden from a dataset row. Tool
+schemas remain in the top-level `tools` field. Processor-batched VLM rows must use identical template kwargs and
+tools within a microbatch.
 
 To train on several sources at once, pass a list to `source`. Each entry in `source_weights` is an epoch count for its source: `1.0` keeps every row once, `2.5` keeps every row twice plus half of them again, and `0.5` keeps half of them. Fractional passes draw without replacement and round up to a whole row. Omitting the weights gives every source one pass.
 

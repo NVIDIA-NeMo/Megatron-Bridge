@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from unittest.mock import Mock, patch
 
 import pytest
+import torch
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.transformer import ModuleSpec
 from megatron.training.models.hybrid import HybridModelBuilder as MLMHybridModelBuilder
 from megatron.training.models.hybrid import HybridModelConfig as MLMHybridModelConfig
@@ -92,12 +95,12 @@ class TestHybridStackSpecs:
 
 
 class TestHybridModelConfig:
-    def test_bridge_exports_upstream_hybrid_config(self):
-        assert HybridModelConfig is MLMHybridModelConfig
-        assert HybridModelBuilder is MLMHybridModelBuilder
+    def test_bridge_extends_upstream_hybrid_config(self):
+        assert issubclass(HybridModelConfig, MLMHybridModelConfig)
+        assert issubclass(HybridModelBuilder, MLMHybridModelBuilder)
 
     def test_builder_classvar(self):
-        assert HybridModelConfig.builder == "megatron.training.models.hybrid.HybridModelBuilder"
+        assert HybridModelConfig.builder == "megatron.bridge.models.hybrid.HybridModelBuilder"
 
     def test_default_values(self):
         config = HybridModelConfig(transformer=_make_transformer())
@@ -109,6 +112,7 @@ class TestHybridModelConfig:
         assert config.seq_length == 8192
         assert config.position_embedding_type == "none"
         assert config.vocab_size is None
+        assert config.logit_dtype is None
 
     def test_rejects_mamba_stack_spec_argument(self):
         module_spec = ModuleSpec(module=object)
@@ -223,6 +227,28 @@ class TestHybridModelBuilder:
         assert kw["fp16_lm_cross_entropy"] is True
         assert kw["parallel_output"] is False
         assert kw["share_embeddings_and_output_weights"] is True
+
+    @pytest.mark.skipif(
+        "logit_dtype" not in inspect.signature(HybridModel).parameters,
+        reason="Installed MCore predates logit_dtype",
+    )
+    @patch("megatron.training.models.hybrid.HybridModel")
+    def test_requested_logit_dtype_reaches_new_mcore_builder(self, mock_model):
+        self.config.logit_dtype = torch.float32
+
+        self.builder.build_model(self.pg, pre_process=True, post_process=True)
+
+        assert mock_model.call_args.kwargs["logit_dtype"] is torch.float32
+
+    @pytest.mark.skipif(
+        "logit_dtype" in inspect.signature(HybridModel).parameters,
+        reason="Installed MCore supports logit_dtype",
+    )
+    def test_requested_logit_dtype_fails_before_old_mcore_builder(self):
+        self.config.logit_dtype = torch.float32
+
+        with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+            self.builder.build_model(self.pg, pre_process=True, post_process=True)
 
     @patch("megatron.training.models.hybrid.compose_hooks")
     @patch("megatron.training.models.hybrid.unimodal_build_distributed_models")

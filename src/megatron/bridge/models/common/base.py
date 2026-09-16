@@ -14,7 +14,7 @@
 
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from megatron.training.models.base import (
     BuildConfigT,  # noqa: F401
@@ -27,7 +27,87 @@ from megatron.training.models.base import (
     ModelConfig as _MegatronModelConfig,
 )
 
-from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix
+from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
+
+
+def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
+    """Deserialize a builder config, including persisted enum and dtype values."""
+
+    def _restore_value(value: Any, full_key: str) -> Any:
+        if isinstance(value, list):
+            return [_restore_value(item, f"{full_key}.{index}") for index, item in enumerate(value)]
+        if not isinstance(value, dict):
+            return value
+        if "_target_" not in value:
+            return {key: _restore_value(item, f"{full_key}.{key}") for key, item in value.items()}
+        return _from_dict(value, full_key)
+
+    def _from_dict(subdata: dict[str, Any], full_key: str) -> Any:
+        target = subdata.get("_target_")
+        if target is None:
+            raise ValueError("Cannot deserialize: missing '_target_' field")
+        if not isinstance(target, str):
+            raise ValueError(f"Cannot deserialize: '_target_' must be a string, got {type(target).__name__}")
+
+        config_cls = _resolve_target(target, full_key=full_key, check_callable=False)
+        if not isinstance(config_cls, type) or not is_dataclass(config_cls):
+            return instantiate(subdata)
+
+        valid_fields = {f.name for f in dataclass_fields(config_cls) if f.init}
+        filtered_data = {
+            key: _restore_value(value, f"{full_key}.{key}")
+            for key, value in subdata.items()
+            if key in valid_fields and not key.startswith("_")
+        }
+        return config_cls(**filtered_data)
+
+    builder = data.get("_builder_")
+    if not isinstance(builder, str):
+        raise ValueError("Cannot deserialize: missing '_builder_' field")
+    _validate_target_prefix(target=builder, full_key="_builder_")
+
+    result = _from_dict(data, full_key="_target_")
+    if not isinstance(result, _MegatronModelConfig):
+        raise ValueError(f"Cannot deserialize: outer target produced {type(result).__name__}, not ModelConfig")
+    result.builder = builder
+    return result
+
+
+class ModelConfigOverrideMixin:
+    """Route flat overrides to their declared owner and reject unknown fields.
+
+    Builder-backed model configs store Megatron-Core transformer settings in a
+    nested ``transformer`` dataclass while exposing flat assignment for recipe
+    compatibility. This mixin keeps that convenience without allowing typos to
+    create phantom configuration attributes. Subclasses declare the nested
+    config type through ``transformer_config_class``.
+    """
+
+    transformer_config_class: ClassVar[type[TransformerConfig]]
+
+    def __setattr__(self, name: str, value: Any, /) -> None:
+        """Assign a declared outer or nested field and reject phantom fields."""
+        try:
+            transformer = object.__getattribute__(self, "transformer")
+        except AttributeError:
+            object.__setattr__(self, name, value)
+            return
+
+        model_fields = getattr(type(self), "__dataclass_fields__", {})
+        transformer_fields = getattr(type(transformer), "__dataclass_fields__", {})
+        descriptor = getattr(type(self), name, None)
+
+        if name == "transformer" or name in model_fields:
+            object.__setattr__(self, name, value)
+        elif name in transformer_fields:
+            setattr(transformer, name, value)
+        elif name == "builder" or name.startswith("_") or hasattr(descriptor, "__set__"):
+            object.__setattr__(self, name, value)
+        else:
+            raise AttributeError(
+                f"Neither {type(self).__name__} nor {type(transformer).__name__} declares a field named {name!r}."
+            )
 
 
 class ModelConfig(_MegatronModelConfig):
@@ -41,37 +121,6 @@ class ModelConfig(_MegatronModelConfig):
         return builder_cls
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ModelConfig":
+    def from_dict(cls, data: dict[str, Any]) -> _MegatronModelConfig:
         """Deserialize config from dictionary with Bridge target validation."""
-
-        def _from_dict(subdata: dict[str, Any], full_key: str) -> Any:
-            target = subdata.get("_target_")
-            if target is None:
-                raise ValueError("Cannot deserialize: missing '_target_' field")
-            if not isinstance(target, str):
-                raise ValueError(f"Cannot deserialize: '_target_' must be a string, got {type(target).__name__}")
-
-            config_cls = _resolve_target(target, full_key=full_key)
-            if not isinstance(config_cls, type) or not is_dataclass(config_cls):
-                raise ValueError(f"Cannot deserialize: target '{target}' did not resolve to a dataclass type")
-
-            valid_fields = {f.name for f in dataclass_fields(config_cls) if f.init}
-            filtered_data = {k: v for k, v in subdata.items() if k in valid_fields and not k.startswith("_")}
-
-            subconfigs = {}
-            for k, v in filtered_data.items():
-                if isinstance(v, dict) and "_target_" in v:
-                    subconfigs[k] = _from_dict(v, full_key=f"{full_key}.{k}")
-            filtered_data.update(subconfigs)
-
-            return config_cls(**filtered_data)
-
-        builder = data.get("_builder_")
-        if not isinstance(builder, str):
-            raise ValueError("Cannot deserialize: missing '_builder_' field")
-        _validate_target_prefix(target=builder, full_key="_builder_")
-
-        result = _from_dict(data, full_key="_target_")
-        result.builder = builder
-
-        return result
+        return deserialize_model_config(data)

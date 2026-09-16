@@ -3,6 +3,7 @@
 import importlib
 
 import pytest
+from datasets import Dataset
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data.base import DatasetBuildContext
@@ -574,6 +575,29 @@ def test_builder_uses_prompt_completion_without_chat_template(monkeypatch):
     batch = train.collate_fn([train[0]])
     assert batch["tokens"].tolist()[0][-2:] == [ord("4"), tokenizer.eos_token_id]
     assert batch["loss_mask"].sum().item() == 2
+
+
+def test_builder_treats_empty_optional_media_as_text_only(monkeypatch):
+    row = Dataset.from_list([{"prompt": "Q", "completion": "A", "images": []}])[0]
+    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/paired"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(),
+        pad_to_multiple_of=1,
+        do_validation=False,
+        do_test=False,
+    )
+
+    train, _, _ = DirectHFSFTDatasetBuilder(config).build(DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer()))
+
+    assert train is not None
+    assert train[0]["images"] == []
+    with pytest.raises(ValueError, match="supports text-only examples"):
+        select_direct_hf_sft_collate(
+            [{"prompt": "Q", "completion": "A", "images": [object()]}],
+            config.preprocessing,
+        )
 
 
 def test_direct_hf_sft_config_resolves_canonical_builder(monkeypatch):

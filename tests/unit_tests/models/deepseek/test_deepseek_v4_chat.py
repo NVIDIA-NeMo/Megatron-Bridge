@@ -259,7 +259,7 @@ def test_deepseek_v4_tokenizer_accepts_tool_call_without_content():
 
     tokenized = tokenize_deepseek_v4_example(example, tokenizer)
 
-    assert tokenized.conversation[2]["content"] is None
+    assert tokenized.conversation[2]["content"] == ""
     assert f'<{DSML_TOKEN}invoke name="get_weather">' in _decode_character_ids(tokenized.input_ids.tolist())
 
 

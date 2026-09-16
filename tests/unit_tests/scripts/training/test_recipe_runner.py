@@ -294,6 +294,83 @@ def test_sync_model_pipeline_layout_preserves_explicit_layout_override(recipe_ru
     layout_builder.assert_not_called()
 
 
+def test_sync_model_pipeline_layout_repartitions_layers_after_pp_override(recipe_runner: ModuleType) -> None:
+    """A standalone public PP override must not retain recipe-default uneven stages."""
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            num_layers=46,
+            pipeline_model_parallel_size=2,
+            virtual_pipeline_model_parallel_size=None,
+            pipeline_model_parallel_layout=None,
+            num_layers_in_first_pipeline_stage=11,
+            num_layers_in_last_pipeline_stage=11,
+            account_for_embedding_in_pipeline_split=False,
+            account_for_loss_in_pipeline_split=False,
+        )
+    )
+
+    recipe_runner.sync_model_pipeline_layout(
+        config,
+        cli_overrides=["model.pipeline_model_parallel_size=2"],
+    )
+
+    assert (
+        config.model.num_layers_in_first_pipeline_stage,
+        config.model.num_layers_in_last_pipeline_stage,
+    ) == (None, None)
+
+
+def test_sync_model_pipeline_layout_preserves_explicit_uneven_stages(recipe_runner: ModuleType) -> None:
+    """Explicit stage-count overrides take precedence over automatic repartitioning."""
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            pipeline_model_parallel_size=2,
+            virtual_pipeline_model_parallel_size=None,
+            pipeline_model_parallel_layout=None,
+            num_layers_in_first_pipeline_stage=11,
+            num_layers_in_last_pipeline_stage=35,
+        )
+    )
+
+    recipe_runner.sync_model_pipeline_layout(
+        config,
+        cli_overrides=[
+            "model.pipeline_model_parallel_size=2",
+            "model.num_layers_in_first_pipeline_stage=11",
+            "model.num_layers_in_last_pipeline_stage=35",
+        ],
+    )
+
+    assert (
+        config.model.num_layers_in_first_pipeline_stage,
+        config.model.num_layers_in_last_pipeline_stage,
+    ) == (11, 35)
+
+
+def test_sync_model_pipeline_layout_preserves_compatible_recipe_stages(recipe_runner: ModuleType) -> None:
+    """Restating a recipe's default PP size must preserve its compatible uneven stages."""
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            num_layers=46,
+            pipeline_model_parallel_size=4,
+            virtual_pipeline_model_parallel_size=None,
+            pipeline_model_parallel_layout=None,
+            num_layers_in_first_pipeline_stage=11,
+            num_layers_in_last_pipeline_stage=11,
+        )
+    )
+
+    recipe_runner.sync_model_pipeline_layout(
+        config,
+        cli_overrides=["model.pipeline_model_parallel_size=4"],
+    )
+
+    assert (
+        config.model.num_layers_in_first_pipeline_stage,
+        config.model.num_layers_in_last_pipeline_stage,
+    ) == (11, 11)
+
+
 @pytest.mark.parametrize(
     "dataset",
     [

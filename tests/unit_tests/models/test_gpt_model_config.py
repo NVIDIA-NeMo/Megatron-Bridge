@@ -12,11 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+from dataclasses import dataclass
+from unittest.mock import Mock, patch
+
 import pytest
+import torch
 import torch.nn.functional as F
+from megatron.core.models.gpt import GPTModel
+from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
+from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
 from megatron.bridge.models.transformer_config import TransformerConfig
@@ -96,10 +104,47 @@ def test_model_config_mapping_rejects_unknown_fields() -> None:
         )
 
 
+def test_model_config_class_selects_nested_transformer_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass
+    class SpecializedTransformerConfig(TransformerConfig):
+        specialized_field: bool = False
+
+    class SpecializedModelConfig(BridgeGPTModelConfig):
+        transformer_config_class = SpecializedTransformerConfig
+
+    class SpecializedBridge(LlamaBridge):
+        MODEL_CONFIG_CLASS = SpecializedModelConfig
+
+    bridge = SpecializedBridge()
+    monkeypatch.setattr(
+        bridge,
+        "hf_config_to_model_config_kwargs",
+        lambda _hf_config: {
+            "num_layers": 2,
+            "hidden_size": 128,
+            "num_attention_heads": 4,
+            "ffn_hidden_size": 256,
+            "activation_func": F.silu,
+            "specialized_field": True,
+            "vocab_size": 256,
+        },
+    )
+
+    model_config = bridge.hf_config_to_model_config(object())
+
+    assert isinstance(model_config, SpecializedModelConfig)
+    assert isinstance(model_config.transformer, SpecializedTransformerConfig)
+    assert model_config.specialized_field is True
+
+
 def test_gpt_model_config_is_the_bridge_default() -> None:
     assert MegatronModelBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
     assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
     assert "MODEL_CONFIG_CLASS" not in LlamaBridge.__dict__
+    assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
+    assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 
 
 def test_bridge_can_explicitly_disable_model_config() -> None:
@@ -108,3 +153,31 @@ def test_bridge_can_explicitly_disable_model_config() -> None:
 
     with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
         UnsupportedBridge().hf_config_to_model_config(object())
+
+
+@pytest.mark.skipif(
+    "logit_dtype" not in inspect.signature(GPTModel).parameters,
+    reason="Installed MCore predates logit_dtype",
+)
+@patch("megatron.training.models.gpt.GPTModel")
+def test_requested_logit_dtype_reaches_new_mcore_builder(mock_model) -> None:
+    config = _make_model_config()
+    config.logit_dtype = torch.float32
+    config.transformer_layer_spec = ModuleSpec(module=object)
+    pg_collection = Mock()
+
+    GPTModelBuilder(config).build_model(pg_collection, pre_process=True, post_process=True)
+
+    assert mock_model.call_args.kwargs["logit_dtype"] is torch.float32
+
+
+@pytest.mark.skipif(
+    "logit_dtype" in inspect.signature(GPTModel).parameters,
+    reason="Installed MCore supports logit_dtype",
+)
+def test_requested_logit_dtype_fails_before_old_mcore_builder() -> None:
+    config = _make_model_config()
+    config.logit_dtype = torch.float32
+
+    with pytest.raises(RuntimeError, match="Megatron-LM PR #6252"):
+        GPTModelBuilder(config).build_model(Mock(), pre_process=True, post_process=True)

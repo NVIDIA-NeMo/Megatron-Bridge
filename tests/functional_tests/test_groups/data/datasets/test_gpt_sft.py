@@ -65,6 +65,7 @@ def get_gpt_sft(ensure_test_data, dataset_type="sft"):
         dataset = GPTSFTChatDataset(
             file_path=path,
             tokenizer=tokenizer,
+            use_hf_tokenizer_chat_template=False,
             label_key="output",
             prompt_template="{input}\n\n### Response:\n{output}",
             truncation_field="output",

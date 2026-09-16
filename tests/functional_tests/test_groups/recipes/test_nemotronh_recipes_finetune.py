@@ -49,6 +49,27 @@ def _fix_tied_weights_keys(model: nn.Module):
             module._tied_weights_keys = {k: k for k in tied}
 
 
+def _rewrite_to_released_layout(model_dir: Path) -> None:
+    """Rename the input embedding to the name the released checkpoint uses.
+
+    Saving through the current `transformers` writes `backbone.embedding.weight`, while
+    `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16` ships `backbone.embeddings.weight`, which
+    is the name the bridge maps. Without this the toy has no key for the embedding and the
+    recipe would train it from its initialization.
+    """
+    from safetensors.torch import load_file, save_file
+
+    weights_path = model_dir / "model.safetensors"
+    if not weights_path.exists():
+        raise FileNotFoundError(f"expected a single-shard toy checkpoint at {weights_path}")
+
+    renamed = {
+        ("backbone.embeddings.weight" if name == "backbone.embedding.weight" else name): tensor
+        for name, tensor in load_file(weights_path).items()
+    }
+    save_file(renamed, weights_path, metadata={"format": "pt"})
+
+
 from megatron.bridge.recipes.nemotronh import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_sft_config,
@@ -160,6 +181,7 @@ class TestNemotron3NanoFinetuneRecipes:
         # Save model, config, and modeling code to directory
         _fix_tied_weights_keys(model)
         model.save_pretrained(model_dir, safe_serialization=True)
+        _rewrite_to_released_layout(model_dir)
         modeling_filepath = os.path.abspath(sys.modules[model_class.__module__].__file__)
         shutil.copy(modeling_filepath, model_dir)
 

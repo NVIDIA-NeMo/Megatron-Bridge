@@ -62,11 +62,15 @@ from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
 from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
     gpt_oss_120b_sft_32gpu_h100_bf16_config as gpt_oss_120b_sft_config,
 )
+from megatron.bridge.recipes.gpt_oss.h100.gpt_oss import (
+    gpt_oss_120b_sft_48gpu_h100_bf16_32k_config as gpt_oss_120b_sft_32k_config,
+)
 
 
 __all__ = [
     "gpt_oss_120b_peft_config",
     "gpt_oss_120b_pretrain_config",
+    "gpt_oss_120b_sft_32k_config",
     "gpt_oss_120b_sft_config",
     "gpt_oss_20b_peft_config",
     "gpt_oss_20b_peft_fp8_current_scaling_config",

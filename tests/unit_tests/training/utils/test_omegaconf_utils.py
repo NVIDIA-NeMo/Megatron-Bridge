@@ -49,6 +49,20 @@ class SimpleConfig:
     value: int = 42
 
 
+class ExampleMode(Enum):
+    """Example enum for testing typed override restoration."""
+
+    FIRST = 1
+    SECOND = 2
+
+
+@dataclasses.dataclass
+class ConfigWithEnum:
+    """Config with an enum field."""
+
+    mode: ExampleMode = ExampleMode.FIRST
+
+
 @dataclasses.dataclass
 class ConfigWithCallable:
     """Config with callable fields for testing."""
@@ -500,6 +514,14 @@ class TestApplyOverrides:
 
         assert config.dtype == torch.float16
 
+    def test_enum_conversion(self):
+        """Test enum member-name conversion."""
+        config = ConfigWithEnum()
+
+        _apply_overrides(config, {"mode": "SECOND"})
+
+        assert config.mode is ExampleMode.SECOND
+
     def test_invalid_key_handling(self):
         """Test handling of invalid override keys."""
         config = SimpleConfig()
@@ -623,6 +645,14 @@ class TestProcessConfigWithOverrides:
         assert result.simple.name == "cli_updated"
         assert result.simple.value == 999
         assert result.with_callable.activation_func == original_func
+
+    def test_cli_override_preserves_enum_type(self):
+        """Test CLI overrides restore enum members instead of leaving strings."""
+        config = ConfigWithEnum()
+
+        result = process_config_with_overrides(config, cli_overrides=["mode=SECOND"])
+
+        assert result.mode is ExampleMode.SECOND
 
     def test_with_config_filepath(self, tmp_path):
         """Test processing config with YAML config file."""

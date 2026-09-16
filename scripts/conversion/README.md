@@ -4,8 +4,8 @@
 Megatron checkpoint conversion. It uses NeMo Run for both local execution and
 Slurm submission and selects one of two conversion backends:
 
-- `--device cpu`: one process on one node, with model construction and export
-  on CPU;
+- `--device cpu`: CPU conversion, with optional distributed export across
+  Gloo ranks for checkpoints that cannot be exported on one host;
 - `--device gpu`: distributed conversion with one process per GPU and TP, PP,
   EP, and ETP support.
 
@@ -13,13 +13,21 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
-Megatron-LM training checkpoints normally store their arguments in `common.pt`
-instead of the Megatron Bridge `run_config.yaml` required by the export path.
-Before exporting such a checkpoint, follow
-[Export Megatron-LM checkpoints without a Bridge run config](../../docs/megatron-lm-to-megatron-bridge.md#export-megatron-lm-checkpoints-without-a-bridge-run-config)
-to generate and validate the provider configuration. Do not create an empty or
-hand-written YAML file; missing hybrid, MTP, MoE, or FP8 fields can construct a
-different model while appearing to load successfully.
+### Megatron-LM checkpoint compatibility
+
+Training with Megatron-LM and later relying on Megatron Bridge for Hugging Face
+export is **not recommended**. Megatron-LM checkpoints normally store their
+arguments in `common.pt` instead of the `run_config.yaml` used by the supported
+Bridge export launcher, so the launcher cannot consume them directly. For an
+existing trusted checkpoint, the
+[best-effort compatibility guidance](../../docs/megatron-lm-to-megatron-bridge.md#best-effort-export-of-an-existing-megatron-lm-checkpoint)
+describes how to generate and validate the required provider configuration. It
+does not guarantee compatibility, and any unclassified metadata mismatch must
+stop the export.
+
+Output from `scripts/translate_mlm_to_bridge.py` is best-effort configuration
+guidance for a new Bridge run. It is not checkpoint metadata and must not be
+renamed or inserted as `run_config.yaml`.
 
 ## Local CPU conversion
 
@@ -41,8 +49,9 @@ conversion to finish.
   --hf-path /workspace/models/llama32-1b-hf
 ```
 
-CPU conversion intentionally supports one process on one node. Allocate more
-host memory and CPUs for large checkpoints rather than increasing `--nodes`.
+CPU import and the default CPU export use one process on one node. Distributed
+CPU export is available through the Slurm workflow below for checkpoints that
+cannot be loaded on one host within the available memory or wall-time limit.
 
 ## Distributed GPU conversion on Slurm
 
@@ -154,6 +163,34 @@ CPU mode submits one task and does not request GPUs or GRES:
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path /workspace/models/llama32-1b
 ```
+
+For a very large Megatron checkpoint, distribute only the export load and save
+across CPU processes. This uses Gloo, initializes every model shard on CPU, and
+enables distributed Hugging Face saving by default. It does not request GPUs:
+
+```bash
+./scripts/conversion/convert.sh export \
+  --executor slurm \
+  --device cpu \
+  --nodes 4 \
+  --cpu-processes-per-node 8 \
+  --cpus-per-task 16 \
+  --mem 0 \
+  --exclusive \
+  --account ACCOUNT \
+  --partition CPU_PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/model/iter_0000000 \
+  --hf-path /workspace/models/model-hf \
+  --tp 1 --pp 4 --ep 8 --etp 1
+```
+
+The topology must satisfy
+`nodes * cpu-processes-per-node % (TP * PP) == 0` and
+`nodes * cpu-processes-per-node % (ETP * EP * PP) == 0`. Distributed CPU
+conversion currently supports export only and requires distributed saving.
 
 `--env` accepts names only. Export values in the launcher environment so
 secrets are inherited by Slurm without being materialized in generated job

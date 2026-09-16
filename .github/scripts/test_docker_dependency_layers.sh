@@ -246,10 +246,24 @@ if ! grep -A1 '^te = \[$' pyproject.toml | grep -Fxq '    "megatron-core[te]",';
   echo "Bridge's TE extra must enable the selected MCore ref's TE extra" >&2
   exit 1
 fi
-grep -Fq '{ name = "megatron-core", extra = ["te"] }' uv.lock
-if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml || \
-  grep -q '^name = "transformer-engine"$' pyproject.toml; then
-  echo "Bridge must inherit the TransformerEngine source and metadata from the selected MCore ref" >&2
+if ! grep -Fq \
+  '{ name = "megatron-core", extras = ["te"], marker = "extra == '\''te'\''", editable = "3rdparty/Megatron-LM" }' \
+  uv.lock; then
+  echo "Bridge's lock metadata must preserve the MCore TE extra" >&2
+  exit 1
+fi
+if grep -q 'transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@' pyproject.toml; then
+  echo "Bridge must inherit the TransformerEngine source from the selected MCore ref" >&2
+  exit 1
+fi
+
+if ! grep -Fq '    NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1 \' "$dockerfile"; then
+  echo "CI builds must disable TransformerEngine's recursive build-time submodule fetch" >&2
+  exit 1
+fi
+if grep -R -qE 'git submodule update.*--recursive|git submodule update --init --recursive' \
+  "$dockerfile" docker .github/actions; then
+  echo "CI build surfaces must not fetch recursive submodules at build time" >&2
   exit 1
 fi
 

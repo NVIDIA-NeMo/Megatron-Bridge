@@ -29,6 +29,7 @@ BENCHMARK_RECIPE_FAMILY_PREFIXES = (
     ("qwen35_vl_", "qwen_vl"),
     ("deepseek_", "deepseek"),
     ("gpt_oss_", "gpt_oss"),
+    ("muse_glimmer_", "muse_glimmer"),
     ("nemotron", "nemotronh"),
     ("llama", "llama"),
     ("qwen", "qwen"),
@@ -63,7 +64,13 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
     }
 )
 
-LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset()
+# This flattened Qwen recipe is the real-data convergence entry point. The
+# same-named benchmark remains available through scripts/performance.
+LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset(
+    {
+        "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
+    }
+)
 
 PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
 TEXT_FORWARD_STEPS = frozenset({"dsv4_step", "gpt_step", "llm_step"})
@@ -94,6 +101,7 @@ RECIPE_FORWARD_STEP_PREFIXES = (
     ("glm_45v_", "vlm_step"),
     ("kimi_k25_vl_", "vlm_step"),
     ("ministral3_", "vlm_step"),
+    ("muse_glimmer_", "vlm_step"),
     ("qwen25_vl_", "vlm_step"),
     ("flux_", "flux_step"),
     ("wan_", "wan_step"),

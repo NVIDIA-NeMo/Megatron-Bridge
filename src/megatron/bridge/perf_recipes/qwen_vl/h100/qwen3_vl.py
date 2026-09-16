@@ -18,7 +18,7 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
-    _finalize_qwen3_vl_with_moe_a2a_and_overlap,
+    _finalize_qwen3_vl_with_moe_a2a_overlap,
     _perf_precision,
     qwen3_vl_30b_a3b_pretrain_mock_config,
     qwen3_vl_235b_a22b_pretrain_mock_config,
@@ -55,7 +55,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
+    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -104,7 +104,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
+    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -156,7 +156,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
+    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -205,7 +205,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
+    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

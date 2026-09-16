@@ -12,13 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
+from typing import ClassVar
+
+import torch
 from megatron.core.models.hybrid.hybrid_layer_specs import (
     hybrid_inference_stack_spec as default_hybrid_inference_stack_spec,
 )
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec as default_hybrid_stack_spec
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
-from megatron.training.models.hybrid import HybridModelBuilder, HybridModelConfig
+from megatron.training.models.hybrid import HybridModelBuilder as MCoreHybridModelBuilder
+from megatron.training.models.hybrid import HybridModelConfig as MCoreHybridModelConfig
+
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
+
+
+@dataclass(kw_only=True)
+class HybridModelConfig(MCoreHybridModelConfig):
+    """Bridge Hybrid config with transitional output-logit dtype support."""
+
+    builder: ClassVar[str] = "megatron.bridge.models.hybrid.HybridModelBuilder"
+    logit_dtype: torch.dtype | None = None
+
+
+class HybridModelBuilder(MCoreHybridModelBuilder):
+    """Bridge Hybrid builder that prevents silent fallback on older MCore."""
+
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> HybridModel:
+        """Build a Hybrid stage after validating MCore logit-dtype support."""
+        logit_dtype_kwarg(HybridModel, self._model_config.logit_dtype)
+        return super().build_model(pg_collection, pre_process, post_process, vp_stage)
 
 
 def transformer_engine_hybrid_stack_spec() -> ModuleSpec:

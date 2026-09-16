@@ -148,6 +148,10 @@ The unpacked baseline leaves both packing modes at their defaults. After it pass
 
 ## 5. Prepare production shards
 
+For a pinned real-dataset example that downloads only one small, self-contained subset, converts the source JSONL and
+separate media tar, and launches Qwen3-VL through `scripts/training/train.sh`, see
+[Nemotron Image Training v3](nemotron-image-v3.md).
+
 For your own dataset, write one or more media members plus one conversation member per sample key. Use
 split-prefixed tar names, then index them through Bridge's compatibility helper:
 
@@ -296,8 +300,8 @@ this does not establish performance. Other EP dispatchers are accepted with fixe
 have equivalent runtime evidence. Logical and physical THD boundaries produce a mask that excludes fixed-width gaps
 from MoE auxiliary-loss, z-loss, and expert-bias statistics. Current MCore may still dispatch those padded positions;
 expert-capacity/token-dropping configurations do not yet have native-packing runtime coverage. Generic HF, Nemotron
-Omni, the legacy `qwen3_vl_step`, MBS greater than one, MTP, CUDA graphs, Qwen3-VL DistTrain, and pipeline parallelism
-are unsupported. Requested MoE expert-parallel communication overlap is disabled with a warning so training uses the
+Omni, the legacy `qwen3_vl_step`, MBS greater than one, CUDA graphs, Qwen3-VL DistTrain, and pipeline parallelism
+are unsupported (MTP is supported through MCore's packed boundary-aware token rolling). Requested MoE expert-parallel communication overlap is disabled with a warning so training uses the
 non-overlapped path. The checked example uses the Qwen3-VL 8B provider; validate other Qwen-VL variants before
 production use.
 The older collate-time path remains available by leaving `packing_buffer_size=None`, setting

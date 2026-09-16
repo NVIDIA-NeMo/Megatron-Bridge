@@ -1,0 +1,93 @@
+title: vision_dp_over_cp
+validated_on: "2026-08-18"
+summary: >
+  Megatron-Bridge can shard a VLM's images or temporal tubelets across the
+  language model's context-parallel group so each CP rank encodes 1/CP of the
+  microbatch instead of all of it. This is data parallelism over images reusing
+  the CP group, not ring attention: the encoder attends within each image via
+  cu_seqlens, so no sequence is split and the only added collective is the
+  post-projector gather. Controlled by model.vision_dp_over_cp, default
+  True, and a silent no-op at context_parallel_size=1.
+validation_status:
+  upstream_mcore_split_gather_helpers:
+    - code_verified
+  bridge_nemotron_omni_passthrough:
+    - code_verified
+  bridge_even_grid_padding:
+    - unit_tested
+  bridge_process_group_mismatch_guard:
+    - code_verified
+  bridge_multi_gpu_ab_cp2_cp4:
+    - benchmark_verified
+  bridge_cp8_placeholder_padding_end_to_end:
+    - unclear
+  bridge_vision_cp_recipes:
+    - unclear
+  bridge_vision_cp_docs:
+    - doc_only
+feature_meaning:
+  vision_dp_over_cp: >
+    Bridge model flag that shards the microbatch's images or tubelets across the
+    language model's CP ranks. Whole images only; no image is split.
+  split_to_context_parallel_ranks_dynamic_res: >
+    Upstream Megatron-Core helper that partitions the patched image tensor on
+    image boundaries and rewrites imgs_sizes and the vision PackedSeqParams to
+    describe the rank-local share.
+  gather_from_context_parallel_ranks_dynamic_res: >
+    Upstream Megatron-Core helper that restores the global feature set after the
+    vision projector and drops the injected placeholder images.
+  placeholder_images: >
+    When a microbatch holds fewer images than CP ranks, the splitter injects
+    max(0, cp_size - num_imgs) dummy 1x1 images so no rank runs an empty
+    encoder. They are removed during the gather.
+recommended_path:
+  model.context_parallel_size: 2
+  model.vision_dp_over_cp: true
+measured_impact:
+  setup: >
+    Nemotron-3 Nano Omni 30B-A3B, 2 nodes / 16 GPUs, PP=1 DP=2 EP=8 ETP=1 MBS=2
+    GBS=64 GA=16, only vision_dp_over_cp flipped.
+  results:
+    - dataset: InfoVQA
+      tp: 4
+      cp: 2
+      step_time_s: "13.2 -> 12.5"
+      peak_memory_gb: "81 -> 73"
+    - dataset: Mantis
+      tp: 2
+      cp: 4
+      step_time_s: "12.2 -> 11.6"
+      peak_memory_gb: "81 -> 77"
+    - dataset: llava_video
+      tp: 4
+      cp: 2
+      step_time_s: "13.6 -> 13.0"
+      peak_memory_gb: "84 -> 75"
+  interpretation: >
+    Both a memory win (-5% to -11% peak) and a throughput win (-4% to -5% step
+    time). Mantis shows the smallest memory saving because its per-sample image
+    count varies from 1 to 5, which the count-based split balances poorly at
+    CP=4.
+known_constraints:
+  - Requires context_parallel_size > 1; the flag self-disables at CP=1 without error.
+  - Requires an MCore pin that exposes megatron.core.models.multimodal.context_parallel.
+  - The CP process group size must equal context_parallel_size, otherwise Bridge raises.
+  - Applies to the dynamic-resolution vision path; the encoder must attend per image via cu_seqlens.
+  - Pixel shuffle requires an even patch grid, so injected placeholder images are zero-padded first.
+known_limitations:
+  - Images are split by count with the remainder on the last rank, so multi-image data with a wide image-count spread balances unevenly.
+  - The CP=8 case where a microbatch holds fewer images than ranks has unit tests but no end-to-end run.
+  - No checked-in Bridge recipe enables vision_dp_over_cp; both Nemotron Omni recipes ship CP=1.
+  - Only wired into Nemotron Omni today, although the MCore helpers are model-agnostic.
+evidence:
+  - src/megatron/bridge/models/nemotron_omni/modeling_nemotron_omni.py
+  - src/megatron/bridge/models/nemotron_omni/nemotron_omni_provider.py
+  - tests/unit_tests/models/nemotron_omni/test_nemotron_omni_model.py
+  - examples/models/nemotron/nemotron_3_omni/README.md
+  - 3rdparty/Megatron-LM/megatron/core/models/multimodal/context_parallel.py
+  - 3rdparty/Megatron-LM/megatron/core/models/multimodal/llava_model.py
+follow_up_validation:
+  - Run an end-to-end job where the microbatch holds fewer images than CP ranks to exercise placeholder padding.
+  - Replace the count-based split with a patch-count-balanced greedy split on image boundaries, upstream in Megatron-Core.
+  - Add a Bridge functional test that completes a training step with vision_dp_over_cp=true at CP=2.
+  - Extend the flag to other Bridge VLM families using the same MCore helpers.

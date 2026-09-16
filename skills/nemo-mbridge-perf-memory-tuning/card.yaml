@@ -1,5 +1,6 @@
 title: memory_tuning
 validated_on: "2026-06-29"
+guidance_updated_on: "2026-08-25"
 summary: >
   Techniques for reducing peak GPU memory to fix OOM or increase headroom.
   Current coverage: expandable segments (fragmentation fix), parallelism
@@ -90,6 +91,7 @@ recommended_path:
   third: "add selective activation recompute (core_attn)"
   fourth: "increase PP or use distributed optimizer"
   last_resort: "increase TP (severe throughput cost)"
+  after_fit: "inspect per-rank peaks, then A/B one legal lower-TP step or higher MBS with fixed GBS"
 expected_metric_change:
   - metric: peak_memory
     direction: down
@@ -218,6 +220,7 @@ known_limitations:
   - no automatic memory profiling to recommend the optimal strategy
   - LoRA input re-gather adds a backward all-gather and may not improve throughput
   - LoRA input re-gather applies only to eligible non-expert column-parallel LoRA-A projections
+  - W&B and logger memory metrics expose headroom but do not select the optimal TP or MBS automatically
 evidence:
   - docs/parallelisms.md
   - docs/performance-guide.md

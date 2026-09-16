@@ -28,6 +28,7 @@ from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
+    resolve_chat_template_kwargs,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
@@ -218,7 +219,7 @@ def prepare_qwen_vl_sequence(
     text = processor.apply_chat_template(
         example["conversation"],
         tokenize=False,
-        **chat_template_kwargs_from_example(example),
+        **resolve_chat_template_kwargs(processor, chat_template_kwargs_from_example(example)),
     )
     images, videos = process_vision_info(example["conversation"])
     if images is None:
@@ -308,7 +309,7 @@ def qwen2_5_collate_fn(
         processor.apply_chat_template(
             example["conversation"],
             tokenize=False,
-            **chat_template_kwargs_from_example(example),
+            **resolve_chat_template_kwargs(processor, chat_template_kwargs_from_example(example)),
         )
         for example in examples
     ]

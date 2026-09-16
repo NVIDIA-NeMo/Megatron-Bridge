@@ -1,8 +1,12 @@
 ---
 name: nemo-mbridge-perf-moe-optimization-workflow
-description: Evidence-gated workflow for MoE performance optimization in Megatron Bridge. Covers measurement contracts, the Three Walls framework, parallel folding, profiling, matched A/B tuning, and final validation.
+description: >-
+  Evidence-gated workflow for MoE performance optimization in Megatron Bridge.
+  Covers measurement contracts, the Three Walls framework, parallel folding,
+  profiling, matched A/B tuning, and final validation. Use for full MoE
+  throughput tuning or diagnosing a regression involving memory,
+  communication, compute, or host/launch overhead.
 license: Apache-2.0
-when_to_use: Full MoE throughput tuning sweep, or diagnosing a MoE throughput regression after a commit or config change; 'optimize MoE throughput', 'MoE perf tuning', 'Three Walls', 'memory wall', 'communication wall', 'compute wall'.
 ---
 
 # MoE Training Optimization Workflow
@@ -37,9 +41,11 @@ For MoE optimization workflow prompts, present the response in this order:
    steady-state metric window. Label each candidate as training-equivalent or
    benchmark-only.
 2. **Fit**: make the model memory-feasible first. Use the smallest model
-   parallelism that fits, prefer selective recompute before full recompute, add
-   offloading only after recompute and parallelism are insufficient, and use
-   `--fake-init-process-group` to sanity-check large layouts.
+   parallelism that fits: keep dense TP as low as capacity allows while using
+   a large legal EP for expert weights. Prefer selective recompute before full
+   recompute, add offloading only after recompute and parallelism are
+   insufficient, and use `--fake-init-process-group` to sanity-check large
+   layouts.
 3. **Scale**: maximize DP after the model fits, keep hot communication inside
    the fastest interconnect, use PP plus VPP for multi-node scaling, prefer EP
    over extra TP for expert layers, and add CP when long context makes attention
@@ -86,10 +92,12 @@ Start with a configuration that fits reliably before chasing throughput.
 
 Recommended order:
 
-1. Use the smallest amount of model parallelism that still fits.
-2. Turn on selective recompute before falling back to full recompute.
-3. Add offloading only when recompute and parallelism are still insufficient.
-4. Use `--fake-init-process-group` to sanity-check large parallel layouts on a
+1. Use the lowest dense TP that still fits; avoid paying extra TP communication
+   merely to reduce activation memory.
+2. Use the largest legal EP that fits the expert count and intended topology.
+3. Turn on selective recompute before falling back to full recompute.
+4. Add offloading only when recompute and parallelism are still insufficient.
+5. Use `--fake-init-process-group` to sanity-check large parallel layouts on a
    single GPU before burning cluster time.
 
 ### Recompute guidance
@@ -106,6 +114,13 @@ As a rule of thumb, fine-grained recompute often recovers most of the needed
 memory while keeping throughput much closer to the non-recompute baseline than
 full-layer recompute does.
 
+For Qwen-family models, choose boundaries by architecture. Standard-attention
+Qwen recipes can often start with `core_attn`. Qwen3.5 includes GDN layers, so
+`core_attn` alone does not cover their retained normalization output; the
+current pinned Megatron Core exposes `gdn_norm_out`. Test it on the exact stack,
+and fall back to full-layer recompute when selective boundaries still do not
+make the complete optimizer step fit.
+
 ## Phase 2: Choose Parallelism For Scale
 
 Priority order:
@@ -115,6 +130,13 @@ Priority order:
 3. Use PP, plus VPP if needed, for multi-node scaling.
 4. Prefer EP over extra TP for expert layers.
 5. Add CP for long context once sequence length makes attention memory dominant.
+
+For common MoE allocations, EP=8 is a strong first candidate on an 8-GPU node
+and EP=32 is a strong first candidate on 32 GPUs when the expert count and mesh
+are divisible. This is a capacity heuristic, not a correctness rule. EP shards
+only expert parameters: EP=8 can still leave a large model dependent on full
+recompute, while EP=32 often creates enough expert-weight headroom to retest
+selective recompute.
 
 ### Parallel Folding
 
@@ -133,6 +155,21 @@ Key knobs:
 
 Use it when attention prefers some TP or CP, but expert layers benefit from a
 larger EP degree than the dense layers can tolerate.
+
+### Fill Available Headroom
+
+Once the run completes optimizer initialization and several steady steps,
+inspect W&B memory and confirm every rank's peak allocated and reserved memory
+in the runtime logs; rank 0 can miss the hot EP or PP rank. Use any safe
+headroom to A/B one of these changes at a time:
+
+- lower TP by one legal step, if the additional dense state still fits;
+- increase MBS, while adjusting gradient accumulation to keep GBS and
+  optimizer boundaries unchanged.
+
+Judge the result by end-to-end tokens/s/GPU or step time, not memory utilization
+alone. Preserve margin for checkpoint/eval transients, routing imbalance,
+dispatcher workspaces, and CUDA-graph private pools.
 
 ## Phase 3: Profile The Dominant Bottleneck
 
@@ -185,6 +222,10 @@ HybridEP plus plain EP overlap is the current measured winner for the canonical
 uses standard `alltoall` plus overlap. Benchmark backend compatibility and
 throughput in the target container; neither GPU name nor EP degree determines
 the winner by itself.
+
+On a single NVL8 domain in BF16, `alltoall` and HybridEP can be close enough
+that the simpler baseline wins after setup overhead. Prefer HybridEP as a tuned
+candidate, not an assumption, and keep a matched `alltoall` control.
 
 If the all-to-all path is visible in profiles, combine dispatcher tuning with:
 
@@ -287,4 +328,4 @@ HybridEP tuning. They answer different questions.
    backend can fall back, a graph can capture without helping, or a lower-
    precision recipe can miss the intended kernels.
 
-_Last signature refresh: 2026-08-03._
+_Last guidance refresh: 2026-08-25._

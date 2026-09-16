@@ -13,7 +13,7 @@ import time
 from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any, Dict
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 
@@ -238,6 +238,24 @@ class TestPgCollectionForwarding:
 class TestPretrainMegatronMIMOSetup:
     """Verify pretrain_megatron_mimo properly initializes checkpointing runtime."""
 
+    def test_optimizer_config_survives_mcore_per_module_replace(self):
+        """MCore's per-module copy should retain fields computed during post-init."""
+        from dataclasses import replace
+
+        from megatron.bridge.training.config import OptimizerConfig
+        from megatron.bridge.training.setup_megatron_mimo import _to_mcore_optimizer_config
+
+        bridge_config = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        bridge_config.finalize()
+
+        module_config = replace(
+            _to_mcore_optimizer_config(bridge_config),
+            overlap_param_gather=True,
+        )
+
+        assert module_config.overlap_param_gather is True
+        assert module_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
+
     @patch("megatron.bridge.training.setup_megatron_mimo.checkpoint_exists", return_value=False)
     @patch("megatron.bridge.training.setup_megatron_mimo.get_active_module_pg")
     @patch("megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager")
@@ -295,6 +313,10 @@ class TestPretrainMegatronMIMOSetup:
         cfg.model = Mock()
         cfg.model.fp16 = False
         cfg.model.bf16 = True
+        from megatron.bridge.training.config import OptimizerConfig
+
+        cfg.optimizer = OptimizerConfig(bf16=True, use_distributed_optimizer=True)
+        cfg.optimizer.finalize()
 
         global_state = Mock()
         global_state.start_time = time.time()
@@ -328,7 +350,10 @@ class TestPretrainMegatronMIMOSetup:
             result = setup_megatron_mimo(state=global_state)
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
-        mock_get_mimo_optimizer.assert_called_once_with(unwrapped, cfg.optimizer)
+        optimizer_config = mock_get_mimo_optimizer.call_args.args[1]
+        assert type(optimizer_config).__module__ == "megatron.core.optimizer.optimizer_config"
+        assert optimizer_config.use_distributed_optimizer is True
+        assert optimizer_config.use_precision_aware_optimizer_no_fp8_or_ds_fp8 is False
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
 
@@ -479,6 +504,55 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
         )
 
     mock_evaluate.assert_called_once()
+
+
+def test_iteration_time_is_logged_once_by_shared_training_logger():
+    """MIMO should not overwrite the shared interval-average timing metric."""
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(save_dir=None, train_iters=2, step=1)
+    state.cfg.logger.skip_train_metrics_log = False
+    state.cfg.logger.log_timers_to_tensorboard = True
+    state.cfg.logger.log_interval = 2
+    state.tensorboard_logger = MagicMock()
+    state.timers.return_value.elapsed.return_value = 5.0
+
+    infra = _make_megatron_mimo_infra()
+
+    def log_interval_average(**_kwargs):
+        state.tensorboard_logger.add_scalar("iteration-time", 2.0, 2)
+        return False
+
+    with (
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+            return_value=Mock(spec=[]),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+            return_value=({}, 0, 0.0, 0),
+        ),
+        patch("megatron.bridge.training.train_megatron_mimo.training_log", side_effect=log_interval_average),
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=iter([object()]),
+            valid_data_iterator=None,
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
+
+    assert state.tensorboard_logger.add_scalar.call_args_list == [call("iteration-time", 2.0, 2)]
 
 
 # ---------------------------------------------------------------------------
@@ -916,9 +990,20 @@ class TestMimoOptimizerLoadCompat:
         opt_a = MagicMock()
         opt_b = MagicMock()
 
+        def process_group(*, rank: int, size: int = 1) -> SimpleNamespace:
+            return SimpleNamespace(rank=lambda: rank, size=lambda: size)
+
+        pg_collection = SimpleNamespace(
+            tp=process_group(rank=0),
+            gtp_remat=process_group(rank=0),
+            pp=process_group(rank=0),
+            dp=process_group(rank=0),
+            dp_cp=process_group(rank=0),
+        )
+
         module_infos = {
-            "language": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=Mock(), is_active=True),
-            "vision": ModuleOptimizerInfo(optimizer=opt_b, grid=Mock(), pg_collection=Mock(), is_active=True),
+            "language": ModuleOptimizerInfo(optimizer=opt_a, grid=Mock(), pg_collection=pg_collection, is_active=True),
+            "vision": ModuleOptimizerInfo(optimizer=opt_b, grid=Mock(), pg_collection=pg_collection, is_active=True),
         }
         config = MagicMock()
         return MimoOptimizer(module_infos, config), opt_a, opt_b

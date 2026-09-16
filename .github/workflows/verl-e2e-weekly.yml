@@ -130,6 +130,7 @@ jobs:
               cd /workspace/verl
               git checkout "$VERL_REF"
               git rev-parse HEAD
+              python3 -m pip install uv
               bash "$SCRIPT_PATH"
             '
 

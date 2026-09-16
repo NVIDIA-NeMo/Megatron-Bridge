@@ -205,6 +205,7 @@ class TestGetPackedSeqParams:
             "cu_seqlens_kv_padded": torch.IntTensor([0, 128, 256, 384]),
             "max_seqlen_q": torch.tensor(128),
             "max_seqlen_kv": torch.tensor(128),
+            "pad_between_seqs": True,
         }
 
         result = get_packed_seq_params(batch)
@@ -215,6 +216,7 @@ class TestGetPackedSeqParams:
         torch.testing.assert_close(result.cu_seqlens_kv_padded, batch["cu_seqlens_kv_padded"])
         assert result.max_seqlen_q == 128
         assert result.max_seqlen_kv == 128
+        assert result.pad_between_seqs is True
         assert isinstance(result.max_seqlen_q, int)
         assert isinstance(result.max_seqlen_kv, int)
         assert result.qkv_format == "thd"
