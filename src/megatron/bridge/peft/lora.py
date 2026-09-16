@@ -216,6 +216,7 @@ class LoRA(PEFT, ModuleMatcher):
                 and getattr(module.config, "use_transformer_engine_op_fuser", False)
                 # TP not yet supported
                 and parallel_state.get_tensor_model_parallel_world_size() == 1
+                and (self.lora_dtype is None or self.lora_dtype == next(module.parameters()).dtype)
             )
 
             logger.info(f"Adding lora to: {full_name}")
@@ -252,6 +253,7 @@ class LoRA(PEFT, ModuleMatcher):
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                     replicate_adapter=attrs.replicate_adapter,
+                    params_dtype=self.lora_dtype,
                 )
             adapter = adapter_cls(attrs.in_features, attrs.out_features, dim, **adapter_kwargs)
             if isinstance(module, TopKRouter):

@@ -352,6 +352,30 @@ class TestLoRA:
         assert adapted.adapter.linear_in.weight.shape == torch.Size([2, 32, 2048])
         assert adapted.adapter.linear_out.weight.shape == torch.Size([2, 512, 32])
 
+    def test_lora_mixed_dtype_disables_transformer_engine_op_fuser(self):
+        module = MockMegatronLinear(4, 3).bfloat16()
+        module.config.use_transformer_engine_op_fuser = True
+        attrs = AdapterAttributes(
+            input_is_parallel=False,
+            in_features=4,
+            out_features=3,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=True,
+        )
+        adapter = nn.Identity()
+        lora = LoRA(target_modules=["linear_proj"], lora_dtype=torch.float32)
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", return_value=attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter", return_value=adapter) as mock_adapter,
+            patch("megatron.bridge.peft.lora.parallel_state.get_tensor_model_parallel_world_size", return_value=1),
+        ):
+            transformed = lora.transform(module, name="linear_proj")
+
+        assert type(transformed) is LoRALinear
+        assert mock_adapter.call_args.kwargs["params_dtype"] is torch.float32
+
     def test_lora_wildcard_matching(self):
         """Test LoRA transformation with wildcard patterns."""
         model = NestedModel()
