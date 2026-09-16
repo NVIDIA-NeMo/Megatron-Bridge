@@ -342,7 +342,15 @@ def memory_efficient_fp32_optimizer_state_loading(
 
 
 def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer | None) -> bool:
-    """Refresh ``HybridDeviceOptimizer`` FP32 master copies from BF16 model parameters.
+    """Synchronize ``HybridDeviceOptimizer`` working copies after checkpoint loading.
+
+    A freshly constructed optimizer has no state when only model weights were
+    loaded. Refresh its FP32 working copies from those model weights. When
+    optimizer state was restored, preserve its full-precision masters and
+    synchronize the CPU/GPU sub-optimizers with that state instead. Rebuilding
+    restored masters from BF16 weights discards their low bits and changes the
+    next update. The pinned Core ``dp_reshardable`` loader also replaces state
+    tensors without refreshing HybridDeviceOptimizer's working copies.
 
     Workaround for an upstream Megatron-Core gap: when a checkpoint is loaded
     into the BF16 model parameters, ``reload_model_params()`` only refreshes
@@ -357,9 +365,9 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
     random init.  Training loss looks plausible at step 1 and collapses at
     step 2 because the model is no longer the one loaded from the checkpoint.
 
-    Mirrors the workaround in NVIDIA-NeMo/RL PR #2372.  Once mcore's
-    ``reload_model_params()`` walks all three FP32 levels, this helper can be
-    removed from both Bridge and RL.
+    The model-only branch mirrors NVIDIA-NeMo/RL PR #2372. This helper can
+    be removed once Core handles model-only master refresh, full-state
+    rebinding, and the restored sub-optimizer step counters.
 
     Args:
         optimizer: The Megatron optimizer returned by :func:`setup_optimizer`.
@@ -383,6 +391,19 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
         inner = getattr(distrib_opt, "optimizer", None)
         if not isinstance(inner, HybridDeviceOptimizer):
             return False
+
+        if getattr(inner, "state", None):
+            # Full-state resume, including iteration-zero checkpoints. This
+            # binds loaded moments to the sub-optimizers and copies the saved
+            # FP32 masters into the parameters their next step will update.
+            inner._sync_hdo_state_to_sub_optimizers()
+            # Core stores Adam's step on the outer groups for checkpointing.
+            # Seed the GPU groups once, then let each sub-optimizer advance:
+            # HDO otherwise reapplies the saved step before every update.
+            inner._sync_hdo_param_groups_to_sub_optimizers()
+            for group in inner.param_groups:
+                group.pop("step", None)
+            return True
 
         # Level 1: per-DP-rank FP32 GPU shards (Adam master parameters).
         for model_group, shard_main_group in zip(
@@ -417,8 +438,8 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
 
     if synced:
         G_LOGGER.info(
-            "Synced HybridDeviceOptimizer FP32 master copies from BF16 model parameters "
-            "after checkpoint load (workaround for upstream mcore reload_model_params() gap)."
+            "Synced HybridDeviceOptimizer working copies after checkpoint load, "
+            "preserving restored optimizer state when present."
         )
     return synced
 

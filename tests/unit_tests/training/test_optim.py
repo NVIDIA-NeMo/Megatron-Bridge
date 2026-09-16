@@ -634,6 +634,148 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
         """A ``None`` optimizer is a no-op and returns ``False``."""
         assert sync_hybrid_device_optimizer_fp32_master_copies(None) is False
 
+    @pytest.mark.parametrize("step", [0, 50])
+    @pytest.mark.parametrize("chained", [False, True])
+    def test_resume_preserves_master_precision_and_adam_update(self, step, chained):
+        """A resumed update uses saved FP32 masters and moments, including at step zero."""
+        from types import MethodType
+
+        from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+
+        saved_master = torch.tensor([1.003, -0.997], dtype=torch.float32)
+        model_param = saved_master.to(torch.bfloat16)
+        working = torch.nn.Parameter(torch.zeros_like(saved_master))
+        adam = torch.optim.AdamW([working], lr=0.01)
+        saved_state = {
+            "master_param": saved_master.clone(),
+            "exp_avg": torch.tensor([0.2, -0.3]),
+            "exp_avg_sq": torch.tensor([0.4, 0.5]),
+            "step": torch.tensor(float(step)),
+        }
+        inner = _FakeHDO()
+        inner.state = {model_param: saved_state}
+        inner.param_groups = [{"params": [model_param], "step": step}]
+        inner.param_update_in_fp32 = True
+        inner.sub_optimizers = [adam]
+        inner.inner_param_to_orig_param = {working: model_param}
+        inner.param_to_inner_param = {model_param: working}
+        inner.param_to_fp32_param = {model_param: working}
+        inner.defaults = {"cpu_optimizer_cls": torch.optim.AdamW}
+        for name in (
+            "_sync_hdo_state_to_sub_optimizers",
+            "_sync_hdo_param_groups_to_sub_optimizers",
+            "_update_fp32_params_by_new_state",
+            "_move_new_state_to_right_device",
+        ):
+            setattr(inner, name, MethodType(getattr(HybridDeviceOptimizer, name), inner))
+        wrapped = _FakeDistribOpt(model_param=model_param, shard_main_param=working, inner=inner)
+        optimizer = _ChainedOpt([_PlainDistribOpt(), wrapped]) if chained else wrapped
+
+        expected_param = torch.nn.Parameter(saved_master.clone())
+        expected_adam = torch.optim.AdamW([expected_param], lr=0.01)
+        expected_adam.state[expected_param] = {
+            key: value.clone() for key, value in saved_state.items() if key != "master_param"
+        }
+        with patch("megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer", _FakeHDO):
+            assert sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
+
+        assert torch.equal(working, saved_master)
+        assert "step" not in inner.param_groups[0]
+        assert adam.param_groups[0]["step"] == step
+        assert not torch.equal(working, model_param.float())
+        assert adam.state[working]["exp_avg"] is saved_state["exp_avg"]
+        assert adam.state[working]["exp_avg_sq"] is saved_state["exp_avg_sq"]
+        working.grad = torch.tensor([0.7, -0.1])
+        expected_param.grad = working.grad.clone()
+        adam.step()
+        expected_adam.step()
+        assert torch.equal(working, expected_param)
+        for key in ("step", "exp_avg", "exp_avg_sq"):
+            assert torch.equal(adam.state[working][key], expected_adam.state[expected_param][key])
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires mixed CPU/GPU Adam")
+    def test_real_distributed_hybrid_resume_matches_multiple_updates(self):
+        """Core restore preserves masters, moments, and advancing CPU/GPU Adam steps."""
+        from copy import deepcopy
+
+        from megatron.core.optimizer import DistributedOptimizer
+        from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+
+        te = pytest.importorskip("transformer_engine.pytorch.optimizers")
+
+        def build():
+            params = [
+                torch.nn.Parameter(torch.linspace(0.5, 1.5, 1024, device="cuda", dtype=torch.bfloat16))
+                for _ in range(2)
+            ]
+            inner = HybridDeviceOptimizer(
+                params,
+                offload_fraction=0.5,
+                cpu_optimizer_cls=torch.optim.AdamW,
+                gpu_optimizer_cls=te.FusedAdam,
+                param_update_in_fp32=True,
+                overlap_cpu_optimizer_d2h_h2d=False,
+                lr=0.03,
+                betas=(0.9, 0.95),
+                eps=1e-8,
+                weight_decay=0.033,
+                bias_correction=True,
+                fused=True,
+            )
+            # Exercise Core's real restore protocol without allocating a model
+            # or distributed gradient buffers, which these methods do not need.
+            wrapped = object.__new__(DistributedOptimizer)
+            wrapped.optimizer = inner
+            wrapped.ddp_config = SimpleNamespace(use_megatron_fsdp=False)
+            wrapped.config = SimpleNamespace(fp16=False, use_precision_aware_optimizer_no_fp8_or_ds_fp8=True)
+            wrapped.grad_scaler = None
+            wrapped.model_param_group_index_map = {param: (0, index) for index, param in enumerate(params)}
+            return params, wrapped
+
+        def update(params, wrapped, step):
+            for index, param in enumerate(params):
+                param.grad = torch.full_like(param, 0.125 * (index + 1) + 0.03125 * step)
+            wrapped.optimizer.step()
+            wrapped.optimizer.zero_grad()
+
+        params, reference = build()
+        for step in range(1, 51):
+            update(params, reference, step)
+        saved_common = deepcopy(reference.state_dict())
+        saved_tensors = [
+            deepcopy(
+                {
+                    key: value
+                    for key, value in reference._get_main_param_and_optimizer_states(param).items()
+                    if key != "step"
+                }
+            )
+            for param in params
+        ]
+        saved_model = [param.detach().clone() for param in params]
+        resumed_params, resumed = build()
+        resumed.load_state_dict(resumed.state_dict())  # Loading scaffold, including Core's dummy step.
+        for target, source in zip(resumed_params, saved_model):
+            target.data.copy_(source)
+        resumed.load_state_dict(saved_common)
+        for param, tensors in zip(resumed_params, saved_tensors):
+            resumed._set_main_param_and_optimizer_states(param, tensors)
+        assert sync_hybrid_device_optimizer_fp32_master_copies(resumed)
+
+        for step in range(51, 54):
+            update(params, reference, step)
+            update(resumed_params, resumed, step)
+            for expected, actual in zip(params, resumed_params):
+                assert torch.equal(expected, actual)
+                expected_state = reference.optimizer.state[expected]
+                actual_state = resumed.optimizer.state[actual]
+                for key in ("master_param", "exp_avg", "exp_avg_sq"):
+                    assert torch.equal(expected_state[key], actual_state[key]), (step, key)
+            for wrapped in (reference, resumed):
+                assert all(group["step"] == step for group in wrapped.optimizer.gpu_optimizer.param_groups)
+                for cpu_optimizer in wrapped.optimizer.cpu_optimizers:
+                    assert all(state["step"].item() == step for state in cpu_optimizer.state.values())
+
     def test_walks_all_three_fp32_levels(self):
         """The helper refreshes level-1 shard, level-2 CPU clone, and level-3 working copy."""
         model_param = torch.full((4,), 1.0, dtype=torch.bfloat16)
