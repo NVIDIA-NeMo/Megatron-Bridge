@@ -258,8 +258,9 @@ def test_pretrain_megatron_mimo_calls_setup_and_train(
     mock_finish.assert_called_once()
 
 
-def test_pretrain_megatron_mimo_evaluates_terminal_weights_after_natural_completion():
-    """Natural MIMO completion should validate final weights before cleanup."""
+@pytest.mark.parametrize("should_exit", [False, True], ids=["natural-completion", "forced-exit"])
+def test_pretrain_megatron_mimo_terminal_validation_respects_exit_decision(should_exit):
+    """Only natural MIMO completion should validate final weights before cleanup."""
     from megatron.bridge.training.pretrain_megatron_mimo import pretrain_megatron_mimo
 
     cfg = _make_cfg()
@@ -275,6 +276,7 @@ def test_pretrain_megatron_mimo_evaluates_terminal_weights_after_natural_complet
     def run_training(**_kwargs):
         events.append("train")
         setup_output.global_state.train_state.step = 1
+        return should_exit
 
     with (
         patch("megatron.bridge.training.pretrain_megatron_mimo.megatron_mimo_runtime_config_update"),
@@ -301,8 +303,12 @@ def test_pretrain_megatron_mimo_evaluates_terminal_weights_after_natural_complet
             global_state=setup_output.global_state,
         )
 
-    mock_evaluate.assert_called_once()
-    assert events == ["train", "evaluate", "finish"]
+    if should_exit:
+        mock_evaluate.assert_not_called()
+        assert events == ["train", "finish"]
+    else:
+        mock_evaluate.assert_called_once()
+        assert events == ["train", "evaluate", "finish"]
 
 
 def test_pretrain_megatron_mimo_aborts_async_state_after_training_failure():

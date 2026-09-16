@@ -86,7 +86,7 @@ def pretrain_megatron_mimo(
         logger.info(f"Rank {dist.get_rank()}: Starting training loop")
 
         # Run training loop
-        train_megatron_mimo(
+        should_exit = train_megatron_mimo(
             forward_step_func=forward_step_func,
             model=setup_output.model,
             optimizer=setup_output.optimizer,
@@ -106,7 +106,8 @@ def pretrain_megatron_mimo(
             eval_interval = cfg.train.eval_interval
         iteration = setup_output.global_state.train_state.step
         if (
-            iteration != 0
+            not should_exit
+            and iteration != 0
             and iteration == cfg.train.train_iters
             and setup_output.valid_data_iterator is not None
             and cfg.validation.eval_iters

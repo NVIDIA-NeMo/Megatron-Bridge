@@ -447,7 +447,8 @@ class TestNonColocatedGuard:
 
 
 @pytest.mark.parametrize("use_canonical_validation_config", [False, True], ids=["deprecated", "canonical"])
-def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_validation_config):
+@pytest.mark.parametrize("should_exit", [False, True], ids=["natural-completion", "forced-exit"])
+def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_validation_config, should_exit):
     """Interval evaluation should honor both config paths and let the shared evaluator own its timer."""
     from megatron.core.timers import Timers
 
@@ -488,9 +489,9 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
             "megatron.bridge.training.train_megatron_mimo.evaluate_and_print_results",
             side_effect=run_shared_evaluator,
         ) as mock_evaluate,
-        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=should_exit),
     ):
-        train_megatron_mimo(
+        result = train_megatron_mimo(
             forward_step_func=Mock(),
             model=Mock(),
             optimizer=Mock(),
@@ -503,6 +504,7 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
             checkpoint_manager=checkpoint_manager,
         )
 
+    assert result is should_exit
     mock_evaluate.assert_called_once()
 
 
@@ -844,6 +846,7 @@ def _make_pretrain_cfg(
     """Create a ConfigContainer-like mock for pretrain_megatron_mimo tests."""
     cfg = MagicMock()
     cfg.train = SimpleNamespace(
+        train_iters=100,
         rampup_batch_size=None,
         global_batch_size=1,
         micro_batch_size=1,
