@@ -635,9 +635,9 @@ def _update_model_config_funcs(
     # requirement, not an overlap optimization (mirrors Megatron-LM #7186). Without it,
     # every backward finalizes the DP-outer axis and only the last microbatch's gradient
     # reaches the optimizer.
-    megatron_fsdp_v2 = isinstance(model[0], FullyShardedDataParallelV2)
-    if isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1, FullyShardedDataParallelV2)) and (
-        ddp_config.overlap_grad_reduce or megatron_fsdp_v2
+    if isinstance(model[0], FullyShardedDataParallelV2) or (
+        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1))
+        and ddp_config.overlap_grad_reduce
     ):
         assert model_config.no_sync_func is None, (
             "config.no_sync_func must be None when the wrapper supplies its own no_sync "
