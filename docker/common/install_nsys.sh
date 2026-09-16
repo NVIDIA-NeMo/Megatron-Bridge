@@ -31,23 +31,27 @@ if [ -z "$NSYS_VERSION" ]; then
     exit 1
 fi
 
-ARCH=$(uname -m)
-if [ "$ARCH" = "amd64" ]; then ARCH="x86_64"; fi
-if [ "$ARCH" = "aarch64" ]; then ARCH="sbsa"; fi
+ARCH=$(dpkg --print-architecture)
 
-# Extract year.major for package name (e.g., "2026.1.0.1085" -> "nsight-systems-2026.1")
-NSYS_YEAR_MAJOR=$(echo "$NSYS_VERSION" | cut -d. -f1,2)
-NSYS_PKG="nsight-systems-${NSYS_YEAR_MAJOR}"
+# Extract year.major.patch for the devtools package name.
+NSYS_RELEASE=$(echo "$NSYS_VERSION" | cut -d. -f1-3)
+NSYS_PKG="nsight-systems-${NSYS_RELEASE}"
 
-curl -fsSLO https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/${ARCH}/cuda-keyring_1.1-1_all.deb
-dpkg -i cuda-keyring_1.1-1_all.deb
-rm cuda-keyring_1.1-1_all.deb
+NSYS_REPO="https://developer.download.nvidia.com/devtools/repos/ubuntu2404/${ARCH}"
+curl -fsSL "${NSYS_REPO}/nvidia.pub" -o /usr/share/keyrings/nvidia-devtools.asc
+echo "deb [signed-by=/usr/share/keyrings/nvidia-devtools.asc] ${NSYS_REPO}/ /" \
+    > /etc/apt/sources.list.d/nvidia-devtools.list
 
 apt-get update
 
 apt-get remove --purge -y --allow-change-held-packages 'nsight-systems*' || true
 
-apt-get install -y --no-install-recommends "${NSYS_PKG}=${NSYS_VERSION}-1"
+apt-get install -y --no-install-recommends "${NSYS_PKG}=${NSYS_VERSION}"
+
+# CUDA can precede /usr/local/bin on PATH in the base image.
+if [ -L /usr/local/cuda/bin/nsys ]; then
+    ln -sf /usr/local/bin/nsys /usr/local/cuda/bin/nsys
+fi
 
 apt-get clean
 rm -rf /var/lib/apt/lists/*
