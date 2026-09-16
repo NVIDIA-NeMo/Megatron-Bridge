@@ -19,6 +19,7 @@ from typing import Callable, Optional
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.core.tensor_parallel.random import initialize_rng_tracker
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -444,6 +445,9 @@ class TestMegatronFSDP:
         initialize_distributed()
         torch.distributed.barrier()
 
+        # Replace the tracker left by eager tests with MCore's graph-safe RNG tracker.
+        initialize_rng_tracker(use_cudagraphable_rng=True, force_reset=True)
+
         cfg = create_fsdp_config_container(
             seq_length=128,
             train_iters=10,
@@ -454,8 +458,6 @@ class TestMegatronFSDP:
         # Full-iteration graphs over a dense model: Megatron-LM #7075 made these work
         # under MFSDP v2. MoE stays out, its dispatch shapes are not capturable.
         cfg.model.cuda_graph_impl = "full_iteration"
-        # Use graph-safe RNG state tracking during capture and replay.
-        cfg.model.use_te_rng_tracker = True
         # The loss NaN check reads a GPU value on the host and cannot be captured.
         cfg.rerun_state_machine.check_for_nan_in_loss = False
         # Capturable TE FusedAdam requires the main-gradient and main-weight dtypes
