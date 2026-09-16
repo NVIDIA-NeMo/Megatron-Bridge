@@ -337,9 +337,6 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, NVFP4 with full-iteration CUDA graph."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
-    cfg.model.recompute_modules = ["mla_up_proj"]
-
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
