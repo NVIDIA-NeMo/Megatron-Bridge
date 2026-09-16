@@ -1913,6 +1913,53 @@ def load_checkpoint_fixtures():
 class TestLoadCheckpoint:
     """Test checkpoint loading functionality."""
 
+    @pytest.mark.parametrize("finetune", [False, True])
+    @pytest.mark.parametrize("saved_shards,requested_shards", [(2, 1), (1, 2)])
+    def test_torch_dist_rejects_changed_gtp_before_loading_weights(
+        self, load_checkpoint_fixtures, finetune, saved_shards, requested_shards
+    ):
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.finetune = finetune
+        cfg.checkpoint.load_optim = False
+        cfg.checkpoint.load_rng = False
+        cfg.model = SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            expert_tensor_parallel_size=1,
+            tensor_parallel_num_weight_shards=requested_shards,
+        )
+        run_config = {
+            "model": {
+                "tensor_model_parallel_size": 1,
+                "pipeline_model_parallel_size": 1,
+                "expert_tensor_parallel_size": 1,
+                "tensor_parallel_num_weight_shards": saved_shards,
+            },
+        }
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.unwrap_model", side_effect=lambda model: model),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config", return_value=run_config),
+            patch("megatron.bridge.training.checkpointing.generate_state_dict") as generate,
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                return_value=({}, "/checkpoints/iter_0000003", False, CheckpointType.GLOBAL),
+            ) as load_base,
+        ):
+            with pytest.raises(ValueError, match="Resharding a GTP checkpoint"):
+                _load_checkpoint_from_path(
+                    "/checkpoints/iter_0000003",
+                    load_checkpoint_fixtures["mock_state"],
+                    load_checkpoint_fixtures["mock_model"],
+                    None,
+                    None,
+                    pg_collection=Mock(),
+                )
+        load_base.assert_called_once()
+        generate.assert_not_called()
+        load_checkpoint_fixtures["mock_model"][0].load_state_dict.assert_not_called()
+
     @patch("megatron.bridge.training.checkpointing._load_hf_pretrained_checkpoint")
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
@@ -3135,6 +3182,49 @@ class TestRecordDataloaderStateDir:
 class TestLoadModelWeightsFromCheckpoint:
     """Test the _load_model_weights_from_checkpoint function."""
 
+    @pytest.mark.parametrize("saved_shards,requested_shards", [(2, 1), (1, 2)])
+    @pytest.mark.parametrize("legacy_args", [False, True])
+    def test_direct_model_load_rejects_changed_gtp_topology(self, saved_shards, requested_shards, legacy_args):
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        saved_model_config = {
+            "tensor_model_parallel_size": 1,
+            "expert_tensor_parallel_size": 1,
+            "tensor_parallel_num_weight_shards": saved_shards,
+        }
+        requested_config = SimpleNamespace(
+            **{**saved_model_config, "tensor_parallel_num_weight_shards": requested_shards}
+        )
+        model = Mock(config=requested_config)
+        common_state = {"args": SimpleNamespace(**saved_model_config)} if legacy_args else {}
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing") as checkpointing,
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=not legacy_args),
+            patch(
+                "megatron.bridge.training.checkpointing.read_run_config", return_value={"model": saved_model_config}
+            ),
+            patch("megatron.bridge.training.checkpointing.restore_modelopt_state") as restore_modelopt,
+        ):
+            checkpointing.load_common_state_dict.return_value = common_state
+            with pytest.raises(ValueError, match="Resharding a GTP checkpoint"):
+                _load_model_weights_from_checkpoint("/checkpoint", [model])
+        checkpointing.load.assert_not_called()
+        restore_modelopt.assert_not_called()
+        model.load_state_dict.assert_not_called()
+
+    def test_direct_gtp_load_requires_saved_topology(self):
+        from megatron.bridge.training.checkpointing import _load_model_weights_from_checkpoint
+
+        model = Mock(config=SimpleNamespace(tensor_parallel_num_weight_shards=2))
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing") as checkpointing,
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=False),
+        ):
+            checkpointing.load_common_state_dict.return_value = {}
+            with pytest.raises(ValueError, match="requires saved model configuration"):
+                _load_model_weights_from_checkpoint("/checkpoint", [model])
+        checkpointing.load.assert_not_called()
+
     @pytest.fixture
     def mock_model(self):
         """Create a mock model for testing."""
@@ -3595,6 +3685,19 @@ class TestMegatronLMCompatibility:
         }
 
         assert result == expected
+
+    def test_extract_megatron_lm_args_preserves_gtp_topology(self):
+        args = SimpleNamespace(
+            tensor_model_parallel_size=2,
+            expert_tensor_parallel_size=1,
+            tensor_parallel_num_weight_shards=4,
+            expert_tensor_parallel_num_weight_shards=4,
+            gtp_weight_remat_size=2,
+            expert_gtp_weight_remat_size=4,
+        )
+        model_config = _extract_megatron_lm_args_from_state_dict({"args": args})["model"]
+        for name, value in vars(args).items():
+            assert model_config[name] == value
 
     def test_extract_megatron_lm_args_from_state_dict_defaults(self):
         """Test extraction with default values when args are missing."""

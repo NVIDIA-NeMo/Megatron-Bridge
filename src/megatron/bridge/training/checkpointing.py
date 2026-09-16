@@ -55,7 +55,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
+from megatron.core.utils import get_model_config, get_pg_rank, get_pg_size, unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -67,6 +67,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.gtp import _get_checkpoint_weight_topology, _validate_checkpoint_weight_topology
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -445,6 +446,17 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
             "fully_parallel_save": getattr(args, "ckpt_fully_parallel_save", False),
         },
     }
+
+    for name in (
+        "expert_tensor_parallel_size",
+        "tensor_parallel_num_weight_shards",
+        "expert_tensor_parallel_num_weight_shards",
+        "gtp_weight_remat_size",
+        "expert_gtp_weight_remat_size",
+    ):
+        value = getattr(args, name, None)
+        if isinstance(value, int):
+            config["model"][name] = value
 
     return config
 
@@ -2467,6 +2479,25 @@ def _load_model_weights_from_checkpoint(
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
     assert state_dict is not None
 
+    # Also protect callers that construct their own model configuration through
+    # build_and_load_model(), bypassing load_megatron_model's early validation.
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+    if file_exists(run_config_filename):
+        saved_model_config = read_run_config(run_config_filename)["model"]
+    elif "args" in state_dict:
+        saved_model_config = _extract_megatron_lm_args_from_state_dict(state_dict)["model"]
+    else:
+        saved_model_config = None
+    requested_topology = _get_checkpoint_weight_topology(get_model_config(model[0]))
+    if saved_model_config is not None:
+        _validate_checkpoint_weight_topology(
+            saved=_get_checkpoint_weight_topology(saved_model_config), requested=requested_topology
+        )
+    elif requested_topology[1] > 1 or requested_topology[3] > 1:
+        raise ValueError(
+            "Loading native weights into GTP requires saved model configuration to verify weight topology."
+        )
+
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
@@ -3013,6 +3044,11 @@ def _load_checkpoint_from_path(
             tp_pp_match = True
             mismatch_msg = ""
         else:
+            if ckpt_type != CheckpointType.LOCAL:
+                _validate_checkpoint_weight_topology(
+                    saved=_get_checkpoint_weight_topology(run_config["model"]),
+                    requested=_get_checkpoint_weight_topology(cfg.model),
+                )
             ckpt_tp_pp = _get_run_config_tp_pp(run_config["model"])
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,

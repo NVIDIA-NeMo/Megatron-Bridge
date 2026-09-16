@@ -206,16 +206,23 @@ When loading a native GTP checkpoint with `load_megatron_model()`, pass `mp_over
 with the saved dense/expert TP sizes and `tensor_parallel_num_weight_shards` /
 `expert_tensor_parallel_num_weight_shards`. Changing that weight-sharding topology is
 rejected because the current Megatron-Core SwiGLU checkpoint layout can reorder
-gate/up rows. To change layouts, export HF weights from the original topology first,
-then import the HF weights into the new topology.
+gate/up rows. Training resume and finetuning enforce the same restriction, including
+loading a non-GTP native checkpoint into a GTP model. To change layouts, export HF
+weights from the original topology first, then import the HF weights into the new
+topology.
 
-The focused two-GPU regression covers exact BF16 HF round-trips and model/RNG resume,
-with fully parallel checkpoint I/O enabled and disabled:
+The focused two-GPU regression covers exact BF16 HF round-trips, model and named
+RNG-stream resume, and rejection of unsafe topology changes, with fully parallel
+checkpoint I/O enabled and disabled:
 
 ```bash
 uv run python -m torch.distributed.run --standalone --nproc_per_node=2 -m pytest \
   tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py -q
 ```
+
+The H100 L1 launcher `L1_Launch_gtp_checkpoint_conversion.sh` runs this matrix in CI.
+GTP cases require TransformerEngine 2.19 or newer and skip on older versions; the
+ordinary TP baseline cases still run.
 
 This coverage does not validate native MXFP8, Muon optimizer state, or dataloader resume.
 

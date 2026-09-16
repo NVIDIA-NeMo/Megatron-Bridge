@@ -14,6 +14,7 @@
 
 """Generalized Tensor Parallelism helpers for the standard Bridge runtime."""
 
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -27,6 +28,49 @@ def get_transformer_config(model_config: Any) -> Any:
     if "transformer" in model_fields:
         return model_config.transformer
     return model_config
+
+
+def _get_checkpoint_weight_topology(model_config: Any) -> tuple[int, int, int, int]:
+    """Read dense/expert TP and GTP sizes from runtime or serialized configs."""
+    if isinstance(model_config, Mapping):
+        nested_config = model_config.get("transformer")
+        transformer_config = nested_config if isinstance(nested_config, Mapping) else model_config
+    else:
+        transformer_config = get_transformer_config(model_config)
+
+    def get_value(name: str, default: Any) -> Any:
+        if isinstance(transformer_config, Mapping):
+            return transformer_config.get(name, default)
+        return getattr(transformer_config, name, default)
+
+    def positive_int(name: str, default: int) -> int:
+        value = get_value(name, default)
+        return value if isinstance(value, int) and value > 0 else default
+
+    tp = positive_int("tensor_model_parallel_size", 1)
+    etp = positive_int("expert_tensor_parallel_size", tp)
+    # Public shard counts take precedence: deserialized providers may still have
+    # the default values for the derived GTP fields until finalize() runs.
+    dense_shards = get_value("tensor_parallel_num_weight_shards", None)
+    expert_shards = get_value("expert_tensor_parallel_num_weight_shards", None)
+    gtp = dense_shards // tp if isinstance(dense_shards, int) else positive_int("gtp_weight_remat_size", 1)
+    egtp = expert_shards // etp if isinstance(expert_shards, int) else positive_int("expert_gtp_weight_remat_size", 1)
+    return tp, gtp, etp, egtp
+
+
+def _validate_checkpoint_weight_topology(
+    *, saved: tuple[int, int, int, int], requested: tuple[int, int, int, int]
+) -> None:
+    """Reject native resharding when either side uses the GTP SwiGLU layout."""
+    if saved == requested or all(size == 1 for size in (saved[1], saved[3], requested[1], requested[3])):
+        return
+    raise ValueError(
+        "Resharding a GTP checkpoint is not supported: Megatron-Core's SwiGLU checkpoint "
+        "layout can reorder gate/up rows when the weight-sharding topology changes. "
+        "Preserve the saved dense/expert TP and weight shard counts (using mp_overrides "
+        "with load_megatron_model), export HF weights, then import those weights into "
+        "the desired topology."
+    )
 
 
 def is_gtp_remat_active(model_config: Any) -> bool:

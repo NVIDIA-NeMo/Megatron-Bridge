@@ -14,6 +14,7 @@
 
 """Tests for Generalized Tensor Parallelism runtime wiring."""
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -22,10 +23,75 @@ import pytest
 
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.bridge.training.gtp import (
+    _get_checkpoint_weight_topology,
+    _validate_checkpoint_weight_topology,
     classify_gtp_remat_chains,
     configure_gtp_remat,
     get_data_distribution_group,
 )
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_checkpoint_weight_topology_reads_serialized_public_shards(nested):
+    config = {
+        "tensor_model_parallel_size": 2,
+        "expert_tensor_parallel_size": 1,
+        "tensor_parallel_num_weight_shards": 4,
+        "expert_tensor_parallel_num_weight_shards": 4,
+        "gtp_weight_remat_size": 1,
+        "expert_gtp_weight_remat_size": 1,
+    }
+    assert _get_checkpoint_weight_topology({"transformer": config} if nested else config) == (2, 2, 1, 4)
+
+
+def test_checkpoint_weight_topology_reads_legacy_derived_sizes():
+    config = SimpleNamespace(
+        tensor_model_parallel_size=2,
+        expert_tensor_parallel_size=None,
+        gtp_weight_remat_size=4,
+        expert_gtp_weight_remat_size=2,
+    )
+    assert _get_checkpoint_weight_topology(config) == (2, 4, 2, 2)
+
+
+def test_checkpoint_weight_topology_reads_nested_runtime_config():
+    @dataclass
+    class ModelConfig:
+        transformer: SimpleNamespace
+
+    config = ModelConfig(
+        transformer=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            expert_tensor_parallel_size=1,
+            tensor_parallel_num_weight_shards=4,
+            expert_tensor_parallel_num_weight_shards=4,
+        )
+    )
+    assert _get_checkpoint_weight_topology(config) == (2, 2, 1, 4)
+
+
+@pytest.mark.parametrize(
+    "saved,requested",
+    [
+        ((1, 2, 1, 1), (1, 1, 1, 1)),
+        ((1, 1, 1, 1), (1, 2, 1, 1)),
+        ((1, 1, 1, 2), (1, 1, 1, 1)),
+        ((1, 1, 1, 1), (1, 1, 1, 2)),
+        ((1, 2, 1, 1), (2, 1, 1, 1)),
+        ((1, 2, 1, 2), (1, 2, 2, 1)),
+    ],
+)
+def test_checkpoint_weight_topology_rejects_native_gtp_resharding(saved, requested):
+    with pytest.raises(ValueError, match="Resharding a GTP checkpoint"):
+        _validate_checkpoint_weight_topology(saved=saved, requested=requested)
+
+
+@pytest.mark.parametrize(
+    "saved,requested",
+    [((1, 2, 1, 4), (1, 2, 1, 4)), ((1, 1, 1, 1), (2, 1, 4, 1))],
+)
+def test_checkpoint_weight_topology_preserves_same_gtp_and_plain_resharding(saved, requested):
+    _validate_checkpoint_weight_topology(saved=saved, requested=requested)
 
 
 def _gtp_config(*, dense_size: int = 2, expert_size: int = 1) -> SimpleNamespace:

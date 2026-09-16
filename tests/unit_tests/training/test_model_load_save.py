@@ -346,6 +346,15 @@ class TestGetOrInitializePgCollection:
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_plain_checkpoint_cannot_be_loaded_directly_into_gtp(self, load_config, build_model):
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        load_config.return_value = (cfg, None)
+        with pytest.raises(ValueError, match="Resharding a GTP checkpoint"):
+            load_megatron_model("/ckpt", mp_overrides={"tensor_parallel_num_weight_shards": 2})
+        build_model.assert_not_called()
+
     @pytest.mark.parametrize("preserve_gtp", [False, True])
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
@@ -1049,13 +1058,17 @@ class TestLoadMegatronModel:
         assert cfg.enable_cuda_graph is False
         assert cfg.external_cuda_graph is False
 
+    @pytest.mark.parametrize("preserve_gtp", [False, True], ids=["plain_tp_resharding", "same_gtp_topology"])
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
-    def test_load_megatron_model_applies_overrides(self, mock_load_model_config, mock_build_and_load):
-        """Verify mp_overrides entries are applied to the config."""
+    def test_load_megatron_model_applies_overrides(self, mock_load_model_config, mock_build_and_load, preserve_gtp):
+        """Apply valid plain TP resharding or topology-preserving GTP overrides."""
         cfg = Mock()
-        # Start with defaults to make verification straightforward
-        cfg.tensor_model_parallel_size = 1
+        cfg.tensor_model_parallel_size = 2 if preserve_gtp else 1
+        cfg.tensor_parallel_num_weight_shards = 4 if preserve_gtp else 1
+        cfg.expert_tensor_parallel_num_weight_shards = 2 if preserve_gtp else 1
+        cfg.gtp_weight_remat_size = 1
+        cfg.expert_gtp_weight_remat_size = 1
         cfg.pipeline_model_parallel_size = 1
         cfg.context_parallel_size = 1
         cfg.expert_model_parallel_size = 1
@@ -1069,8 +1082,8 @@ class TestLoadMegatronModel:
 
         overrides = {
             "tensor_model_parallel_size": 2,
-            "tensor_parallel_num_weight_shards": 4,
-            "expert_tensor_parallel_num_weight_shards": 2,
+            "tensor_parallel_num_weight_shards": 4 if preserve_gtp else 2,
+            "expert_tensor_parallel_num_weight_shards": 2 if preserve_gtp else 1,
             "pipeline_model_parallel_size": 3,
             "sequence_parallel": True,
             "virtual_pipeline_model_parallel_size": 4,
@@ -1078,9 +1091,10 @@ class TestLoadMegatronModel:
 
         _ = load_megatron_model("/ckpt", mp_overrides=overrides)
 
+        mock_build_and_load.assert_called_once()
         assert cfg.tensor_model_parallel_size == 2
-        assert cfg.tensor_parallel_num_weight_shards == 4
-        assert cfg.expert_tensor_parallel_num_weight_shards == 2
+        assert cfg.tensor_parallel_num_weight_shards == overrides["tensor_parallel_num_weight_shards"]
+        assert cfg.expert_tensor_parallel_num_weight_shards == overrides["expert_tensor_parallel_num_weight_shards"]
         assert cfg.pipeline_model_parallel_size == 3
         assert cfg.sequence_parallel is True
         assert cfg.virtual_pipeline_model_parallel_size == 4

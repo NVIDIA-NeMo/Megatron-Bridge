@@ -8,6 +8,7 @@ import torch
 from megatron.core.num_microbatches_calculator import init_num_microbatches_calculator
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_gtp_remat_rng_tracker_name
 from transformers import (
     LlamaConfig,
     LlamaForCausalLM,
@@ -77,7 +78,7 @@ def _assert_export_matches(bridge, models) -> None:
 )
 @pytest.mark.parametrize("fully_parallel", [False, True])
 def test_gtp_hf_roundtrip_and_checkpoint(tmp_path, topology, fully_parallel, model_api):
-    if not HAVE_GTP:
+    if topology != "tp" and not HAVE_GTP:
         pytest.skip("GTP requires TransformerEngine >= 2.19")
     initialize_distributed()
     if torch.distributed.get_world_size() != 2:
@@ -141,9 +142,22 @@ def test_gtp_hf_roundtrip_and_checkpoint(tmp_path, topology, fully_parallel, mod
         # Distinct per-rank streams expose accidental replica restoration.
         torch.manual_seed(5000 + torch.distributed.get_rank())
         torch.cuda.manual_seed(6000 + torch.distributed.get_rank())
+        rng_tracker = get_cuda_rng_tracker()
+        rng_names = tuple(sorted(rng_tracker.get_states()))
+        assert rng_names
+        if topology != "tp":
+            assert get_gtp_remat_rng_tracker_name(is_expert=topology == "expert_gtp") in rng_names
+        for name in rng_names:
+            with rng_tracker.fork(name):
+                torch.rand(11 * (torch.distributed.get_rank() + 1), device="cuda")
         save_checkpoint(state, models, None, None, 0, pg_collection=pg)
         expected_cpu = torch.rand(8)
         expected_cuda = torch.rand(8, device="cuda")
+        expected_named_cuda = {}
+        for name in rng_names:
+            with rng_tracker.fork(name):
+                expected_named_cuda[name] = torch.rand(8, device="cuda")
+                torch.rand(17, device="cuda")
         with torch.no_grad():
             for model in models:
                 for param in model.parameters():
@@ -154,7 +168,30 @@ def test_gtp_hf_roundtrip_and_checkpoint(tmp_path, topology, fully_parallel, mod
         assert iteration == 3
         assert torch.equal(torch.rand(8), expected_cpu)
         assert torch.equal(torch.rand(8, device="cuda"), expected_cuda)
+        assert set(rng_tracker.get_states()) == set(rng_names)
+        for name in rng_names:
+            with rng_tracker.fork(name):
+                assert torch.equal(torch.rand(8, device="cuda"), expected_named_cuda[name]), name
         _assert_export_matches(bridge, models)
+
+        if topology == "dense_gtp" and model_api == "provider":
+            # The training entrypoint must reject unsafe GTP resharding before
+            # generating a loading scaffold or writing any model parameters.
+            saved_shards = provider.tensor_parallel_num_weight_shards
+            saved_remat = provider.gtp_weight_remat_size
+            saved_finetune = cfg.checkpoint.finetune
+            try:
+                provider.tensor_parallel_num_weight_shards = provider.tensor_model_parallel_size
+                provider.gtp_weight_remat_size = 1
+                for finetune in (False, True):
+                    cfg.checkpoint.finetune = finetune
+                    with pytest.raises(ValueError, match="Resharding a GTP checkpoint"):
+                        load_checkpoint(state, models, None, None, pg_collection=pg)
+            finally:
+                provider.tensor_parallel_num_weight_shards = saved_shards
+                provider.gtp_weight_remat_size = saved_remat
+                cfg.checkpoint.finetune = saved_finetune
+            _assert_export_matches(bridge, models)
 
         # Preserve the saved GTP topology when loading through the model-only export API.
         del models

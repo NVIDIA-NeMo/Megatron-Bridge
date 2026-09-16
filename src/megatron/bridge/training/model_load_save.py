@@ -31,6 +31,7 @@ from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import _CpuTorchDistSaveShardedStrategy, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
+from megatron.bridge.training.gtp import _get_checkpoint_weight_topology, _validate_checkpoint_weight_topology
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import file_exists
@@ -490,22 +491,7 @@ def load_megatron_model(
     model_cfg, mlm_args = load_model_config(checkpoint_path)
     # Deserialized providers have not been finalized yet: derive GTP from the
     # saved public shard counts before resetting the model-parallel defaults.
-    saved_tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
-    saved_etp = getattr(model_cfg, "expert_tensor_parallel_size", 1) or saved_tp
-    saved_dense_shards = getattr(model_cfg, "tensor_parallel_num_weight_shards", None)
-    saved_expert_shards = getattr(model_cfg, "expert_tensor_parallel_num_weight_shards", None)
-    saved_gtp = (
-        saved_dense_shards // saved_tp
-        if isinstance(saved_dense_shards, int)
-        else getattr(model_cfg, "gtp_weight_remat_size", 1)
-    )
-    saved_expert_gtp = (
-        saved_expert_shards // saved_etp
-        if isinstance(saved_expert_shards, int)
-        else getattr(model_cfg, "expert_gtp_weight_remat_size", 1)
-    )
-    saved_gtp_active = any(isinstance(size, int) and size > 1 for size in (saved_gtp, saved_expert_gtp))
-    saved_weight_topology = (saved_tp, saved_gtp, saved_etp, saved_expert_gtp)
+    saved_weight_topology = _get_checkpoint_weight_topology(model_cfg)
     saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
@@ -550,22 +536,9 @@ def load_megatron_model(
     if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
         model_cfg.pipeline_model_parallel_layout = None
 
-    if saved_gtp_active:
-        tp = model_cfg.tensor_model_parallel_size
-        etp = model_cfg.expert_tensor_parallel_size
-        target_weight_topology = (
-            tp,
-            (model_cfg.tensor_parallel_num_weight_shards or tp) // tp,
-            etp,
-            (model_cfg.expert_tensor_parallel_num_weight_shards or etp) // etp,
-        )
-        if target_weight_topology != saved_weight_topology:
-            raise ValueError(
-                "Resharding a GTP checkpoint is not supported: Megatron-Core's SwiGLU checkpoint "
-                "layout can reorder gate/up rows when the weight-sharding topology changes. "
-                "Pass mp_overrides preserving the saved dense/expert TP and weight shard counts, "
-                "export HF weights, then import those weights into the desired topology."
-            )
+    _validate_checkpoint_weight_topology(
+        saved=saved_weight_topology, requested=_get_checkpoint_weight_topology(model_cfg)
+    )
 
     # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
