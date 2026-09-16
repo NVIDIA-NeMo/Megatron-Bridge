@@ -27,6 +27,7 @@ import torch
 from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
 from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
 from megatron.core.msc_utils import MultiStorageClientFeature
+from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
     _DIRECT_ITERATION_DIR_SENTINEL,
@@ -70,6 +71,7 @@ from megatron.bridge.training.checkpointing import (
     maybe_save_dataloader_state,
     read_metadata,
     save_checkpoint,
+    schedule_async_save,
 )
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -6051,6 +6053,17 @@ class TestAlignRngStateShardedMetadata:
         assert result.global_offset == (1, 3, 5)
         assert result.replica_id == 0
 
+    @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    def test_returns_none_without_a_dp_cp_shard_for_this_rank(self, mock_strategy, _mock_is_file):
+        rng_state = self._rng(replica_id=5)
+        stored = [self._rng(global_offset=(1, 3, rank), global_shape=(2, 4, 4), replica_id=0) for rank in range(4)]
+        mock_strategy.return_value.load_sharded_metadata.return_value = {item.unique_key: item for item in stored}
+
+        result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
+
+        assert result is None
+
     @pytest.mark.parametrize("stored", [{}, None])
     @patch("megatron.bridge.training.checkpointing.Path.is_file", return_value=True)
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
@@ -6065,3 +6078,27 @@ class TestAlignRngStateShardedMetadata:
         result = _align_rng_state_sharded_metadata(rng_state, "/checkpoint")
 
         assert result is rng_state
+
+
+class TestAsyncCheckpointScheduling:
+    """Test async request handoff to the NVRx worker."""
+
+    def test_schedule_async_save_forwards_nvrx_request(self):
+        """The NVRx queue must ignore the inherited stale strategy value."""
+        async_queue = Mock()
+        state = Mock()
+        state.async_calls_queue = async_queue
+        state.cfg.checkpoint = CheckpointConfig()
+        assert state.cfg.checkpoint.async_strategy == "mcore"
+        state.cfg.checkpoint.async_save = True
+        nvrx_request = NVRxAsyncRequest(
+            async_fn=Mock(),
+            async_fn_args=(0, None, None),
+            finalize_fns=[Mock()],
+            preload_fn=Mock(),
+        )
+
+        schedule_async_save(state, nvrx_request)
+
+        scheduled_request = async_queue.schedule_async_request.call_args.args[0]
+        assert scheduled_request is nvrx_request
