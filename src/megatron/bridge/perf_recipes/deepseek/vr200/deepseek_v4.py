@@ -47,6 +47,7 @@ def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # This benchmark-only recipe permits Scaled-SwiGLU dprob atomics in the fused path.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg

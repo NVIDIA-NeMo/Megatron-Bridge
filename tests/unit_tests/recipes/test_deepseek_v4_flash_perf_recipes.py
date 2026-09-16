@@ -140,9 +140,11 @@ def test_deepseek_v4_flash_128gpu_vr200_fp8mx_disables_clamp_for_cutedsl() -> No
     assert vr200_cfg.model.use_transformer_engine_op_fuser is True
     assert vr200_cfg.model.moe_use_grouped_tensor is True
     assert vr200_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert vr200_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
     assert is_full_iteration_cuda_graph(vr200_cfg.model)
 
     gb300_cfg.model.activation_func_clamp_value = None
+    gb300_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = 1
     assert vr200_cfg == gb300_cfg
 
 
