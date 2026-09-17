@@ -2816,13 +2816,23 @@ class TestCalcParamsL2Norm:
             expert_tp_group=_patch_pg_collection.expt_tp,
         )
 
+    @pytest.mark.parametrize(
+        ("expert_gtp_rank", "remote_contribution", "expected_local_input"),
+        [
+            pytest.param(0, 9.0, 20.0, id="rank-zero-keeps-replica"),
+            pytest.param(1, 13.0, 16.0, id="nonzero-rank-drops-replica"),
+        ],
+    )
     def test_expert_gtp_param_norm_reduces_over_expert_gtp(
         self,
         monkeypatch,
         mock_model_config_fp32,
         _patch_pg_collection,
+        expert_gtp_rank,
+        remote_contribution,
+        expected_local_input,
     ):
-        """Expert GTP shards are summed over the expert GTP group."""
+        """Expert GTP shards are summed while replicated parameters contribute once."""
 
         class _ExpertGTPModel(torch.nn.Module):
             def __init__(self):
@@ -2842,8 +2852,7 @@ class TestCalcParamsL2Norm:
             del op
             if group is _patch_pg_collection.expt_gtp_remat:
                 expert_gtp_inputs.append(tensor.item())
-                # The other expert GTP rank contributes its unique weight shard (3**2).
-                tensor.add_(9.0)
+                tensor.add_(remote_contribution)
 
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
@@ -2857,7 +2866,10 @@ class TestCalcParamsL2Norm:
             "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
             lambda param: param,
         )
-        monkeypatch.setattr("megatron.bridge.training.utils.train_utils.get_pg_rank", lambda group: 0)
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: expert_gtp_rank if group is _patch_pg_collection.expt_gtp_remat else 0,
+        )
         monkeypatch.setattr(
             "torch.distributed.get_process_group_ranks",
             lambda group: [0] if group is _patch_pg_collection.mp else [1],
@@ -2866,7 +2878,7 @@ class TestCalcParamsL2Norm:
 
         actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
 
-        assert expert_gtp_inputs == pytest.approx([20.0])
+        assert expert_gtp_inputs == pytest.approx([expected_local_input])
         assert actual_norm == pytest.approx(math.sqrt(29.0))
         duplicate_filter.assert_called_once_with(
             model.bias,
