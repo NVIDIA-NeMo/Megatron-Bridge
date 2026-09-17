@@ -631,3 +631,25 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def test_state_source_receives_pinned_hub_revision():
+    """Test the state accessor resolves weights at the revision the model was pinned to."""
+    expected_revision = "b5968e9190ef611bbf34a7229255be88a0e937c1"  # pragma: allowlist secret
+
+    base = MockPreTrainedBase(model_name_or_path="org/model", revision=expected_revision)
+
+    with patch("megatron.bridge.models.hf_pretrained.base.SafeTensorsStateSource") as safetensors_state_source:
+        _ = base.state
+
+    safetensors_state_source.assert_called_once_with("org/model", revision=expected_revision)
+
+
+def test_state_source_revision_is_none_when_unpinned():
+    """Test an unpinned model passes no revision through to the state source."""
+    base = MockPreTrainedBase(model_name_or_path="org/model")
+
+    with patch("megatron.bridge.models.hf_pretrained.base.SafeTensorsStateSource") as safetensors_state_source:
+        _ = base.state
+
+    safetensors_state_source.assert_called_once_with("org/model", revision=None)
