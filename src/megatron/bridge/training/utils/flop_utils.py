@@ -957,6 +957,86 @@ def num_floating_point_operations(
         )
         return flops_fwd * 3
 
+    def dsv4_attention_terms(compress_ratios: list[int]) -> tuple[float, float]:
+        """Return token-linear and sequence-quadratic DSv4 attention FLOPs."""
+        # DeepSeek-V4 hybrid MLA uses sparse attention instead of the full
+        # core-attention terms used by DeepSeek-V2/V3 MLA. Projection costs
+        # are accounted here; sparse attention, compressor, and indexer
+        # costs are added below.
+        q_lora_rank = getattr(cfg.model, "q_lora_rank", None)
+        if q_lora_rank is None:
+            raise ValueError("q_lora_rank must be set for dsv4_hybrid FLOPs calculation")
+
+        qk_head_dim = getattr(cfg.model, "qk_head_dim", 64)
+        qk_pos_emb_head_dim = getattr(cfg.model, "qk_pos_emb_head_dim", 0)
+        v_head_dim = getattr(cfg.model, "v_head_dim", 64)
+        o_lora_rank = getattr(cfg.model, "output_projection_lora_rank", 0)
+        o_groups = getattr(cfg.model, "output_projection_groups", 1)
+
+        q_term = q_lora_rank * (
+            cfg.model.hidden_size + cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1  # q norm
+        )
+        kv_term = cfg.model.hidden_size * v_head_dim + v_head_dim  # kv projection + kv norm
+        o_term = (
+            cfg.model.num_attention_heads * v_head_dim * o_lora_rank + o_groups * o_lora_rank * cfg.model.hidden_size
+        )
+        self_attn_term = 3 * 2 * len(compress_ratios) * (q_term + kv_term + o_term)
+
+        supported_compress_ratios = {0, 4, 128}
+        unsupported_compress_ratios = [ratio for ratio in compress_ratios if ratio not in supported_compress_ratios]
+        if unsupported_compress_ratios:
+            raise ValueError(
+                "csa_compress_ratios contains unsupported values: "
+                f"{unsupported_compress_ratios}. Only 0, 4, and 128 are supported."
+            )
+
+        n_layers_r0 = sum(1 for ratio in compress_ratios if ratio == 0)
+        n_layers_r4 = sum(1 for ratio in compress_ratios if ratio == 4)
+        n_layers_r128 = sum(1 for ratio in compress_ratios if ratio == 128)
+        window = getattr(cfg.model, "csa_window_size", 128)
+
+        sparse_attn_r0 = n_layers_r0 * cfg.model.num_attention_heads * window * v_head_dim * 2
+        # Window work is token-linear; compressed-KV attention scales with sum_i(sequence_length_i^2).
+        sparse_attn_r128 = n_layers_r128 * cfg.model.num_attention_heads * window * v_head_dim * 2
+        sparse_attn_r128_core = n_layers_r128 * cfg.model.num_attention_heads * v_head_dim / 128
+
+        main_compressor_term = (
+            n_layers_r4 * cfg.model.hidden_size * (2 * v_head_dim) * 2
+            + n_layers_r128 * cfg.model.hidden_size * v_head_dim * 2
+        )
+
+        if n_layers_r4 > 0:
+            idx_n_heads = getattr(cfg.model, "dsa_indexer_n_heads", None)
+            idx_head_dim = getattr(cfg.model, "dsa_indexer_head_dim", None)
+            idx_topk = getattr(cfg.model, "dsa_indexer_topk", None)
+            if idx_n_heads is None:
+                raise ValueError("dsa_indexer_n_heads must be set for dsv4_hybrid ratio==4 layers")
+            if idx_head_dim is None:
+                raise ValueError("dsa_indexer_head_dim must be set for dsv4_hybrid ratio==4 layers")
+            if idx_topk is None:
+                raise ValueError("dsa_indexer_topk must be set for dsv4_hybrid ratio==4 layers")
+
+            # Match MCore's nominal ratio-4 selection estimate, which uses the configured sequence length.
+            effective_topk_4 = min(idx_topk, cfg.model.seq_length // 4)
+            avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * cfg.model.seq_length))
+            sparse_attn_r4 = n_layers_r4 * cfg.model.num_attention_heads * (window + avg_comp_4) * v_head_dim * 2
+            indexer_term = (
+                n_layers_r4 * cfg.model.hidden_size * (2 * idx_head_dim) * 2
+                + n_layers_r4 * q_lora_rank * idx_n_heads * idx_head_dim
+                + n_layers_r4 * cfg.model.hidden_size * idx_n_heads
+            )
+            # Dense indexer scoring is quadratic and therefore uses the runtime squared-length sum below.
+            indexer_scoring_core = n_layers_r4 * idx_n_heads * idx_head_dim / 4
+        else:
+            sparse_attn_r4 = 0
+            indexer_term = 0
+            indexer_scoring_core = 0
+
+        sparse_attn_term = sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128
+        self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
+        dsv4_hybrid_core_attn_term = 3 * 2 * (sparse_attn_r128_core + indexer_scoring_core)
+        return self_attn_term, dsv4_hybrid_core_attn_term
+
     def transformer_flops():
         """Calculate FLOPs for a standard Transformer model."""
         # TODO(helenn/dnarayanan): Refactor this to reuse the helper methods.
@@ -1084,32 +1164,6 @@ def num_floating_point_operations(
             https://arxiv.org/abs/2205.05198
             """
             if experimental_attention_variant == "dsv4_hybrid":
-                # DeepSeek-V4 hybrid MLA uses sparse attention instead of the full
-                # core-attention terms used by DeepSeek-V2/V3 MLA. Projection costs
-                # are accounted here; sparse attention, compressor, and indexer
-                # costs are added below.
-                q_lora_rank = getattr(cfg.model, "q_lora_rank", None)
-                if q_lora_rank is None:
-                    raise ValueError("q_lora_rank must be set for dsv4_hybrid FLOPs calculation")
-
-                qk_head_dim = getattr(cfg.model, "qk_head_dim", 64)
-                qk_pos_emb_head_dim = getattr(cfg.model, "qk_pos_emb_head_dim", 0)
-                v_head_dim = getattr(cfg.model, "v_head_dim", 64)
-                o_lora_rank = getattr(cfg.model, "o_lora_rank", 0)
-                o_groups = getattr(cfg.model, "o_groups", 1)
-
-                q_term = q_lora_rank * (
-                    cfg.model.hidden_size
-                    + cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim)
-                    + 1  # q norm
-                )
-                kv_term = cfg.model.hidden_size * v_head_dim + v_head_dim  # kv projection + kv norm
-                o_term = (
-                    cfg.model.num_attention_heads * v_head_dim * o_lora_rank
-                    + o_groups * o_lora_rank * cfg.model.hidden_size
-                )
-                self_attn_term = 3 * 2 * num_layers * (q_term + kv_term + o_term)
-
                 compress_ratios = getattr(cfg.model, "csa_compress_ratios", None)
                 if compress_ratios is None:
                     raise ValueError("csa_compress_ratios must be set for dsv4_hybrid FLOPs calculation")
@@ -1120,63 +1174,7 @@ def num_floating_point_operations(
                         f"(num_layers={cfg.model.num_layers}, mtp_num_layers={mtp_num_layers})."
                     )
 
-                supported_compress_ratios = {0, 4, 128}
-                unsupported_compress_ratios = [
-                    ratio for ratio in compress_ratios if ratio not in supported_compress_ratios
-                ]
-                if unsupported_compress_ratios:
-                    raise ValueError(
-                        "csa_compress_ratios contains unsupported values: "
-                        f"{unsupported_compress_ratios}. Only 0, 4, and 128 are supported."
-                    )
-
-                n_layers_r0 = sum(1 for ratio in compress_ratios if ratio == 0)
-                n_layers_r4 = sum(1 for ratio in compress_ratios if ratio == 4)
-                n_layers_r128 = sum(1 for ratio in compress_ratios if ratio == 128)
-                window = getattr(cfg.model, "csa_window_size", 128)
-
-                sparse_attn_r0 = n_layers_r0 * cfg.model.num_attention_heads * window * v_head_dim * 2
-                # Window work is token-linear; compressed-KV attention scales with sum_i(sequence_length_i^2).
-                sparse_attn_r128 = n_layers_r128 * cfg.model.num_attention_heads * window * v_head_dim * 2
-                sparse_attn_r128_core = n_layers_r128 * cfg.model.num_attention_heads * v_head_dim / 128
-
-                main_compressor_term = (
-                    n_layers_r4 * cfg.model.hidden_size * (2 * v_head_dim) * 2
-                    + n_layers_r128 * cfg.model.hidden_size * v_head_dim * 2
-                )
-
-                if n_layers_r4 > 0:
-                    idx_n_heads = getattr(cfg.model, "dsa_indexer_n_heads", None)
-                    idx_head_dim = getattr(cfg.model, "dsa_indexer_head_dim", None)
-                    idx_topk = getattr(cfg.model, "dsa_indexer_topk", None)
-                    if idx_n_heads is None:
-                        raise ValueError("dsa_indexer_n_heads must be set for dsv4_hybrid ratio==4 layers")
-                    if idx_head_dim is None:
-                        raise ValueError("dsa_indexer_head_dim must be set for dsv4_hybrid ratio==4 layers")
-                    if idx_topk is None:
-                        raise ValueError("dsa_indexer_topk must be set for dsv4_hybrid ratio==4 layers")
-
-                    # Match MCore's nominal ratio-4 selection estimate, which uses the configured sequence length.
-                    effective_topk_4 = min(idx_topk, cfg.model.seq_length // 4)
-                    avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * cfg.model.seq_length))
-                    sparse_attn_r4 = (
-                        n_layers_r4 * cfg.model.num_attention_heads * (window + avg_comp_4) * v_head_dim * 2
-                    )
-                    indexer_term = (
-                        n_layers_r4 * cfg.model.hidden_size * (2 * idx_head_dim) * 2
-                        + n_layers_r4 * q_lora_rank * idx_n_heads * idx_head_dim
-                        + n_layers_r4 * cfg.model.hidden_size * idx_n_heads
-                    )
-                    # Dense indexer scoring is quadratic and therefore uses the runtime squared-length sum below.
-                    indexer_scoring_core = n_layers_r4 * idx_n_heads * idx_head_dim / 4
-                else:
-                    sparse_attn_r4 = 0
-                    indexer_term = 0
-                    indexer_scoring_core = 0
-
-                sparse_attn_term = sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128
-                self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
-                dsv4_hybrid_core_attn_term = 3 * 2 * (sparse_attn_r128_core + indexer_scoring_core)
+                self_attn_term, dsv4_hybrid_core_attn_term = dsv4_attention_terms(compress_ratios)
             elif experimental_attention_variant == "dsa":
                 # DSA replaces dense MLA core attention with top-k attention while retaining a
                 # dense lightning indexer. The attention/indexer geometry follows equations 1-2
@@ -1673,6 +1671,23 @@ def num_floating_point_operations(
             swa_context=swa_context,
             core_attn_seq_factor=core_attn_seq_factor,
         )
+        # Native DSv4 blocks split attention (W/C/H) and MoE (E) into
+        # separate physical layers. Generic hybrid accounting above includes
+        # the E layers and logits, but not these sparse-attention symbols.
+        hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+        if hybrid_pattern:
+            layer_counts = get_hybrid_layer_counts(hybrid_pattern)
+            dsv4_ratios = [
+                ratio for symbol, ratio in (("W", 0), ("C", 4), ("H", 128)) for _ in range(layer_counts.get(symbol, 0))
+            ]
+            if dsv4_ratios:
+                attention_term, attention_core_term = dsv4_attention_terms(dsv4_ratios)
+                llm_flops += seqlen_sum * attention_term + effective_seqlen_squared_sum * attention_core_term
+                # MTP norms and embedding/hidden projection; its attention,
+                # MoE and logits are already counted from the unified pattern.
+                llm_flops += (
+                    seqlen_sum * 3 * 2 * mtp_num_layers * (3 * cfg.model.hidden_size + 2 * cfg.model.hidden_size**2)
+                )
         return llm_flops + _compute_vit_flops()
     else:
         # Compute standard Transformer model FLOPs.
