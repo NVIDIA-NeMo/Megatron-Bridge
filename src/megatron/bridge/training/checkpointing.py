@@ -69,10 +69,15 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.gtp import (
     _get_checkpoint_weight_topology,
+    _get_dataloader_process_group,
     _validate_checkpoint_weight_topology,
     get_data_distribution_group,
 )
-from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
+from megatron.bridge.training.optim import (
+    hybrid_optimizer_state_loading,
+    memory_efficient_precision_aware_optimizer_state_checkpointing,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+)
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -1928,9 +1933,9 @@ def maybe_save_dataloader_state(
     if not hasattr(train_iterator.iterable, "save_state"):
         raise RuntimeError(f"Could not find a save_state for the train_iterator of type {type(train_iterator)}")
 
-    # Resolve process groups and write the per-DP-rank state from a single writer. Tensor-,
-    # pipeline-, and context-parallel ranks of a DP replica all hold the identical per-DP-rank
-    # state, so only the tp/pp/cp leader writes avoiding racing to write the same
+    # Each DP/GTP rank consumes a distinct stream. Tensor-, pipeline-, and
+    # context-parallel peers repeat it, so only the tp/pp/cp leader writes
+    # each stream's state, avoiding racing to write the same
     # train_dataloader_dprank{dp}.pt file.
     pg_collection = pg_collection or get_pg_collection(model)
     is_first_rank = (
@@ -1941,7 +1946,8 @@ def maybe_save_dataloader_state(
     if not is_first_rank:
         return
 
-    dp_rank = get_pg_rank(pg_collection.dp)
+    data_group = _get_dataloader_process_group(pg_collection)
+    dp_rank = get_pg_rank(data_group)
     print_rank_0(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
     train_dataloader_state_dict = train_iterator.iterable.save_state()
     # Get the base directory for the current iteration
@@ -1949,9 +1955,9 @@ def maybe_save_dataloader_state(
     # Construct the specific filename within that iteration directory
     data_state_save_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
 
-    torch.distributed.barrier(group=pg_collection.dp)
+    torch.distributed.barrier(group=data_group)
 
-    if get_pg_rank(pg_collection.dp) == 0:
+    if dp_rank == 0:
         # A retained Energon generation may outlive its model checkpoint. Replace the generation
         # before reusing an iteration so rank files from a previous, larger DP world cannot survive.
         if MultiStorageClientFeature.is_enabled():
@@ -1962,7 +1968,7 @@ def maybe_save_dataloader_state(
             shutil.rmtree(iter_dir)
         ensure_directory_exists(data_state_save_path)
 
-    torch.distributed.barrier(group=pg_collection.dp)
+    torch.distributed.barrier(group=data_group)
 
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
@@ -1989,7 +1995,7 @@ def maybe_load_dataloader_state(
     (non-Energon dataloaders).
 
     Note on per-rank gating, which is **not** symmetric to the save side. Save writes one file per
-    data-parallel rank, gated to a single model-parallel writer because the per-DP-rank state is
+    DP/GTP data-stream rank, gated to a single model-parallel writer because that state is
     identical across the tensor/pipeline/context ranks of a DP replica. Load, by contrast, restores
     on *every* rank: each tensor/pipeline/context rank pulls from its own data iterator (e.g.
     ``qwen3_vl`` ``get_batch``), so all of them must be rewound to the saved position.
@@ -2009,7 +2015,7 @@ def maybe_load_dataloader_state(
         iteration: The iteration the run resumed from (used to locate the state file).
         dataloader_load_path: Base directory the dataloader state was saved under. ``None`` or empty
             disables restore.
-        pg_collection: Process groups, used to resolve the per-DP-rank state file.
+        pg_collection: Process groups, used to resolve the per-DP/GTP-rank state file.
     """
     if train_iterator is None or not dataloader_load_path:
         return
@@ -2046,7 +2052,8 @@ def maybe_load_dataloader_state(
         if msc is not None
         else len(list(Path(iter_dir).glob("train_dataloader_dprank*.pt")))
     )
-    current_dp_size = get_pg_size(pg_collection.dp)
+    data_group = _get_dataloader_process_group(pg_collection)
+    current_dp_size = get_pg_size(data_group)
     if saved_dp_size != current_dp_size:
         raise RuntimeError(
             f"Dataloader state at {iter_dir} was saved for data-parallel size {saved_dp_size}, but the current "
@@ -2054,7 +2061,7 @@ def maybe_load_dataloader_state(
             "refusing to continue."
         )
 
-    dp_rank = get_pg_rank(pg_collection.dp)
+    dp_rank = get_pg_rank(data_group)
     data_state_load_path = join_paths(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
     if not is_file(data_state_load_path):
         raise RuntimeError(
@@ -3403,12 +3410,16 @@ def _load_checkpoint_from_path(
                     # require grad without this context.
                     with (
                         torch.no_grad(),
+                        hybrid_optimizer_state_loading(optimizer),
                         memory_efficient_precision_aware_optimizer_state_checkpointing(
                             optimizer,
                             enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
                         ),
                     ):
                         optimizer.load_state_dict(state_dict["optimizer"])
+                    # Direct checkpoint callers also need HDO's loaded working
+                    # copies and advancing CPU/GPU step counters synchronized.
+                    sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:

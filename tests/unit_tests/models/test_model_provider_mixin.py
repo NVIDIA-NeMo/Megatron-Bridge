@@ -106,6 +106,28 @@ def test_initialize_model_parallel_forwards_gtp_sizes(provider):
     assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 4
 
 
+def test_initialize_model_parallel_finalizes_public_gtp_shards():
+    from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+    provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=4)
+    provider.tensor_model_parallel_size = 2
+    provider.tensor_parallel_num_weight_shards = 4
+    provider.expert_tensor_parallel_size = 1
+    provider.expert_tensor_parallel_num_weight_shards = 2
+    assert provider.gtp_weight_remat_size == 1
+    with (
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("megatron.bridge.training.gtp.configure_gtp_remat") as configure,
+        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as initialize,
+    ):
+        provider.initialize_model_parallel()
+    configure.assert_called_once_with(provider)
+    assert provider.gtp_weight_remat_size == 2
+    assert provider.expert_gtp_weight_remat_size == 2
+    assert initialize.call_args.kwargs["gtp_remat_size"] == 2
+    assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 2
+
+
 def test_initialize_model_parallel_preserves_explicit_gtp_overrides(provider):
     provider.gtp_weight_remat_size = 2
     with (

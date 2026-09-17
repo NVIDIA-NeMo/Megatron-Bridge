@@ -325,6 +325,9 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             seed_kwargs: Additional arguments for `model_parallel_cuda_manual_seed`.
             **model_parallel_kwargs: Additional arguments for `parallel_state.initialize_model_parallel`.
         """
+        # Resolve public weight-shard counts before reading the derived GTP axes
+        # used to construct process groups and configure GTP kernels.
+        self.finalize()
         if not torch.distributed.is_initialized():
             torch.cuda.set_device(get_local_rank_preinit())
             torch.distributed.init_process_group("nccl")

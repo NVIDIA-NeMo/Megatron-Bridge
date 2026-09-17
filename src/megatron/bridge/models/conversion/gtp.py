@@ -14,6 +14,9 @@
 
 """Translate between stored GTP shards and the TP-local tensors used by mappings."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+
 import torch
 
 
@@ -28,6 +31,18 @@ def _get_mapping_shape(param: torch.Tensor) -> torch.Size:
         shape[0] = shape[0] * param.group.size() - param.pad_length
         return torch.Size(shape)
     return param.shape
+
+
+@contextmanager
+def _gtp_weight_load_context(param: torch.Tensor, module: torch.nn.Module) -> Iterator[None]:
+    """Let TE update native FP8 storage while preserving the GTP parameter subclass."""
+    if _is_gtp_param(param) and getattr(param, "_gtp_native_fp8", False):
+        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
+
+        with gtp_native_fp8_load_context(module):
+            yield
+    else:
+        yield
 
 
 def _slice_gtp_weight(weight: torch.Tensor, param: torch.Tensor) -> torch.Tensor:

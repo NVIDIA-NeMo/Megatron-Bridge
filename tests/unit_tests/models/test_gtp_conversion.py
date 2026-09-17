@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -27,6 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.conversion.peft_bridge import AdapterWeightConversionTask
 
 
 pytestmark = pytest.mark.unit
@@ -155,3 +157,154 @@ def test_hf_import_loads_local_gtp_shard(monkeypatch, streaming):
         actual = module.weight
     expected = torch.cat((source[3:], torch.zeros(1, 4)))
     assert torch.equal(actual, expected)
+
+
+@pytest.mark.parametrize("copy_error", [False, True])
+def test_native_fp8_hf_import_preserves_gtp_storage_context(monkeypatch, copy_error):
+    """TE copy must run inside Core's temporary native-FP8 class restoration."""
+    import megatron.core.tensor_parallel.gtp_api as gtp_api
+
+    bridge = _Bridge()
+    module = torch.nn.Module()
+    module.weight = _shard((3, 4), rank=1, padding=1)
+    module.weight._gtp_native_fp8 = True
+    source = torch.arange(20).reshape(5, 4).float()
+    events = []
+    original_copy = torch.nn.Parameter.copy_
+
+    @contextmanager
+    def native_load_context(owner):
+        assert owner is module
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    def copy_with_te_check(param, value):
+        assert events == ["enter"], "Native FP8 copy ran outside Core's load context"
+        events.append("copy")
+        if copy_error:
+            raise RuntimeError("TE copy failed")
+        return original_copy(param, value)
+
+    monkeypatch.setattr(gtp_api, "gtp_native_fp8_load_context", native_load_context, raising=False)
+    monkeypatch.setattr(torch.nn.Parameter, "copy_", copy_with_te_check)
+    mapping = Mock(hf_param="hf.weight", is_grouped_export=False)
+    mapping.hf_to_megatron.return_value = source
+    task = WeightConversionTask("weight", "weight", mapping, megatron_module=module, param_weight=module.weight)
+    monkeypatch.setattr(bridge, "build_conversion_tasks", lambda *args: [task])
+    monkeypatch.setattr(bridge, "finalize_hf_import", lambda *args: None)
+
+    hf = SimpleNamespace(state={"hf.weight": source}, model_name_or_path="toy")
+    if copy_error:
+        with pytest.raises(RuntimeError, match="TE copy failed"):
+            bridge.load_weights_hf_to_megatron(hf, [module])
+    else:
+        bridge.load_weights_hf_to_megatron(hf, [module])
+
+    assert events == ["enter", "copy", "exit"]
+    assert module.weight.is_gtp_weight_remat
+    expected = torch.zeros(3, 4) if copy_error else torch.cat((source[3:], torch.zeros(1, 4)))
+    assert torch.equal(module.weight, expected)
+
+
+@pytest.mark.parametrize("tp_size", [1, 2])
+def test_quantized_export_gathers_gtp_before_computing_values_and_scales(monkeypatch, tp_size):
+    bridge = _Bridge()
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    model.weight = _shard((3, 4), padding=2)
+    logical = torch.arange(16).reshape(4, 4).float()
+    monkeypatch.setattr(
+        torch.distributed,
+        "all_gather_into_tensor",
+        lambda output, local, **kwargs: output.copy_(torch.cat((logical, torch.zeros(2, 4)))),
+    )
+    monkeypatch.setattr("megatron.bridge.models.conversion.param_mapping.get_pg_size", lambda group: tp_size)
+    monkeypatch.setattr("megatron.bridge.models.conversion.quant_bridge.unwrap_model", lambda models: models)
+    mapping = ColumnParallelMapping("weight", "hf.weight")
+    monkeypatch.setattr(mapping, "broadcast_from_pp_rank", lambda weight, **kwargs: weight)
+    monkeypatch.setattr(
+        mapping, "gather_from_tp_ranks", lambda weight: [weight + rank * 32 for rank in range(tp_size)]
+    )
+    task = WeightConversionTask("weight", "weight", mapping, megatron_module=model, param_weight=model.weight)
+
+    def quantize(weight, block_size):
+        assert weight.shape == (4, 4), "Quantization received a stored GTP shard"
+        assert block_size == (2, 2)
+        return weight.to(torch.int8), weight.reshape(2, 2, 2, 2).amax(dim=(1, 3))
+
+    exported = dict(
+        bridge.stream_weights_megatron_to_hf_quant(
+            [model],
+            SimpleNamespace(state={}),
+            lambda name: True,
+            quantize,
+            quant_block_size=(2, 2),
+            conversion_tasks=[task],
+            show_progress=False,
+        )
+    )
+    expected_weights = torch.cat([logical + rank * 32 for rank in range(tp_size)]).to(torch.int8)
+    expected_scales = torch.cat([torch.tensor([[5.0, 7.0], [13.0, 15.0]]) + rank * 32 for rank in range(tp_size)])
+    assert torch.equal(exported["hf.weight"], expected_weights)
+    assert torch.equal(exported["hf.weight_scale_inv"], expected_scales)
+
+
+@pytest.mark.parametrize("grouped", [False, True])
+def test_adapter_export_and_merge_materialize_full_gtp_weights(monkeypatch, grouped):
+    bridge = _Bridge()
+    shape_in, shape_out = ((2, 2, 4), (2, 6, 2)) if grouped else ((2, 4), (6, 2))
+    full_in = torch.arange(torch.tensor(shape_in).prod()).reshape(shape_in).float()
+    full_out = torch.arange(torch.tensor(shape_out).prod()).reshape(shape_out).float() + 1
+    tensors = {}
+
+    def task(name, full):
+        param = _shard((full.shape[0] // 2, *full.shape[1:]), rank=0)
+        tensors[param.group] = full
+        mapping = DirectMapping(name, f"hf.{name}")
+        monkeypatch.setattr(mapping, "broadcast_from_pp_rank", lambda weight, **kwargs: weight)
+        return WeightConversionTask(name, name, mapping, param_weight=param)
+
+    in_task, out_task = task("linear_in.weight", full_in), task("linear_out.weight", full_out)
+    monkeypatch.setattr("megatron.bridge.models.conversion.param_mapping.get_pg_size", lambda group: 1)
+    monkeypatch.setattr(
+        torch.distributed, "all_gather_into_tensor", lambda output, local, *, group: output.copy_(tensors[group])
+    )
+    adapter = AdapterWeightConversionTask("linear", None, 2, 2, in_task, out_task, grouped)
+
+    [materialized] = bridge.materialize_adapter_weights([adapter])
+
+    actual_in, actual_out = materialized.linear_in_weight.weight, materialized.linear_out_weight.weight
+    assert torch.equal(actual_in, full_in)
+    assert torch.equal(actual_out, full_out)
+    # The same materialized tensors feed both adapter-only export and the base-weight merge.
+    assert torch.equal(actual_out @ actual_in, full_out @ full_in)
+
+
+@pytest.mark.parametrize("remote_pp", [False, True])
+def test_raw_fp8_detection_rejects_gtp_on_every_pp_rank(monkeypatch, remote_pp):
+    bridge = _Bridge()
+    model = torch.nn.Module()
+    model.weight = _shard((4, 4), rank=0)
+    model.weight.get_metadata = lambda: {
+        "is_2D_scaled": True,
+        "rowwise_data": torch.zeros(4, 4, dtype=torch.uint8),
+        "rowwise_scale_inv": torch.ones(2, 2),
+    }
+    path = "megatron.bridge.models.conversion.model_bridge"
+    monkeypatch.setattr(f"{path}.persistent_buffers", lambda module: [])
+    monkeypatch.setattr(f"{path}._megatron_local_name_to_global", lambda *args: "weight")
+    monkeypatch.setattr(f"{path}.get_pg_size", lambda group: 2)
+
+    def gather(flags, local, **kwargs):
+        if not remote_pp:
+            assert local == {"weight": -1}
+        flags[:] = [{"weight": -1}, {}]
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather)
+    with pytest.raises(ValueError, match="raw FP8 export does not support GTP"):
+        bridge._detect_fp8_params(
+            [] if remote_pp else [model], SimpleNamespace(), ["weight"], None, "rowwise_scale_inv"
+        )

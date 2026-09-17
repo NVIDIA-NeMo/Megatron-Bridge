@@ -62,7 +62,9 @@ def _validate_checkpoint_weight_topology(
     *, saved: tuple[int, int, int, int], requested: tuple[int, int, int, int]
 ) -> None:
     """Reject native resharding when either side uses the GTP SwiGLU layout."""
-    if saved == requested or all(size == 1 for size in (saved[1], saved[3], requested[1], requested[3])):
+    dense_changed = (saved[1] > 1 or requested[1] > 1) and saved[:2] != requested[:2]
+    expert_changed = (saved[3] > 1 or requested[3] > 1) and saved[2:] != requested[2:]
+    if not dense_changed and not expert_changed:
         return
     raise ValueError(
         "Resharding a GTP checkpoint is not supported: Megatron-Core's SwiGLU checkpoint "
@@ -71,6 +73,14 @@ def _validate_checkpoint_weight_topology(
         "with load_megatron_model), export HF weights, then import those weights into "
         "the desired topology."
     )
+
+
+def _get_dataloader_process_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
+    """Return DP x dense GTP, excluding CP ranks that repeat the same samples."""
+    remat_group = getattr(pg_collection, "gtp_remat", None)
+    if remat_group is not None and remat_group.size() > 1:
+        return parallel_state.get_data_parallel_group(with_gtp_remat=True)
+    return pg_collection.dp
 
 
 def is_gtp_remat_active(model_config: Any) -> bool:

@@ -54,7 +54,13 @@ from transformers.configuration_utils import PretrainedConfig
 from transformers.modeling_utils import PreTrainedModel
 
 from megatron.bridge.models.common import ModelConfigOverrideMixin
-from megatron.bridge.models.conversion.gtp import _gather_gtp_weight, _get_mapping_shape, _slice_gtp_weight
+from megatron.bridge.models.conversion.gtp import (
+    _gather_gtp_weight,
+    _get_mapping_shape,
+    _gtp_weight_load_context,
+    _is_gtp_param,
+    _slice_gtp_weight,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     LocalHFParam,
@@ -1533,7 +1539,7 @@ class MegatronModelBridge(
                 # Float8BlockwiseQTensor) that is a leaf with requires_grad=True.
                 # In-place updates under grad mode will raise:
                 # "a leaf Variable that requires grad is being used in an in-place operation."
-                with torch.no_grad():
+                with torch.no_grad(), _gtp_weight_load_context(task.param_weight, task.megatron_module):
                     task.param_weight.copy_(converted_weights)
         self.finalize_hf_import(megatron_model)
         if use_megatron_fsdp:
@@ -2360,6 +2366,10 @@ class MegatronModelBridge(
                     local_fp8_flags[global_name] = (
                         local_weights.shape[0] // scale_tensor.shape[0] if has_valid_row_ratio else True
                     )
+                    if _is_gtp_param(local_weights):
+                        # Propagate rejection through the same PP collective before any rank
+                        # creates raw storage views, which do not retain GTP layout metadata.
+                        local_fp8_flags[global_name] = -1
 
         # Gather across PP ranks to ensure consistent insertion decisions
         fp8_flags_list: list[Dict[str, bool | int]] = [None] * get_pg_size(pp_group)
@@ -2369,6 +2379,11 @@ class MegatronModelBridge(
             if not d:
                 continue
             for k, v in d.items():
+                if v == -1:
+                    raise ValueError(
+                        f"{k}: raw FP8 export does not support GTP sharding; "
+                        "use gathered dequantized export or gathered quantized export instead"
+                    )
                 if v:
                     global_fp8_flags[k] = v
 

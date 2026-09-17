@@ -23,6 +23,7 @@ from megatron.core.transformer import MLATransformerConfig, TransformerConfig
 from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 
 from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.training.gtp import _get_checkpoint_weight_topology
 from megatron.bridge.training.mlm_compat.activations import squared_relu
 
 
@@ -78,9 +79,19 @@ def _transformer_config_from_args(
 
     # Translate args to core transformer configuration
     kw_args = {}
+    init_fields = {f.name for f in dataclasses.fields(config_class) if f.init}
     for f in dataclasses.fields(config_class):
-        if hasattr(args, f.name):
+        if f.init and hasattr(args, f.name):
             kw_args[f.name] = getattr(args, f.name)
+    # Some Bridge config variants expose the runtime GTP sizes as init=False.
+    # Preserve legacy MLM values through the public constructor shard counts.
+    tp, gtp, etp, egtp = _get_checkpoint_weight_topology(args)
+    for name, parallel_size, remat_size in (
+        ("tensor_parallel_num_weight_shards", tp, gtp),
+        ("expert_tensor_parallel_num_weight_shards", etp, egtp),
+    ):
+        if name in init_fields and kw_args.get(name) is None and remat_size > 1:
+            kw_args[name] = parallel_size * remat_size
     kw_args["persist_layer_norm"] = not args.no_persist_layer_norm
     kw_args["layernorm_zero_centered_gamma"] = getattr(
         args, "layernorm_zero_centered_gamma", getattr(args, "apply_layernorm_1p", False)

@@ -16,7 +16,7 @@
 import os
 import pickle
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -2280,6 +2280,7 @@ class TestLoadCheckpoint:
         # Should return default values when no checkpoint found
         assert result == (0, 0)
 
+    @pytest.mark.parametrize("optimizer_load_error", [False, True])
     @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False)
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
@@ -2333,8 +2334,9 @@ class TestLoadCheckpoint:
         mock_load_base,
         mock_is_hf_checkpoint_dir,
         load_checkpoint_fixtures,
+        optimizer_load_error,
     ):
-        """Test successful checkpoint loading."""
+        """Direct loading syncs HDO only after a successful restore and context cleanup."""
         # Setup mocks
         mock_dist_init.return_value = False  # Disable distributed for simpler testing
         mock_is_last_rank.return_value = False
@@ -2415,12 +2417,63 @@ class TestLoadCheckpoint:
         }
         mock_load_base.return_value = (mock_state_dict, "/ckpt/path", False, CheckpointType.GLOBAL)
 
-        result = load_checkpoint(
-            load_checkpoint_fixtures["mock_state"],
-            load_checkpoint_fixtures["mock_model"],
-            load_checkpoint_fixtures["mock_optimizer"],
-            load_checkpoint_fixtures["mock_scheduler"],
-        )
+        optimizer = load_checkpoint_fixtures["mock_optimizer"]
+        optimizer.is_stub_optimizer = False
+        events = []
+
+        @contextmanager
+        def load_context(name, *_args, **_kwargs):
+            events.append(f"enter {name}")
+            try:
+                yield
+            finally:
+                events.append(f"exit {name}")
+
+        def load_optimizer(loaded_state):
+            assert loaded_state is mock_state_dict["optimizer"]
+            assert not torch.is_grad_enabled()
+            events.append("load optimizer")
+            if optimizer_load_error:
+                raise RuntimeError("optimizer restore failed")
+
+        optimizer.load_state_dict.side_effect = load_optimizer
+        with (
+            patch(
+                "megatron.bridge.training.checkpointing.hybrid_optimizer_state_loading",
+                side_effect=partial(load_context, "hybrid"),
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.memory_efficient_precision_aware_optimizer_state_checkpointing",
+                side_effect=partial(load_context, "staging"),
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.sync_hybrid_device_optimizer_fp32_master_copies",
+                side_effect=lambda _optimizer: events.append("sync optimizer"),
+            ) as sync_optimizer,
+        ):
+            if optimizer_load_error:
+                with pytest.raises(RuntimeError, match="optimizer restore failed"):
+                    load_checkpoint(
+                        load_checkpoint_fixtures["mock_state"],
+                        load_checkpoint_fixtures["mock_model"],
+                        optimizer,
+                        load_checkpoint_fixtures["mock_scheduler"],
+                    )
+            else:
+                result = load_checkpoint(
+                    load_checkpoint_fixtures["mock_state"],
+                    load_checkpoint_fixtures["mock_model"],
+                    optimizer,
+                    load_checkpoint_fixtures["mock_scheduler"],
+                )
+
+        assert events[:5] == ["enter hybrid", "enter staging", "load optimizer", "exit staging", "exit hybrid"]
+        if optimizer_load_error:
+            assert len(events) == 5
+            sync_optimizer.assert_not_called()
+            return
+        assert events[5:] == ["sync optimizer"]
+        sync_optimizer.assert_called_once_with(optimizer)
 
         # Verify results
         assert result[0] == 1000  # iteration
@@ -5899,6 +5952,7 @@ class TestMaybeLoadDataloaderState:
         modeling a collection configured without context parallelism (tp/pp/dp are always
         populated); the real get_pg_rank then reads the absent cp group as rank 0."""
         pg = Mock()
+        pg.gtp_remat = None
         if cp is None:
             pg.cp = None
         else:
@@ -6200,6 +6254,7 @@ class TestMaybeSaveDataloaderState:
         modeling a collection configured without context parallelism (tp/pp/dp are always
         populated); the real get_pg_rank then reads the absent cp group as rank 0."""
         pg = Mock()
+        pg.gtp_remat = None
         if cp is None:
             pg.cp = None
         else:
@@ -6215,6 +6270,63 @@ class TestMaybeSaveDataloaderState:
         train_iterator = Mock()
         train_iterator.iterable.save_state.return_value = {"dummy_energon_state": "xyz"}
         return train_iterator
+
+    def test_gtp_peers_save_distinct_streams_and_restore_without_racing_cleanup(self, tmp_path):
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        (iter_dir / "stale.pt").write_text("stale generation")
+        groups = []
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier") as barrier:
+            for rank in range(2):
+                pg = self._pg(dp=0)  # Both peers have the same replica-DP rank.
+                pg.gtp_remat = Mock()
+                pg.gtp_remat.size.return_value = 2
+                data_group = Mock()
+                data_group.rank.return_value = rank
+                data_group.size.return_value = 2
+                groups.append(data_group)
+                train_iterator = self._iterator()
+                train_iterator.iterable.save_state.return_value = {"stream": rank}
+                with patch(
+                    "megatron.bridge.training.gtp.parallel_state.get_data_parallel_group", return_value=data_group
+                ) as get_group:
+                    maybe_save_dataloader_state(Mock(), train_iterator, 10, str(tmp_path), pg_collection=pg)
+                get_group.assert_called_once_with(with_gtp_remat=True)
+        assert not (iter_dir / "stale.pt").exists()
+        assert sorted(path.name for path in iter_dir.glob("*.pt")) == [
+            "train_dataloader_dprank000.pt",
+            "train_dataloader_dprank001.pt",
+        ]
+        assert [call.kwargs["group"] for call in barrier.call_args_list] == [
+            groups[0],
+            groups[0],
+            groups[1],
+            groups[1],
+        ]
+        for rank, data_group in enumerate(groups):
+            pg = self._pg(dp=0, cp=1)  # CP peers restore the same stream file.
+            pg.gtp_remat = Mock()
+            pg.gtp_remat.size.return_value = 2
+            train_iterator = self._iterator()
+            with patch("megatron.bridge.training.gtp.parallel_state.get_data_parallel_group", return_value=data_group):
+                maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=pg)
+            train_iterator.iterable.restore_state.assert_called_once_with({"stream": rank})
+
+    def test_gtp_rejects_legacy_duplicate_dataloader_state(self, tmp_path):
+        iter_dir = Path(get_checkpoint_name(str(tmp_path), 10))
+        iter_dir.mkdir(parents=True)
+        torch.save({"dataloader_state_dict": {"stream": 0}}, iter_dir / "train_dataloader_dprank000.pt")
+        pg = self._pg(dp=0)
+        pg.gtp_remat = Mock()
+        pg.gtp_remat.size.return_value = 2
+        data_group = Mock()
+        data_group.rank.return_value = 0
+        data_group.size.return_value = 2
+        train_iterator = self._iterator()
+        with patch("megatron.bridge.training.gtp.parallel_state.get_data_parallel_group", return_value=data_group):
+            with pytest.raises(RuntimeError, match="saved for data-parallel size 1.*current data-parallel size is 2"):
+                maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=pg)
+        train_iterator.iterable.restore_state.assert_not_called()
 
     def test_noop_when_no_path(self):
         """No save path => nothing is saved."""

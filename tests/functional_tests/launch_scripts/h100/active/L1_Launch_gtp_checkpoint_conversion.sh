@@ -24,5 +24,7 @@ export CUDA_VISIBLE_DEVICES="0,1"
 uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \
   -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py
+  tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py \
+  tests/functional_tests/test_groups/converter/test_gtp_native_fp8_conversion.py \
+  tests/functional_tests/test_groups/data/energon/test_gtp_checkpoint_state.py
 uv run python -m coverage combine -q

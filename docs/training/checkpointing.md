@@ -200,16 +200,29 @@ axis. RNG checkpoint entries preserve distinct streams on dense and expert GTP r
 HF import splits each mapped TP-local tensor into its stored GTP row shard. HF export
 gathers those rows and removes alignment padding before applying the existing TP/EP/PP
 mappings. Use `AutoBridge.export_hf_weights()` or `save_hf_weights()` for this export;
-the local HF parameter-view API cannot describe the extra GTP shard axis.
+the local HF parameter-view API cannot describe the extra GTP shard axis. Quantized
+HF export and LoRA adapter export/merge also gather before applying their mappings.
+Raw FP8 export tasks and local native MXFP8 parameter export reject GTP before
+yielding weights, because their storage views cannot preserve this layout.
 
 When loading a native GTP checkpoint with `load_megatron_model()`, pass `mp_overrides`
-with the saved dense/expert TP sizes and `tensor_parallel_num_weight_shards` /
-`expert_tensor_parallel_num_weight_shards`. Changing that weight-sharding topology is
+with the saved TP size and weight shard count for each axis that uses GTP:
+`tensor_model_parallel_size` / `tensor_parallel_num_weight_shards` for dense weights,
+and `expert_tensor_parallel_size` / `expert_tensor_parallel_num_weight_shards` for
+expert weights. Axes without GTP can still change TP independently. Changing a GTP
+weight-sharding topology is
 rejected because the current Megatron-Core SwiGLU checkpoint layout can reorder
 gate/up rows. Training resume and finetuning enforce the same restriction, including
 loading a non-GTP native checkpoint into a GTP model. To change layouts, export HF
 weights from the original topology first, then import the HF weights into the new
 topology.
+
+Energon shards samples across DP and dense GTP ranks while CP peers consume the
+same samples. Dataloader checkpoints use the same group for file ownership and
+restore; old duplicated GTP states with a different stream count are rejected.
+With GTP, do not enable both `dist_ckpt_optim_fully_reshardable` and
+`distrib_optim_fully_reshardable_mem_efficient`: Core does not create the Gloo
+groups needed by that combination.
 
 The focused two-GPU regression covers exact BF16 HF round-trips, model and named
 RNG-stream resume, and rejection of unsafe topology changes, with fully parallel
@@ -217,14 +230,19 @@ checkpoint I/O enabled and disabled:
 
 ```bash
 uv run python -m torch.distributed.run --standalone --nproc_per_node=2 -m pytest \
-  tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py -q
+  tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py \
+  tests/functional_tests/test_groups/converter/test_gtp_native_fp8_conversion.py \
+  tests/functional_tests/test_groups/data/energon/test_gtp_checkpoint_state.py -q
 ```
 
 The H100 L1 launcher `L1_Launch_gtp_checkpoint_conversion.sh` runs this matrix in CI.
 GTP cases require TransformerEngine 2.19 or newer and skip on older versions; the
 ordinary TP baseline cases still run.
 
-This coverage does not validate native MXFP8, Muon optimizer state, or dataloader resume.
+The additional tests check native FP8 HF import against an independent TE cast and
+exact Energon sample continuation after restore. Native MXFP8 requires Blackwell
+and skips on H100; this does not validate native MXFP8 training or Muon optimizer
+state. Quantized and LoRA GTP mapping regressions use controlled unit fixtures.
 
 ## Performance Optimizations
 

@@ -24,6 +24,7 @@ import pytest
 from megatron.bridge.models.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.bridge.training.gtp import (
     _get_checkpoint_weight_topology,
+    _get_dataloader_process_group,
     _validate_checkpoint_weight_topology,
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -88,10 +89,32 @@ def test_checkpoint_weight_topology_rejects_native_gtp_resharding(saved, request
 
 @pytest.mark.parametrize(
     "saved,requested",
-    [((1, 2, 1, 4), (1, 2, 1, 4)), ((1, 1, 1, 1), (2, 1, 4, 1))],
+    [
+        ((1, 2, 1, 4), (1, 2, 1, 4)),
+        ((1, 1, 1, 1), (2, 1, 4, 1)),
+        ((2, 2, 2, 1), (2, 2, 1, 1)),
+        ((2, 1, 2, 2), (1, 1, 2, 2)),
+    ],
 )
 def test_checkpoint_weight_topology_preserves_same_gtp_and_plain_resharding(saved, requested):
     _validate_checkpoint_weight_topology(saved=saved, requested=requested)
+
+
+@pytest.mark.parametrize("dense_gtp_size", [None, 1, 2])
+def test_dataloader_process_group_excludes_cp_and_preserves_dense_gtp(dense_gtp_size):
+    pg = SimpleNamespace(dp=object(), gtp_remat=None, expt_gtp_remat=MagicMock())
+    pg.expt_gtp_remat.size.return_value = 2
+    if dense_gtp_size is not None:
+        pg.gtp_remat = MagicMock()
+        pg.gtp_remat.size.return_value = dense_gtp_size
+    with patch("megatron.bridge.training.gtp.parallel_state.get_data_parallel_group") as get_group:
+        group = _get_dataloader_process_group(pg)
+    if dense_gtp_size == 2:
+        get_group.assert_called_once_with(with_gtp_remat=True)
+        assert group is get_group.return_value
+    else:
+        get_group.assert_not_called()
+        assert group is pg.dp
 
 
 def _gtp_config(*, dense_size: int = 2, expert_size: int = 1) -> SimpleNamespace:

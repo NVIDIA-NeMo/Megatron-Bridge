@@ -348,6 +348,46 @@ class TestLoadMegatronModel:
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_dense_gtp_preserves_dense_topology_with_default_expert_tp(self, load_config, build_model):
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=4)
+        cfg.tensor_model_parallel_size = 2
+        cfg.tensor_parallel_num_weight_shards = 4
+        cfg.expert_tensor_parallel_size = 2
+        load_config.return_value = (cfg, None)
+        load_megatron_model(
+            "/ckpt", mp_overrides={"tensor_model_parallel_size": 2, "tensor_parallel_num_weight_shards": 4}
+        )
+        build_model.assert_called_once()
+        assert cfg.expert_tensor_parallel_size == 1
+
+    @pytest.mark.parametrize("legacy", [False, True])
+    def test_load_model_config_preserves_derived_gtp_sizes(self, tmp_path, legacy):
+        import yaml
+
+        from megatron.bridge.recipes.gpt import vanilla_gpt_pretrain_config
+        from megatron.bridge.training.gtp import _get_checkpoint_weight_topology
+
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=4)
+        cfg.tensor_model_parallel_size = 2
+        cfg.expert_tensor_parallel_size = 1
+        cfg.gtp_weight_remat_size = 2
+        cfg.expert_gtp_weight_remat_size = 4
+        config = vanilla_gpt_pretrain_config()
+        config.model = cfg
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+        if legacy:
+            # Older saves retained runtime fields while leaving constructor shard counts unset.
+            raw = yaml.safe_load((tmp_path / "run_config.yaml").read_text())
+            raw["model"]["tensor_parallel_num_weight_shards"] = None
+            raw["model"]["expert_tensor_parallel_num_weight_shards"] = None
+            (tmp_path / "run_config.yaml").write_text(yaml.safe_dump(raw))
+        loaded, _ = load_model_config(str(tmp_path))
+        assert _get_checkpoint_weight_topology(loaded) == (2, 2, 1, 4)
+        assert loaded.tensor_parallel_num_weight_shards == 4
+        assert loaded.expert_tensor_parallel_num_weight_shards == 4
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_plain_checkpoint_cannot_be_loaded_directly_into_gtp(self, load_config, build_model):
         cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
         load_config.return_value = (cfg, None)
