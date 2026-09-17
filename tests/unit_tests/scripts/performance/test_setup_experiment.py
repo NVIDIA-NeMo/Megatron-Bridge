@@ -173,26 +173,26 @@ def test_nvcre_flags_are_filtered_from_recipe_args() -> None:
 # ── _nvcre_env_vars ───────────────────────────────────────────────────────────
 
 
-def test_nvcre_env_vars_without_hf_token() -> None:
-    """Custom env vars must be forwarded unchanged when no HF token is given."""
+def test_nvcre_env_vars_without_hf_token_secret() -> None:
+    """Custom env vars must be forwarded unchanged when no HF token secret is configured."""
     custom = {"NCCL_TIMEOUT": "1800", "MY_VAR": "1"}
-    result = setup_experiment._nvcre_env_vars(custom, hf_token=None)
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name=None)
     assert result == custom
     assert result is not custom  # must be an independent copy
 
 
-def test_nvcre_env_vars_with_hf_token() -> None:
-    """HF_TOKEN and offline-mode overrides must be injected when a token is provided."""
-    result = setup_experiment._nvcre_env_vars({}, hf_token="hf-secret-token")
-    assert result["HF_TOKEN"] == "hf-secret-token"
+def test_nvcre_env_vars_with_hf_token_secret_enables_online_mode() -> None:
+    """When an HF secret is configured, offline-mode flags must be overridden to allow pod access."""
+    result = setup_experiment._nvcre_env_vars({}, hf_token_secret_name="hf-token-secret")
     assert result["HF_HUB_OFFLINE"] == "0"
     assert result["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" not in result  # token is injected via secret_env_vars, not here
 
 
-def test_nvcre_env_vars_hf_token_forces_online_mode() -> None:
-    """HF token must override any caller-supplied offline flag so the pod can reach HuggingFace."""
+def test_nvcre_env_vars_hf_token_secret_forces_online_mode() -> None:
+    """HF secret must override any caller-supplied offline flag so the pod can reach HuggingFace."""
     custom = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
-    result = setup_experiment._nvcre_env_vars(custom, hf_token="tok")
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name="hf-token-secret")
     assert result["HF_HUB_OFFLINE"] == "0"
     assert result["TRANSFORMERS_OFFLINE"] == "0"
-    assert "HF_TOKEN" in result
+    assert "HF_TOKEN" not in result

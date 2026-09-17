@@ -477,16 +477,18 @@ def maybe_increase_n_attempts_on_flaky_failure(
     return n_attempts
 
 
-def _nvcre_env_vars(custom_env_vars: Dict[str, str], hf_token: Optional[str]) -> Dict[str, str]:
-    """Build the env-var dict for an NVCRE executor.
+def _nvcre_env_vars(custom_env_vars: Dict[str, str], hf_token_secret_name: Optional[str]) -> Dict[str, str]:
+    """Build the plain env-var dict for an NVCRE executor.
 
-    When *hf_token* is set, HF connectivity is always enabled — the pod has no
-    access to the host HF cache, so offline mode must not be forced even when
-    ``--offline`` was passed for launcher-side setup.
+    When an HF token secret is configured, HF connectivity is always enabled
+    via plain env vars — the pod has no access to the host HF cache, so offline
+    mode must not be forced here even when ``--offline`` was passed for
+    launcher-side setup. The token itself is injected via secret_env_vars, not
+    here.
     """
     env = custom_env_vars.copy()
-    if hf_token:
-        env.update({"HF_TOKEN": hf_token, "HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
+    if hf_token_secret_name:
+        env.update({"HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
     return env
 
 
@@ -573,6 +575,8 @@ def main(
     nvcre_kubeconfig: Optional[str] = None,
     nvcre_kube_context: Optional[str] = None,
     nvcre_gang_scheduler_name: Optional[str] = None,
+    nvcre_hf_token_secret_name: Optional[str] = None,
+    nvcre_hf_token_secret_key: str = "token",
     deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
@@ -727,7 +731,9 @@ def main(
             kube_context=nvcre_kube_context,
             gang_scheduler_name=nvcre_gang_scheduler_name,
         )
-        executor.env_vars = _nvcre_env_vars(custom_env_vars, hf_token)
+        executor.env_vars = _nvcre_env_vars(custom_env_vars, nvcre_hf_token_secret_name)
+        if nvcre_hf_token_secret_name:
+            executor.secret_env_vars["HF_TOKEN"] = (nvcre_hf_token_secret_name, nvcre_hf_token_secret_key)
     else:
         executor = slurm_executor(
             gpu=gpu,
@@ -1145,6 +1151,8 @@ if __name__ == "__main__":
         nvcre_kubeconfig=args.nvcre_kubeconfig,
         nvcre_kube_context=args.nvcre_kube_context,
         nvcre_gang_scheduler_name=args.nvcre_gang_scheduler_name,
+        nvcre_hf_token_secret_name=args.nvcre_hf_token_secret_name,
+        nvcre_hf_token_secret_key=args.nvcre_hf_token_secret_key,
         deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,

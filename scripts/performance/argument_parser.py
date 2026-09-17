@@ -767,6 +767,20 @@ def parse_cli_args():
         required=False,
         default=None,
     )
+    nvcre_args.add_argument(
+        "--nvcre_hf_token_secret_name",
+        type=str,
+        help="Name of the Kubernetes Secret holding the HuggingFace token.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_hf_token_secret_key",
+        type=str,
+        help="Key inside the Kubernetes Secret that holds the HuggingFace token value.",
+        required=False,
+        default="token",
+    )
 
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
