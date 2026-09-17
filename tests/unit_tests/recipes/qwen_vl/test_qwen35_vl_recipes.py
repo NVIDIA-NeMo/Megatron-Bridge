@@ -76,6 +76,7 @@ _QWEN35_VL_H100_SFT_FUNCS = [
     _qwen35_vl_h100_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config,
     _qwen35_vl_h100_module.qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config,
     _qwen35_vl_h100_module.qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_122b_a10b_sft_long_context_96gpu_h100_bf16_config,
     _qwen35_vl_h100_module.qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config,
 ]
 
@@ -797,6 +798,37 @@ def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft is None
     assert cfg.optimizer.lr == 2e-5
     assert cfg.model.recompute_granularity == "full"
+
+
+def test_qwen35_vl_122b_a10b_long_context_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """122B-A10B long-context SFT should add CP and packing on top of the 48-GPU SFT layout."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_h100_module.qwen35_vl_122b_a10b_sft_long_context_96gpu_h100_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.calculate_per_token_loss is True
+    # GatedDeltaNet owns its CP communication; the attention-only kwarg must stay unset.
+    assert getattr(cfg.model, "cp_comm_type", None) is None
+    assert cfg.model.seq_length == 8192
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
+    assert cfg.train.global_batch_size == 32
+    # In-batch packing requires at least two sequences per micro-batch.
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.enable_in_batch_packing is True
+    assert cfg.dataset.defer_in_batch_packing_to_step is True
+    assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 4
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.peft is None
+    assert cfg.optimizer.lr == 2e-5
 
 
 def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):

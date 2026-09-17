@@ -1387,6 +1387,38 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def qwen35_vl_122b_a10b_sft_long_context_96gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the long-context SFT config for Qwen3.5-VL 122B-A10B (MoE).
+
+    Builds on the 48-GPU SFT recipe and adds context parallelism plus
+    processor-native in-batch sequence packing. CP=2 keeps the per-rank
+    sequence shard at the 4096 tokens the 48-GPU recipe already fits, and
+    dense DP stays at 4 so DP*CP still covers EP=8.
+
+    Default configuration: 96 GPUs
+    - TP=2, PP=6, CP=2, EP=8
+    - MBS=2, GBS=32 with deferred in-batch packing
+    - Sequence length: 8192
+    """
+    cfg = qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config()
+
+    cfg.model.context_parallel_size = 2
+    # In-batch packing concatenates sequences within a micro-batch and requires MBS >= 2.
+    cfg.train.micro_batch_size = 2
+    # Qwen3.5 hybrid layers include GatedDeltaNet, which owns its CP
+    # communication and does not accept the attention-only cp_comm_type kwarg.
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.seq_length = 8192
+
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.dataset.defer_in_batch_packing_to_step = True
+    cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
+
+    cfg.ddp.average_in_collective = False
+    return cfg
+
+
 def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 397B-A17B (MoE).
 
@@ -2378,6 +2410,7 @@ __all__ = [
     "qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config",
     "qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config",
     "qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config",
+    "qwen35_vl_122b_a10b_sft_long_context_96gpu_h100_bf16_config",
     "qwen35_vl_27b_peft_2gpu_h100_bf16_config",
     "qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config",  # pragma: allowlist secret
     "qwen35_vl_27b_sft_16gpu_h100_bf16_config",
