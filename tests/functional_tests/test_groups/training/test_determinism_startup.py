@@ -34,6 +34,7 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
             configure_determinism({'deterministic_mode': True})
         if case != 'late':
             assert is_determinism_configured()  # Builder uses the early launcher.
+            assert os.environ['TRITON_CACHE_AUTOTUNING'] == '0'
 
         from megatron.core import parallel_state
         from megatron.core.tensor_parallel.layers import ColumnParallelLinear
@@ -48,6 +49,10 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
         )
         from megatron.bridge.training.initialize import initialize_megatron
 
+        module_paths = {
+            name: str(Path(sys.modules[name].__file__).resolve())
+            for name in ('megatron.core', 'megatron.bridge', 'megatron.determinism')
+        }
         logging.basicConfig(level=logging.INFO)
         options = dict(
             num_layers=1, hidden_size=128, ffn_hidden_size=256, num_attention_heads=4,
@@ -83,7 +88,9 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
                 assert 'before CUDA' in str(error)
             else:
                 raise AssertionError('Accepted the first policy setup after CUDA initialization')
-            Path(report_path).write_text(json.dumps({'case': case, 'late_setup_rejected': True}))
+            Path(report_path).write_text(json.dumps({
+                'case': case, 'late_setup_rejected': True, 'module_paths': module_paths,
+            }))
             sys.exit(0)
 
         finalizations = []
@@ -145,6 +152,7 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
             Path(report_path).write_text(json.dumps({
                 'case': case, 'policy': policy, 'compared_tensors': len(first),
                 'config_drift_rejected': True, 'environment_drift_rejected': True,
+                'module_paths': module_paths,
             }))
         finally:
             parallel_state.destroy_model_parallel()
