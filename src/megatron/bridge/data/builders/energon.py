@@ -49,7 +49,9 @@ class EnergonTaskEncoderConfig:
     def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
         """Validate or synchronize model-owned fields with resolved dataset settings.
 
-        Called after generic dataset validation and before runtime construction.
+        Called during dataset finalization and before runtime construction,
+        after generic validation. Training finalizes the dataset after deriving
+        padding settings; preliminary generic validation does not call this hook.
         Implementations must be idempotent, must not construct runtime objects,
         and must not modify generic dataset settings. Recipe/CLI overrides and
         training-derived padding settings are available when the builder runs.
@@ -222,7 +224,7 @@ class EnergonDatasetConfig(DataloaderConfig):
     in_batch_packing_pad_to_multiple_of: int = 1
 
     def validate(self) -> None:
-        """Validate declarative Energon settings."""
+        """Validate declarative fields before training derives dataset settings."""
         if not isinstance(self.path, str) or not self.path.strip():
             raise ValueError("EnergonDatasetConfig.path must be set to a non-empty dataset path.")
         if self.seq_length <= 0:
@@ -277,17 +279,18 @@ class EnergonDatasetConfig(DataloaderConfig):
                 "dataset_kwargs cannot override builder-owned arguments: " + ", ".join(sorted(conflicting_kwargs))
             )
         self.task_encoder.validate()
-        self.task_encoder.validate_dataset(self)
 
     def finalize(self) -> None:
-        """Finalize dataloader fields and validate the config."""
+        """Finalize dataloader fields and validate the resolved encoder settings."""
         super().finalize()
         self.validate()
+        self.task_encoder.validate_dataset(self)
 
 
 def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
     """Construct the configured Energon task encoder at runtime."""
     config.validate()
+    config.task_encoder.validate_dataset(config)
     return config.task_encoder.build_task_encoder(config)
 
 
