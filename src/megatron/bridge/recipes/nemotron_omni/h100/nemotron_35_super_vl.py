@@ -184,12 +184,20 @@ def nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.use_te_rng_tracker = False
     cfg.rng.te_rng_tracker = False
 
-    cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = 0
-    cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = 0
     cfg.checkpoint.async_save = False
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
     cfg.model.freeze_vision_projection = False
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+    }
     return cfg
 
 
@@ -231,6 +239,16 @@ def nemotron_35_super_vl_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
     cfg.mixed_precision.grad_reduce_in_fp32 = True
     cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg
 
 
@@ -347,8 +365,6 @@ def nemotron_35_super_vl_peft_16gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        "NVLINK_DOMAIN_SIZE": 8,
-        "USE_MNNVL": 0,
     }
     return cfg
 
