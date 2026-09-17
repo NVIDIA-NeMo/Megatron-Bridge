@@ -61,7 +61,6 @@ from megatron.bridge.training.checkpointing import (
     ensure_directory_exists,
     find_checkpoint_rank_0,
     get_checkpoint_name,
-    get_checkpoint_run_config_filename,
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
     get_rng_state,
@@ -158,12 +157,6 @@ class TestCheckpointUtilities:
     def test_get_checkpoint_train_state_filename(self, checkpoints_path, prefix, expected):
         """Test train state filename generation."""
         result = get_checkpoint_train_state_filename(checkpoints_path, prefix)
-        assert result == expected
-
-    def test_get_checkpoint_run_config_filename(self):
-        """Test run config filename generation."""
-        result = get_checkpoint_run_config_filename("/checkpoints")
-        expected = "/checkpoints/run_config.yaml"
         assert result == expected
 
     @patch("megatron.bridge.models.conversion.auto_bridge.AutoBridge.from_hf_pretrained")
