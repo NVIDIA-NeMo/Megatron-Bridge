@@ -1554,7 +1554,6 @@ class TestConfigContainerValidation:
     @pytest.mark.parametrize(
         ("field_name", "value", "world_size", "message"),
         [
-            ("mtp_num_layers", 1, 1, "does not support MTP"),
             ("cuda_graph_impl", "local", 1, "does not support CUDA graphs"),
             ("vision_cuda_graph_impl", "transformer_engine", 1, "does not support CUDA graphs"),
             ("pipeline_model_parallel_size", 2, 2, "does not yet support pipeline parallelism"),
@@ -1581,6 +1580,35 @@ class TestConfigContainerValidation:
         try:
             with pytest.raises(ValueError, match=message):
                 container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_allows_mtp(self, monkeypatch):
+        """Native Energon packing is orthogonal to MTP packed-sequence rolling.
+
+        MTP with packed sequences is handled downstream: ``vlm_step`` forwards
+        the packed THD metadata, the Qwen3-VL text model routes physical
+        boundaries to MCore's ``process_mtp_loss``, and MCore rolls
+        labels/loss_mask within packed boundaries. Configuration must not
+        reject the combination (regression for issue #5954).
+        """
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        model_cfg.mtp_num_layers = 1
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert model_cfg.mtp_num_layers == 1
+            assert dataset_cfg.packing_buffer_size is not None
+            assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 1
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -5045,7 +5073,7 @@ class TestTokenizerConfig:
             tokenizer_type=tokenizer_type,
             metadata_path=metadata_path,
             hf_tokenizer_kwargs={"use_fast": use_fast},
-            sp_tokenizer_kwargs={"legacy": legacy},
+            tokenizer_sentencepiece_legacy=legacy,
         )
 
         assert config.tokenizer_model == tokenizer_model

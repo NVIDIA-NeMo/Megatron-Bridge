@@ -275,6 +275,7 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
         micro_batch_size=1,
         task_encoder=NemotronOmniEnergonTaskEncoderConfig(
             hf_processor_path="nvidia/model",
+            hf_processor_revision="0123456789abcdef",
             max_audio_duration=10.0,
             num_mel_bins=128,
             visual_keys=("pixel_values",),
@@ -289,10 +290,11 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
     processor = object()
     encoder = object()
     encoder_cls = MagicMock(return_value=encoder)
+    load_processor = MagicMock(return_value=processor)
     monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)
     monkeypatch.setattr(
         "megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained",
-        lambda *_, **__: processor,
+        load_processor,
     )
     monkeypatch.setattr(
         "megatron.bridge.data.energon.nemotron_omni_task_encoder.NemotronOmniTaskEncoder",
@@ -300,9 +302,15 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
     )
 
     assert build_energon_task_encoder(config) is encoder
+    load_processor.assert_called_once_with(
+        "nvidia/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
     assert encoder_cls.call_args.kwargs["processor"] is processor
     assert encoder_cls.call_args.kwargs["max_audio_duration"] == 10.0
     assert encoder_cls.call_args.kwargs["use_temporal_video_embedder"] is True
+    assert encoder_cls.call_args.kwargs["temporal_video_resize_mode"] == "processor"
     assert encoder_cls.call_args.kwargs["collapse_image_tokens"] is False
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
 
@@ -321,6 +329,54 @@ def test_nemotron_config_rejects_unsupported_visual_keys():
     )
 
     with pytest.raises(ValueError, match=r"visual_keys must be exactly \('pixel_values',\)"):
+        config.validate()
+
+
+def test_nemotron_config_allows_image_only_legacy_contract():
+    config = NemotronOmniEnergonTaskEncoderConfig(
+        hf_processor_path="nvidia/model",
+        max_audio_duration=10.0,
+        num_mel_bins=128,
+        visual_keys=("pixel_values",),
+        temporal_patch_size=2,
+        video_fps=1.0,
+        video_nframes=8,
+        use_temporal_video_embedder=False,
+        patch_dim=16,
+        temporal_video_resize_mode="processor",
+        collapse_image_tokens=True,
+    )
+
+    config.validate()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"hf_processor_revision": " "}, "hf_processor_revision"),
+        ({"temporal_video_resize_mode": "unknown"}, "temporal_video_resize_mode"),
+        (
+            {"temporal_video_resize_mode": "processor", "collapse_image_tokens": True},
+            "canonical expanded-sequence",
+        ),
+    ],
+)
+def test_nemotron_config_rejects_invalid_temporal_video_resize_settings(overrides, match):
+    kwargs = {
+        "hf_processor_path": "nvidia/model",
+        "max_audio_duration": 10.0,
+        "num_mel_bins": 128,
+        "visual_keys": ("pixel_values",),
+        "temporal_patch_size": 2,
+        "video_fps": 1.0,
+        "video_nframes": 8,
+        "use_temporal_video_embedder": True,
+        "patch_dim": 16,
+        **overrides,
+    }
+    config = NemotronOmniEnergonTaskEncoderConfig(**kwargs)
+
+    with pytest.raises(ValueError, match=match):
         config.validate()
 
 
