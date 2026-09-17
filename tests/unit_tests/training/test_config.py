@@ -2344,22 +2344,28 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     @pytest.mark.parametrize(
-        ("fp8_param_gather", "reuse_grad_buffer", "use_megatron_fsdp", "error_match"),
+        ("fp8", "fp8_param_gather", "reuse_grad_buffer", "use_megatron_fsdp", "error_match"),
         [
-            (False, False, False, "fp8_param_gather=True"),
-            (True, False, False, "reuse_grad_buf_for_mxfp8_param_ag=True"),
-            (True, True, False, None),
-            (True, True, True, "not supported with Megatron FSDP"),
+            (None, False, False, False, None),
+            ("e4m3", False, False, False, "fp8_param_gather=True"),
+            ("e4m3", True, False, False, "reuse_grad_buf_for_mxfp8_param_ag=True"),
+            ("e4m3", True, True, False, None),
+            ("e4m3", True, True, True, "not supported with Megatron FSDP"),
         ],
     )
     def test_gtp_mxfp8_requires_param_gather_and_grad_buffer_reuse(
         self,
+        fp8,
         fp8_param_gather,
         reuse_grad_buffer,
         use_megatron_fsdp,
         error_match,
     ):
-        gpt_model_cfg = create_test_gpt_config(tensor_parallel_num_weight_shards=2)
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_parallel_num_weight_shards=2,
+            fp8=fp8,
+            fp8_recipe="mxfp8",
+        )
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=2,
             model_config=gpt_model_cfg,
@@ -2368,11 +2374,8 @@ class TestConfigContainerValidation:
             dist_config=create_test_distributed_init_config(use_megatron_fsdp=use_megatron_fsdp),
         )
         try:
-            container.mixed_precision = MixedPrecisionConfig(
-                fp8_param_gather=fp8_param_gather,
-                fp8_recipe="mxfp8",
-                reuse_grad_buf_for_mxfp8_param_ag=reuse_grad_buffer,
-            )
+            container.ddp.fp8_param_gather = fp8_param_gather
+            container.ddp.reuse_grad_buf_for_mxfp8_param_ag = reuse_grad_buffer
             if error_match is None:
                 container.validate()
             else:
