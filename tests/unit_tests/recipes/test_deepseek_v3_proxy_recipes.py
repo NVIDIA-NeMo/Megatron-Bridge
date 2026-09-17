@@ -5,7 +5,7 @@ from dataclasses import fields
 from pathlib import Path
 
 import pytest
-from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.enums import AttnBackend, LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.perf_recipes import deepseek
@@ -35,6 +35,8 @@ def test_proxy_preserves_parent_except_depth_and_layout(precision: str) -> None:
     assert parent.train.global_batch_size == proxy.train.global_batch_size == 4096
     assert parent.train.micro_batch_size == proxy.train.micro_batch_size == 1
     assert parent.train.train_iters == proxy.train.train_iters == 50
+    # Current MCore requires an explicit backend; None fails during model construction.
+    assert parent.model.attention_backend is proxy.model.attention_backend is AttnBackend.auto
     depth_fields = {
         "num_layers",
         "moe_layer_freq",
@@ -98,6 +100,7 @@ def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.Mon
     cfg = get_perf_recipe_by_name("deepseek_v3", "pretrain", 64, "vr200", precision, config_variant="proxy")
     assert cfg.train.global_batch_size == 4096
     assert cfg.model.num_layers == 13
+    assert cfg.model.attention_backend is AttnBackend.auto
     assert "proxy" in list_available_config_variants(
         model_family_name="deepseek",
         model_recipe_name="deepseek_v3",
