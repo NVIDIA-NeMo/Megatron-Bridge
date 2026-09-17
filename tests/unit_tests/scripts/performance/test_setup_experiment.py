@@ -196,3 +196,11 @@ def test_nvcre_env_vars_hf_token_secret_forces_online_mode() -> None:
     assert result["HF_HUB_OFFLINE"] == "0"
     assert result["TRANSFORMERS_OFFLINE"] == "0"
     assert "HF_TOKEN" not in result
+
+
+def test_nvcre_env_vars_strips_plain_hf_token_when_secret_configured() -> None:
+    """Plain HF_TOKEN from cluster_config environment: or --env flags must be stripped when a secret is set."""
+    custom = {"HF_TOKEN": "hf_leaked_token", "NCCL_TIMEOUT": "1800"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name="hf-token-secret")
+    assert "HF_TOKEN" not in result
+    assert result["NCCL_TIMEOUT"] == "1800"

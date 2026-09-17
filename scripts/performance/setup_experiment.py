@@ -480,14 +480,16 @@ def maybe_increase_n_attempts_on_flaky_failure(
 def _nvcre_env_vars(custom_env_vars: Dict[str, str], hf_token_secret_name: Optional[str]) -> Dict[str, str]:
     """Build the plain env-var dict for an NVCRE executor.
 
-    When an HF token secret is configured, HF connectivity is always enabled
-    via plain env vars — the pod has no access to the host HF cache, so offline
-    mode must not be forced here even when ``--offline`` was passed for
-    launcher-side setup. The token itself is injected via secret_env_vars, not
-    here.
+    When an HF token secret is configured, HF_TOKEN is stripped from the plain
+    env (it may have arrived via cluster_config environment: or --env flags) and
+    injected via secret_env_vars instead, so the token never appears as a plain
+    value in the WorkloadRun manifest. HF connectivity is always enabled so the
+    pod can reach HuggingFace regardless of any --offline flag passed for
+    launcher-side setup.
     """
     env = custom_env_vars.copy()
     if hf_token_secret_name:
+        env.pop("HF_TOKEN", None)
         env.update({"HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
     return env
 
