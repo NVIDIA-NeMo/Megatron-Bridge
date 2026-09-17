@@ -23,11 +23,13 @@ summary: >
   exactly and step 100 lands within 0.248 percent, far tighter than the roughly
   1.4 percent drift between two independent launches of this
   order-sensitive BF16 mixture-of-experts recipe.
-  sft_export_inference is unverified because only its export
-  half can run on this hardware; the bf16 export exceeds single-device memory
-  and the reload has no sharded path. sft_long_context has no Qwen3.5-VL
-  122B-A10B recipe yet, so it remains unverified rather than claiming coverage
-  from another model size.
+  sft_long_context is verified on 96 H100 GPUs with the canonical 96-GPU
+  recipe, exercising context parallelism 2 and in-batch sequence packing at
+  sequence length 8192 together. sft_export_inference remains unverified: its
+  export completes and its sharded 8-GPU reload of the 234 GiB bf16 export
+  completes and generates, but the fine-tuned model answers in CORD-v2 markup
+  whose XML-style tags this card format cannot record as a literal completion,
+  so the item is held at unverified until that recording gap is resolved.
 verification_index:
   model_level:
     verified:
@@ -40,8 +42,8 @@ verification_index:
       - manual_forward_pass
   training:
     H100:
-      verified: [pretrain, sft, peft, checkpoint_resume]
-      unverified: [sft_export_inference, sft_long_context]
+      verified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unverified: [sft_export_inference]
   performance:
     H100: verified
 model:
@@ -312,40 +314,86 @@ items:
       last_verified: null
       depends_on: sft
       expected_result: >
-        This workflow remains unverified because only its export half
-        completes. Exporting the final SFT checkpoint succeeds and produces 40
-        safetensors shards totalling 234 GiB alongside config.json,
-        generation_config.json, and chat_template.jinja. The deterministic
-        reload half cannot run: the shared verifier places the entire model on
-        one torch device, and 234 GiB of bf16 weights exceed the 80 GiB
-        capacity of a single H100, so the reload aborts once roughly 78 GiB is
-        resident. Falling back to host memory does not help either, because the
-        Qwen3.5-VL modeling code calls the CUDA-only causal_conv1d kernel and
-        rejects CPU tensors. Verifying this item requires either an
-        accelerator whose memory holds the full bf16 export or a sharded
-        multi-device reload path in the shared verifier; that limitation
-        applies to every model whose export exceeds one device and is not
-        specific to this variant.
+        This item is held at unverified for a recording reason, not a
+        workload failure. Exporting the step-100 SFT checkpoint on one 8-GPU
+        node at TP4/PP1/EP8/ETP1 succeeds and writes 39 safetensors shards
+        totalling 234 GiB alongside model.safetensors.index.json, config.json,
+        generation_config.json, preprocessor_config.json,
+        processor_config.json, tokenizer.json, tokenizer_config.json, and
+        chat_template.jinja. The deterministic reload also completes when the
+        shared verifier shards the bf16 export across all 8 H100 GPUs of one
+        node with a device map, which is required because 234 GiB of weights
+        exceed the 80 GiB capacity of a single H100 and the Qwen3.5-VL modeling
+        code calls the CUDA-only causal_conv1d kernel, so no host-memory
+        fallback exists for this variant. All 1,164 weight-loading steps
+        complete with zero missing, unexpected, or mismatched keys, and greedy
+        image-conditioned generation emits exactly 64 new tokens, stopped by
+        the token bound. Because the sft item fine-tunes on CORD-v2 document
+        parsing, the completion is CORD-v2 receipt markup made of XML-style
+        tags, and it reads the strings "Pre-Layernorm Transformer Block" and
+        "Self-Attention" verbatim off the diagram, so the vision path executes
+        on the reloaded export. This card format cannot record that literal
+        completion: its verification rules reject angle-bracket tags in a
+        verified result, so the item stays unverified until the format can
+        carry a markup completion. Nothing about the export or reload remains
+        to be shown.
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      bridge_commit: 07204f69dc2381a0784796627a5c9b1e0154cb03  # pragma: allowlist secret
+      enabled_features:
+        sequence_packing: in_batch
+        context_parallel_size: 2
+      command: >
+        ./scripts/training/train.sh --nodes 12 --gpus-per-node 8
+        --recipe qwen35_vl_122b_a10b_sft_long_context_96gpu_h100_bf16_config
+        --pretrained_checkpoint
+        work/model-verification/qwen35-vl-122b-a10b/megatron-gpu/iter_0000000
+        --max_steps 100 --warmup_iters 10
+        checkpoint.load=null checkpoint.save=null
+        validation.eval_iters=0 validation.eval_interval=0
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/qwen35-vl-122b-a10b/sft-long-context/resolved-config.yaml
+        scheduler.lr_decay_iters=100
+      last_verified: 2026-09-17
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.527129
+        final_loss: 0.027519
+        last_10_steps_step_time_ms_avg: 3588.300
+        last_10_steps_model_tflops_per_gpu_avg: 51.110
+        last_10_steps_tokens_per_second_per_gpu_avg: 760.992
       expected_result: >
-        This workflow remains unverified because no long-context SFT recipe
-        exists for Qwen3.5-VL 122B-A10B. The Qwen3.5-VL 35B-A3B long-context
-        recipe covers a different checkpoint and must not be relabeled for this
-        variant. Verification requires a 122B-A10B recipe that exercises
-        sequence packing and context parallelism together.
+        The command completes all 100 steps of the canonical 96-GPU recipe
+        qwen35_vl_122b_a10b_sft_long_context_96gpu_h100_bf16_config at
+        TP2/PP6/CP2/EP8/ETP1 with sequence parallelism, dense DP4 and 4-way
+        gradient accumulation, MBS2/GBS32, sequence length 8192 with
+        processor-native deferred in-batch packing padded to a multiple of 4,
+        per-token loss, all three language, vision, and vision-projection
+        towers trainable, one multi-token-prediction layer at loss scale 0.1,
+        uniform full activation recompute of one layer, and no CUDA graphs.
+        The persisted post-setup config confirms every one of these settings,
+        including context_parallel_size 2 and enable_in_batch_packing true,
+        and leaves cp_comm_type unset because the GatedDeltaNet layers own
+        their context-parallel communication. Every optimizer step reports
+        finite losses with zero skipped and zero NaN iterations; training loss
+        falls from 0.527129 to 0.027519 and the process exits successfully.
+        The first step takes roughly 933 seconds of one-time Triton and
+        Inductor compilation, after which steps 91-100 average 3588.300 ms and
+        51.110 TFLOP/s/GPU with a peak of 59.108 GiB allocated per GPU. The
+        tokens-per-second figure is the padded budget of 32 samples by 8192
+        tokens per step divided by step time and GPU count, matching the
+        convention of the sft item. CP2 is what makes this layout fit: it keeps
+        the per-rank sequence shard at the 4096 tokens the 48-GPU SFT layout
+        already holds while dense DP stays at 4 so DP times CP still covers
+        EP8. This is a support verification of packing and context parallelism
+        together on this variant, not a member of any convergence cohort: the
+        recipe uses the CORD-v2 dataset with a 2e-5 to 2e-6 cosine schedule at
+        a different sequence length and batch construction than the sft item,
+        so its losses must not be compared against that item or against cards
+        whose long-context runs use a different dataset or schedule.
 
   peft:
     H100:
