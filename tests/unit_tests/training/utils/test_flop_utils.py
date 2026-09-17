@@ -16,7 +16,7 @@
 
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1039,9 +1039,10 @@ assert flop_utils._is_gated_delta_net_variant("gdn") is True
 
 
 class TestDeepSeekV4HybridFlops:
-    """Tests for DeepSeek-V4 hybrid attention FLOPs in the transformer path."""
+    """Tests for DeepSeek-V4 attention FLOPs in logical and physical layouts."""
 
-    def test_dsv4_hybrid_exact_flops(self):
+    @pytest.mark.parametrize("native_hybrid", [False, True])
+    def test_dsv4_hybrid_exact_flops(self, native_hybrid):
         """DSv4 hybrid FLOPs include sparse attention, compressor, and indexer terms."""
         batch_size = 1
         seq_len = 512
@@ -1083,6 +1084,15 @@ class TestDeepSeekV4HybridFlops:
             dsa_indexer_topk=idx_topk,
             gated_linear_unit=False,
         )
+        if native_hybrid:
+            model_cfg = replace(
+                model_cfg,
+                num_layers=2 * num_layers,
+                hybrid_layer_pattern="W-C-H-",
+                # Ratios on native configs align with physical layers, including
+                # MLP slots. The W/C/H symbols determine the attention work.
+                csa_compress_ratios=[0, 0, 4, 0, 128, 0],
+            )
         cfg = MockConfigContainer(model=model_cfg)
 
         q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
@@ -1114,6 +1124,49 @@ class TestDeepSeekV4HybridFlops:
         actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
 
         assert actual_flops == expected_flops
+
+    @pytest.mark.parametrize("mtp_depth", [0, 1, 2])
+    @pytest.mark.parametrize("packed", [False, True])
+    def test_native_dsv4_moe_and_mtp_match_logical_layout(self, mtp_depth, packed):
+        """Physical W/C/H + E blocks count the same work as logical DSv4 blocks."""
+        logical = MockModelConfig(
+            num_layers=3,
+            hidden_size=128,
+            seq_length=512,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            vocab_size=1024,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=16,
+            qk_head_dim=24,
+            qk_pos_emb_head_dim=8,
+            v_head_dim=32,
+            output_projection_lora_rank=16,
+            output_projection_groups=2,
+            csa_compress_ratios=[0, 4, 128] + [4] * mtp_depth,
+            csa_window_size=64,
+            dsa_indexer_n_heads=2,
+            dsa_indexer_head_dim=8,
+            dsa_indexer_topk=32,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            moe_shared_expert_intermediate_size=128,
+            mtp_num_layers=mtp_depth,
+        )
+        physical = replace(
+            logical,
+            num_layers=6,
+            hybrid_layer_pattern="WE|CEHE" + "/CE" * mtp_depth,
+            csa_compress_ratios=[0, 0, 4, 0, 128, 0] + [4, 0] * mtp_depth,
+            # The unified pattern supplies MTP depth on native HybridModel.
+            mtp_num_layers=None,
+        )
+        runtime_stats = {"seqlen_sum": 768, "seqlen_squared_sum": 256**2 + 512**2} if packed else {}
+        expected = num_floating_point_operations(MockConfigContainer(model=logical), batch_size=2, **runtime_stats)
+        actual = num_floating_point_operations(MockConfigContainer(model=physical), batch_size=2, **runtime_stats)
+        assert actual == pytest.approx(expected)
 
     def test_dsv4_hybrid_packed_flops_match_mcore_split(self):
         """Packed DSv4 FLOPs split token-linear work from quadratic sparse work."""
