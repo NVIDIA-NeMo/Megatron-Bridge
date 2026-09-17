@@ -334,17 +334,20 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
-    """Keep the 256-GPU MXFP8 workload per rank on 64 VR200 GPUs.
+    """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
 
-    This is the full model, not a reduced-depth/width surrogate. GBS=1024 keeps
-    32 microbatches with dense DP=32, matching GBS=4096 and DP=128 at scale.
-    EP=32 and PP=2 leave expert DP=1: expert-DP collectives are not covered,
-    and optimizer shards are larger. Memory fit requires runtime validation.
-    The smaller global batch makes this a debugging benchmark, not a
-    convergence-equivalent replacement or an at-scale throughput predictor.
+    Keep GBS=4096, per-layer shapes, EP=32, PP=2 and one MTP layer. Reducing
+    VPP from 8 to 2 retains the parent's first/last chunks and two four-layer
+    middle chunks. Dense DP=32 now implies 128 microbatches per iteration.
+    This reduced-depth model is not convergence-equivalent to the parent;
+    expert DP=1 omits expert-DP collectives, and memory fit needs validation.
     """
     cfg = deepseek_v3_pretrain_256gpu_vr200_fp8mx_config()
-    cfg.train.global_batch_size = 1024
+    cfg.model.num_layers = 13
+    # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern.
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*2tmL")
 
     # Keep this explicit environment identical to the 256-GPU parent.
     cfg.env_vars = {
@@ -404,16 +407,19 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config() -> ConfigContainer:
-    """Keep the 256-GPU NVFP4 workload per rank on 64 VR200 GPUs.
+    """DeepSeek V3 NVFP4 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
 
-    Preserve the full model, PP/VPP layout, MTP, EP group, precision, graph,
-    fusion, recompute and overlap settings. GBS=1024 preserves 32 microbatches
-    per iteration. Expert DP falls from 4 to 1, increasing optimizer memory
-    and removing expert-DP collective coverage; memory fit is not guaranteed.
-    Use this for feature debugging, not convergence or at-scale acceptance.
+    Keep GBS=4096, per-layer shapes, EP=32, PP=2 and one MTP layer. VPP=2
+    retains the parent's five-layer first chunk, four-layer middle chunks,
+    and MTP/loss-only last chunk. There are 128 microbatches per iteration.
+    Use this reduced-depth model for feature debugging, not convergence or
+    at-scale acceptance. Expert DP=1 and GPU memory fit remain limitations.
     """
     cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
-    cfg.train.global_batch_size = 1024
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*5|(t*4|)*2mL")
 
     # Keep this explicit environment identical to the 256-GPU parent.
     cfg.env_vars = {
