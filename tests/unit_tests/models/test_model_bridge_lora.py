@@ -2728,3 +2728,397 @@ def test_column_parallel_mapping_skips_ep_gather_for_adapters(monkeypatch):
 
     result = mapping.megatron_to_hf(torch.ones(2, 2), None)
     torch.testing.assert_close(result["hf_param"], torch.ones(2, 2))
+
+
+def test_build_local_adapter_weight_snapshots_fp32_and_replication_metadata() -> None:
+    source = torch.ones((2, 3), dtype=torch.bfloat16)
+    mapping = Mock()
+    mapping.maybe_dequantize.side_effect = lambda tensor: tensor
+    mapping.tp_rank = 1
+    mapping.tp_size = 8
+    mapping.ep_rank = 3
+    mapping.ep_size = 8
+    mapping.is_expert = False
+    task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.self_attention.linear_qkv",
+        adapter_key=None,
+        alpha=32,
+        dim=32,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.self_attention.linear_qkv.adapter.linear_in.weight",
+            mapping=mapping,
+            param_weight=source,
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.self_attention.linear_qkv.adapter.linear_out.weight",
+            mapping=mapping,
+            param_weight=source,
+        ),
+    )
+
+    result = DummyBridge()._build_local_adapter_weight(
+        task,
+        component="linear_in",
+        hf_param_names=[
+            "model.layers.0.self_attn.q_proj.lora_A.weight",
+            "model.layers.0.self_attn.k_proj.lora_A.weight",
+            "model.layers.0.self_attn.v_proj.lora_A.weight",
+        ],
+        model_config=SimpleNamespace(),
+    )
+
+    assert result.component == "linear_in"
+    assert result.transform == "replicate"
+    assert result.alpha == 32
+    assert result.effective_rank == 32
+    assert result.weight.dtype is torch.float32
+    assert result.weight.data_ptr() != source.data_ptr()
+    assert result.tensor_parallel_axis is None
+    assert result.tensor_parallel_rank == 1
+    assert result.tensor_parallel_size == 8
+    assert result.expert_parallel_axis is None
+    assert result.expert_parallel_rank == 0
+    assert result.expert_parallel_size == 1
+
+
+def test_local_adapter_export_rejects_gdn_transform() -> None:
+    source = torch.ones((2, 3), dtype=torch.float32)
+    mapping = Mock()
+    mapping.maybe_dequantize.side_effect = lambda tensor: tensor
+    mapping.tp_rank = 0
+    mapping.tp_size = 1
+    mapping.ep_rank = 0
+    mapping.ep_size = 1
+    mapping.is_expert = False
+    task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.linear_attention.linear_qkv",
+        adapter_key=None,
+        alpha=32,
+        dim=32,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.linear_attention.linear_qkv.adapter.linear_in.weight",
+            mapping=mapping,
+            param_weight=source,
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.linear_attention.linear_qkv.adapter.linear_out.weight",
+            mapping=mapping,
+            param_weight=source,
+        ),
+    )
+
+    with pytest.raises(NotImplementedError, match="does not support GDN"):
+        DummyBridge()._build_local_adapter_weight(
+            task,
+            component="linear_out",
+            hf_param_names=[
+                "model.layers.0.linear_attn.in_proj_qkv.lora_B.weight",
+                "model.layers.0.linear_attn.in_proj_z.lora_B.weight",
+                "model.layers.0.linear_attn.in_proj_b.lora_B.weight",
+                "model.layers.0.linear_attn.in_proj_a.lora_B.weight",
+            ],
+            model_config=SimpleNamespace(),
+        )
+
+
+@pytest.mark.parametrize("projection", ["fc1", "fc2"])
+def test_local_shared_outer_export_matches_global_hf_export(monkeypatch, projection):
+    bridge = DummyBridge()
+    state = {"ep_rank": 0}
+    for mapping_cls in (ColumnParallelMapping, RowParallelMapping):
+        monkeypatch.setattr(mapping_cls, "tp_size", property(lambda self: 1))
+        monkeypatch.setattr(mapping_cls, "tp_rank", property(lambda self: 0))
+        monkeypatch.setattr(mapping_cls, "ep_size", property(lambda self: 2))
+        monkeypatch.setattr(mapping_cls, "ep_rank", property(lambda self: state["ep_rank"]))
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_pipeline_model_parallel_world_size",
+        lambda: 1,
+    )
+    prefix = f"decoder.layers.0.mlp.experts.linear_{projection}"
+    config = SimpleNamespace(num_moe_experts=4)
+    model = [SimpleNamespace(config=config)]
+    shared = torch.arange(6, dtype=torch.float32).reshape(2, 3) / 17 + 1
+    if projection == "fc1":
+        full_a = shared
+        full_b = torch.arange(32, dtype=torch.float32).reshape(4, 4, 2) / 19 + 3
+    else:
+        full_a = torch.arange(24, dtype=torch.float32).reshape(4, 2, 3) / 23 + 5
+        full_b = shared.T.contiguous()
+
+    def get_base_names(_registry, _prefix, _adapter_key, suffix):
+        expert = suffix.removeprefix(".weight")
+        projections = ("gate_proj", "up_proj") if projection == "fc1" else ("down_proj",)
+        return [f"model.layers.0.mlp.experts.{expert}.{name}.weight" for name in projections]
+
+    monkeypatch.setattr(bridge, "_get_base_hf_param_names_for_adapter", get_base_names)
+    exported = {}
+    source_keys = []
+    records = []
+    for ep_rank in range(2):
+        state["ep_rank"] = ep_rank
+        local_a = full_a if full_a.ndim == 2 else full_a[2 * ep_rank : 2 * ep_rank + 2]
+        local_b = full_b if full_b.ndim == 2 else full_b[2 * ep_rank : 2 * ep_rank + 2]
+        in_name = f"{prefix}.adapter.linear_in.weight"
+        out_name = f"{prefix}.adapter.linear_out.weight"
+        task = AdapterWeightConversionTask(
+            global_base_prefix=prefix,
+            adapter_key=None,
+            alpha=2,
+            dim=2,
+            requires_expert_splits=local_a.ndim == 3,
+            linear_in_task=WeightConversionTask(
+                param_name=in_name,
+                global_param_name=in_name,
+                mapping=(ColumnParallelMapping if projection == "fc1" else RowParallelMapping)(in_name, "hf_in"),
+                param_weight=local_a,
+            ),
+            linear_out_task=WeightConversionTask(
+                param_name=out_name,
+                global_param_name=out_name,
+                mapping=ColumnParallelMapping(out_name, "hf_out"),
+                param_weight=local_b,
+            ),
+        )
+        monkeypatch.setattr(bridge, "build_adapter_conversion_tasks", lambda *args, **kwargs: {prefix: [task]})
+        local_records = list(bridge.stream_local_adapter_weights(model))
+        records.extend(local_records)
+        for record in local_records:
+            assert record.weight.dtype == torch.float32
+            assert record.weight.is_contiguous()
+            assert record.weight.untyped_storage().data_ptr() not in (
+                full_a.untyped_storage().data_ptr(),
+                full_b.untyped_storage().data_ptr(),
+            )
+            if record.weight.ndim == 3:
+                assert record.weight.shape[0] == 1
+                assert record.expert_parallel_axis is None
+                assert record.expert_parallel_rank == ep_rank
+                assert record.expert_parallel_size == 2
+                values = [record.weight] * len(record.hf_param_names)
+            else:
+                source_keys.append(record.global_param_name)
+                assert record.expert_parallel_rank == 0
+                assert record.expert_parallel_size == 1
+                values = record.weight.chunk(2, dim=0) if record.transform == "split_gated_mlp" else [record.weight]
+            for name, value in zip(record.hf_param_names, values, strict=True):
+                if name in exported:
+                    torch.testing.assert_close(exported[name], value, rtol=0, atol=0)
+                exported[name] = value
+
+    assert len(source_keys) == len(set(source_keys)) == 4
+    assert {key.rsplit(".expert", 1)[1] for key in source_keys} == {"0", "1", "2", "3"}
+    adapter_weight = AdapterWeight(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        linear_in_weight=MegatronWeightTuple("in", full_a, vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", full_b, vp_stage=0),
+    )
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    expected = {
+        item.param_name: item.weight
+        for item in bridge.stream_adapter_weights_megatron_to_hf(model, cpu=False, show_progress=False)
+    }
+    assert exported.keys() == expected.keys()
+    for name, value in exported.items():
+        torch.testing.assert_close(value, expected[name], rtol=0, atol=0)
+    snapshots = [record.weight.clone() for record in records]
+    full_a.zero_()
+    full_b.zero_()
+    for record, snapshot in zip(records, snapshots, strict=True):
+        torch.testing.assert_close(record.weight, snapshot, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("component,shape,axis", [("linear_in", (2, 3), 0), ("linear_out", (4, 6, 2), 1)])
+def test_local_shared_outer_axes_follow_each_component(monkeypatch, component, shape, axis):
+    for name, value in (("tp_size", 1), ("tp_rank", 0), ("ep_size", 2), ("ep_rank", 1)):
+        monkeypatch.setattr(ColumnParallelMapping, name, property(lambda self, value=value: value))
+    prefix = "decoder.layers.0.mlp.experts.linear_fc1"
+    in_name = f"{prefix}.adapter.linear_in.weight"
+    out_name = f"{prefix}.adapter.linear_out.weight"
+    task = AdapterWeightConversionTask(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        requires_expert_splits=False,
+        linear_in_task=WeightConversionTask(
+            param_name=in_name,
+            global_param_name=in_name,
+            mapping=ColumnParallelMapping(in_name, "hf_in"),
+            param_weight=torch.ones(2, 3),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name=out_name,
+            global_param_name=out_name,
+            mapping=ColumnParallelMapping(out_name, "hf_out"),
+            param_weight=torch.ones(4, 6, 2),
+        ),
+    )
+    result = DummyBridge()._build_local_adapter_weight(
+        task, component=component, hf_param_names=["projection.lora_A.weight"], model_config=SimpleNamespace()
+    )
+    assert result.weight.shape == shape
+    assert result.tensor_parallel_axis == axis
+    assert result.expert_parallel_axis == (0 if len(shape) == 3 else None)
+
+
+@pytest.mark.parametrize("projection", ["fc1", "fc2"])
+@pytest.mark.parametrize("unsupported", [None, "expert_tp", "uneven_ep"])
+def test_local_glm_shared_adapters_preserve_unique_ep_sources(monkeypatch, projection, unsupported):
+    from megatron.core.model_parallel_config import ModelParallelConfig
+    from megatron.core.process_groups_config import ProcessGroupCollection
+
+    from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
+    from megatron.bridge.peft.utils import ParallelLinearAdapter
+
+    bridge = GLM5Bridge()
+    bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=0, num_hidden_layers=1)
+    state = {"ep_rank": 0}
+    for mapping_cls in (ColumnParallelMapping, RowParallelMapping):
+        monkeypatch.setattr(mapping_cls, "tp_size", property(lambda self: 1))
+        monkeypatch.setattr(mapping_cls, "tp_rank", property(lambda self: 0))
+        monkeypatch.setattr(mapping_cls, "ep_size", property(lambda self: 2))
+        monkeypatch.setattr(mapping_cls, "ep_rank", property(lambda self: state["ep_rank"]))
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_pipeline_model_parallel_world_size",
+        lambda: 1,
+    )
+    prefix = f"decoder.layers.0.mlp.experts.linear_{projection}"
+    model = [SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))]
+    group = Mock()
+    group.size.return_value = 1
+    group.rank.return_value = 0
+    pg_collection = ProcessGroupCollection(tp=group, expt_tp=group, ep=group, expt_dp=group)
+    adapters = []
+    records = []
+    tasks = []
+    for ep_rank in range(2):
+        state["ep_rank"] = ep_rank
+        config = ModelParallelConfig(
+            use_cpu_initialization=True,
+            params_dtype=torch.float32,
+            gradient_accumulation_fusion=False,
+            tensor_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+            expert_model_parallel_size=2,
+        )
+        adapter = ParallelLinearAdapter(
+            in_features=3,
+            out_features=4,
+            dim=2,
+            base_linear_name=prefix,
+            activation="identity",
+            input_is_parallel=projection == "fc2",
+            is_expert=True,
+            model_parallel_config=config,
+            pg_collection=pg_collection,
+        )
+        adapters.append(adapter)
+        with torch.no_grad():
+            for index, parameter in enumerate(adapter.parameters()):
+                parameter.copy_(
+                    torch.arange(parameter.numel(), dtype=torch.float32).reshape_as(parameter) / 17
+                    + 10 * ep_rank
+                    + 3 * index
+                    + 1
+                )
+        assert adapter.linear_in.weight.ndim == adapter.linear_out.weight.ndim == 2
+        in_name = f"{prefix}.adapter.linear_in.weight"
+        out_name = f"{prefix}.adapter.linear_out.weight"
+        task = AdapterWeightConversionTask(
+            global_base_prefix=prefix,
+            adapter_key=None,
+            alpha=2,
+            dim=2,
+            linear_in_task=WeightConversionTask(
+                param_name=in_name,
+                global_param_name=in_name,
+                mapping=(ColumnParallelMapping if projection == "fc1" else RowParallelMapping)(in_name, "in"),
+                param_weight=adapter.linear_in.weight,
+            ),
+            linear_out_task=WeightConversionTask(
+                param_name=out_name,
+                global_param_name=out_name,
+                mapping=ColumnParallelMapping(out_name, "out"),
+                param_weight=adapter.linear_out.weight,
+            ),
+        )
+        tasks.append(task)
+        monkeypatch.setattr(bridge, "build_adapter_conversion_tasks", lambda *args, **kwargs: {prefix: [task]})
+        if unsupported == "expert_tp":
+            monkeypatch.setattr(ColumnParallelMapping, "tp_size", property(lambda self: 2))
+            monkeypatch.setattr(RowParallelMapping, "tp_size", property(lambda self: 2))
+            with pytest.raises(ValueError, match="expert tensor parallel size 1"):
+                list(bridge.stream_local_adapter_weights(model))
+            return
+        if unsupported == "uneven_ep":
+            model[0].config.num_moe_experts = 5
+            with pytest.raises(ValueError, match="evenly partitioned experts"):
+                list(bridge.stream_local_adapter_weights(model))
+            return
+        local_records = list(bridge.stream_local_adapter_weights(model))
+        assert sum(record.weight.numel() for record in local_records) == sum(
+            parameter.numel() for parameter in adapter.parameters()
+        )
+        for record in local_records:
+            assert record.expert_parallel_size == 1
+            assert record.expert_parallel_rank == 0
+            assert record.expert_parallel_axis is None
+            assert record.weight.dtype == torch.float32
+            assert record.weight.is_contiguous()
+            assert record.transform == "replicate"
+            assert {bridge._infer_hf_expert_idx(name) for name in record.hf_param_names} == {
+                2 * ep_rank,
+                2 * ep_rank + 1,
+            }
+            assert record.weight.untyped_storage().data_ptr() not in {
+                parameter.untyped_storage().data_ptr() for parameter in adapter.parameters()
+            }
+        records.extend(local_records)
+
+    assert len({record.global_param_name for record in records}) == len(records)
+    exported = {name: record.weight for record in records for name in record.hf_param_names}
+    assert len(exported) == sum(len(record.hf_param_names) for record in records)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 2,
+    )
+    first = adapters[0]
+    materialized = AdapterWeight(
+        global_base_prefix=prefix,
+        adapter_key=None,
+        alpha=2,
+        dim=2,
+        linear_in_weight=MegatronWeightTuple("in", first.linear_in.weight, vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("out", first.linear_out.weight, vp_stage=0),
+    )
+    monkeypatch.setattr(bridge, "build_adapter_conversion_tasks", lambda *args, **kwargs: {prefix: [tasks[0]]})
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [materialized])
+    monkeypatch.setattr(
+        bridge,
+        "_gather_expert_adapter_weight",
+        lambda tensor: [
+            adapter.linear_in.weight if tensor is first.linear_in.weight else adapter.linear_out.weight
+            for adapter in adapters
+        ],
+    )
+    expected = {
+        item.param_name: item.weight
+        for item in bridge.stream_adapter_weights_megatron_to_hf(model, cpu=False, show_progress=False)
+    }
+    assert exported.keys() == expected.keys()
+    for name, value in exported.items():
+        torch.testing.assert_close(value, expected[name], rtol=0, atol=0)
+    snapshots = [record.weight.clone() for record in records]
+    with torch.no_grad():
+        for adapter in adapters:
+            for parameter in adapter.parameters():
+                parameter.zero_()
+    for record, snapshot in zip(records, snapshots, strict=True):
+        torch.testing.assert_close(record.weight, snapshot, rtol=0, atol=0)
