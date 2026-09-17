@@ -70,6 +70,8 @@ from megatron.bridge.models.gemma_vl import (
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.glm import (
+    Glm5NextBridge,
+    Glm5NextModelProvider,
     GLM45Bridge,
     GLM47FlashBridge,
 )
@@ -234,6 +236,8 @@ __all__ = [
     "GemmaModelProvider",
     "Gemma2ModelProvider",
     "GLM45Bridge",
+    "Glm5NextBridge",
+    "Glm5NextModelProvider",
     "GLM47FlashBridge",
     "GLM5Bridge",
     "GLM45VBridge",
