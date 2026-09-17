@@ -71,7 +71,6 @@ from megatron.bridge.models.transformer_config import _enable_safe_hybridep_disp
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -528,11 +527,6 @@ class CheckpointConfig(MTrainCheckpointConfig):
     """Use a persistent background worker for async checkpoint saves. When enabled, creates a dedicated
     worker thread/process for handling async saves. When disabled, uses temporal workers that are
     created and destroyed for each save operation."""
-
-    async_strategy: str = "nvrx"
-    """Async checkpoint strategy to use. Options: ``"nvrx"`` (default) or ``"mcore"``.
-    The ``"nvrx"`` strategy uses nvidia_resiliency_ext for async checkpointing and falls back
-    to ``"mcore"`` if the package is not installed."""
 
     async_write_results_mp_mode: str = "fork"
     """Multiprocessing start method for the async write results queue.
@@ -1087,8 +1081,8 @@ class ConfigContainer(Container):
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
-        megatron_fsdp_version = getattr(self.ddp, "megatron_fsdp_version", 1)
-        if not MCORE_HAS_MEGATRON_FSDP_V2 or megatron_fsdp_version == 1:
+        megatron_fsdp_version = self.ddp.megatron_fsdp_version
+        if megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
         elif megatron_fsdp_version == 2:
             self._validate_and_apply_megatron_fsdp_v2_configs()
@@ -1178,32 +1172,20 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support use_tp_pp_dp_mapping.")
         if self.rng.data_parallel_random_init:
             raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
-        if self.ddp.num_distributed_optimizer_instances != 1:
-            raise ValueError("MFSDP V2 does not currently support HSDP.")
-        if self.ddp.outer_dp_sharding_strategy != "no_shard":
-            raise ValueError("MFSDP V2 does not currently support outer DP sharding.")
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
         if self.checkpoint.pretrained_checkpoint is not None:
             raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
         if self.optimizer.loss_scale is not None:
             raise ValueError("MFSDP V2 does not support loss scaling.")
-        if self.optimizer.clip_grad > 0.0:
-            raise ValueError("MFSDP V2 does not currently support gradient clipping.")
-        if self.optimizer.use_precision_aware_optimizer:
-            raise ValueError("MFSDP V2 does not support precision-aware optimizer.")
         if self.optimizer.optimizer_cpu_offload:
             raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
         if self.optimizer.use_layer_wise_distributed_optimizer:
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
-        if self.optimizer.optimizer_cuda_graph:
-            raise ValueError("MFSDP V2 does not support optimizer CUDA graphs.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
         if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP8 or FP4.")
-        if self.model.cuda_graph_impl != "none" or self.ddp.megatron_fsdp_cuda_graph_mode:
-            raise ValueError("MFSDP V2 does not support CUDA graphs.")
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
@@ -1350,8 +1332,6 @@ class ConfigContainer(Container):
                 raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
             if self.ddp.average_in_collective:
                 raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
-            if (getattr(self.model, "mtp_num_layers", None) or 0) > 0:
-                raise ValueError("Energon native sequence packing does not support MTP.")
             if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
                 self.model, "vision_cuda_graph_impl", None
             ) not in (None, "none"):
