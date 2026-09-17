@@ -173,6 +173,11 @@ def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include
     conversion = parser.add_argument_group("Conversion")
     conversion.add_argument("--hf-model", required=True, help="Hugging Face model ID or local path.")
     conversion.add_argument(
+        "--text-only",
+        action="store_true",
+        help="Convert only the language component of a supported multimodal checkpoint.",
+    )
+    conversion.add_argument(
         "--hf-revision",
         help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
     )
@@ -374,6 +379,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         worker_args.append("--trust-remote-code")
     if args.overwrite:
         worker_args.append("--overwrite")
+    if args.text_only:
+        worker_args.append("--text-only")
     if args.distributed_timeout_minutes is not None:
         worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
 
