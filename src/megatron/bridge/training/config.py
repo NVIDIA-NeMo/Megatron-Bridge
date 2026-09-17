@@ -1055,23 +1055,25 @@ class ConfigContainer(Container):
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
     def _validate_and_apply_deterministic_mode(self) -> None:
-        """Apply the shared MCore policy before config finalization or CUDA setup."""
-        if not getattr(self.model, "deterministic_mode", False):
-            return
-
-        # Direct validate()/initialize_megatron() callers must see recipe defaults
-        # too. Explicit launcher values retain precedence and are validated by Core.
-        apply_environment_variables(self)
+        """Recheck early process policy against the resolved model configuration."""
+        requested = getattr(self.model, "deterministic_mode", False)
         try:
-            from megatron.core.determinism import configure_determinism
+            from megatron.determinism import configure_determinism, is_determinism_configured
         except ImportError as error:
-            if error.name != "megatron.core.determinism":
+            if error.name != "megatron.determinism":
                 raise
+            if not requested:
+                return
             raise RuntimeError(
                 "Deterministic Bridge training requires Megatron Core's "
-                "megatron.core.determinism.configure_determinism API. "
+                "megatron.determinism.configure_determinism API. "
                 "Install an MCore revision that provides the shared startup policy."
             ) from error
+        if not requested and not is_determinism_configured():
+            return
+        # A previously bootstrapped process must also reject mode=False. Recipe
+        # defaults cannot override launcher values or relax an active policy.
+        apply_environment_variables(self)
         configure_determinism(self.model)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:

@@ -25,8 +25,17 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
         from unittest.mock import patch
 
         import torch
+        from megatron.determinism import configure_determinism, is_determinism_configured
+
+        case, report_path = sys.argv[1:]
+        assert not torch.cuda.is_initialized()
+        assert not torch.distributed.is_initialized()
+        if case == 'provider':
+            configure_determinism({'deterministic_mode': True})
+        if case != 'late':
+            assert is_determinism_configured()  # Builder uses the early launcher.
+
         from megatron.core import parallel_state
-        from megatron.core.determinism import configure_determinism
         from megatron.core.tensor_parallel.layers import ColumnParallelLinear
         from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
         from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -40,9 +49,6 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
         from megatron.bridge.training.initialize import initialize_megatron
 
         logging.basicConfig(level=logging.INFO)
-        case, report_path = sys.argv[1:]
-        assert not torch.cuda.is_initialized(), 'Imports initialized CUDA before policy setup'
-        assert not torch.distributed.is_initialized()
         options = dict(
             num_layers=1, hidden_size=128, ffn_hidden_size=256, num_attention_heads=4,
             use_cpu_initialization=True, gradient_accumulation_fusion=False,
@@ -120,6 +126,7 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
                     b.contiguous().reshape(-1).view(torch.uint8),
                 )
             policy = configure_determinism(model)  # Unchanged repeated setup is valid.
+            assert hasattr(model, 'tp_comm_overlap')
             model.tp_comm_overlap = True
             try:
                 initialize_megatron(cfg)
@@ -154,6 +161,9 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
     }
     env = {key: value for key, value in os.environ.items() if key not in policy_keys}
     report_path = tmp_path / f"{case}.json"
+    script_path = tmp_path / "startup_worker.py"
+    script_path.write_text(script)
+    target = ["-m", "megatron.determinism", str(script_path)] if case == "builder" else [str(script_path)]
     result = subprocess.run(
         [
             sys.executable,
@@ -163,8 +173,7 @@ def test_determinism_startup_in_fresh_process(case: str, tmp_path: Path) -> None
             "--nproc_per_node=1",
             "--no_python",
             sys.executable,
-            "-c",
-            script,
+            *target,
             case,
             str(report_path),
         ],

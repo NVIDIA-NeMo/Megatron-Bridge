@@ -1,16 +1,21 @@
 # Deterministic startup
 
-Bridge uses `megatron.core.determinism.configure_determinism` to establish the
+Bridge uses `megatron.determinism.configure_determinism` to establish the
 same process-wide startup policy as Megatron Core training. An MCore revision
 containing that API is required when deterministic mode is requested. Older
 revisions fail with an upgrade message. Runs with deterministic mode disabled
-do not import or call the new API.
+continue to work without the new API when no early policy has been applied.
 
 ## Enable the policy
 
-Apply the recipe helper after choosing the recipe and before training starts:
+Configure the process before importing Bridge or Core. Their GPU dependencies
+can initialize CUDA during import, before a recipe exists:
 
 ```python
+from megatron.determinism import configure_determinism
+
+configure_determinism({"deterministic_mode": True})
+
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -21,14 +26,20 @@ cfg.rng.seed = 1234
 pretrain(cfg, forward_step)
 ```
 
+Alternatively, start an existing script with `python -m megatron.determinism
+train.py ...`, or use `torchrun --nproc-per-node=2 --module megatron.determinism
+train.py ...` for fresh distributed workers. The script must still enable the
+model's deterministic mode, for example with the recipe helper shown above.
+The launcher preserves the script's arguments and applies policy before imports.
+
 The helper enables `model.deterministic_mode`, disables fused cross entropy and
 TP communication overlap in both the model and communication config, and disables
 MoE auxiliary-loss fusion. Router fusion can remain enabled when MCore exposes
 the separate auxiliary-loss option. The helper prepares config and environment
 defaults; it does not initialize CUDA, seed RNGs, or apply process-wide policy.
 
-`pretrain` resolves mixed precision and communication options, then applies the
-policy at the start of `ConfigContainer.validate()`, before model or other
+`pretrain` resolves mixed precision and communication options, then rechecks the
+early policy at the start of `ConfigContainer.validate()`, before model or other
 sub-config finalization. `initialize_megatron()` also checks the policy before its
 first CUDA probe, including for direct callers. Explicit shell/launcher environment
 settings take precedence over recipe defaults, and MCore rejects incompatible
@@ -42,13 +53,13 @@ In particular, `NCCL_ALGO=Tree` is no longer accepted by Bridge's deterministic
 training path. An INFO-level `Determinism policy:` record describes effective
 settings.
 
-Custom callers that initialize CUDA or distributed groups before handing control
-to Bridge must call the shared MCore API earlier, using the final model options.
+All deterministic Bridge entrypoints need the early call or launcher before
+Bridge imports, using compatible environment values and final model options.
 The first call after initialization fails and requires a fresh process. Repeated
 calls after initialization are allowed only if the same process established the
 policy early and the checked environment and strict Torch settings have not
 changed. Changing a recipe from deterministic to ordinary execution should use
-a fresh process; disabling the config flag does not undo process-wide settings.
+a fresh process; disabling the config flag after early setup is rejected.
 
 ## Evidence and limits
 
@@ -79,7 +90,7 @@ When testing an MCore change before updating Bridge's submodule, set
 policy file for CPU tests; it does not change Bridge's installed MCore package.
 The functional startup tests use real public imports, config finalization,
 single-rank NCCL initialization and a small output/gradient byte comparison in
-fresh processes. Provider and builder configs, late setup, and post-initialization
-drift are checked in the H100 and GB200 L0 launchers. They require the matching
+fresh processes. Provider and builder configs (including the early launcher), late setup, and
+post-initialization drift are checked in the H100 and GB200 L0 launchers. They require the matching
 MCore revision in the GPU environment and do not qualify full-model training or
 multi-rank replay.

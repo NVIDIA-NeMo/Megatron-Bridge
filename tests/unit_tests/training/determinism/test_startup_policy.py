@@ -111,9 +111,9 @@ class StopAfterPolicy(Exception):
 @pytest.fixture
 def policy(adapter: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     root = Path(os.environ.get("MCORE_SOURCE_ROOT", ROOT / "3rdparty/Megatron-LM"))
-    path = root / "megatron/core/determinism.py"
+    path = root / "megatron/determinism/_policy.py"
     assert path.is_file(), "This integration requires an MCore checkout with the shared startup API."
-    spec = importlib.util.spec_from_file_location("megatron.core.determinism", path)
+    spec = importlib.util.spec_from_file_location("megatron.determinism", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -217,7 +217,7 @@ def test_resolved_comm_overlap_is_validated(adapter: SimpleNamespace, policy: Mo
 def test_missing_api_is_clear_and_default_mode_does_not_require_it(
     adapter: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setitem(sys.modules, "megatron.core.determinism", None)
+    monkeypatch.setitem(sys.modules, "megatron.determinism", None)
     cfg = adapter.Config()
     cfg.model.deterministic_mode = False
     cfg._validate_and_apply_deterministic_mode()
@@ -242,6 +242,14 @@ def test_first_late_call_is_rejected(
     monkeypatch.setattr(torch.cuda, "is_initialized", lambda: True)
     with pytest.raises(RuntimeError, match="before CUDA"):
         adapter.Config()._validate_and_apply_deterministic_mode()
+
+
+def test_disabling_model_mode_cannot_bypass_bootstrapped_policy(adapter: SimpleNamespace, policy: ModuleType) -> None:
+    policy.configure_determinism({"deterministic_mode": True})
+    cfg = adapter.Config()
+    cfg.model.deterministic_mode = False
+    with pytest.raises(AssertionError, match="deterministic_mode=True"):
+        cfg._validate_and_apply_deterministic_mode()
 
 
 @pytest.mark.parametrize("drift", ["workspace", "torch", "config"])
