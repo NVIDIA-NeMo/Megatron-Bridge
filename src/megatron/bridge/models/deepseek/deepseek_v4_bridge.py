@@ -61,6 +61,7 @@ Megatron-Core prerequisites:
   - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
+import inspect
 from typing import Dict, Mapping
 
 import torch
@@ -114,12 +115,18 @@ def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
 def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     """Return whether DSv4 fused DSA kernels can be enabled."""
     try:
-        from cudnn import DSA  # noqa: F401
+        from cudnn import DSA
         from flash_mla import flash_mla_sparse_fwd  # noqa: F401
     except ImportError:
         return False
 
-    return True
+    compact_wrapper = getattr(DSA, "indexer_forward_top_k_wrapper", None)
+    if not callable(compact_wrapper):
+        return False
+    try:
+        return "deterministic" in inspect.signature(compact_wrapper).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
@@ -341,6 +348,14 @@ class _ReplicatedOptional(ReplicatedMapping):
         self.allow_hf_name_mismatch = True
 
 
+class _AutoOptional(AutoMapping):
+    """AutoMapping for weights synthesized when absent from an HF checkpoint."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.allow_hf_name_mismatch = True
+
+
 # ---------------------------------------------------------------------------
 # Bridge registration
 # ---------------------------------------------------------------------------
@@ -390,8 +405,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+        provider_field_names = getattr(type(provider), "__dataclass_fields__", {})
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
-        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
+        use_dsa_kernel_fusion = (
+            use_blackwell_fused_kernels
+            and "apply_dsa_kernel_fusion" in provider_field_names
+            and deepseek_v4_supports_fused_dsa_kernels()
+        )
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -417,8 +437,15 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
-        provider.o_groups = hf_config.o_groups  # 8
-        provider.o_lora_rank = hf_config.o_lora_rank  # 1024
+        # MCore renamed the grouped output-projection fields on dev. Populate the
+        # names supported by the selected ref so the HF geometry is not replaced
+        # by TransformerConfig defaults on main.
+        if hasattr(provider, "output_projection_groups"):
+            provider.output_projection_groups = hf_config.o_groups  # 8
+            provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
+        else:
+            provider.o_groups = hf_config.o_groups  # 8
+            provider.o_lora_rank = hf_config.o_lora_rank  # 1024
 
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
@@ -469,12 +496,18 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
-        provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
+        provider.dsa_kernel_backend = "cudnn" if use_dsa_kernel_fusion else "none"
+        if "apply_dsa_kernel_fusion" in provider_field_names:
+            provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
 
         # ---- Hyper-Connections (mHC) ----
-        provider.enable_hyper_connections = True
+        if "enable_hyper_connections" in provider_field_names:
+            provider.enable_hyper_connections = True
+            provider.num_residual_streams = hf_config.hc_mult  # 4
+        else:
+            provider.enable_mhc_connections = True
+            provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
         provider.use_fused_mhc = use_blackwell_fused_kernels
-        provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
 
         # ---- MoE ----
@@ -541,6 +574,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             0, num_hidden_layers - num_hash_layers
         )
         hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
+        hf_cfg["o_groups"] = getattr(provider, "output_projection_groups", getattr(provider, "o_groups", 8))
+        hf_cfg["o_lora_rank"] = getattr(
+            provider, "output_projection_lora_rank", getattr(provider, "o_lora_rank", 1024)
+        )
 
         compress_ratios = getattr(provider, "csa_compress_ratios", None)
         if compress_ratios is not None:
@@ -585,6 +622,9 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         Optional CSA indexer weights may use the legacy flat name or the native
         Transformers scorer submodule name.
         """
+        if isinstance(hf_param, str) and hf_param.endswith(".ffn.gate.bias") and hf_param not in hf_state_dict:
+            return torch.zeros(self.hf_config.n_routed_experts, dtype=torch.float32)
+
         if isinstance(hf_param, str) and hf_param not in hf_state_dict:
             legacy_param = hf_param.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
             if legacy_param in hf_state_dict:
@@ -709,7 +749,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "decoder.layers.*.mlp.router.weight",
                 "layers.*.ffn.gate.weight",
             ),
-            AutoMapping(
+            _AutoOptional(
                 "decoder.layers.*.mlp.router.expert_bias",
                 "layers.*.ffn.gate.bias",
             ),
@@ -942,12 +982,21 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
+        """Restore the DSv4 source checkpoint's keys and quantized weight layout.
 
-        Legacy indexer scorer names are restored before selecting the export dtype.
-        When ``task.weight_dtype`` is set, skip requantization and return the weights
-        unchanged — the generic export path casts the dtype.
+        Expert-bias buffers synthesized during import are omitted when the source
+        checkpoint did not contain them. Legacy indexer scorer names are restored
+        before selecting the export dtype. When ``task.weight_dtype`` is set, skip
+        requantization and return the weights unchanged — the generic export path
+        casts the dtype.
         """
+        omitted_expert_biases = {
+            key for key in converted_weights_dict if key.endswith(".ffn.gate.bias") and key not in hf_state_dict
+        }
+        if omitted_expert_biases:
+            converted_weights_dict = {
+                key: value for key, value in converted_weights_dict.items() if key not in omitted_expert_biases
+            }
         native_scorer_key = next(
             (
                 key
@@ -963,6 +1012,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         if task.weight_dtype is not None:
             return converted_weights_dict
+
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,

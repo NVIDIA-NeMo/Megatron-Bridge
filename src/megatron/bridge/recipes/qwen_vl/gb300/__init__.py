@@ -12,18 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Megatron-FSDP wrapper compatibility helpers."""
+from megatron.bridge.recipes.qwen_vl.gb300.qwen35_vl import (
+    qwen35_vl_397b_a17b_pretrain_config,
+)
 
-try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-        FullyShardedDataParallelV1,
-        FullyShardedDataParallelV2,
-    )
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
-    MCORE_HAS_MEGATRON_FSDP_V2 = True
-except ImportError:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
-
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)
-    MCORE_HAS_MEGATRON_FSDP_V2 = False
+__all__ = [
+    "qwen35_vl_397b_a17b_pretrain_config",
+]
