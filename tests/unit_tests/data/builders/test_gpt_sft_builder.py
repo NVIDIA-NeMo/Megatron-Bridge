@@ -16,6 +16,7 @@ import json
 import os
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pyarrow.parquet as pq
@@ -89,6 +90,30 @@ def test_default_pack_path_fingerprints_preprocessing(tmp_path):
     )
 
     assert prompt_builder.default_pack_path != chat_builder.default_pack_path
+
+
+def test_default_pack_path_distinguishes_legacy_and_explicit_prompt_modes(tmp_path):
+    specs = PackedSequenceSpecs(packed_sequence_size=128, tokenizer_model_name="mock-tokenizer", pad_seq_to_mult=8)
+    legacy = GPTSFTDatasetConfig(
+        dataset_root=tmp_path,
+        seq_length=128,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+    )
+    explicit = GPTSFTDatasetConfig(
+        dataset_root=tmp_path,
+        seq_length=128,
+        preprocessing=builder_mod.resolve_gpt_sft_preprocessing(legacy),
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+    )
+    # Explicit paired-text preparation uses a different tokenizer and loss-mask path.
+    assert "prompt_completion_config" not in builder_mod.normalize_gpt_sft_dataset_kwargs(legacy)
+    assert builder_mod.normalize_gpt_sft_dataset_kwargs(explicit)["prompt_completion_config"] is explicit.preprocessing
+    tokenizer = SimpleNamespace(_tokenizer=object())
+    legacy_builder = GPTSFTDatasetBuilder(config=legacy, tokenizer=tokenizer)
+    explicit_builder = GPTSFTDatasetBuilder(config=explicit, tokenizer=tokenizer)
+    assert legacy_builder.default_pack_path != explicit_builder.default_pack_path
 
 
 def test_default_pack_path_fingerprints_max_single_sequence_length(tmp_path):

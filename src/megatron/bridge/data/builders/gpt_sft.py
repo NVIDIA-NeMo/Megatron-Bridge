@@ -224,6 +224,7 @@ def _packing_fingerprint(
     packing_identity = {
         "seq_length": config.seq_length,
         "seed": config.seed,
+        "preprocessing_explicit": config.preprocessing is not None,
         "preprocessing": (type(preprocessing).__name__, asdict(preprocessing)),
         "dataset_kwargs": dataset_kwargs,
         "tokenizer": tokenizer_identity,
