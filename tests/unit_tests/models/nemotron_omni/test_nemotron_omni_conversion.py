@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from dataclasses import asdict
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -27,6 +28,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
@@ -44,6 +46,7 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -152,6 +155,105 @@ def _mock_nemotron_35_super_vl_hf_config():
     hf_config.llm_config.mtp_layers_block_type = ["attention", "moe"]
     del hf_config.vision_config.separate_video_embedder
     return hf_config
+
+
+@pytest.mark.unit
+def test_super_vl_text_only_uses_native_super_bridge_and_shared_mtp(tmp_path):
+    full_config = _mock_nemotron_35_super_vl_hf_config()
+    full_config.llm_config = PretrainedConfig(**full_config.llm_config.to_dict())
+    source = PreTrainedCausalLM.from_pretrained(tmp_path)
+    source.config = full_config
+    text = Nemotron35SuperVLBridge().text_only_pretrained(source)
+    bridge = AutoBridge(text)
+    assert isinstance(bridge._model_bridge, NemotronHBridge)
+    provider = bridge.to_megatron_provider(load_weights=False)
+    assert type(provider) is HybridModelProvider
+    assert provider.hf_model_text_only
+    assert provider.mtp_num_layers == 2
+    assert provider.mtp_hybrid_override_pattern == "*E"
+    assert provider.mtp_use_repeated_layer
+    assert source.config.llm_config.num_nextn_predict_layers == 1
+    assert not hasattr(text.config, "vision_config")
+    assert not hasattr(provider, "vision_model")
+
+    # A native standalone Super checkpoint with this same language config
+    # must select exactly the same architecture, mappings, and training defaults.
+    native_source = PreTrainedCausalLM.from_pretrained(tmp_path)
+    native_source.config = text.config
+    native = AutoBridge(native_source).to_megatron_provider(load_weights=False)
+    expected = asdict(native)
+    actual = asdict(provider)
+    actual.pop("hf_model_text_only")
+    expected.pop("hf_model_text_only")
+    assert actual == expected
+    assert _mapping_names(bridge._model_bridge.mapping_registry()) == _mapping_names(
+        AutoBridge(native_source)._model_bridge.mapping_registry()
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("text_only", [False, True])
+def test_super_vl_auto_bridge_text_selection_is_explicit(tmp_path, text_only):
+    config = _mock_nemotron_35_super_vl_hf_config()
+    config.llm_config = PretrainedConfig(**config.llm_config.to_dict())
+    with patch(
+        "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry", return_value=config
+    ) as load:
+        bridge = AutoBridge.from_hf_pretrained(tmp_path, text_only=text_only)
+    assert "text_only" not in load.call_args.kwargs
+    assert isinstance(bridge._model_bridge, NemotronHBridge if text_only else Nemotron35SuperVLBridge)
+
+
+@pytest.mark.unit
+def test_text_only_rejects_unimplemented_families():
+    from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+
+    with pytest.raises(ValueError, match="does not support text_only"):
+        MegatronModelBridge.text_only_pretrained(NemotronOmniBridge(), Mock())
+
+
+@pytest.mark.unit
+def test_super_vl_text_only_rejects_invalid_mtp(tmp_path):
+    source = PreTrainedCausalLM.from_pretrained(tmp_path)
+    source.config = _mock_nemotron_35_super_vl_hf_config()
+    source.config.llm_config.num_nextn_predict_layers = 2
+    with pytest.raises(ValueError, match="exactly one serialized"):
+        Nemotron35SuperVLBridge().text_only_pretrained(source)
+
+
+@pytest.mark.unit
+def test_text_only_reopening_same_source_preserves_pinned_wrapper(tmp_path):
+    source = PreTrainedCausalLM.from_pretrained(tmp_path, revision="pinned", local_files_only=True)
+    source.config = _mock_nemotron_35_super_vl_hf_config()
+    text = Nemotron35SuperVLBridge().text_only_pretrained(source)
+    bridge = AutoBridge(text)
+    with patch.object(AutoBridge, "from_hf_pretrained", side_effect=AssertionError("must reuse pinned source")):
+        assert bridge._text_only_pretrained_from_path(str(tmp_path)) is text
+    assert text.init_kwargs["revision"] == "pinned"
+
+
+@pytest.mark.unit
+def test_text_only_auto_config_restores_native_config_and_mode(tmp_path):
+    full_config = _mock_nemotron_35_super_vl_hf_config()
+    full_config.llm_config = PretrainedConfig(**full_config.llm_config.to_dict())
+    source = PreTrainedCausalLM.from_pretrained("org/vl", revision="pinned")
+    source.config = full_config
+    selected = AutoBridge(Nemotron35SuperVLBridge().text_only_pretrained(source))
+    provider = selected.to_megatron_provider(load_weights=False)
+    (tmp_path / "run_config.yaml").touch()
+    with (
+        patch("megatron.bridge.training.model_load_save.load_model_config", return_value=(provider, None)),
+        patch.object(AutoBridge, "from_hf_pretrained", return_value=selected) as load,
+    ):
+        restored = AutoBridge.from_auto_config(str(tmp_path), "org/vl", trust_remote_code=True)
+    load.assert_called_once_with("org/vl", text_only=True, trust_remote_code=True, revision="pinned")
+    assert isinstance(restored.hf_pretrained, PretrainedConfig)
+    assert restored.text_only
+    assert isinstance(restored._model_bridge, NemotronHBridge)
+    assert restored.hf_pretrained.architectures == ["NemotronHForCausalLM"]
+    assert restored.hf_pretrained.num_nextn_predict_layers == 2
+    assert not hasattr(restored.hf_pretrained, "vision_config")
+    assert not hasattr(restored.hf_pretrained, "auto_map")
 
 
 def test_public_nemotron_omni_architecture_is_registered():

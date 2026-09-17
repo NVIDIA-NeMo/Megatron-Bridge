@@ -378,6 +378,33 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
 
+    @classmethod
+    def _validate_shared_mtp_config(cls, llm_config) -> None:
+        """Validate the serialized shared block before choosing training depths."""
+        blocks, pattern = NemotronHBridge._hf_mtp_config(llm_config)
+        if blocks != cls._HF_SHARED_MTP_BLOCKS:
+            raise ValueError(f"Nemotron 3.5 Super VL requires exactly one serialized shared MTP block; got {blocks}.")
+        if pattern != "*E" or not getattr(llm_config, "mtp_use_repeated_layer", True):
+            raise ValueError("Nemotron 3.5 Super VL requires a repeated attention+MoE MTP block.")
+
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """Select the native Nemotron-H language checkpoint, excluding all media.
+
+        Standalone Nemotron-H configs express the runtime prediction depth in
+        num_nextn_predict_layers. Super VL instead stores a serialized-block
+        count there; normalize it without duplicating the shared MTP weights.
+        """
+        from megatron.bridge.models.hf_pretrained.text_only import TextOnlyPreTrainedCausalLM
+
+        config = copy.deepcopy(hf_pretrained.config.llm_config)
+        self._validate_shared_mtp_config(config)
+        config.architectures = ["NemotronHForCausalLM"]
+        if hasattr(config, "auto_map"):
+            del config.auto_map
+        config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+        config.mtp_use_repeated_layer = True
+        return TextOnlyPreTrainedCausalLM(hf_pretrained, config=config, prefix="language_model.")
+
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""
         modeling_path = path / "modeling_nemotron_h_omni.py"
@@ -393,13 +420,7 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         # Super-VL serializes one shared MTP block in HF. Megatron training applies
         # that block at two prediction depths, with the attention+MoE parameters
         # shared across both applications.
-        serialized_mtp_blocks = int(getattr(hf_config.llm_config, "num_nextn_predict_layers", 0) or 0)
-        if serialized_mtp_blocks != self._HF_SHARED_MTP_BLOCKS:
-            raise ValueError(
-                f"Nemotron 3.5 Super VL requires exactly one serialized shared MTP block; got {serialized_mtp_blocks}."
-            )
-        if provider.mtp_hybrid_override_pattern != "*E" or not provider.mtp_use_repeated_layer:
-            raise ValueError("Nemotron 3.5 Super VL requires a repeated attention+MoE MTP block.")
+        self._validate_shared_mtp_config(hf_config.llm_config)
         provider.mtp_num_layers = self._MCORE_MTP_PREDICTION_DEPTHS
 
         provider.temporal_patch_dim = temporal_patch_dim
