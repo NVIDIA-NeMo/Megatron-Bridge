@@ -52,6 +52,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
+    cfg.model.moe_router_force_load_balancing = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -155,6 +156,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_output_proj=True)
+    cfg.model.moe_router_force_load_balancing = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
