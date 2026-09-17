@@ -101,6 +101,16 @@ def _enable_partial_cuda_graphs(cfg: ConfigContainer) -> None:
     """
     cfg.model.cuda_graph_impl = "transformer_engine"
     set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    # The RNG trackers must be re-enabled here, not left to an earlier caller.
+    # ``_benchmark_common`` derives them from whatever ``cuda_graph_impl`` held at
+    # ITS call time (_common.py:88-92: ``cfg.rng.te_rng_tracker =
+    # cfg.model.use_te_rng_tracker = graphs_active``), and by then
+    # ``_qwen35_vl_post`` has not yet run -- so with the graphs disabled the flags
+    # land on False. Flipping ``cuda_graph_impl`` back on afterwards without them
+    # trips MCore's "cuda_graph_impl != none requires use_te_rng_tracker" assertion
+    # at model build. The h100 library recipe sets both for the same reason.
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
 
 
 def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:

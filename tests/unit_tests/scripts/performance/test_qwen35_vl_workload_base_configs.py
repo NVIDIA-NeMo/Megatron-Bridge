@@ -325,6 +325,11 @@ def test_qwen35_vl_gb300_enables_attn_partial_cuda_graph(recipe_fn: Callable, mo
     # MCore asserts if both are set at once.
     assert config.model.cuda_graph_scope is None
     assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
+    # Graphs require the TE RNG tracker. `_benchmark_common` derives these flags from
+    # the cuda_graph_impl value at its own call time, so re-enabling graphs later must
+    # set them explicitly or model build asserts. Assert on the FINAL config.
+    assert config.model.use_te_rng_tracker is True
+    assert config.rng.te_rng_tracker is True
 
 
 def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
