@@ -87,6 +87,10 @@ def initialize_megatron(
         otherwise None.
     """
 
+    # Also cover direct callers and revalidate after callbacks/config changes.
+    # Repeating setup is safe only if this process established the same policy
+    # before CUDA/distributed initialization; MCore enforces that boundary.
+    cfg._validate_and_apply_deterministic_mode()
     if not allow_no_cuda:
         # Make sure cuda is available.
         assert torch.cuda.is_available(), "Megatron requires CUDA."

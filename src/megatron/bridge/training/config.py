@@ -1055,26 +1055,24 @@ class ConfigContainer(Container):
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
     def _validate_and_apply_deterministic_mode(self) -> None:
-        """Apply and validate deterministic mode requirements.
-
-        This enforces restrictions and settings that must hold when
-        the model is configured to run in deterministic mode.
-        """
+        """Apply the shared MCore policy before config finalization or CUDA setup."""
         if not getattr(self.model, "deterministic_mode", False):
             return
 
-        # Disallow cross-entropy loss fusion as it is not deterministic
-        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
-            "Cross Entropy Fusion is currently not deterministic."
-        )
-
-        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
-        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
-            f"NCCL_ALGO must be one of {all_reduce_choices}."
-        )
-
-        # Enable deterministic algorithms in torch
-        torch.use_deterministic_algorithms(True)
+        # Direct validate()/initialize_megatron() callers must see recipe defaults
+        # too. Explicit launcher values retain precedence and are validated by Core.
+        apply_environment_variables(self)
+        try:
+            from megatron.core.determinism import configure_determinism
+        except ImportError as error:
+            if error.name != "megatron.core.determinism":
+                raise
+            raise RuntimeError(
+                "Deterministic Bridge training requires Megatron Core's "
+                "megatron.core.determinism.configure_determinism API. "
+                "Install an MCore revision that provides the shared startup policy."
+            ) from error
+        configure_determinism(self.model)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
@@ -1271,6 +1269,9 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        # MCore config finalization can query CUDA capabilities. Establish the
+        # process policy before finalizing any model, optimizer, or dataset config.
+        self._validate_and_apply_deterministic_mode()
         if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
                 "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
@@ -1522,7 +1523,7 @@ class ConfigContainer(Container):
                 "reuse_grad_buf_for_mxfp8_param_ag must be set to True"
             )
 
-        # Deterministic mode validations and settings
+        # Recheck effective options after finalization; late policy drift fails.
         self._validate_and_apply_deterministic_mode()
 
         # Run validations
@@ -2086,6 +2087,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
     apply_environment_variables(cfg)
+    cfg._validate_and_apply_deterministic_mode()
 
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
