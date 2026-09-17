@@ -191,7 +191,7 @@ class NsysPlugin(Plugin):
             launcher.nsys_filename = "profile_%p_%q{SLURM_JOB_ID}_node%q{SLURM_NODEID}_rank%q{SLURM_PROCID}"
         elif NvcreExecutor is not None and isinstance(executor, NvcreExecutor):
             # Nvcre pods use PET_* env vars for distributed rank info.
-            launcher.nsys_filename = "profile_node${PET_NODE_RANK}_rank%p"
+            launcher.nsys_filename = "profile_node%q{PET_NODE_RANK}_rank%p"
 
         if self.nsys_gpu_metrics:
             if hasattr(launcher, "nsys_gpu_metrics"):

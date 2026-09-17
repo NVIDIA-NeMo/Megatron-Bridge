@@ -745,13 +745,7 @@ def parse_cli_args():
         required=False,
         default="24h",
     )
-    nvcre_args.add_argument(
-        "--nvcre_test_scale",
-        type=str,
-        help="Nvcre test scale: 'intra-node', 'intra-rack', or 'full-scale'.",
-        required=False,
-        default=None,
-    )
+
     nvcre_args.add_argument(
         "--nvcre_kubeconfig",
         type=str,

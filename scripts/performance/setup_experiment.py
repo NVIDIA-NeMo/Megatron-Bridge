@@ -94,7 +94,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     Value-taking flags are passed as ``--flag value`` or ``--flag=value``.
     Boolean flags (no following value) are listed in ``_LAUNCHER_ONLY_BOOL``.
     """
-    _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun"}
+    _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun", "-d"}
 
     def _is_launcher_only(flag: str) -> bool:
         return flag in (
@@ -477,6 +477,19 @@ def maybe_increase_n_attempts_on_flaky_failure(
     return n_attempts
 
 
+def _nvcre_env_vars(custom_env_vars: Dict[str, str], hf_token: Optional[str]) -> Dict[str, str]:
+    """Build the env-var dict for an NVCRE executor.
+
+    When *hf_token* is set, HF connectivity is always enabled — the pod has no
+    access to the host HF cache, so offline mode must not be forced even when
+    ``--offline`` was passed for launcher-side setup.
+    """
+    env = custom_env_vars.copy()
+    if hf_token:
+        env.update({"HF_TOKEN": hf_token, "HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
+    return env
+
+
 def main(
     use_recipes: bool,
     model_family_name: str,
@@ -556,7 +569,7 @@ def main(
     nvcre_volumes_json: Optional[str] = None,
     nvcre_volume_mounts_json: Optional[str] = None,
     nvcre_timeout_per_job: str = "24h",
-    nvcre_test_scale: Optional[str] = None,
+
     nvcre_kubeconfig: Optional[str] = None,
     nvcre_kube_context: Optional[str] = None,
     nvcre_gang_scheduler_name: Optional[str] = None,
@@ -653,11 +666,13 @@ def main(
     if peak_mem_clk == -1:
         peak_mem_clk = None
 
-    if kubeflow_namespace:
+    if kubeflow_namespace or nvcre_namespace:
         if enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None:
             logger.warning(
-                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow."
+                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow/NVCRE."
             )
+
+    if kubeflow_namespace:
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -696,9 +711,9 @@ def main(
             from .utils.executors import nvcre_executor
         executor = nvcre_executor(
             namespace=nvcre_namespace,
-            image=container_image,
-            num_nodes=-(num_gpus // -gpus_per_node),
-            gpus_per_node=gpus_per_node,
+            container_image=container_image,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
             image_pull_secret=nvcre_image_pull_secret,
             workdir_pvc=nvcre_workdir_pvc,
             workdir_pvc_path=nvcre_workdir_pvc_path,
@@ -707,19 +722,12 @@ def main(
             volumes=json.loads(nvcre_volumes_json) if nvcre_volumes_json else None,
             volume_mounts=json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else None,
             timeout_per_job=nvcre_timeout_per_job,
-            test_scale=nvcre_test_scale,
+
             kubeconfig=nvcre_kubeconfig,
             kube_context=nvcre_kube_context,
             gang_scheduler_name=nvcre_gang_scheduler_name,
         )
-        nvcre_env = custom_env_vars.copy()
-        if hf_token:
-            # Always allow the pod to reach HF to download gated model files
-            # (tokenizer configs, etc.) — the pod has no access to the host
-            # HF cache so offline mode must not be forced here even when
-            # --offline was passed for the launcher-side setup.
-            nvcre_env.update({"HF_TOKEN": hf_token, "HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
-        executor.env_vars = nvcre_env
+        executor.env_vars = _nvcre_env_vars(custom_env_vars, hf_token)
     else:
         executor = slurm_executor(
             gpu=gpu,
@@ -1133,7 +1141,7 @@ if __name__ == "__main__":
         nvcre_volumes_json=args.nvcre_volumes_json,
         nvcre_volume_mounts_json=args.nvcre_volume_mounts_json,
         nvcre_timeout_per_job=args.nvcre_timeout_per_job,
-        nvcre_test_scale=args.nvcre_test_scale,
+
         nvcre_kubeconfig=args.nvcre_kubeconfig,
         nvcre_kube_context=args.nvcre_kube_context,
         nvcre_gang_scheduler_name=args.nvcre_gang_scheduler_name,

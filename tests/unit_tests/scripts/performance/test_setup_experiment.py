@@ -149,3 +149,50 @@ sys.meta_path.insert(0, _RejectMegatron())
     assert "bootstrap.py" in output
     assert "pretrain_llama3_8b_bf16_gpus8_h100" in output
     assert "login-node import forbidden" not in output
+
+
+def test_dryrun_short_flag_is_filtered_from_recipe_args() -> None:
+    """-d (short form of --dryrun) must be stripped from args forwarded to the recipe script."""
+    argv = ["-d", "--tensor_model_parallel_size", "2"]
+    assert "-d" not in setup_experiment._filter_run_script_args(argv)
+
+
+def test_nvcre_flags_are_filtered_from_recipe_args() -> None:
+    """All --nvcre_* flags and their values must be stripped before forwarding to the recipe."""
+    argv = [
+        "--nvcre_namespace",
+        "nemo-perf",
+        "--nvcre_image_pull_secret=ngc-secret",
+        "--tensor_model_parallel_size",
+        "2",
+    ]
+    filtered = setup_experiment._filter_run_script_args(argv)
+    assert filtered == ["--tensor_model_parallel_size", "2"]
+
+
+# ── _nvcre_env_vars ───────────────────────────────────────────────────────────
+
+
+def test_nvcre_env_vars_without_hf_token() -> None:
+    """Custom env vars must be forwarded unchanged when no HF token is given."""
+    custom = {"NCCL_TIMEOUT": "1800", "MY_VAR": "1"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token=None)
+    assert result == custom
+    assert result is not custom  # must be an independent copy
+
+
+def test_nvcre_env_vars_with_hf_token() -> None:
+    """HF_TOKEN and offline-mode overrides must be injected when a token is provided."""
+    result = setup_experiment._nvcre_env_vars({}, hf_token="hf-secret-token")
+    assert result["HF_TOKEN"] == "hf-secret-token"
+    assert result["HF_HUB_OFFLINE"] == "0"
+    assert result["TRANSFORMERS_OFFLINE"] == "0"
+
+
+def test_nvcre_env_vars_hf_token_forces_online_mode() -> None:
+    """HF token must override any caller-supplied offline flag so the pod can reach HuggingFace."""
+    custom = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token="tok")
+    assert result["HF_HUB_OFFLINE"] == "0"
+    assert result["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" in result

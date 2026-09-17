@@ -34,6 +34,13 @@ try:
 except ImportError:
     HAS_NEMO_RUN = False
 
+try:
+    from nemo_run.core.execution.nvcre import NvcreExecutor
+
+    HAS_NVCRE = True
+except ImportError:
+    HAS_NVCRE = False
+
 if HAS_NEMO_RUN:
     from setup_experiment import _build_nemorun_script
     from utils import executors as executors_module
@@ -43,6 +50,7 @@ if HAS_NEMO_RUN:
         _kubeflow_numa_binding_enabled,
         _kubeflow_numa_binding_script,
         kubeflow_executor,
+        nvcre_executor,
         slurm_executor,
     )
 
@@ -224,3 +232,57 @@ def test_recipe_env_vars_are_added_to_kubeflow_trainer_environment(monkeypatch):
     )
 
     assert executor.env_vars.items() >= recipe_env_vars.items()
+
+
+# ── nvcre_executor ────────────────────────────────────────────────────────────
+
+
+@pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
+def test_nvcre_executor_basic_fields():
+    """nvcre_executor must forward renamed parameters to NvcreExecutor correctly."""
+    executor = nvcre_executor(
+        namespace="nemo-perf",
+        container_image="nvcr.io/nvidia/nemo:dev",
+        nodes=4,
+        num_gpus_per_node=8,
+    )
+
+    assert isinstance(executor, NvcreExecutor)
+    assert executor.namespace == "nemo-perf"
+    assert executor.container_image == "nvcr.io/nvidia/nemo:dev"
+    assert executor.num_nodes == 4
+    assert executor.gpus_per_node == 8
+
+
+@pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
+def test_nvcre_executor_optional_fields():
+    """Optional fields must be forwarded and default to safe values when absent."""
+    executor = nvcre_executor(
+        namespace="ns",
+        container_image="img:latest",
+        nodes=1,
+        num_gpus_per_node=8,
+        image_pull_secret="ngc-secret",
+        workdir_pvc="nemo-pvc",
+        workdir_pvc_path="/workspace",
+        timeout_per_job="2h",
+        gang_scheduler_name="kai-scheduler",
+    )
+
+    assert executor.image_pull_secret == "ngc-secret"
+    assert executor.workdir_pvc == "nemo-pvc"
+    assert executor.workdir_pvc_path == "/workspace"
+    assert executor.timeout_per_job == "2h"
+    assert executor.gang_scheduler_name == "kai-scheduler"
+    assert executor.node_selector == {}
+    assert executor.volumes == []
+    assert executor.volume_mounts == []
+
+
+@pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
+def test_nvcre_executor_has_no_test_scale():
+    """test_scale must not be wired up — it was intentionally removed."""
+    import inspect
+
+    sig = inspect.signature(nvcre_executor)
+    assert "test_scale" not in sig.parameters
