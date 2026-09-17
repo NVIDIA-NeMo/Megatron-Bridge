@@ -2826,12 +2826,23 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         # In Megatron-LM, handled via adapter: FullyShardedDataParallel.load_state_dict().
         for key in list(state_dict.keys()):
             state_dict[f"module.{key}"] = state_dict.pop(key)
+
+    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+
+    load_context = contextlib.nullcontext
+    if HAVE_GTP:
+        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
+
+        load_context = partial(gtp_native_fp8_load_context, module)
+
     try:
-        module.load_state_dict(state_dict, strict=strict)
+        with load_context():
+            module.load_state_dict(state_dict, strict=strict)
     except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
-            load_return = module.load_state_dict(state_dict, strict=False)
+            with load_context():
+                load_return = module.load_state_dict(state_dict, strict=False)
             missing = load_return.missing_keys
             unexpected = load_return.unexpected_keys
             non_extra = [k for k in missing + unexpected if not k.endswith("._extra_state")]

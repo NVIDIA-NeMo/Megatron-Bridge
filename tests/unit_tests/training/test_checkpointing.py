@@ -19,7 +19,7 @@ import tempfile
 from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import numpy as np
 import pytest
@@ -3402,6 +3402,27 @@ class TestLoadModelWeightsFromCheckpoint:
 
 class TestLoadModelStateDictHelper:
     """Tests for _load_model_state_dict strict fallback behavior and logging."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_gtp_load_context(self, monkeypatch):
+        monkeypatch.setattr("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", False)
+
+    @patch("megatron.core.tensor_parallel.gtp_api.gtp_native_fp8_load_context", create=True)
+    @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
+    def test_load_model_state_dict_wraps_gtp_native_fp8_loads(self, mock_load_context):
+        module = Mock()
+        load_return = Mock(missing_keys=[], unexpected_keys=[])
+        module.load_state_dict.side_effect = [Exception("strict mismatch"), load_return]
+        contexts = [MagicMock(), MagicMock()]
+        mock_load_context.side_effect = contexts
+
+        _load_model_state_dict(module, {"w": 1}, strict=True)
+
+        assert mock_load_context.call_count == 2
+        mock_load_context.assert_any_call(module)
+        for context in contexts:
+            context.__enter__.assert_called_once_with()
+            context.__exit__.assert_called_once()
 
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_load_model_state_dict_strict_fallback(self, mock_print_rank_0):
