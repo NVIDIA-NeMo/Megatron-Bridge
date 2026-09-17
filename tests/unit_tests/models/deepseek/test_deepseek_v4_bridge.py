@@ -728,7 +728,7 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         assert out.output_projection_groups == 8
         assert out.output_projection_lora_rank == 1024
         # MCore counts MoE positions, so this remains the logical HF layer count.
-        assert out.moe_n_hash_layers == 3
+        assert out.moe_num_hash_layers == 3
         assert out.hash_moe_vocab_size == 129280
         # Doubled per-hybrid-layer ratios (main) + one MTP depth [0, 0].
         assert out.csa_compress_ratios == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
@@ -737,7 +737,7 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         provider = SimpleNamespace(
             hybrid_layer_pattern="WECEHECE",
             mtp_num_layers=1,
-            moe_n_hash_layers=3,
+            moe_num_hash_layers=3,
             activation_func_clamp_value=10.0,
             output_projection_groups=8,
             output_projection_lora_rank=1024,

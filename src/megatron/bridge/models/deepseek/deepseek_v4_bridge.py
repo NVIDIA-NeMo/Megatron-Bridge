@@ -48,7 +48,7 @@ except the MXFP4 expert path, where scale is per-row over 32-element K-tiles.
 F32 via ``.to(torch.float32)`` and selects the tile expansion automatically.
 All weights are dequantised to bfloat16 during import.
 
-MoE router note: The first ``moe_n_hash_layers`` MoE positions in the hybrid
+MoE router note: The first ``moe_num_hash_layers`` MoE positions in the hybrid
 pattern contain a `tid2eid` buffer (int32 vocab→expert lookup table). Buffers are
 not parameters, so Megatron does not expose them via `named_parameters()`.
 The bridge handles `tid2eid` via `maybe_modify_loaded_hf_weight()` and
@@ -635,7 +635,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
 
         # Hash routing. MCore counts MoE positions in the hybrid pattern rather than all
         # hybrid symbols, so this remains the logical HF hash-layer count.
-        provider.moe_n_hash_layers = _dsv4_num_hash_layers(hf_config)  # 3 for DSv4 Flash
+        provider.moe_num_hash_layers = _dsv4_num_hash_layers(hf_config)  # 3 for DSv4 Flash
         provider.hash_moe_vocab_size = hf_config.vocab_size  # 129280
 
         # SwiGLU activation clamp
@@ -686,7 +686,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         hf_cfg["num_nextn_predict_layers"] = getattr(provider, "mtp_num_layers", None) or 0
         num_mtp = hf_cfg["num_nextn_predict_layers"]
 
-        num_hash_layers = getattr(provider, "moe_n_hash_layers", 0)
+        num_hash_layers = getattr(provider, "moe_num_hash_layers", 0)
         hf_cfg["num_hash_layers"] = num_hash_layers
         hf_cfg["mlp_layer_types"] = ["hash_moe"] * min(num_hidden_layers, num_hash_layers) + ["moe"] * max(
             0, num_hidden_layers - num_hash_layers
