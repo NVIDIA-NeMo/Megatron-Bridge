@@ -1,3 +1,4 @@
+#!/bin/bash
 # CI_TIMEOUT=15
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
@@ -13,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
 set -xeuo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
