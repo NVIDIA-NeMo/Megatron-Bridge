@@ -47,6 +47,7 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "TORCHINDUCTOR_WORKER_START",
 }
 _VR200_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
     "deepseek_v3_pretrain_128gpu_vr200_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
     "gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config",
@@ -212,7 +213,15 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
             assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
             assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
-            assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+            # The VR200 MXFP8 parent and its proxy explicitly opt into this path.
+            expected_nondeterminism = int(
+                function_name
+                in {
+                    "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
+                    "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
+                }
+            )
+            assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == expected_nondeterminism
             assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
 
 

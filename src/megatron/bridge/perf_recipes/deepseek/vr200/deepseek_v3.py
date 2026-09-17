@@ -333,6 +333,42 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
+    """Keep the 256-GPU MXFP8 workload per rank on 64 VR200 GPUs.
+
+    This is the full model, not a reduced-depth/width surrogate. GBS=1024 keeps
+    32 microbatches with dense DP=32, matching GBS=4096 and DP=128 at scale.
+    EP=32 and PP=2 leave expert DP=1: expert-DP collectives are not covered,
+    and optimizer shards are larger. Memory fit requires runtime validation.
+    The smaller global batch makes this a debugging benchmark, not a
+    convergence-equivalent replacement or an at-scale throughput predictor.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vr200_fp8mx_config()
+    cfg.train.global_batch_size = 1024
+
+    # Keep this explicit environment identical to the 256-GPU parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, NVFP4 with full-iteration CUDA graph."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
@@ -359,6 +395,41 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
+        "NVTE_DPA_FP8_FORMAT": "E4M3",
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config() -> ConfigContainer:
+    """Keep the 256-GPU NVFP4 workload per rank on 64 VR200 GPUs.
+
+    Preserve the full model, PP/VPP layout, MTP, EP group, precision, graph,
+    fusion, recompute and overlap settings. GBS=1024 preserves 32 microbatches
+    per iteration. Expert DP falls from 4 to 1, increasing optimizer memory
+    and removing expert-DP collective coverage; memory fit is not guaranteed.
+    Use this for feature debugging, not convergence or at-scale acceptance.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+    cfg.train.global_batch_size = 1024
+
+    # Keep this explicit environment identical to the 256-GPU parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         "NVTE_USE_FAST_MATH": 1,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
