@@ -223,6 +223,30 @@ def test_qwen35_vl_35b_gb200_measured_performance_defaults(
     assert config.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
 
 
+def test_qwen35_vl_perf_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Qwen3.5-VL perf recipes should fuse the GatedDeltaNet pre-gated-delta-rule path.
+
+    The flag lives in ``_qwen35_vl_common`` so it applies to every Qwen3.5-VL perf
+    recipe regardless of platform -- it selects Triton kernels, not a
+    hardware-specific path.
+
+    Skipped when the installed Megatron-Core predates
+    ``gdn_pre_gated_delta_rule_fusion``; the recipe guards on the same condition,
+    so on an older core the flag is intentionally not set. The assertion below
+    starts running as soon as the core is bumped.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    if not hasattr(type(config.model), "gdn_pre_gated_delta_rule_fusion") and not hasattr(
+        config.model, "gdn_pre_gated_delta_rule_fusion"
+    ):
+        pytest.skip("Megatron-Core does not expose gdn_pre_gated_delta_rule_fusion")
+
+    assert config.model.gdn_pre_gated_delta_rule_fusion is True
+
+
 def test_qwen35_vl_35b_gb300_fp8mx_enables_cutedsl_grouped_mlp(monkeypatch: pytest.MonkeyPatch) -> None:
     """The GB300 MXFP8 recipe should route the MoE experts through the CuTe DSL grouped MLP.
 
