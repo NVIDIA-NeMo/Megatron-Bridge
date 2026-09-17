@@ -67,6 +67,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -1314,7 +1315,7 @@ def save_checkpoint(
     # distributed checkpoint via optimizer.sharded_state_dict(), so writing separate
     # per-rank files is unnecessary and the files would never be loaded on resume.
     if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_format == "torch":
-        dp_rank = pg_collection.dp.rank()
+        dp_rank = get_data_distribution_group(pg_collection, cfg.model).rank()
         optim_checkpoint_name = os.path.join(save_dir, f"layer_wise_optimizer_{dp_rank}.pt")
         ensure_directory_exists(optim_checkpoint_name)
         if not optimizer.is_stub_optimizer:
@@ -3322,7 +3323,7 @@ def _load_checkpoint_from_path(
                     # separate per-rank file at the base local checkpoint directory rather
                     # than embedding it in the sharded distributed checkpoint.
                     # Load it back from that file here.
-                    dp_rank = pg_collection.dp.rank()
+                    dp_rank = get_data_distribution_group(pg_collection, cfg.model).rank()
                     local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
                     optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
                     optimizer.load_state_dict_from_file(optim_ckpt_path)
