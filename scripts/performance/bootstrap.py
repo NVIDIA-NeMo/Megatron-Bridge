@@ -19,8 +19,6 @@ import os
 import sys
 from pathlib import Path
 
-from argument_parser import parse_cli_args
-
 
 ENTRYPOINT_PERFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
@@ -62,6 +60,14 @@ def _exec_training(target_name: str) -> None:
 
 def main() -> None:
     """Prepare process settings, then execute one training entrypoint."""
+    if os.environ.get("MBRIDGE_RUNTIME_PREFLIGHT"):
+        from utils.runtime_preflight import run_from_environment
+
+        run_from_environment()
+
+    # The opt-in preflight must run even if nemo_run or training imports are broken.
+    from argument_parser import parse_cli_args
+
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
     recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
