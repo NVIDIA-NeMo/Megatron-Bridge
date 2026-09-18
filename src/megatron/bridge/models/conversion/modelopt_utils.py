@@ -492,12 +492,15 @@ def collect_modelopt_quant_metadata(
     metadata: dict[str, QuantMeta] = {}
     quantizer_metadata: dict[tuple[int, int, str, int], QuantMeta | None] = {}
     for task in conversion_tasks:
-        if task is None or task.megatron_module is None or task.param_weight is None:
+        if task is None or task.megatron_module is None:
+            continue
+        param_weight = task.resolve_param_weight()
+        if param_weight is None:
             continue
 
         weight_quantizer, quant_module = find_modelopt_weight_quantizer_and_module(
             task.megatron_module,
-            task.param_weight,
+            param_weight,
         )
         if weight_quantizer is None:
             continue
