@@ -89,6 +89,13 @@ The performance data includes:
 | DGX-GB300 | 64 | NVFP4 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 10240 | 871 |
 | DGX-GB200 | 64 | NVFP4 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 7296 | 616 |
 
+#### Model: Nemotron_3_Ultra
+
+| System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
+|--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
+| DGX-GB300 | 256 | NVFP4 | 256 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 3744 | 1348 |
+| DGX-GB200 | 256 | NVFP4 | 256 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 2464 | 888 |
+
 [^moe-training-note]: In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
 ## Archive
