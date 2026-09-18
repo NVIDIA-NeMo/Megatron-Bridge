@@ -30,6 +30,7 @@ from megatron.core.fp8_utils import get_fp8_context
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.hyper_connection import HyperConnectionModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlock, TransformerBlockSubmodules
 from megatron.core.transformer.transformer_layer import get_transformer_layer_offset
@@ -299,6 +300,13 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
         #   already creates viewless tensors. That said, make_viewless_tensor()
         #   is called here to be future-proof and corner-case-proof.
         hidden_states = make_viewless_tensor(inp=hidden_states, requires_grad=True, keep_graph=True)
+
+        # Hyper connections (e.g. Qwen4-Exp gated residual): expand the single stream to
+        # n streams at the block start, mirroring megatron.core TransformerBlock.forward.
+        if self.config.enable_mhc_connections and self.pre_process:
+            hidden_states = HyperConnectionModule.input_expand(
+                hidden_states, self.mhc_num_residual_streams
+            )  # [s, b, C] -> [s, b, n*C]
 
         if self.config.sequence_parallel:
             rng_context = tensor_parallel.get_cuda_rng_tracker().fork()
@@ -713,6 +721,13 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         #   already creates viewless tensors. That said, make_viewless_tensor()
         #   is called here to be future-proof and corner-case-proof.
         hidden_states = make_viewless_tensor(inp=hidden_states, requires_grad=True, keep_graph=True)
+
+        # Hyper connections (e.g. Qwen4-Exp gated residual): expand the single stream to
+        # n streams at the block start, mirroring megatron.core TransformerBlock.forward.
+        if self.config.enable_mhc_connections and self.pre_process:
+            hidden_states = HyperConnectionModule.input_expand(
+                hidden_states, self.mhc_num_residual_streams
+            )  # [s, b, C] -> [s, b, n*C]
 
         if self.config.sequence_parallel:
             rng_context = tensor_parallel.get_cuda_rng_tracker().fork()

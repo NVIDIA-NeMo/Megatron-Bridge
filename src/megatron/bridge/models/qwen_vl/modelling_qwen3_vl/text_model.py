@@ -212,6 +212,11 @@ class Qwen3VLGPTModel(GPTModel):
         if len(preproc_output) > 5:
             padding_mask = preproc_output[5]
 
+        # Per-layer (hashed n-gram) embeddings (Qwen4-Exp PLE) need the raw token ids
+        # prepared before the decoder runs — mirror the base GPTModel.forward.
+        if self.config.ple_layer_ids:
+            self._prepare_per_layer_embeddings(input_ids, packed_seq_params, inference_context)
+
         # Run decoder.
         hidden_states = self.decoder(
             hidden_states=decoder_input,
