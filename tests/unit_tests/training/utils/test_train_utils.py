@@ -28,7 +28,9 @@ import torch
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
+    _count_dsa_indexer_layers,
     _get_num_moe_layers,
+    _should_track_dsa_indexer_metrics,
     _track_moe_metrics_supports_num_moe_layers,
     calc_params_l2_norm,
     create_value_head_hook,
@@ -124,6 +126,24 @@ def test_track_moe_metrics_supports_num_moe_layers(parameters, expected):
     with mock.patch("inspect.signature") as mock_signature:
         mock_signature.return_value.parameters = parameters
         assert _track_moe_metrics_supports_num_moe_layers() is expected
+
+
+def test_count_dsa_indexer_layers_only_ratio_four():
+    model = mock.MagicMock()
+    model.csa_compress_ratios = [0, 0, 4, 128, 4, 128, 4, 128, 4, 128, 4, 0]
+    assert _count_dsa_indexer_layers(model) == 5
+    model.csa_compress_ratios = None
+    assert _count_dsa_indexer_layers(model) is None
+
+
+def test_should_track_dsa_indexer_metrics_requires_positive_coeff():
+    model = mock.MagicMock()
+    model.dsa_indexer_loss_coeff = 0.01
+    assert _should_track_dsa_indexer_metrics(model) is True
+    model.dsa_indexer_loss_coeff = 0.0
+    assert _should_track_dsa_indexer_metrics(model) is False
+    model.dsa_indexer_loss_coeff = None
+    assert _should_track_dsa_indexer_metrics(model) is False
 
 
 @pytest.mark.parametrize(
@@ -1590,6 +1610,68 @@ class TestTrainingLog:
 
         # Verify MTP tracking was called
         mock_mtp_helper.track_mtp_metrics.assert_called_once()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.DSAIndexerLossLoggingHelper")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_dsa_indexer_loss_logging(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_indexer_helper,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test DSA indexer-loss logging when dsa_indexer_loss_coeff > 0."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        mock_config.model.num_moe_experts = None
+        mock_config.model.mtp_num_layers = None
+        mock_config.model.dsa_indexer_loss_coeff = 0.01
+        mock_config.model.csa_compress_ratios = [0, 0, 4, 128, 4, 128, 4, 128, 4, 128, 4, 0]
+        mock_config.model.num_layers = 12
+        mock_config.model.cuda_graph_impl = "none"
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_indexer_helper.track_indexer_metrics.assert_called_once()
+        kwargs = mock_indexer_helper.track_indexer_metrics.call_args.kwargs
+        assert kwargs["loss_scale"] == 1 / 8
+        assert kwargs["num_indexer_layers"] == 5
+        assert kwargs["num_layers"] == 12
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
