@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
@@ -81,7 +82,7 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None
+    cfg.model.attention_backend = AttnBackend.auto
     cfg.model.moe_router_fusion = False
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True

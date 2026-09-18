@@ -722,6 +722,37 @@ def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     assert perf_base is legacy_base
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"),
+    [
+        (
+            "megatron.bridge.recipes.qwen.h100.qwen3_moe",
+            "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
+        ),
+        (
+            "megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe",
+            "qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config",
+        ),
+        (
+            "megatron.bridge.perf_recipes.qwen.vr200.qwen3_moe",
+            "qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config",
+        ),
+    ],
+)
+def test_qwen3_30b_a3b_inherited_attention_backend_is_auto(
+    monkeypatch: pytest.MonkeyPatch, module_name: str, factory_name: str
+) -> None:
+    """The shared base must supply MCore's auto enum, not the invalid None sentinel."""
+    from megatron.core.transformer.enums import AttnBackend
+
+    base_module = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3_moe")
+    monkeypatch.setattr(base_module, "AutoBridge", _FakeMoeBridge)
+    cfg = getattr(importlib.import_module(module_name), factory_name)()
+
+    assert cfg.model.attention_backend is AttnBackend.auto
+
+
 def test_qwen3_30b_a3b_h100_fp8cs_perf_recipe_uses_te_partial_cuda_graph(
     monkeypatch: pytest.MonkeyPatch,
 ):
