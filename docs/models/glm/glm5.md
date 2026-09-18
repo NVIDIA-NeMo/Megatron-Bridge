@@ -1,6 +1,37 @@
 # GLM-5
 
-[GLM-5](https://huggingface.co/zai-org/GLM-5), [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1), and [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) are large sparse MoE language models with Multi-Latent Attention and Dynamic Sparse Attention. Megatron Bridge supports these checkpoints through the shared `GLM5Bridge`.
+[GLM-5](https://huggingface.co/zai-org/GLM-5), [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1), [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2), and [GLM-5.3](https://huggingface.co/zai-org/GLM-5.3) use the shared `GLM5Bridge` for their MoE, Multi-Latent Attention, and Dynamic Sparse Attention architecture. GLM-5.3 shares GLM-5.2's architecture and import mappings; full-model GLM-5.3 verification remains pending.
+
+
+## GLM-5.2 / GLM-5.3 compatibility
+
+The pinned publisher configs for [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2/blob/cf457fa734ab149ffef225f80893eb38c6ff5cdc/config.json) and [GLM-5.3](https://huggingface.co/zai-org/GLM-5.3/blob/aca966e4e02791568aa6a4ced368624b3d897f42/config.json) have identical architecture fields: 78 decoder layers, 256 routed experts with top-8 routing, MLA, and the same DSA IndexShare pattern. All 59,585 base checkpoint tensor names and shapes also match. AutoBridge resolves both to `GlmMoeDsaForCausalLM` and `GLM5Bridge`; no separate provider is needed. **GLM-5.3-Flash is a different architecture and is outside this support statement.**
+
+The checkpoints have important differences:
+
+- **Precision:** GLM-5.2 stores BF16 weights (plus FP32 router biases). GLM-5.3 stores 59,044 weights as E4M3 FP8 with FP32 scales per 128×128 block. The existing GLM bridge dequantizes these weights to BF16 on import. This is distinct from enabling FP8 training.
+- **Config metadata:** GLM-5.3 adds `quantization_config` and records Transformers 5.15.0 instead of 5.12.0. Use the repository's supported dependency versions.
+- **Tokenizer and generation defaults:** `tokenizer.json`, `tokenizer_config.json`, and `generation_config.json` are identical at those revisions, including token IDs and sampling defaults.
+- **Chat formatting:** GLM-5.3's template adds low reasoning effort, retains historical reasoning by default, always opens a thinking response (it does not honor `enable_thinking=False`), and changes structured tool-result handling and ordering. Load the template from the GLM-5.3 checkpoint; do not substitute GLM-5.2's template.
+
+For config/provider loading without weights:
+
+```python
+from megatron.bridge import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained(
+    "zai-org/GLM-5.3", revision="aca966e4e02791568aa6a4ced368624b3d897f42"  # pragma: allowlist secret (public HF revision)
+)
+provider = bridge.to_megatron_provider(load_weights=False)
+```
+
+For **BF16 export** using the FP8 source as the reference, explicitly select `--export-weight-dtype bfloat16` with the GPU or distributed-CPU conversion backend (API: `weight_dtype=torch.bfloat16`). This removes FP8 scale tensors from strict source-key validation and writes a BF16 artifact rather than claiming a bitwise FP8 round trip. The serial-CPU backend does not support this option. MTP is disabled by default; the appended MTP layer is outside that default inference graph.
+
+### Verification limits
+
+The recorded commands and results below belong to the checkpoint named in each verification card. GLM-5.2 results do **not** establish GLM-5.3 full-checkpoint conversion/export, forward parity, generation, SFT/PEFT, resume, long-context behavior, or performance. Those GLM-5.3 checks remain unverified. The `glm52_*` recipes are pinned to GLM-5.2 and retain that name and attribution; changing only their display name would not select GLM-5.3 weights or its chat template.
+
+[Production qualification tracker #5476](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/5476) remains open. It includes repeated-MTP training semantics, precision controls, dynamic context parallelism, production recipes, checkpoint continuity, convergence, and hardware-specific performance qualification. See also the open [export context-length fix #5996](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/5996), [router-bias fix #6036](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6036), and [recipe-selection fix #5608](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/5608).
 
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 

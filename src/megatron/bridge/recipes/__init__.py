@@ -18,6 +18,8 @@ Megatron Bridge Recipe Configurations
 This module exposes all recipe configurations from all model families.
 """
 
+from megatron.bridge.recipes.bagel import *
+from megatron.bridge.recipes.bagel.h100 import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.deepseek.h100 import *
 from megatron.bridge.recipes.exaone import *
