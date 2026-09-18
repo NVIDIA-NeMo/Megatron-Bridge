@@ -21,6 +21,7 @@ import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig, ParamKey, get_standard_config_overrides
 from megatron.core.optimizer_param_scheduler import ParamGroupOverride
+from megatron.core.transformer.module import mark_keep_in_fp32
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
@@ -184,6 +185,7 @@ class LoRA(PEFT, ModuleMatcher):
                     lora_A_init_method=self.lora_A_init_method,
                     lora_dtype=self.lora_dtype,
                 )
+                self._preserve_adapter_dtype(adapter)
                 return LoRALinear(module, adapter)
 
             is_expert = is_expert_linear(full_name)
@@ -216,6 +218,7 @@ class LoRA(PEFT, ModuleMatcher):
                 and getattr(module.config, "use_transformer_engine_op_fuser", False)
                 # TP not yet supported
                 and parallel_state.get_tensor_model_parallel_world_size() == 1
+                and (self.lora_dtype is None or self.lora_dtype == next(module.parameters()).dtype)
             )
 
             logger.info(f"Adding lora to: {full_name}")
@@ -252,8 +255,10 @@ class LoRA(PEFT, ModuleMatcher):
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                     replicate_adapter=attrs.replicate_adapter,
+                    params_dtype=self.lora_dtype,
                 )
             adapter = adapter_cls(attrs.in_features, attrs.out_features, dim, **adapter_kwargs)
+            self._preserve_adapter_dtype(adapter)
             if isinstance(module, TopKRouter):
                 return LoRATopKRouter(module, adapter)
             if enable_op_fuser:
@@ -261,6 +266,13 @@ class LoRA(PEFT, ModuleMatcher):
             else:
                 return LoRALinear(module, adapter)
         return module
+
+    def _preserve_adapter_dtype(self, adapter: nn.Module) -> None:
+        """Keep explicitly FP32 adapters intact through the model precision wrapper."""
+        if self.lora_dtype is torch.float32:
+            for parameter in adapter.parameters():
+                if parameter.dtype is torch.float32:
+                    mark_keep_in_fp32(parameter)
 
 
 @dataclass
