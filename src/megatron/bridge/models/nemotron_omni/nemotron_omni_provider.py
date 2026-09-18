@@ -513,9 +513,9 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
         self.validate_model_contract()
 
-        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
-        vision_cfg = self._build_vision_config(language_cfg)
-        vision_proj_cfg = self._build_vision_projection_config(language_cfg)
+        auxiliary_cfg = self._copy_config_without_runtime_process_groups(deep=True)
+        vision_cfg = self._build_vision_config(auxiliary_cfg)
+        vision_proj_cfg = self._build_vision_projection_config(auxiliary_cfg)
 
         # LLM decoder spec, which can be TE or Megatron inference-optimized.
         language_spec = self._resolve_hybrid_stack_spec()
@@ -527,44 +527,52 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
         add_encoder = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
 
         sound_model, sound_projection = self._build_sound_modules(
-            language_cfg,
+            auxiliary_cfg,
             add_encoder=add_encoder,
         )
 
-        model = NemotronOmniModel(
-            language_transformer_config=language_cfg,
-            language_transformer_layer_spec=language_spec,
-            language_vocab_size=self.vocab_size,
-            language_max_sequence_length=self.seq_length,
-            vision_transformer_config=vision_cfg,
-            vision_transformer_layer_spec=vision_spec,
-            vision_projection_config=vision_proj_cfg,
-            vision_projection_layer_spec=vision_proj_spec,
-            image_token_index=self.image_token_index,
-            parallel_output=self.parallel_output,
-            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
-            language_position_embedding_type=self.position_embedding_type,
-            pre_process=True if pre_process is None else pre_process,
-            post_process=True if post_process is None else post_process,
-            add_encoder=add_encoder,
-            add_decoder=True,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
-            dynamic_resolution=self.dynamic_resolution,
-            vision_class_token_len=self.vision_class_token_len or 10,
-            radio_force_eval_mode=self.radio_force_eval_mode,
-            radio_force_cpe_eval_mode=self.radio_force_cpe_eval_mode,
-            radio_interpolate_only_cpe=self.radio_interpolate_only_cpe,
-            radio_cpe_aspect_ratio_select=self.radio_cpe_aspect_ratio_select,
-            radio_disable_cpe=self.radio_disable_cpe,
-            temporal_patch_dim=self.temporal_patch_dim,
-            separate_video_embedder=self.separate_video_embedder,
-            temporal_ckpt_compat=self.temporal_ckpt_compat,
-            vision_dp_over_cp=self.vision_dp_over_cp,
-            sound_model=sound_model,
-            sound_projection=sound_projection,
-            sound_token_index=self.sound_context_token_id,
-            vp_stage=vp_stage,
-        )
+        # Bridge installs training callbacks on this provider after model wrapping.
+        # Keep that identity on both the root and language model, but detach runtime
+        # process groups while MCore deep-copies configs for individual layers.
+        pg_collection = self._pg_collection
+        self._pg_collection = None
+        try:
+            model = NemotronOmniModel(
+                language_transformer_config=self,
+                language_transformer_layer_spec=language_spec,
+                language_vocab_size=self.vocab_size,
+                language_max_sequence_length=self.seq_length,
+                vision_transformer_config=vision_cfg,
+                vision_transformer_layer_spec=vision_spec,
+                vision_projection_config=vision_proj_cfg,
+                vision_projection_layer_spec=vision_proj_spec,
+                image_token_index=self.image_token_index,
+                parallel_output=self.parallel_output,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                language_position_embedding_type=self.position_embedding_type,
+                pre_process=True if pre_process is None else pre_process,
+                post_process=True if post_process is None else post_process,
+                add_encoder=add_encoder,
+                add_decoder=True,
+                hybrid_layer_pattern=self.hybrid_layer_pattern,
+                dynamic_resolution=self.dynamic_resolution,
+                vision_class_token_len=self.vision_class_token_len or 10,
+                radio_force_eval_mode=self.radio_force_eval_mode,
+                radio_force_cpe_eval_mode=self.radio_force_cpe_eval_mode,
+                radio_interpolate_only_cpe=self.radio_interpolate_only_cpe,
+                radio_cpe_aspect_ratio_select=self.radio_cpe_aspect_ratio_select,
+                radio_disable_cpe=self.radio_disable_cpe,
+                temporal_patch_dim=self.temporal_patch_dim,
+                separate_video_embedder=self.separate_video_embedder,
+                temporal_ckpt_compat=self.temporal_ckpt_compat,
+                vision_dp_over_cp=self.vision_dp_over_cp,
+                sound_model=sound_model,
+                sound_projection=sound_projection,
+                sound_token_index=self.sound_context_token_id,
+                vp_stage=vp_stage,
+            )
+        finally:
+            self._pg_collection = pg_collection
 
         if any(
             (

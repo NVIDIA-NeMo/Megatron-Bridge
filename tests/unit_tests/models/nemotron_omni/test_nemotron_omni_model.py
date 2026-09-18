@@ -29,6 +29,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
+from megatron.core.utils import get_model_config
 from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
@@ -292,6 +293,9 @@ def test_cuda_graph_helper_discovers_nested_language_layers(single_rank_model_pa
     provider.finalize()
     model = provider.provide().cuda().train()
 
+    assert model.config is provider
+    assert model.language_model.config is provider
+
     helper = TECudaGraphHelper(
         model=[model],
         config=provider,
@@ -303,7 +307,8 @@ def test_cuda_graph_helper_discovers_nested_language_layers(single_rank_model_pa
     assert helper.num_layers_per_chunk[0] > 0
 
 
-def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config():
+@pytest.mark.parametrize("construction_fails", [False, True])
+def test_canonical_provider_preserves_config_identity_and_restores_process_groups(construction_fails):
     class UncopyableProcessGroupCollection:
         def __deepcopy__(self, memo):
             raise TypeError("runtime process groups cannot be copied")
@@ -311,15 +316,24 @@ def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config(
     provider = _TinyOmniProvider()
     pg_collection = UncopyableProcessGroupCollection()
     provider._pg_collection = pg_collection
+    failure = RuntimeError("model construction failed")
 
     def create_model(**kwargs):
-        copied_config = _copy_attention_config(kwargs["language_transformer_config"])
+        language_config = kwargs["language_transformer_config"]
+        assert language_config is provider
+        assert language_config._pg_collection is None
+        copied_config = _copy_attention_config(language_config)
         assert copied_config._pg_collection is None
-        return Mock()
+        assert copied_config is not provider
+        for key in ("vision_transformer_config", "vision_projection_config"):
+            assert kwargs[key] is not provider
+            assert kwargs[key]._pg_collection is None
+        assert kwargs["vision_transformer_config"] is not kwargs["vision_projection_config"]
+        if construction_fails:
+            raise failure
+        return SimpleNamespace(config=language_config, language_model=SimpleNamespace(config=language_config))
 
     with (
-        patch.object(_TinyOmniProvider, "_build_vision_config", return_value=Mock()),
-        patch.object(_TinyOmniProvider, "_build_vision_projection_config", return_value=Mock()),
         patch.object(_TinyOmniProvider, "_resolve_hybrid_stack_spec", return_value=Mock()),
         patch.object(_TinyOmniProvider, "_build_sound_modules", return_value=(None, None)),
         patch(
@@ -327,7 +341,19 @@ def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config(
             side_effect=create_model,
         ),
     ):
-        provider.provide(pre_process=True, post_process=True)
+        if construction_fails:
+            with pytest.raises(RuntimeError) as caught:
+                provider.provide(pre_process=True, post_process=True)
+            assert caught.value is failure
+        else:
+            model = provider.provide(pre_process=True, post_process=True)
+            # Training setup installs this only after model construction/wrapping.
+            finalize_grads = Mock()
+            provider.finalize_model_grads_func = finalize_grads
+            assert get_model_config(model).finalize_model_grads_func is finalize_grads
+            assert get_model_config(model.language_model).finalize_model_grads_func is finalize_grads
+            get_model_config(model).finalize_model_grads_func([model])
+            finalize_grads.assert_called_once_with([model])
 
     assert provider._pg_collection is pg_collection
 
