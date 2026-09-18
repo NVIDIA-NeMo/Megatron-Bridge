@@ -107,6 +107,7 @@ jobs:
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
+      build-wheel-env: '{"TMS_CUDA_MAJOR":"13"}'
       extra-no-build-isolation-packages: "grpcio-tools"
       restrict-to-admins: true
     secrets: inherit  # pragma: allowlist secret
