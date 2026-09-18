@@ -135,6 +135,17 @@ def _run_probe(module_name: str) -> dict[str, object]:
     return {"module": module_name, "returncode": result.returncode, "stdout": result.stdout, "stderr": result.stderr}
 
 
+def _record(path: Path, report: dict[str, object], *, event: str, payload: object) -> None:
+    # Console evidence survives missing artifact mounts and peer-rank teardown.
+    for line in json.dumps({event: payload}, indent=2).splitlines():
+        logger.warning("Runtime preflight rank=%s %s", report["rank"], line)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2) + "\n")
+    except OSError as error:
+        logger.warning("Cannot save runtime preflight report %s: %s; evidence is in the log", path, error)
+
+
 def run_from_environment() -> None:
     """Save per-rank evidence and optionally exit before any training imports.
 
@@ -155,18 +166,17 @@ def run_from_environment() -> None:
         raise ValueError("Runtime preflight requires a nonnegative RANK or SLURM_PROCID")
 
     output_dir = Path(directory)
-    output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"runtime_preflight_rank-{int(rank)}.json"
     probes: list[dict[str, object]] = []
     report = {"mode": mode, "rank": int(rank), "provenance": _provenance(), "probes": probes}
     # Persist each stage before risking a native crash or peer-rank cancellation.
-    path.write_text(json.dumps(report, indent=2) + "\n")
+    _record(path, report, event="provenance", payload=report["provenance"])
     modules = ["torch", "transformer_engine.pytorch"]
     if mode == "check":
         modules.extend(["deep_ep", "modelopt.torch"])
     for name in modules:
         probes.append(_run_probe(name))
-        path.write_text(json.dumps(report, indent=2) + "\n")
+        _record(path, report, event="probe", payload=probes[-1])
     failed = [probe["module"] for probe in probes if probe["returncode"] != 0]
     logger.warning("Runtime preflight rank=%s failed=%s report=%s", rank, failed, path)
     if failed or mode == "only":

@@ -99,3 +99,26 @@ def test_probe_process_failure_is_reported(monkeypatch, error):
     monkeypatch.setattr(module.subprocess, "run", Mock(side_effect=error))
     result = module._run_probe("torch")
     assert result["returncode"] in {124, 127}
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_unwritable_report_preserves_console_evidence_and_gate(preflight, monkeypatch, tmp_path, caplog, failed):
+    monkeypatch.setenv("MBRIDGE_RUNTIME_PREFLIGHT", "check")
+    monkeypatch.setenv("MBRIDGE_RUNTIME_PREFLIGHT_DIR", str(tmp_path))
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setattr(Path, "write_text", Mock(side_effect=OSError("artifact mount unavailable")))
+    preflight._run_probe.side_effect = lambda name: {
+        "module": name,
+        "returncode": int(failed and name == "transformer_engine.pytorch"),
+        "stderr": "diagnostic evidence",
+    }
+    if failed:
+        with pytest.raises(SystemExit) as error:
+            preflight.run_from_environment()
+        assert error.value.code == 1
+    else:
+        preflight.run_from_environment()
+    assert preflight._run_probe.call_count == 4
+    assert "diagnostic evidence" in caplog.text
+    assert "artifact mount unavailable" in caplog.text
+    assert '"machine": "test"' in caplog.text
