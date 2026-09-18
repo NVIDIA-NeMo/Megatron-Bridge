@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Tuple, TypeVar
 import torch
 from hydra._internal.config_loader_impl import ConfigLoaderImpl
 from hydra.core.override_parser.overrides_parser import OverridesParser
+from hydra.core.override_parser.types import Override
 from omegaconf import DictConfig, OmegaConf
 
 # Re-export so existing callers (e.g. transformer_config.py) keep working.
@@ -41,6 +42,40 @@ _EXCLUDE_FIELD = object()
 
 # Fields whose callables should be serialized as strings (not excluded)
 _SERIALIZABLE_CALLABLE_FIELDS: frozenset[str] = frozenset({"activation_func"})
+
+
+def _leaf_paths(value: Any, prefix: str = "") -> set[str]:
+    """Return dot-separated paths for every explicitly supplied leaf value."""
+    if isinstance(value, dict):
+        if not value:
+            return {prefix} if prefix else set()
+        paths: set[str] = set()
+        for key, item in value.items():
+            item_prefix = f"{prefix}.{key}" if prefix else str(key)
+            paths.update(_leaf_paths(item, item_prefix))
+        return paths
+    return {prefix} if prefix else set()
+
+
+def _cli_override_paths(parsed_overrides: list[Override]) -> set[str]:
+    """Return leaf paths assigned by parsed Hydra overrides."""
+    paths: set[str] = set()
+    for override in parsed_overrides:
+        # Deletions do not supply a value for mixed-precision setup to preserve.
+        if not override.is_delete():
+            paths.update(_leaf_paths(override.value(), override.key_or_group))
+    return paths
+
+
+def _parse_and_apply_hydra_overrides(cfg: DictConfig, overrides: list[str]) -> tuple[DictConfig, list[Override]]:
+    """Parse and apply Hydra overrides, returning the parsed objects for provenance."""
+    try:
+        parsed_overrides = OverridesParser.create().parse_overrides(overrides=overrides)
+        OmegaConf.set_struct(cfg, True)
+        ConfigLoaderImpl._apply_overrides_to_config(overrides=parsed_overrides, cfg=cfg)
+        return cfg, parsed_overrides
+    except Exception as e:
+        raise OverridesError(f"Failed to parse Hydra overrides: {str(e)}") from e
 
 
 def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dict[str, Any]]:
@@ -115,6 +150,9 @@ def process_config_with_overrides(
     3. Apply optional CLI overrides using Hydra syntax
     4. Apply the final configuration back to the original object
 
+    Top-level training configs retain explicit CLI leaf paths as runtime
+    metadata so later setup does not overwrite values supplied by the user.
+
     Args:
         config: The dataclass configuration instance to process
         config_filepath: Optional path to a YAML config file to merge
@@ -150,12 +188,16 @@ def process_config_with_overrides(
 
     # Apply CLI overrides if provided
     if cli_overrides:
-        omega_conf = parse_hydra_overrides(omega_conf, cli_overrides)
+        omega_conf, parsed_overrides = _parse_and_apply_hydra_overrides(omega_conf, cli_overrides)
+        explicit_cli_override_paths = _cli_override_paths(parsed_overrides)
         logger.debug(f"Applied {len(cli_overrides)} CLI overrides")
 
     # Convert back to dict and apply to original config object
     final_config_dict = OmegaConf.to_container(omega_conf, resolve=True)
     apply_overrides(config, final_config_dict, excluded_fields)
+    if cli_overrides and hasattr(config, "mixed_precision"):
+        existing_override_paths = getattr(config, "_explicit_cli_override_paths", frozenset())
+        setattr(config, "_explicit_cli_override_paths", existing_override_paths | explicit_cli_override_paths)
 
     return config
 
@@ -176,14 +218,8 @@ def parse_hydra_overrides(cfg: DictConfig, overrides: List[str]) -> DictConfig:
     Raises:
         OverridesError: If there's an error parsing or applying overrides
     """
-    try:
-        OmegaConf.set_struct(cfg, True)
-        parser = OverridesParser.create()
-        parsed = parser.parse_overrides(overrides=overrides)
-        ConfigLoaderImpl._apply_overrides_to_config(overrides=parsed, cfg=cfg)
-        return cfg
-    except Exception as e:
-        raise OverridesError(f"Failed to parse Hydra overrides: {str(e)}") from e
+    cfg, _ = _parse_and_apply_hydra_overrides(cfg, overrides)
+    return cfg
 
 
 class OverridesError(Exception):
