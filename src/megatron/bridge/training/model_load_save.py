@@ -305,7 +305,9 @@ def load_model_config(
 
     if mbridge_ckpt:
         if "_builder_" in run_config["model"]:
-            model_dict = run_config["model"]
+            from megatron.bridge.compat.mcore_gpt import normalize_gpt_config_targets
+
+            model_dict = normalize_gpt_config_targets(run_config["model"])
             target = model_dict.get("_target_")
             if isinstance(target, str):
                 model_config_cls = _resolve_target(target, full_key="model._target_")

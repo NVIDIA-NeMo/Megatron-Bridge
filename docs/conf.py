@@ -94,6 +94,8 @@ autodoc2_packages = [
     {
         "path": "../src/megatron/bridge",  # Path to your package relative to conf.py
         "exclude_dirs": ["converters"],  # list of directory names to exclude
+        # Internal compatibility implementation; document the public facade only.
+        "exclude_files": ["mcore_gpt_fallback.py"],
     }
 ]
 autodoc2_render_plugin = "myst"  # Use MyST for rendering docstrings

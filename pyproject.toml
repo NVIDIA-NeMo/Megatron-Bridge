@@ -89,7 +89,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "tqdm>=4.67.1",
     "hydra-core>=1.3.4,<1.4",  # CVE-2026-68508
-    "megatron-core[dev,inference,mlm,te]",
+    "megatron-core[dev,inference,mlm,te]>=0.18.0,<0.21",  # see megatron.bridge.compat.mcore_version
     "qwen-vl-utils",
     "nvidia-resiliency-ext",
     "flash-linear-attention",
@@ -325,6 +325,7 @@ omit = [
     "/tmp/*",
     "/opt/Megatron-Bridge/tests/*",
     "/opt/Megatron-Bridge/*.py",
+    "*/src/megatron/bridge/compat/*",
     "examples/*",
     "scripts/*",
     "*_ray.py",
