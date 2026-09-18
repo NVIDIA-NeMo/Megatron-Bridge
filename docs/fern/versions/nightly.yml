@@ -207,6 +207,8 @@ navigation:
     path: ./nightly/pages/training/cuda-graphs.mdx
   - page: Hierarchical Context Parallel
     path: ./nightly/pages/training/hierarchical-context-parallel.mdx
+  - page: Dynamic Context Parallel
+    path: ./nightly/pages/training/dynamic-context-parallel.mdx
   - page: Communication Overlap
     path: ./nightly/pages/training/communication-overlap.mdx
   - page: Attention Optimizations

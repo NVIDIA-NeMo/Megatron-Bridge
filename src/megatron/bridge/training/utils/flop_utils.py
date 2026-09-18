@@ -238,6 +238,13 @@ def resolve_global_flops_runtime_stats(
         cross_seqlen_sum = local_cross_seqlen_sum * data_parallel_size
         cross_seqlen_product_sum = local_cross_seqlen_product_sum * data_parallel_size
 
+    # Online sequence packing already knows the exact data-parallel-global token
+    # statistics for this step (Megatron-Core gathers every sample length before
+    # packing), so prefer them over the per-rank accumulators.
+    seqlen_override = getattr(state, "_flops_global_seqlen_override", None)
+    if seqlen_override is not None:
+        seqlen_sum, seqlen_squared_sum = (int(seqlen_override[0]), int(seqlen_override[1]))
+
     if seqlen_sum <= 0:
         seqlen_sum = None
         seqlen_squared_sum = None

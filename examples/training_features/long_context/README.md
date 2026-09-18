@@ -104,3 +104,39 @@ uv run python examples/training_features/long_context/dynamic_context_parallel.p
 The `qwen3_600m_sft_128k.sh` and `qwen3_600m_sft_yarn_128k.sh` scripts are
 separate long-context SFT launch examples. They are real training launch
 scripts, unlike the DCP packing demo above.
+
+## Qwen3.5-35B-A3B with Online Packing and Dynamic CP
+
+`qwen35_35b_a3b_dynamic_cp.py` is a real training launch script. It builds the
+`qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_dynamic_cp_config` recipe (TP1 PP1
+CP4 EP8, 32k cap, synthetic lognormal sequence lengths), applies dotted config
+overrides, and trains with Megatron-Core's online sequence-packing scheduler
+so every packed bin runs on a context-parallel group sized for its longest
+sequence. It needs the Megatron-Core dev pin:
+
+```bash
+./scripts/switch_mcore.sh dev && uv sync
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+  examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py \
+  train.train_iters=20 logger.log_interval=1
+```
+
+Static-CP baseline with the same bins:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+  examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py \
+  model.dynamic_context_parallel=false model.sequence_packing_scheduler=dp_balanced
+```
+
+Two-GPU smoke test with a tiny Qwen3.5-shaped model:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=2 \
+  examples/training_features/long_context/qwen35_35b_a3b_dynamic_cp.py --tiny-model
+```
+
+See `docs/training/dynamic-context-parallel.md` for the configuration
+contract, the dataset schema, and the operational notes for wide-head MoE
+models.
+

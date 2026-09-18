@@ -12,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.qwen.gb200.qwen3_moe import (
-    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
-)
-from megatron.bridge.recipes.qwen.gb200.qwen35 import (
-    qwen35_text_9b_pretrain_8gpu_gb200_bf16_config,
-    qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
-    qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_dynamic_cp_config,
-)
+"""Identity collate for datasets consumed by Megatron-Core's online packing scheduler."""
+
+from __future__ import annotations
+
+from typing import Any
 
 
-__all__ = [
-    "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
-    "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
-    "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
-    "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_dynamic_cp_config",
-]
+def identity_collate(samples: list[Any]) -> list[Any]:
+    """Return the samples as a list instead of stacking them.
+
+    Megatron-Core's sequence-packing scheduler pulls ``micro_batch_size`` samples
+    per ``next()`` and packs them itself; the default collate would stack the
+    variable-length tensors and destroy the per-sample lengths it needs.
+    """
+    return list(samples)
