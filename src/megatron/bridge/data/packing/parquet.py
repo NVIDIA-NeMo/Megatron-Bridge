@@ -30,11 +30,13 @@ from __future__ import annotations
 
 import bisect
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
+from torch.utils.data import Dataset
 
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 from megatron.bridge.data.packing.paths import _resolve_parquet_paths
@@ -459,3 +461,115 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             "seq_boundaries": seq_boundaries,
             "loss_mask": loss_mask,
         }
+
+
+class GPTSFTPackedParquetBlendDataset(Dataset):
+    """Deterministically blend multiple packed Parquet SFT datasets.
+
+    Source selection follows the same low-discrepancy weighted scheduling used
+    by Megatron blended pretraining datasets. Samples within each source are
+    shuffled without replacement for each source-local pass, then repeated as
+    needed when the requested blend size oversamples that source.
+
+    Args:
+        datasets: Packed Parquet datasets, one per logical source. A source may
+            itself contain multiple Parquet shards through a directory or glob.
+        weights: Positive relative sampling weights, one per source.
+        size: Number of samples exposed by the blend. When ``None``, the sum of
+            the source lengths is used.
+        seed: Seed for deterministic source-local sample shuffling.
+    """
+
+    def __init__(
+        self,
+        datasets: Sequence[GPTSFTPackedParquetDataset],
+        weights: Sequence[float],
+        *,
+        size: int | None = None,
+        seed: int = 1234,
+    ) -> None:
+        if len(datasets) < 2:
+            raise ValueError("A packed Parquet blend requires at least two datasets.")
+        if len(datasets) != len(weights):
+            raise ValueError("Packed Parquet blend datasets and weights must have the same length.")
+        if len(datasets) >= np.iinfo(np.int16).max:
+            raise ValueError("Packed Parquet blend supports fewer than 32767 sources.")
+        if any(len(dataset) <= 0 for dataset in datasets):
+            raise ValueError("Packed Parquet blend sources must not be empty.")
+
+        normalized_weights = np.asarray(weights, dtype=np.float64)
+        if not np.all(np.isfinite(normalized_weights)) or np.any(normalized_weights <= 0.0):
+            raise ValueError("Packed Parquet blend weights must be finite and greater than 0.")
+        weight_sum = normalized_weights.sum()
+        if not np.isfinite(weight_sum):
+            raise ValueError("Packed Parquet blend weights must have a finite sum.")
+        normalized_weights /= weight_sum
+
+        resolved_size = sum(len(dataset) for dataset in datasets) if size is None else size
+        if not isinstance(resolved_size, (int, np.integer)) or resolved_size <= 0:
+            raise ValueError("Packed Parquet blend size must be a positive integer.")
+
+        self.datasets = list(datasets)
+        self.weights = normalized_weights.tolist()
+        self.size = int(resolved_size)
+        self.seed = seed
+        self.dataset_index, self.dataset_sample_index = self._build_indices()
+
+    def __len__(self) -> int:
+        """Return the configured number of blended samples."""
+        return self.size
+
+    def __getitem__(self, idx: int) -> dict[str, Any]:
+        """Return one sample from the source selected by the blend mapping."""
+        if idx < -self.size or idx >= self.size:
+            raise IndexError(f"Packed Parquet blend index {idx} is out of range for size {self.size}.")
+
+        is_padding_sample = idx < 0
+        mapping_idx = idx % self.size
+        dataset_id = int(self.dataset_index[mapping_idx])
+        dataset_sample_id = int(self.dataset_sample_index[mapping_idx])
+        sample = self.datasets[dataset_id][dataset_sample_id]
+        if not is_padding_sample:
+            return sample
+
+        padding_sample = dict(sample)
+        padding_sample["loss_mask"] = [0] * len(sample["loss_mask"])
+        return padding_sample
+
+    def collate_fn(self, batch: list[dict[str, Any]]) -> dict[str, Any]:
+        """Collate blended samples with the common packed SFT collator."""
+        return self.datasets[0].collate_fn(batch)
+
+    def close(self) -> None:
+        """Close all source dataset readers."""
+        for dataset in self.datasets:
+            dataset.close()
+
+    def _build_indices(self) -> tuple[np.ndarray, np.ndarray]:
+        """Build deterministic source and source-local sample mappings."""
+        dataset_index = np.empty(self.size, dtype=np.int16)
+        current_samples = np.zeros(len(self.datasets), dtype=np.int64)
+        weights = np.asarray(self.weights, dtype=np.float64)
+
+        for sample_idx in range(self.size):
+            target_sample_count = max(float(sample_idx), 1.0)
+            sampling_error = weights * target_sample_count - current_samples
+            dataset_id = int(np.argmax(sampling_error))
+            dataset_index[sample_idx] = dataset_id
+            current_samples[dataset_id] += 1
+
+        dataset_sample_index = np.empty(self.size, dtype=np.int64)
+        for dataset_id, dataset in enumerate(self.datasets):
+            blend_positions = np.flatnonzero(dataset_index == dataset_id)
+            if len(blend_positions) == 0:
+                continue
+            rng = np.random.default_rng(self.seed + dataset_id)
+            source_order: list[np.ndarray] = []
+            remaining = len(blend_positions)
+            while remaining > 0:
+                permutation = rng.permutation(len(dataset))
+                source_order.append(permutation[:remaining])
+                remaining -= len(permutation)
+            dataset_sample_index[blend_positions] = np.concatenate(source_order)[: len(blend_positions)]
+
+        return dataset_index, dataset_sample_index

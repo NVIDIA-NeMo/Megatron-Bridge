@@ -214,11 +214,12 @@ def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str
 class GPTSFTDatasetConfig(DataloaderConfig):
     """Serializable configuration for text-only ``GPTSFTDataset`` construction.
 
-    Exactly one source is required: ``dataset_root`` selects existing local
-    JSONL/packed artifacts, ``per_split_data_source_manifest_path`` selects MLM-style
-    JSONL blends, and ``hf_dataset`` selects a declarative Hugging Face source
-    that is materialized before construction. New callers should set
-    ``preprocessing`` explicitly. ``None`` preserves the established local
+    A source is required: ``dataset_root`` selects existing local JSONL/packed
+    artifacts, ``per_split_data_source_manifest_path`` selects MLM-style JSONL
+    blends, and ``hf_dataset`` selects a declarative Hugging Face source that is
+    materialized before construction. A packed Parquet training blend may be
+    used by itself when validation and test are disabled. New callers should
+    set ``preprocessing`` explicitly. ``None`` preserves the established local
     prompt-completion and Hugging Face chat defaults for compatibility.
     """
 
@@ -249,10 +250,27 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         has_local_source = self.dataset_root is not None
         has_blend_source = self.per_split_data_source_manifest_path is not None
         has_hf_source = self.hf_dataset is not None
-        if sum((has_local_source, has_blend_source, has_hf_source)) != 1:
+        packed_train_data_blend = (
+            None if self.offline_packing_specs is None else self.offline_packing_specs.packed_train_data_blend
+        )
+        has_packed_blend_source = packed_train_data_blend is not None
+        raw_source_count = sum((has_local_source, has_blend_source, has_hf_source))
+        if raw_source_count > 1:
             raise ValueError(
                 "Exactly one text-only SFT source must be set: dataset_root, "
                 "per_split_data_source_manifest_path, or hf_dataset."
+            )
+        if not raw_source_count and not has_packed_blend_source:
+            raise ValueError(
+                "A text-only SFT source must be set: dataset_root, per_split_data_source_manifest_path, "
+                "hf_dataset, or packed_train_data_blend."
+            )
+        if has_packed_blend_source and has_blend_source:
+            raise ValueError("packed_train_data_blend and per_split_data_source_manifest_path cannot be combined.")
+        if has_packed_blend_source and not raw_source_count and (self.do_validation or self.do_test):
+            raise ValueError(
+                "A standalone packed_train_data_blend requires do_validation=False and do_test=False; "
+                "set dataset_root or hf_dataset when additional splits are needed."
             )
         if has_local_source and not str(self.dataset_root).strip():
             raise ValueError("dataset_root must be a non-empty path.")
@@ -329,6 +347,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         if self.hf_rewrite and self.offline_packing_specs is not None:
             explicit_packed_paths = (
                 self.offline_packing_specs.packed_train_data_path,
+                self.offline_packing_specs.packed_train_data_blend,
                 self.offline_packing_specs.packed_val_data_path,
                 self.offline_packing_specs.packed_metadata_path,
             )
@@ -412,7 +431,13 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
         return get_dataset_root(f"jsonl-sft-blend-{fingerprint}")
 
     source = config.hf_dataset
-    assert source is not None
+    if source is None:
+        assert config.offline_packing_specs is not None
+        blend = config.offline_packing_specs.packed_train_data_blend
+        assert blend is not None
+        encoded_blend = json.dumps(blend, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        fingerprint = hashlib.sha256(encoded_blend).hexdigest()[:16]
+        return get_dataset_root(f"packed-parquet-blend-{fingerprint}")
     if config.hf_output_root is not None:
         return Path(config.hf_output_root)
     preprocessing = resolve_gpt_sft_preprocessing(config)
@@ -748,6 +773,48 @@ def build_gpt_sft_split(
     )
 
 
+def _build_packed_parquet_blend(
+    blend: tuple[list[str | Path], list[float]],
+    *,
+    tokenizer: MegatronTokenizer,
+    seq_length: int,
+    memmap_workers: int,
+    seed: int,
+    packed_sequence_size: int,
+    max_num_samples: int | None,
+    pad_seq_to_mult: int | None = None,
+    dataset_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    """Build a weighted training dataset from packed Parquet sources."""
+    from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetBlendDataset
+
+    sources, weights = blend
+    source_datasets = []
+    source_options = dict(dataset_kwargs or {})
+    source_options.pop("max_num_samples", None)
+    for source in sources:
+        dataset = build_gpt_sft_split(
+            source,
+            tokenizer=tokenizer,
+            seq_length=seq_length,
+            memmap_workers=memmap_workers,
+            seed=seed,
+            packed_sequence_size=packed_sequence_size,
+            pad_seq_to_mult=pad_seq_to_mult,
+            dataset_kwargs=source_options,
+        )
+        if dataset is None:
+            raise FileNotFoundError(f"Packed Parquet blend source does not exist: {source}")
+        source_datasets.append(dataset)
+
+    return GPTSFTPackedParquetBlendDataset(
+        source_datasets,
+        weights,
+        size=max_num_samples,
+        seed=seed,
+    )
+
+
 class GPTSFTDatasetBuilder:
     """Runtime builder for :class:`GPTSFTDatasetConfig`.
 
@@ -844,11 +911,15 @@ class GPTSFTDatasetBuilder:
             if not self.do_validation:
                 self._remove_packed_path(self.validation_path_packed)
 
-        self._prepare_packed_split(
-            split_name="training",
-            packed_path=self.train_path_packed,
-            input_path=self.train_path,
-        )
+        packed_train_data_blend = self.offline_packing_specs.packed_train_data_blend
+        if packed_train_data_blend is None:
+            self._prepare_packed_split(
+                split_name="training",
+                packed_path=self.train_path_packed,
+                input_path=self.train_path,
+            )
+        else:
+            print_rank_0(f"Using pre-packed training blend with {len(packed_train_data_blend[0])} Parquet sources")
 
         if not self.do_validation:
             return
@@ -977,20 +1048,36 @@ class GPTSFTDatasetBuilder:
         Returns:
             list[Optional[Any]]: The train, validation, and test datasets.
         """
-        train_ds = build_gpt_sft_split(
-            self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
-            tokenizer=self.tokenizer,
-            seq_length=self.seq_length,
-            memmap_workers=self.memmap_workers,
-            seed=self.seed,
-            packed_sequence_size=self.packed_sequence_size,
-            pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
-            pad_cu_seqlens=self._pad_cu_seqlens,
-            pad_seq_to_mult=self._pad_seq_to_mult,
-            enable_in_batch_packing=self.enable_in_batch_packing,
-            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
-            dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
+        packed_train_data_blend = (
+            None if self.offline_packing_specs is None else self.offline_packing_specs.packed_train_data_blend
         )
+        if packed_train_data_blend is not None:
+            train_ds = _build_packed_parquet_blend(
+                packed_train_data_blend,
+                tokenizer=self.tokenizer,
+                seq_length=self.seq_length,
+                memmap_workers=self.memmap_workers,
+                seed=self.seed,
+                packed_sequence_size=self.packed_sequence_size,
+                max_num_samples=self.max_train_samples,
+                pad_seq_to_mult=self._pad_seq_to_mult,
+                dataset_kwargs=self.dataset_kwargs,
+            )
+        else:
+            train_ds = build_gpt_sft_split(
+                self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
+                tokenizer=self.tokenizer,
+                seq_length=self.seq_length,
+                memmap_workers=self.memmap_workers,
+                seed=self.seed,
+                packed_sequence_size=self.packed_sequence_size,
+                pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
+                pad_cu_seqlens=self._pad_cu_seqlens,
+                pad_seq_to_mult=self._pad_seq_to_mult,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+                dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
+            )
 
         if self.do_validation:
             valid_ds = build_gpt_sft_split(
@@ -1096,6 +1183,8 @@ class GPTSFTDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
+            if self.offline_packing_specs.packed_train_data_blend is not None:
+                raise ValueError("train_path_packed is not available when packed_train_data_blend is configured.")
             if self.offline_packing_specs.packed_train_data_path is not None:
                 return self.offline_packing_specs.packed_train_data_path
             return self.default_pack_path / f"training_{self.packed_sequence_size}.idx.parquet"

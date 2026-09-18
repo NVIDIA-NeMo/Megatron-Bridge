@@ -6,7 +6,7 @@ serializable `HFDatasetSourceConfig` and `DirectHFSFTDatasetConfig`; `DirectHFSF
 tokenizer, collator, and dataset construction.
 
 For image, video, audio, or omni conversations, use the separate [Hugging Face multimodal tutorial](../hf-multimodal/README.md).
-For materialized JSONL, finite `num_epochs`, or offline packed-Parquet behavior, use the transitional
+For materialized JSONL, finite `num_epochs`, offline packed Parquet, or weighted packed-source blends, use the
 [prepared text-only tutorial](../text-only-sft/README.md).
 
 ## Start with a hosted chat dataset
