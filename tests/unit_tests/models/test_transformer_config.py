@@ -21,6 +21,7 @@ from unittest.mock import patch
 import pytest
 import torch
 
+from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.transformer_config import (
     _HYBRIDEP_PADDING_FIELDS,
     HeterogeneousTransformerConfig,
@@ -338,6 +339,43 @@ class TestMLATransformerConfigFinalize:
             cfg.finalize()
 
         assert getattr(cfg, padding_field) is False
+
+
+# ---------------------------------------------------------------------------
+# MLATransformerConfig.multi_latent_attention
+# ---------------------------------------------------------------------------
+
+
+class TestMLATransformerConfigMultiLatentAttention:
+    """Tests for the multi_latent_attention default on MLATransformerConfig."""
+
+    def _make_mla(self, **kwargs) -> MLATransformerConfig:
+        defaults = dict(
+            num_layers=2,
+            hidden_size=256,
+            ffn_hidden_size=512,
+            num_attention_heads=8,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+        )
+        defaults.update(kwargs)
+        return MLATransformerConfig(**defaults)
+
+    def test_mla_config_and_provider_default_to_multi_latent_attention(self):
+        assert MLATransformerConfig.__dataclass_fields__["multi_latent_attention"].default is True
+        assert MLAModelProvider.__dataclass_fields__["multi_latent_attention"].default is True
+        assert self._make_mla().multi_latent_attention is True
+
+    def test_selective_mla_up_proj_recompute_is_accepted(self):
+        cfg = self._make_mla(recompute_granularity="selective", recompute_modules=["mla_up_proj"])
+
+        cfg.finalize()
+
+        assert cfg.recompute_modules == ["mla_up_proj"]
+
+    def test_explicit_non_mla_value_and_plain_config_are_unchanged(self):
+        assert self._make_mla(multi_latent_attention=False).multi_latent_attention is False
+        assert TransformerConfig.__dataclass_fields__["multi_latent_attention"].default is False
 
 
 # ---------------------------------------------------------------------------
