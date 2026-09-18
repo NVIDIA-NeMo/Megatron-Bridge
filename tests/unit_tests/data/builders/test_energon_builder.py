@@ -14,15 +14,18 @@
 
 """Focused coverage for declarative Energon config and runtime construction."""
 
+from dataclasses import dataclass
 from unittest.mock import MagicMock
 
 import pytest
+from megatron.energon import DefaultTaskEncoder
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data import DatasetBuildContext
 from megatron.bridge.data.builders.energon import (
     EnergonDatasetBuilder,
     EnergonDatasetConfig,
+    EnergonTaskEncoderConfig,
     HFEnergonTaskEncoderConfig,
     NemotronOmniEnergonTaskEncoderConfig,
     QwenVLEnergonTaskEncoderConfig,
@@ -31,6 +34,53 @@ from megatron.bridge.data.builders.energon import (
 from megatron.bridge.data.energon import base_energon_datamodule
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+from megatron.bridge.utils.instantiate_utils import target_allowlist
+
+
+pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def allow_custom_config_targets():
+    prefix = f"{__name__}."
+    already_allowed = prefix in target_allowlist.allowed_prefixes
+    if not already_allowed:
+        target_allowlist.add_prefix(prefix)
+    yield
+    if not already_allowed:
+        target_allowlist.remove_prefix(prefix)
+
+
+class CustomTaskEncoder(DefaultTaskEncoder):
+    def __init__(self, *, seq_length: int, token_budget: int):
+        super().__init__()
+        self.seq_length = seq_length
+        self.token_budget = token_budget
+
+
+@dataclass(kw_only=True)
+class CustomQwenTaskEncoderConfig(QwenVLEnergonTaskEncoderConfig):
+    max_bin_vision_tokens: int
+    resolved_seq_length: int | None = None
+
+    def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+        if dataset_config.packing_buffer_size is None:
+            raise ValueError("A per-bin budget requires native packing.")
+        if not 0 < self.max_bin_vision_tokens <= dataset_config.seq_length:
+            raise ValueError("The vision budget must fit the resolved sequence length.")
+        self.resolved_seq_length = dataset_config.seq_length
+
+    def build_task_encoder(self, dataset_config: EnergonDatasetConfig) -> CustomTaskEncoder:
+        assert self.resolved_seq_length == dataset_config.seq_length
+        return CustomTaskEncoder(seq_length=self.resolved_seq_length, token_budget=self.max_bin_vision_tokens)
+
+
+@dataclass(kw_only=True)
+class StandaloneTaskEncoderConfig(EnergonTaskEncoderConfig):
+    token_budget: int
+
+    def build_task_encoder(self, dataset_config: EnergonDatasetConfig) -> CustomTaskEncoder:
+        return CustomTaskEncoder(seq_length=dataset_config.seq_length, token_budget=self.token_budget)
 
 
 def _qwen_config(**overrides) -> EnergonDatasetConfig:
@@ -66,6 +116,93 @@ def test_config_round_trip_is_declarative_and_cli_overridable():
     )
     assert restored.task_encoder.max_num_images == 4
     assert restored.task_encoder.max_visual_tokens == 8192
+
+
+def test_custom_encoder_uses_resolved_config_through_generic_builder(monkeypatch: pytest.MonkeyPatch):
+    config = _qwen_config(
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        task_encoder=CustomQwenTaskEncoderConfig(hf_processor_path="Qwen/model", max_bin_vision_tokens=128),
+    )
+    serialized = ConfigContainer._convert_value_to_dict(config)
+    restored = instantiate(serialized)
+    assert isinstance(restored.task_encoder, CustomQwenTaskEncoderConfig)
+    assert "supports_native_packing" not in serialized["task_encoder"]
+    process_config_with_overrides(
+        restored,
+        cli_overrides=["seq_length=2048", "task_encoder.max_bin_vision_tokens=256"],
+    )
+    build_encoder = MagicMock(wraps=restored.task_encoder.build_task_encoder)
+    monkeypatch.setattr(restored.task_encoder, "build_task_encoder", build_encoder)
+    restored.finalize()
+    assert restored.task_encoder.resolved_seq_length == 2048
+
+    datamodule = MagicMock()
+    datamodule.train_dataloader.return_value = ["train"]
+    datamodule.val_dataloader.return_value = ["validation"]
+    datamodule_cls = MagicMock(return_value=datamodule)
+    monkeypatch.setattr(base_energon_datamodule, "EnergonMultiModalDataModule", datamodule_cls)
+    load_processor = MagicMock(side_effect=AssertionError("Custom construction must bypass built-in HF loading."))
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.Qwen3VLProcessor.from_pretrained", load_processor)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.AutoTokenizer.from_pretrained", load_processor)
+
+    builder = EnergonDatasetBuilder(restored)
+    build_encoder.assert_not_called()
+    # Also verify that building uses the config's latest values, not a captured encoder.
+    restored.seq_length = 1024
+    train, validation, test = builder.build(DatasetBuildContext(train_samples=1, valid_samples=1, test_samples=0))
+    encoder = datamodule_cls.call_args.kwargs["task_encoder"]
+    build_encoder.assert_called_once_with(restored)
+    assert isinstance(encoder, CustomTaskEncoder)
+    assert encoder.seq_length == restored.task_encoder.resolved_seq_length == 1024
+    assert encoder.token_budget == 256
+    assert datamodule_cls.call_args.kwargs["validation_task_encoder"] is encoder
+    assert train is datamodule.train_dataloader.return_value
+    assert list(validation) == ["validation"]
+    assert test is None
+    load_processor.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [("packing_buffer_size=null", "per-bin budget requires native packing"), ("seq_length=64", "vision budget")],
+)
+def test_custom_validation_rejects_dataset_combinations_before_construction(override, message, monkeypatch):
+    config = _qwen_config(
+        micro_batch_size=1,
+        packing_buffer_size=32,
+        task_encoder=CustomQwenTaskEncoderConfig(hf_processor_path="Qwen/model", max_bin_vision_tokens=128),
+    )
+    process_config_with_overrides(config, cli_overrides=[override])
+    build_encoder = MagicMock()
+    monkeypatch.setattr(CustomQwenTaskEncoderConfig, "build_task_encoder", build_encoder)
+    with pytest.raises(ValueError, match=message):
+        build_energon_task_encoder(config)
+    build_encoder.assert_not_called()
+
+
+def test_standalone_encoder_config_needs_no_builtin_processor_fields():
+    config = _qwen_config(task_encoder=StandaloneTaskEncoderConfig(token_budget=32))
+    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+    encoder = build_energon_task_encoder(restored)
+    assert isinstance(encoder, CustomTaskEncoder)
+    assert encoder.seq_length == 4096
+    assert encoder.token_budget == 32
+
+
+def test_custom_native_packing_requires_explicit_capability(monkeypatch):
+    config = _qwen_config(
+        micro_batch_size=1, packing_buffer_size=32, task_encoder=StandaloneTaskEncoderConfig(token_budget=32)
+    )
+    with pytest.raises(ValueError, match="does not support Energon native sequence packing"):
+        config.validate()
+    monkeypatch.setattr(StandaloneTaskEncoderConfig, "supports_native_packing", True)
+    assert isinstance(build_energon_task_encoder(config), CustomTaskEncoder)
+
+
+def test_custom_config_requires_construction_hook():
+    with pytest.raises(TypeError, match="must override build_task_encoder"):
+        build_energon_task_encoder(_qwen_config(task_encoder=EnergonTaskEncoderConfig()))
 
 
 @pytest.mark.parametrize("reserved_key", ["batch_size", "task_encoder", "split_part", "worker_config"])
@@ -213,7 +350,7 @@ def test_native_energon_packing_rejects_unsupported_task_encoder():
         task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
     )
 
-    with pytest.raises(ValueError, match="supports only QwenVLEnergonTaskEncoderConfig"):
+    with pytest.raises(ValueError, match="does not support Energon native sequence packing"):
         config.validate()
 
 

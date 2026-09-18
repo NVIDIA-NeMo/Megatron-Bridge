@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from transformers import AutoProcessor, AutoTokenizer, Qwen3VLProcessor
 
@@ -31,7 +31,53 @@ def _validate_hf_path(path: str, *, field_name: str) -> None:
 
 
 @dataclass(kw_only=True)
-class HFEnergonTaskEncoderConfig:
+class EnergonTaskEncoderConfig:
+    """Declarative extension contract for Energon task encoders.
+
+    Subclass this config (or a built-in config) with model-owned dataclass
+    fields and override ``build_task_encoder`` to construct the runtime encoder.
+    Config instances must not store processors, tokenizers, or runtime encoders.
+    Restoring custom config classes uses Bridge's existing target allowlist.
+    """
+
+    supports_native_packing: ClassVar[bool] = False
+    """Whether the encoder implements Energon's native packing contract."""
+
+    def validate(self) -> None:
+        """Validate model-owned fields without constructing runtime objects."""
+
+    def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+        """Validate or synchronize model-owned fields with resolved dataset settings.
+
+        Called during dataset finalization and before runtime construction,
+        after generic validation. Training finalizes the dataset after deriving
+        padding settings; preliminary generic validation does not call this hook.
+        Implementations must be idempotent, must not construct runtime objects,
+        and must not modify generic dataset settings. Recipe/CLI overrides and
+        training-derived padding settings are available when the builder runs.
+
+        Args:
+            dataset_config: Enclosing dataset settings used to validate or
+                derive model-owned fields.
+        """
+
+    def build_task_encoder(self, dataset_config: EnergonDatasetConfig) -> object:
+        """Construct an encoder from validated, resolved settings at runtime.
+
+        Custom encoders override this method and own loading their runtime
+        assets. The default implementation constructs the built-in encoders.
+
+        Args:
+            dataset_config: Validated dataset settings after overrides.
+
+        Returns:
+            The runtime Energon task encoder.
+        """
+        return _build_builtin_energon_task_encoder(dataset_config)
+
+
+@dataclass(kw_only=True)
+class HFEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
     """Serializable settings for the generic Hugging Face Energon task encoder.
 
     ``hf_processor_revision`` optionally pins the processor artifact load.
@@ -59,7 +105,7 @@ class HFEnergonTaskEncoderConfig:
 
 
 @dataclass(kw_only=True)
-class QwenVLEnergonTaskEncoderConfig:
+class QwenVLEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
     """Serializable settings for the Qwen-VL Energon task encoder.
 
     Qwen's visual output keys are model-owned. ``min_pixels`` and
@@ -67,6 +113,8 @@ class QwenVLEnergonTaskEncoderConfig:
     ``hf_processor_revision`` optionally pins both tokenizer and processor
     artifact loads.
     """
+
+    supports_native_packing: ClassVar[bool] = True
 
     hf_processor_path: str
     hf_processor_revision: str | None = None
@@ -97,7 +145,7 @@ class QwenVLEnergonTaskEncoderConfig:
 
 
 @dataclass(kw_only=True)
-class NemotronOmniEnergonTaskEncoderConfig:
+class NemotronOmniEnergonTaskEncoderConfig(EnergonTaskEncoderConfig):
     """Serializable settings for the Nemotron Omni Energon task encoder.
 
     ``visual_keys`` is retained for configuration compatibility, but Omni owns
@@ -153,11 +201,6 @@ class NemotronOmniEnergonTaskEncoderConfig:
             raise ValueError("Nemotron Omni visual_keys must be exactly ('pixel_values',).")
 
 
-EnergonTaskEncoderConfig = (
-    HFEnergonTaskEncoderConfig | QwenVLEnergonTaskEncoderConfig | NemotronOmniEnergonTaskEncoderConfig
-)
-
-
 @dataclass(kw_only=True)
 class EnergonDatasetConfig(DataloaderConfig):
     """Serializable configuration for an Energon-backed multimodal dataset."""
@@ -181,7 +224,7 @@ class EnergonDatasetConfig(DataloaderConfig):
     in_batch_packing_pad_to_multiple_of: int = 1
 
     def validate(self) -> None:
-        """Validate declarative Energon settings."""
+        """Validate declarative fields before training derives dataset settings."""
         if not isinstance(self.path, str) or not self.path.strip():
             raise ValueError("EnergonDatasetConfig.path must be set to a non-empty dataset path.")
         if self.seq_length <= 0:
@@ -216,13 +259,10 @@ class EnergonDatasetConfig(DataloaderConfig):
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
         if self.do_test:
             raise ValueError("EnergonDatasetConfig does not support a distinct test split.")
-        if not isinstance(
-            self.task_encoder,
-            (HFEnergonTaskEncoderConfig, QwenVLEnergonTaskEncoderConfig, NemotronOmniEnergonTaskEncoderConfig),
-        ):
+        if not isinstance(self.task_encoder, EnergonTaskEncoderConfig):
             raise TypeError("task_encoder must be a supported declarative Energon task-encoder config.")
-        if self.packing_buffer_size is not None and not isinstance(self.task_encoder, QwenVLEnergonTaskEncoderConfig):
-            raise ValueError("Energon native sequence packing currently supports only QwenVLEnergonTaskEncoderConfig.")
+        if self.packing_buffer_size is not None and not self.task_encoder.supports_native_packing:
+            raise ValueError("The configured task encoder does not support Energon native sequence packing.")
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         reserved_dataset_kwargs = {
             "batch_size",
@@ -241,15 +281,26 @@ class EnergonDatasetConfig(DataloaderConfig):
         self.task_encoder.validate()
 
     def finalize(self) -> None:
-        """Finalize dataloader fields and validate the config."""
+        """Finalize dataloader fields and validate the resolved encoder settings."""
         super().finalize()
         self.validate()
+        self.task_encoder.validate_dataset(self)
 
 
 def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
     """Construct the configured Energon task encoder at runtime."""
+    config.validate()
+    config.task_encoder.validate_dataset(config)
+    return config.task_encoder.build_task_encoder(config)
+
+
+def _build_builtin_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
     task_config = config.task_encoder
-    task_config.validate()
+    if not isinstance(
+        task_config,
+        (HFEnergonTaskEncoderConfig, QwenVLEnergonTaskEncoderConfig, NemotronOmniEnergonTaskEncoderConfig),
+    ):
+        raise TypeError("Custom Energon task-encoder configs must override build_task_encoder().")
     effective_packing = config.enable_in_batch_packing and not config.defer_in_batch_packing_to_step
     enable_energon_packing = config.packing_buffer_size is not None
 
