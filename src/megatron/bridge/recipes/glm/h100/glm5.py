@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config, default_tulu3_config
@@ -29,14 +30,6 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
-
-_GLM52_VPP2_LAYOUT = (
-    "Et|t||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|ttttmL"
-)
-_GLM52_PP13_LAYOUT = "Etttttt|tttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|tttt|tttt|tttt|ttttmL"
-_GLM52_PP19_200K_LAYOUT = (
-    "Etttttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|tttt|ttttmL"
-)
 
 
 def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
@@ -52,12 +45,12 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_layout = _GLM52_VPP2_LAYOUT
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.microbatch_group_size_per_vp_stage = 16
+    cfg.model.microbatch_group_size_per_vp_stage = None
 
     cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.mtp_num_layers = 1
@@ -107,6 +100,8 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -123,12 +118,12 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.seq_length = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_layout = _GLM52_VPP2_LAYOUT
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 16
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.microbatch_group_size_per_vp_stage = 16
+    cfg.model.microbatch_group_size_per_vp_stage = None
 
     cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.mtp_num_layers = 1
@@ -188,6 +183,8 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.save_optim = False
     cfg.checkpoint.save_rng = False
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -205,7 +202,7 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 19
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP19_200K_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
@@ -264,6 +261,8 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.checkpoint.save = None
     cfg.checkpoint.load = None
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6] + [4] * 18
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -281,7 +280,7 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP13_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
@@ -357,6 +356,8 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 

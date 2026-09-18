@@ -14,6 +14,7 @@
 """H100 performance recipes for GLM-5.1 and GLM-5.2 SFT."""
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.common import _sft_common
@@ -42,7 +43,7 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
@@ -105,6 +106,8 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -129,15 +132,13 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    # Empty VPP chunks keep every four-layer DSA index-sharing group intact.
-    cfg.model.pipeline_model_parallel_layout = (
-        "Et|t||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|ttttmL"
-    )
+    # Non-VPP Hybrid segments keep each DSA sharing group on one rank.
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.num_layers_in_first_pipeline_stage = None
@@ -195,4 +196,6 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    block_counts = [6, 4] + [8] * 6 + [4] * 5
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
