@@ -28,6 +28,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+README = REPO_ROOT / "README.md"
+DOCS_MODELS = REPO_ROOT / "docs" / "models"
+SUPPORTED_MODELS_HEADING = "## Supported Models"
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
 PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
@@ -566,6 +569,81 @@ def test_qwen3_model_guides_match_fern_and_reference_exported_recipes():
         assert documented_recipes, f"{sphinx_path.relative_to(REPO_ROOT)} documents no Qwen recipes"
         missing = sorted(documented_recipes - defined_recipes)
         assert not missing, f"{sphinx_path.relative_to(REPO_ROOT)} references unknown recipes: {missing}"
+
+
+def _normalize(text: str) -> str:
+    """Lowercase and drop every non-alphanumeric character, so separators and case do not matter."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _supported_models_rows() -> list[tuple[str, str]]:
+    """`(family_cell, variants_cell)` for every data row of the README Supported Models table."""
+    text = _read(README)
+    assert SUPPORTED_MODELS_HEADING in text, f"README.md has no {SUPPORTED_MODELS_HEADING!r} section"
+    body = text.split(SUPPORTED_MODELS_HEADING, 1)[1]
+    following = re.search(r"^## ", body, flags=re.MULTILINE)
+    table = body[: following.start()] if following else body
+
+    rows: list[tuple[str, str]] = []
+    for line in table.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "---" in line or line.count("|") < 3:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if not cells[0].lower().startswith("family"):
+            rows.append((cells[0], cells[1] if len(cells) > 1 else ""))
+    return rows
+
+
+def _row_for_family(rows: list[tuple[str, str]], family: str) -> tuple[str, str] | None:
+    """The row claiming `family`, matched by its docs link or by name, or None."""
+    for cell, variants in rows:
+        if f"docs/models/{family}/" in cell:
+            return cell, variants
+    for cell, variants in rows:
+        if _normalize(family) in _normalize(cell):
+            return cell, variants
+    return None
+
+
+def test_readme_supported_models_table_lists_every_shipped_model_family():
+    """Every documented model family with code in the tree has a Supported Models row."""
+    rows = _supported_models_rows()
+    assert len(rows) >= 15, f"only {len(rows)} Supported Models rows parsed — the table layout has changed"
+
+    missing = []
+    for family_dir in sorted(path for path in DOCS_MODELS.iterdir() if path.is_dir()):
+        name = family_dir.name
+        shipped = (REPO_ROOT / "examples" / "models" / name).is_dir() or (
+            REPO_ROOT / "src" / "megatron" / "bridge" / "models" / name
+        ).is_dir()
+        if shipped and _row_for_family(rows, name) is None:
+            missing.append(f"docs/models/{name}/")
+    assert not missing, f"documented, shipped model families have no Supported Models row: {missing}"
+
+
+def test_readme_supported_models_rows_name_every_shipped_model_variant():
+    """Every documented variant page with runnable examples is named in its family's row."""
+    rows = _supported_models_rows()
+    checked, missing = [], []
+    for page in sorted(DOCS_MODELS.glob("*/*.md")):
+        if page.name == "index.md":
+            continue
+        examples = re.findall(r"(examples/[A-Za-z0-9_./-]+)", _read(page))
+        if not any((REPO_ROOT / path.rstrip("/.")).exists() for path in examples):
+            continue  # nothing runnable behind this page yet, so the table cannot be expected to name it
+        row = _row_for_family(rows, page.parent.name)
+        if row is None:
+            continue  # already reported at family granularity
+        checked.append(page.name)
+        named = _normalize(" ".join(row))
+        tokens = [token for token in re.split(r"[-_]", page.stem) if token]
+        if _normalize(page.stem) in named or all(_normalize(token) in named for token in tokens):
+            continue
+        missing.append(f"docs/models/{page.parent.name}/{page.name}")
+
+    assert checked, "no documented variant page cleared the shipped gate — the docs layout has changed"
+    assert not missing, f"documented, shipped model variants are not named in their README row: {missing}"
 
 
 def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
