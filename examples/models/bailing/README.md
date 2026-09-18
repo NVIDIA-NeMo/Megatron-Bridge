@@ -1,79 +1,113 @@
 # Bailing (Ling) Examples
 
-This directory contains example scripts for [Ling 2.0](https://github.com/inclusionAI/Ling-V2) MoE language models by inclusionAI.
+This directory contains checkpoint-conversion examples for the Ling 2.0 and Ling 3.0 model families from inclusionAI. All supported variants use custom Hugging Face code and require `--trust-remote-code`.
 
-Ling 2.0 uses a high-sparsity Mixture of Experts (MoE) architecture with sigmoid routing, QK-Norm, and Half RoPE.
+## Shared Checkpoint Conversion
 
-| Model | HF ID | Architecture | Params | Active Params |
-|---|---|---|---|---|
-| Ling-flash-2.0 | `inclusionAI/Ling-flash-2.0` | MoE (256 experts, top-8) | 100B | 6.1B |
-| Ling-flash-base-2.0 | `inclusionAI/Ling-flash-base-2.0` | MoE (256 experts, top-8) | 100B | 6.1B |
-| Ling-mini-2.0 | `inclusionAI/Ling-mini-2.0` | MoE (256 experts, top-8) | 16B | 1.5B |
-| Ling-mini-base-2.0 | `inclusionAI/Ling-mini-base-2.0` | MoE (256 experts, top-8) | 16B | 1.5B |
+[conversion.sh](conversion.sh) wraps the repository-wide `scripts/conversion/convert.sh` launcher. It imports a Hugging Face checkpoint into Megatron, exports the persisted DCP back to Hugging Face, and runs the distributed round-trip example.
 
-## Workspace Configuration
-
-All scripts use a `WORKSPACE` environment variable for the base directory. Default: `/workspace`.
+The wrapper stores checkpoints under `WORKSPACE`, which defaults to `/workspace`:
 
 ```bash
-export WORKSPACE=/your/custom/path
+export WORKSPACE=/your/shared/workspace
 ```
 
-Directory structure:
-- `${WORKSPACE}/models/` - Converted checkpoints
-- `${WORKSPACE}/results/` - Training outputs
+The following environment variables select the model and parallel topology:
 
-## Checkpoint Conversion
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `HF_MODEL_ID` | `inclusionAI/Ling-3.0-tiny` | Hub model ID or local Hugging Face directory |
+| `TP`, `PP`, `EP`, `ETP` | `1` | Megatron parallelism sizes |
+| `NPROC_PER_NODE` | `TP * PP * EP` | Local GPU process count |
+| `MEGATRON_PATH` | `${WORKSPACE}/models/<model>` | Imported Megatron checkpoint directory |
+| `HF_EXPORT_PATH` | `${WORKSPACE}/models/<model>-hf-export` | Exported Hugging Face directory |
+| `ROUNDTRIP_OUTPUT_DIR` | `${WORKSPACE}/models/<model>-roundtrip` | Round-trip Hugging Face output directory |
 
-See [conversion.sh](conversion.sh) for checkpoint conversion examples. The
-script defaults to `inclusionAI/Ling-mini-2.0`, the 16B checkpoint, and accepts
-the other variants through `MODEL_NAME` or a complete `HF_MODEL_ID`:
+## Ling 2.0
+
+| Variant | Hugging Face ID | Architecture notes |
+|---------|-----------------|--------------------|
+| Ling-mini-2.0 | `inclusionAI/Ling-mini-2.0` | 16B MoE, 1.5B active |
+| Ling-mini-base-2.0 | `inclusionAI/Ling-mini-base-2.0` | Base checkpoint, 16B MoE |
+| Ling-flash-2.0 | `inclusionAI/Ling-flash-2.0` | 100B MoE, 6.1B active |
+| Ling-flash-base-2.0 | `inclusionAI/Ling-flash-base-2.0` | Base checkpoint, 100B MoE |
+
+### Conversion
+
+For example, convert Ling-mini-2.0 with two-way tensor parallelism and four-way expert parallelism:
 
 ```bash
-MODEL_NAME=Ling-flash-2.0 bash examples/models/bailing/conversion.sh
+HF_MODEL_ID=inclusionAI/Ling-mini-2.0 \
+TP=2 EP=4 \
+bash examples/models/bailing/conversion.sh
 ```
 
-### Import HF → Megatron
+### Inference
+
+[inference.sh](inference.sh) generates text from the original Hugging Face checkpoint, the imported Megatron checkpoint, and the exported Hugging Face checkpoint. It defaults to `inclusionAI/Ling-mini-2.0` with `TP=2` and `EP=4`:
 
 ```bash
+bash examples/models/bailing/inference.sh
+```
+
+## Ling 3.0
+
+| Variant | Hugging Face ID | Architecture notes |
+|---------|-----------------|--------------------|
+| Ling-3.0-tiny-base | `inclusionAI/Ling-3.0-tiny-base` | Hybrid KDA/MLA, 128 routed experts, one low-rank-Q MLA MTP layer |
+| Ling-3.0-tiny | `inclusionAI/Ling-3.0-tiny` | Hybrid KDA/MLA, 128 routed experts |
+| Ling-3.0-flash | `inclusionAI/Ling-3.0-flash` | Hybrid KDA/MLA with MTP, 512 routed experts |
+
+### Conversion
+
+Ling 3.0 Tiny is the wrapper default and runs on one GPU:
+
+```bash
+bash examples/models/bailing/conversion.sh
+```
+
+For Ling 3.0 Flash, select the public Flash checkpoint and a distributed topology appropriate for the full model. The following example uses eight-way expert parallelism:
+
+```bash
+HF_MODEL_ID=inclusionAI/Ling-3.0-flash \
+EP=8 \
+bash examples/models/bailing/conversion.sh
+```
+
+The wrapper is optional. The equivalent Ling 3.0 Tiny import and export commands use the shared launcher directly:
+
+```bash
+export WORKSPACE=${WORKSPACE:-/workspace}
+
 ./scripts/conversion/convert.sh import \
-    --hf-model inclusionAI/Ling-mini-2.0 \
-    --megatron-path ${WORKSPACE}/models/Ling-mini-2.0 \
+    --executor local --device gpu --gpus-per-node 1 \
+    --hf-model inclusionAI/Ling-3.0-tiny \
+    --megatron-path "${WORKSPACE}/models/Ling-3.0-tiny" \
     --trust-remote-code
-```
 
-### Export Megatron → HF
-
-```bash
 ./scripts/conversion/convert.sh export \
-    --hf-model inclusionAI/Ling-mini-2.0 \
-    --megatron-path ${WORKSPACE}/models/Ling-mini-2.0/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/Ling-mini-2.0-hf-export \
+    --executor local --device gpu --gpus-per-node 1 \
+    --hf-model inclusionAI/Ling-3.0-tiny \
+    --megatron-path "${WORKSPACE}/models/Ling-3.0-tiny/iter_0000000" \
+    --hf-path "${WORKSPACE}/models/Ling-3.0-tiny-hf-export" \
     --trust-remote-code
 ```
 
-### Round-trip Validation
+### Tiny Base SFT
+
+`ling_v3_tiny_base_sft_8gpu_h100_bf16_config` is an eight-GPU BF16 full-parameter SFT recipe for the public Tiny Base checkpoint. The recipe reads the model architecture and MTP configuration from Hugging Face, uses the matching public tokenizer, and includes the public SQuAD prompt/completion dataset with offline packing at sequence length 2048. The sequence length is an SFT workload default; it does not change Ling 3.0's 262144-token model context limit. Omit `--dataset` below to retain the recipe-level packed SQuAD configuration.
 
 ```bash
-python -m torch.distributed.run --nproc_per_node=8 \
-    examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id inclusionAI/Ling-mini-2.0 \
-    --megatron-load-path ${WORKSPACE}/models/Ling-mini-2.0/iter_0000000 \
-    --tp 2 --ep 4 \
-    --trust-remote-code
+uv run python -m torch.distributed.run --nproc_per_node=8 \
+    scripts/training/run_recipe.py \
+    --recipe ling_v3_tiny_base_sft_8gpu_h100_bf16_config \
+    --mode sft \
+    --pretrained_checkpoint /path/to/Ling-3.0-tiny-base
 ```
 
-## Inference
+The recipe keeps normal validation and checkpoint saving enabled. Pass `--dataset` only when selecting another supported dataset preset; that preset owns its packing policy. Set `LING_V3_TINY_BASE_HF_PATH` to the same trusted local Tiny Base directory when recipe construction must run offline; otherwise the pinned public model revision is used.
 
-See [inference.sh](inference.sh) for text generation with:
-- Hugging Face checkpoint (`inclusionAI/Ling-mini-2.0` by default)
-- Imported Megatron checkpoint (after [conversion.sh](conversion.sh) import)
-- Exported HF checkpoint (after conversion export)
+## Related Documentation
 
-Both scripts default to 8 GPUs with `--tp 2 --ep 4`. Override `TP`, `PP`,
-`EP`, `ETP`, and `NPROC_PER_NODE` together for another valid layout.
-TP×PP×EP must equal `--nproc_per_node`.
-
-> **Note**: `--tp 1 --ep 8` works for conversion round-trip but may cause issues during autoregressive inference with single-token batches (empty token dispatch to some EP ranks). Use `--tp 2 --ep 4` for inference.
-
-> **Note**: All Ling 2.0 models use custom HuggingFace code, so `--trust-remote-code` is required for conversion and inference.
+- [Ling 2.0](../../../docs/models/bailing/ling-2.md)
+- [Ling 3.0](../../../docs/models/bailing/ling-3.md)
