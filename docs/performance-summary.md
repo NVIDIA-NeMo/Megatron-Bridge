@@ -43,7 +43,6 @@ The performance data includes:
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6288 | 1636 |
-| DGX-GB300 | 256 | NVFP4 | 4096 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6640 | 1728 |
 | DGX-GB200 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 4 | 1 | 4 | 64 | 4912 | 1277 |
 
 #### Model: DeepSeekV4 Flash
@@ -74,9 +73,7 @@ The performance data includes:
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 256 | MXFP8 | 8192 | 2 | 4096 | 1 | 4 | 1 | 12 | 32 | 8832 | 1306 |
-| DGX-GB300 | 256 | NVFP4 | 8192 | 2 | 4096 | 1 | 4 | 1 | 12 | 32 | 9216 | 1365 |
 | DGX-GB200 | 256 | MXFP8 | 8192 | 1 | 4096 | 1 | 8 | 1 | 3 | 32 | 7264 | 1076 |
-| DGX-GB200 | 256 | NVFP4 | 8192 | 1 | 4096 | 1 | 8 | 1 | 3 | 32 | 8000 | 1185 |
 
 #### Model: Nemotron_3_5_Lightning
 
@@ -89,17 +86,8 @@ The performance data includes:
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
-| DGX-GB300 | 64 | MXFP8 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 9984 | 850 |
 | DGX-GB300 | 64 | NVFP4 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 10240 | 871 |
-| DGX-GB200 | 64 | MXFP8 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 7552 | 636 |
 | DGX-GB200 | 64 | NVFP4 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 7296 | 616 |
-
-#### Model: Nemotron_3_Ultra
-
-| System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
-|--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
-| DGX-GB300 | 256 | MXFP8 | 256 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 3840 | 1376 |
-| DGX-GB200 | 256 | MXFP8 | 256 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 2688 | 968 |
 
 [^moe-training-note]: In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 
