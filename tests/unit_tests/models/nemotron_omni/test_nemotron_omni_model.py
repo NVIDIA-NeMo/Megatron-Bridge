@@ -27,6 +27,9 @@ from megatron.core import parallel_state
 from megatron.core.activations import squared_relu
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer.cuda_graphs import TECudaGraphHelper
+from megatron.core.transformer.transformer_block import get_num_layers_to_build
+from megatron.core.utils import get_model_config
 from torch import nn
 
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
@@ -58,6 +61,18 @@ class _FakeLanguageModel(nn.Module):
     def forward(self, *, decoder_input, **kwargs):
         self.last_kwargs = kwargs
         return decoder_input
+
+
+class _FakeCudaGraphLanguageModel(nn.Module):
+    def __init__(self, *, variable_seq_lengths=False):
+        super().__init__()
+        self.config = SimpleNamespace(
+            cuda_graph_impl="transformer_engine",
+            variable_seq_lengths=variable_seq_lengths,
+        )
+        self.position_embedding_type = "rope"
+        self.rotary_pos_emb = object()
+        self.decoder = nn.Linear(1, 1)
 
 
 class _BoundaryModel(NemotronOmniModel):
@@ -167,7 +182,7 @@ class _TinyOmniProvider(NemotronOmniModelProvider):
         vision_cfg.recompute_granularity = None
         vision_cfg.recompute_method = None
         vision_cfg.recompute_num_layers = None
-        vision_cfg.mtp_num_layers = None
+        vision_cfg.mtp_num_layers = 1 if self.vision_final_layernorm else None
         vision_cfg.num_layers = 1
         vision_cfg.pipeline_model_parallel_size = 1
         vision_cfg.num_attention_heads = 4
@@ -244,7 +259,56 @@ def test_canonical_model_advertises_collator_owned_packing():
     assert NemotronOmniModel.model_slices_context_parallel_inputs is True
 
 
-def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config():
+def test_canonical_model_exposes_nested_language_decoder_for_cuda_graph_helper():
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.language_model = _FakeCudaGraphLanguageModel()
+
+    model._expose_language_model_for_cuda_graph_helper()
+
+    assert model.position_embedding_type == "rope"
+    assert model.rotary_pos_emb is model.language_model.rotary_pos_emb
+    assert model.decoder is model.language_model.decoder
+    assert "decoder" not in model._modules
+
+
+def test_canonical_model_rejects_variable_sequences_with_cuda_graphs():
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.language_model = _FakeCudaGraphLanguageModel(variable_seq_lengths=True)
+
+    with pytest.raises(AssertionError, match="requires fixed sequence lengths"):
+        model._expose_language_model_for_cuda_graph_helper()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_cuda_graph_helper_discovers_nested_language_layers(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider(
+        cuda_graph_impl="transformer_engine",
+        cuda_graph_modules=["mamba"],
+        use_te_rng_tracker=True,
+        variable_seq_lengths=False,
+    )
+    provider.finalize()
+    model = provider.provide().cuda().train()
+
+    assert model.config is provider
+    assert model.language_model.config is provider
+
+    helper = TECudaGraphHelper(
+        model=[model],
+        config=provider,
+        seq_length=provider.seq_length,
+        micro_batch_size=1,
+    )
+
+    assert helper.chunks_with_decoder == [model]
+    assert helper.num_layers_per_chunk[0] > 0
+
+
+@pytest.mark.parametrize("construction_fails", [False, True])
+def test_canonical_provider_preserves_config_identity_and_restores_process_groups(construction_fails):
     class UncopyableProcessGroupCollection:
         def __deepcopy__(self, memo):
             raise TypeError("runtime process groups cannot be copied")
@@ -252,15 +316,24 @@ def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config(
     provider = _TinyOmniProvider()
     pg_collection = UncopyableProcessGroupCollection()
     provider._pg_collection = pg_collection
+    failure = RuntimeError("model construction failed")
 
     def create_model(**kwargs):
-        copied_config = _copy_attention_config(kwargs["language_transformer_config"])
+        language_config = kwargs["language_transformer_config"]
+        assert language_config is provider
+        assert language_config._pg_collection is None
+        copied_config = _copy_attention_config(language_config)
         assert copied_config._pg_collection is None
-        return Mock()
+        assert copied_config is not provider
+        for key in ("vision_transformer_config", "vision_projection_config"):
+            assert kwargs[key] is not provider
+            assert kwargs[key]._pg_collection is None
+        assert kwargs["vision_transformer_config"] is not kwargs["vision_projection_config"]
+        if construction_fails:
+            raise failure
+        return SimpleNamespace(config=language_config, language_model=SimpleNamespace(config=language_config))
 
     with (
-        patch.object(_TinyOmniProvider, "_build_vision_config", return_value=Mock()),
-        patch.object(_TinyOmniProvider, "_build_vision_projection_config", return_value=Mock()),
         patch.object(_TinyOmniProvider, "_resolve_hybrid_stack_spec", return_value=Mock()),
         patch.object(_TinyOmniProvider, "_build_sound_modules", return_value=(None, None)),
         patch(
@@ -268,7 +341,19 @@ def test_canonical_provider_keeps_runtime_process_groups_out_of_language_config(
             side_effect=create_model,
         ),
     ):
-        provider.provide(pre_process=True, post_process=True)
+        if construction_fails:
+            with pytest.raises(RuntimeError) as caught:
+                provider.provide(pre_process=True, post_process=True)
+            assert caught.value is failure
+        else:
+            model = provider.provide(pre_process=True, post_process=True)
+            # Training setup installs this only after model construction/wrapping.
+            finalize_grads = Mock()
+            provider.finalize_model_grads_func = finalize_grads
+            assert get_model_config(model).finalize_model_grads_func is finalize_grads
+            assert get_model_config(model.language_model).finalize_model_grads_func is finalize_grads
+            get_model_config(model).finalize_model_grads_func([model])
+            finalize_grads.assert_called_once_with([model])
 
     assert provider._pg_collection is pg_collection
 
@@ -355,6 +440,169 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     provider = NemotronOmniLlavaModelProvider(nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT)
 
     assert provider.radio_interpolate_only_cpe is True
+
+
+def test_vision_recompute_is_disabled_by_default():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_granularity="selective",
+        recompute_modules=["core_attn", "mlp"],
+    )
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert vision_config.recompute_granularity is None
+    assert vision_config.recompute_method is None
+    assert vision_config.recompute_num_layers is None
+
+
+def test_vision_configs_do_not_inherit_language_pipeline_partitioning():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+    )
+    provider.pipeline_model_parallel_size = 2
+    provider.virtual_pipeline_model_parallel_size = 2
+    provider.num_layers_in_first_pipeline_stage = 38
+    provider.num_layers_in_last_pipeline_stage = 50
+    provider.account_for_embedding_in_pipeline_split = True
+    provider.account_for_loss_in_pipeline_split = True
+
+    vision_config = provider._build_vision_config(provider)
+    vision_projection_config = provider._build_vision_projection_config(provider)
+
+    assert get_num_layers_to_build(vision_config, pp_rank=0) == 32
+    for vision_config in (vision_config, vision_projection_config):
+        assert vision_config.pipeline_model_parallel_size == 1
+        assert vision_config.virtual_pipeline_model_parallel_size is None
+        assert vision_config.num_layers_in_first_pipeline_stage is None
+        assert vision_config.num_layers_in_last_pipeline_stage is None
+        assert vision_config.pipeline_model_parallel_layout is None
+        assert vision_config.account_for_embedding_in_pipeline_split is False
+        assert vision_config.account_for_loss_in_pipeline_split is False
+
+
+def test_vision_recompute_inherits_selective_model_config_when_enabled():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+        recompute_granularity="selective",
+        recompute_modules=["core_attn", "mlp"],
+    )
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert vision_config.recompute_granularity == "selective"
+    assert vision_config.recompute_modules == ["core_attn", "mlp"]
+    assert vision_config.recompute_num_layers is None
+
+
+def test_vision_recompute_can_override_selective_modules():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+        recompute_granularity="selective",
+        recompute_modules=["moe"],
+        vision_recompute_granularity="selective",
+        vision_recompute_modules=["core_attn"],
+    )
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert provider.recompute_modules == ["moe"]
+    assert vision_config.recompute_modules == ["core_attn"]
+
+
+def test_vision_recompute_can_use_per_layer_full_recompute_independently():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+        recompute_granularity="selective",
+        recompute_modules=["core_attn", "mlp"],
+        vision_recompute_granularity="full",
+        vision_recompute_method="uniform",
+        vision_recompute_num_layers=1,
+    )
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert provider.recompute_granularity == "selective"
+    assert vision_config.recompute_granularity == "full"
+    assert vision_config.recompute_method == "uniform"
+    assert vision_config.recompute_num_layers == 1
+
+
+def test_vision_recompute_requires_effective_granularity():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+    )
+
+    with pytest.raises(ValueError, match="effective recompute granularity"):
+        provider._build_vision_config(provider)
+
+
+@pytest.mark.parametrize(
+    ("method", "num_layers", "message"),
+    [
+        (None, 1, "requires a recompute method"),
+        ("uniform", None, "requires a layer count"),
+    ],
+)
+def test_full_vision_recompute_requires_complete_policy(method, num_layers, message):
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+        recompute_granularity="selective",
+        vision_recompute_granularity="full",
+        vision_recompute_method=method,
+        vision_recompute_num_layers=num_layers,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        provider._build_vision_config(provider)
+
+
+@pytest.mark.parametrize("num_layers", [0, 33, 1.5, True])
+def test_full_vision_recompute_rejects_invalid_layer_count(num_layers):
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+        vision_recompute_granularity="full",
+        vision_recompute_method="uniform",
+        vision_recompute_num_layers=num_layers,
+    )
+
+    with pytest.raises(ValueError, match="integer between 1 and 32"):
+        provider._build_vision_config(provider)
+
+
+def test_vision_recompute_rejects_forced_radio_eval_mode():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+    )
+
+    with pytest.raises(ValueError, match="radio_force_eval_mode=False"):
+        provider._build_vision_config(provider)
+
+
+def test_vision_recompute_rejects_empty_selective_modules():
+    provider = NemotronOmniModelProvider(
+        nemotron_omni_contract=NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+        recompute_vision=True,
+        radio_force_eval_mode=False,
+        vision_recompute_granularity="selective",
+        vision_recompute_modules=[],
+    )
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        provider._build_vision_config(provider)
 
 
 def test_llava_provider_uses_exact_replacement_counts_with_production_tile_limit():
@@ -1105,6 +1353,48 @@ def test_real_radio_multiframe_video_forward(single_rank_model_parallel):
 
     assert output.shape == (1, 4, 128)
     assert torch.isfinite(output).all()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_super_vl_rectangular_image_and_video_use_exact_visual_token_counts(
+    single_rank_model_parallel,
+):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider(vision_final_layernorm=True)
+    provider.finalize()
+    model = provider.provide().cuda().eval()
+
+    assert model.vision_model.decoder.final_layernorm is not None
+    assert model.vision_model.video_embedder is not None
+
+    # A 32x64 input has a 2x4 patch grid and therefore two visual tokens
+    # after the spatial 2x2 shuffle. Exercise both the image embedder and the
+    # separate two-frame video embedder against that non-square grid.
+    image_input_ids = torch.tensor([[7, 18, 18, 9]], device="cuda")
+    video_input_ids = torch.tensor([[7, 18, 18, 18, 18, 9]], device="cuda")
+    image_sizes = torch.tensor([[32, 64]], dtype=torch.int32, device="cuda")
+    video_sizes = torch.tensor([[32, 64]] * 4, dtype=torch.int32, device="cuda")
+
+    with torch.no_grad():
+        image_output = model(
+            input_ids=image_input_ids,
+            attention_mask=torch.ones_like(image_input_ids, dtype=torch.bool),
+            pixel_values=torch.randn(1, 3, 32, 64, device="cuda"),
+            imgs_sizes=image_sizes,
+            num_frames=torch.tensor([1], dtype=torch.int32, device="cuda"),
+        )
+        video_output = model(
+            input_ids=video_input_ids,
+            attention_mask=torch.ones_like(video_input_ids, dtype=torch.bool),
+            pixel_values=torch.randn(4, 3, 32, 64, device="cuda"),
+            imgs_sizes=video_sizes,
+            num_frames=torch.tensor([4], dtype=torch.int32, device="cuda"),
+        )
+
+    assert image_output.shape == (1, 4, 128)
+    assert video_output.shape == (1, 6, 128)
+    assert torch.isfinite(image_output).all()
+    assert torch.isfinite(video_output).all()
 
 
 @pytest.mark.run_only_on("GPU")

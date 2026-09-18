@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
 from megatron.core.activations import squared_relu
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from torch import nn
 from transformers import PretrainedConfig
 
@@ -30,6 +31,7 @@ from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provi
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
+    Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniLlavaBridge,
 )
@@ -133,6 +135,25 @@ def _mock_legacy_v2_omni_hf_config():
     return hf_config
 
 
+def _mock_nemotron_35_super_vl_hf_config():
+    """Represent the list-based Transformers config used by Super VL."""
+
+    hf_config = _mock_omni_hf_config()
+    hf_config.architectures = ["NemotronH_Omni_Reasoning_V3"]
+    hf_config.model_type = "nemotron_h_omni"
+    hf_config.auto_map = {"AutoModelForCausalLM": "modeling_nemotron_h_omni.NemotronH_Omni_Reasoning_V3"}
+    hf_config.sound_config = None
+    hf_config.sound_context_token_id = None
+    hf_config.video_temporal_patch_size = 2
+    hf_config.video_pruning_rate = 0.7
+    del hf_config.llm_config.hybrid_override_pattern
+    hf_config.llm_config.layers_block_type = ["mamba", "moe", "attention", "moe"]
+    hf_config.llm_config.num_nextn_predict_layers = 1
+    hf_config.llm_config.mtp_layers_block_type = ["attention", "moe"]
+    del hf_config.vision_config.separate_video_embedder
+    return hf_config
+
+
 def test_public_nemotron_omni_architecture_is_registered():
     hf_config = _mock_omni_hf_config()
 
@@ -142,6 +163,14 @@ def test_public_nemotron_omni_architecture_is_registered():
     hf_config.architectures = ["NemotronH_Super_Omni_Reasoning_V3"]
     assert AutoBridge.supports(hf_config)
     assert isinstance(get_model_bridge("NemotronH_Super_Omni_Reasoning_V3", hf_config=hf_config), NemotronOmniBridge)
+
+
+def test_nemotron_35_super_vl_architecture_is_registered():
+    hf_config = _mock_nemotron_35_super_vl_hf_config()
+
+    assert AutoBridge.supports(hf_config)
+    bridge = get_model_bridge("NemotronH_Omni_Reasoning_V3", hf_config=hf_config)
+    assert isinstance(bridge, Nemotron35SuperVLBridge)
 
 
 def test_legacy_v2_moe_checkpoint_routes_to_canonical_nemotron_omni():
@@ -449,6 +478,42 @@ def test_nemotron_omni_export_requires_modeling_entrypoint(tmp_path):
         bridge.postprocess_hf_export_artifacts(tmp_path)
 
 
+def test_nemotron_35_super_vl_export_accepts_direct_modeling_entrypoint(tmp_path):
+    modeling_path = tmp_path / "modeling_nemotron_h_omni.py"
+    modeling_source = "from .configuration_nemotron_h_omni import NemotronH_Omni_Reasoning_V3_Config\n"
+    modeling_path.write_text(modeling_source)
+
+    Nemotron35SuperVLBridge().postprocess_hf_export_artifacts(tmp_path)
+
+    assert modeling_path.read_text() == modeling_source
+
+
+def test_nemotron_35_super_vl_export_requires_direct_modeling_entrypoint(tmp_path):
+    with pytest.raises(FileNotFoundError, match="missing required artifact.*modeling_nemotron_h_omni.py"):
+        Nemotron35SuperVLBridge().postprocess_hf_export_artifacts(tmp_path)
+
+
+def test_nemotron_35_super_vl_export_closes_summary_idxs_buffer(tmp_path):
+    bridge = Nemotron35SuperVLBridge()
+    (tmp_path / "config.json").write_text(json.dumps({"vision_config": {"summary_idxs": [0, 1]}}))
+    index_path = tmp_path / "model.safetensors.index.json"
+    index_path.write_text(json.dumps({"metadata": {"total_size": 4}, "weight_map": {"weight": "model.safetensors"}}))
+
+    bridge.postprocess_hf_export_weights(tmp_path)
+    bridge.postprocess_hf_export_weights(tmp_path)
+
+    index = json.loads(index_path.read_text())
+    assert index["weight_map"]["vision_model.summary_idxs"] == "model-summary-idxs.safetensors"
+    assert index["metadata"]["total_size"] == 20
+    summary_shard = load_file(tmp_path / "model-summary-idxs.safetensors")
+    assert torch.equal(summary_shard["vision_model.summary_idxs"], torch.tensor([0, 1], dtype=torch.long))
+
+
+def test_nemotron_35_super_vl_export_requires_weight_index(tmp_path):
+    with pytest.raises(FileNotFoundError, match="missing its weight index"):
+        Nemotron35SuperVLBridge().postprocess_hf_export_weights(tmp_path)
+
+
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):
     bridge = NemotronOmniBridge()
     source_tensors = {
@@ -487,6 +552,76 @@ def test_canonical_bridge_maps_super_mtp_config():
         get_model_bridge("NemotronH_Super_Omni_Reasoning_V3", hf_config=hf_config),
         NemotronOmniBridge,
     )
+
+
+def test_nemotron_35_super_vl_provider_reuses_omni_with_list_based_mtp():
+    hf_config = _mock_nemotron_35_super_vl_hf_config()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    provider = Nemotron35SuperVLBridge().provider_bridge(hf_pretrained)
+
+    assert isinstance(provider, NemotronOmniModelProvider)
+    assert provider.hybrid_layer_pattern == "ME*E"
+    assert provider.mtp_hybrid_override_pattern == "*E"
+    assert provider.mtp_num_layers == 2
+    assert provider.mtp_use_repeated_layer is True
+    assert provider.has_sound is False
+    assert provider.sound_config is None
+    assert provider.temporal_patch_dim == 2
+    assert provider.separate_video_embedder is True
+    assert provider.temporal_ckpt_compat is False
+    assert provider.vision_final_layernorm is True
+
+    vision_config = provider._build_vision_config(provider)
+    assert vision_config.mtp_num_layers == 1
+
+
+def test_nemotron_35_super_vl_export_preserves_shared_mtp_serialization():
+    provider = Nemotron35SuperVLBridge().provider_bridge(
+        SimpleNamespace(config=_mock_nemotron_35_super_vl_hf_config())
+    )
+
+    hf_config = Nemotron35SuperVLBridge.megatron_to_hf_config(provider)
+
+    assert "num_nextn_predict_layers" not in hf_config
+    assert hf_config["llm_config"]["num_nextn_predict_layers"] == 1
+
+
+def test_nemotron_35_super_vl_rejects_unexpected_serialized_mtp_depth():
+    hf_config = _mock_nemotron_35_super_vl_hf_config()
+    hf_config.llm_config.num_nextn_predict_layers = 2
+
+    with pytest.raises(ValueError, match="exactly one serialized shared MTP block"):
+        Nemotron35SuperVLBridge().provider_bridge(SimpleNamespace(config=hf_config))
+
+
+def test_nemotron_35_super_vl_mapping_uses_nested_mtp_and_vision_final_norm():
+    bridge = Nemotron35SuperVLBridge()
+    bridge.hf_config = _mock_nemotron_35_super_vl_hf_config()
+
+    registry = bridge.mapping_registry()
+
+    mtp_projection = registry.megatron_to_hf_lookup("language_model.mtp.layers.0.eh_proj.weight")
+    mtp_attention_norm = registry.megatron_to_hf_lookup(
+        "language_model.mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_qkv.layer_norm_weight"
+    )
+    mtp_moe_norm = registry.megatron_to_hf_lookup(
+        "language_model.mtp.layers.0.mtp_model_layer.layers.1.pre_mlp_layernorm.weight"
+    )
+    reverse_mtp_qkv = registry.hf_to_megatron_lookup("language_model.mtp.layers.1.mixer.q_proj.weight")
+    vision_norm_weight = registry.megatron_to_hf_lookup("vision_model.decoder.final_layernorm.weight")
+    vision_norm_bias = registry.megatron_to_hf_lookup("vision_model.decoder.final_layernorm.bias")
+
+    assert mtp_projection.hf_param == "language_model.mtp.layers.0.eh_proj.weight"
+    assert mtp_attention_norm.hf_param == "language_model.mtp.layers.0.norm.weight"
+    assert mtp_moe_norm.hf_param == "language_model.mtp.layers.1.norm.weight"
+    assert (
+        reverse_mtp_qkv.megatron_param
+        == "language_model.mtp.layers.0.mtp_model_layer.layers.1.self_attention.linear_qkv.weight"
+    )
+    assert vision_norm_weight.hf_param == "vision_projector.vision_final_layernorm.weight"
+    assert vision_norm_bias.hf_param == "vision_projector.vision_final_layernorm.bias"
 
 
 def test_canonical_mapping_registry_uses_top_level_model_names():
