@@ -80,7 +80,7 @@ jobs:
     secrets: inherit  # pragma: allowlist secret
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@b0a3760374f50b3d6a7d5f8629e826dddca3b931 # v1.10.1
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@4ba12f712f03d20c9fe60ddb959117ceec7fdd74 # build-wheel-env support (#566)
     needs: [pre-flight]
     if: |
       !cancelled() && !failure()
@@ -107,6 +107,7 @@ jobs:
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
+      build-wheel-env: '{"TMS_CUDA_MAJOR":"13"}'
       extra-no-build-isolation-packages: "grpcio-tools"
       restrict-to-admins: true
     secrets: inherit  # pragma: allowlist secret
