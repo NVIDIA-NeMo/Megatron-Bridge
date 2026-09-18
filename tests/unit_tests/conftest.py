@@ -90,7 +90,9 @@ def check_gpu_requirements(request):
 def clear_lru_cache():
     """Clear LRU cache before each test to ensure test isolation."""
     # Import the functions that use @lru_cache
-    from megatron.bridge.training.utils.checkpoint_utils import read_run_config, read_train_state
+    from megatron.training.utils.checkpoint_utils import read_run_config
+
+    from megatron.bridge.training.utils.checkpoint_utils import read_train_state
 
     # Clear the cache before each test
     read_run_config.cache_clear()

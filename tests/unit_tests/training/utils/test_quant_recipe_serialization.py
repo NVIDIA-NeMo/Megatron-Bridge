@@ -17,10 +17,10 @@ from dataclasses import dataclass
 import pytest
 import yaml
 from megatron.core.quantization.quant_config import GlobMatcher, MatchContext, Matcher, RecipeConfig
+from megatron.training.utils.checkpoint_utils import read_run_config
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.model_load_save import load_model_config
-from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
 from megatron.bridge.utils.instantiate_utils import instantiate, target_allowlist
 
