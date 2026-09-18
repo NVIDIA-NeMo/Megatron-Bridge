@@ -1411,6 +1411,22 @@ class ConfigContainer(Container):
                 )
             if self.ddp.average_in_collective:
                 raise ValueError("GTP requires ddp.average_in_collective=False.")
+            if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
+                if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+                    raise ValueError(
+                        "GTP + mxfp8 is not supported with Megatron FSDP because "
+                        "reuse_grad_buf_for_mxfp8_param_ag is required."
+                    )
+                if not self.ddp.fp8_param_gather:
+                    raise ValueError(
+                        "GTP + mxfp8 requires ddp.fp8_param_gather=True because GTP does not keep "
+                        "or re-quantize a BF16 weight."
+                    )
+                if not self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
+                    raise ValueError(
+                        "GTP + mxfp8 requires ddp.reuse_grad_buf_for_mxfp8_param_ag=True because "
+                        "MXFP8 parameters cannot be mapped into the contiguous parameter buffer."
+                    )
 
         self.logger.finalize()
         self.train.finalize()
