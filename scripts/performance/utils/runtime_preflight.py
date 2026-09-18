@@ -43,7 +43,7 @@ def _command(argv: list[str]) -> dict[str, object]:
 
 
 def _provenance() -> dict[str, object]:
-    names = {"torch", "deep-ep", "nvidia-modelopt", "nvidia-cutlass-dsl"}
+    names = {"torch", "deep-ep", "nvidia-modelopt", "nvidia-cutlass-dsl", "nvidia-cudnn-frontend"}
     packages = []
     for dist in importlib.metadata.distributions():
         name = (dist.metadata.get("Name") or "").lower().replace("_", "-")

@@ -35,6 +35,23 @@ See `/opt/NeMo-FW/pyproject.toml` for additonal uv configurations.
 
 ## Development
 
+### Preserving a validated Rubin base runtime
+
+For diagnostic Rubin builds, `docker/Dockerfile.ci` accepts
+`--build-arg PRESERVE_BASE_RUNTIME=True` (default: `False`). This keeps the
+base image's TE and cuDNN frontend out of dependency installation and skips
+the public CUTLASS DSL replacement. The setting is inherited by the FW final
+image. Both stages check the selected Torch, TE, cuDNN frontend, and CUTLASS
+distribution versions and locations against `/opt/base-runtime-packages.json`.
+
+Use an immutable base image whose Rubin TE was built against its own Torch;
+this option cannot repair an already-incompatible base. The checks detect
+package replacement/shadowing, not GPU correctness. GPU import tests and a
+training smoke test are still required. Disable any later internal frontend
+reinstallation when validating this preserved stack. The standard dependency
+lockfiles are not a description of these opt-in base-supplied package versions;
+retain the recorded manifest and runtime reports with the experiment.
+
 ### Mounting and syncing local repository into the container
 
 Local working directories can be mounted via docker run:
