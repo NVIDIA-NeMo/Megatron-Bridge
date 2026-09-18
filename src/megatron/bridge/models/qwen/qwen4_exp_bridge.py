@@ -365,9 +365,15 @@ class Qwen4ExpBridge(MegatronModelBridge):
         return [ReplicatedMapping(f"{megatron_prefix}{n}", f"{hf_prefix}{n}") for n in names]
 
     @staticmethod
-    def get_lm_mappings(hf_prefix: str, experts_packed: bool, text_config, num_ple_shards: int) -> list:
-        """Parameter mappings of the language model (``megatron_prefix`` is empty for GPTModel)."""
-        mp = ""
+    def get_lm_mappings(
+        hf_prefix: str, experts_packed: bool, text_config, num_ple_shards: int, megatron_prefix: str = ""
+    ) -> list:
+        """Parameter mappings of the language model.
+
+        ``megatron_prefix`` is empty for GPTModel (text-only); it is ``"language_model."``
+        when the same decoder lives inside a VL wrapper (Qwen3VLModel).
+        """
+        mp = megatron_prefix
         simple = {
             f"{mp}embedding.word_embeddings.weight": f"{hf_prefix}embed_tokens.weight",
             f"{mp}output_layer.weight": "lm_head.weight",
