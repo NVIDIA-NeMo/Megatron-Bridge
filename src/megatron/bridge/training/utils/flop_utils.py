@@ -1605,6 +1605,21 @@ def num_floating_point_operations(
     if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
         return transformer_flops()
 
+    # GLM's split Hybrid graph has the same arithmetic as its paired DSA/MoE
+    # blocks. Reuse the DSA estimator in logical coordinates (including top-k
+    # reuse and MTP) rather than counting D as ordinary multi-head attention.
+    pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+    if pattern and getattr(cfg.model, "experimental_attention_variant", None) == "dsa":
+        import copy
+
+        main = pattern.split("/")[0].replace("|", "")
+        if len(main) % 2 == 0 and all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
+            cfg = copy.copy(cfg)
+            cfg.model = copy.copy(cfg.model)
+            cfg.model.num_layers = len(main) // 2
+            cfg.model.moe_layer_freq = [int(main[i] == "E") for i in range(1, len(main), 2)]
+            return transformer_flops()
+
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.
     if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):

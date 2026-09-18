@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config, default_tulu3_config
@@ -29,7 +30,6 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
-_GLM52_PP6_128K_LAYOUT = "|".join(("E" + "t" * 14, "t" * 16, "t" * 12, "t" * 12, "t" * 12, "t" * 12 + "mL"))
 
 
 def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
@@ -51,8 +51,8 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = 6
@@ -107,6 +107,8 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
 
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -128,8 +130,8 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = 6
@@ -213,6 +215,8 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "USE_MNNVL": 1,
     }
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -229,7 +233,7 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP6_128K_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
@@ -317,6 +321,8 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "USE_MNNVL": 1,
     }
+    block_counts = [14, 16, 12, 12, 12, 12]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
@@ -338,8 +344,8 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = 6
@@ -416,6 +422,8 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
 
