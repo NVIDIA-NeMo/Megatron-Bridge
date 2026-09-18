@@ -16,7 +16,7 @@ import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 import torch
@@ -1131,6 +1131,7 @@ class TestSaveMegatronModel:
             callback_manager=None,
         )
 
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
@@ -1147,6 +1148,7 @@ class TestSaveMegatronModel:
         mock_global_state,
         mock_get_model_config,
         mock_save_checkpoint,
+        mock_save_tokenizer_assets,
     ):
         """Builder-backed checkpoints serialize the complete outer model config."""
         mock_model = Mock()
@@ -1168,7 +1170,7 @@ class TestSaveMegatronModel:
             model_load_save._CpuTorchDistSaveShardedStrategy,
         )
 
-    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
@@ -1256,6 +1258,64 @@ class TestSaveMegatronModel:
         mock_save_tokenizer_assets.assert_called_once_with(
             mock_tokenizer,
             tokenizer_config,
+            "/fake/checkpoint/iter_0000000",
+            raise_on_error=True,
+        )
+
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_megatron_model_tokenizer_import_split(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+        mock_build_tokenizer,
+        mock_get_checkpoint_name,
+        mock_save_tokenizer_assets,
+    ):
+        """save_tokenizer_assets must be sourced from megatron.training.checkpointing (MLM),
+        while get_checkpoint_name stays sourced from megatron.bridge.training.checkpointing."""
+
+        class MockModelConfig(ModelProviderMixin, Mock):
+            def provide(self, pre_process=None, post_process=None, vp_stage=None):
+                return Mock()
+
+            def finalize(self) -> None:
+                pass
+
+        mock_get_model_config.return_value = MockModelConfig()
+        mock_global_state.return_value = Mock()
+
+        mock_tokenizer = Mock()
+        mock_build_tokenizer.return_value = mock_tokenizer
+        mock_get_checkpoint_name.return_value = "/fake/checkpoint/iter_0000000"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_model(
+                [Mock()],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path="org/model",
+                low_memory_save=False,
+            )
+
+            mock_get_checkpoint_name.assert_called_once_with(str(temp_dir), 0, release=False)
+
+        mock_save_tokenizer_assets.assert_called_once_with(
+            mock_tokenizer,
+            ANY,
             "/fake/checkpoint/iter_0000000",
             raise_on_error=True,
         )
