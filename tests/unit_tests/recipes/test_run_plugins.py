@@ -463,6 +463,36 @@ class TestNsysPlugin:
         # Verify hydra-style args are NOT present
         assert "profiling.use_nsys_profiler=true" not in task.args
 
+    def test_nsys_filename_uses_slurm_placeholders_for_slurm_executor(self):
+        """NsysPlugin must set Slurm %q{} placeholders for the nsys output filename."""
+        plugin = NsysPlugin(profile_step_start=10, profile_step_end=20)
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock(spec=run.SlurmExecutor)
+
+        plugin.setup(task, executor)
+
+        assert "%q{SLURM_JOB_ID}" in executor.launcher.nsys_filename
+        assert "%q{SLURM_PROCID}" in executor.launcher.nsys_filename
+        assert "${" not in executor.launcher.nsys_filename
+
+    def test_nsys_filename_uses_nsys_placeholders_for_nvcre_executor(self):
+        """NsysPlugin must use nsys %q{} placeholders (not bash ${}) for NVCRE executors."""
+        try:
+            from nemo_run.core.execution.nvcre import NvcreExecutor
+        except ImportError:
+            pytest.skip("nemo_run nvcre not available")
+
+        plugin = NsysPlugin(profile_step_start=10, profile_step_end=20)
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock(spec=NvcreExecutor)
+
+        plugin.setup(task, executor)
+
+        assert "%q{PET_NODE_RANK}" in executor.launcher.nsys_filename
+        assert "${PET_NODE_RANK}" not in executor.launcher.nsys_filename
+
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 class TestPyTorchProfilerPlugin:

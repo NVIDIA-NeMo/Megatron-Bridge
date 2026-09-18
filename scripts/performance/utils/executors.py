@@ -361,3 +361,63 @@ def kubeflow_executor(
         packager=run.GitArchivePackager(include_submodules=True),
     )
     return executor
+
+
+def nvcre_executor(
+    namespace: str,
+    container_image: str,
+    nodes: int,
+    num_gpus_per_node: int,
+    image_pull_secret: Optional[str] = None,
+    workdir_pvc: Optional[str] = None,
+    workdir_pvc_path: str = "/nemo_run",
+    workdir_local_path: Optional[str] = None,
+    node_selector: Optional[dict] = None,
+    volumes: Optional[list] = None,
+    volume_mounts: Optional[list] = None,
+    timeout_per_job: str = "24h",
+    kubeconfig: Optional[str] = None,
+    kube_context: Optional[str] = None,
+    gang_scheduler_name: Optional[str] = None,
+) -> "NvcreExecutor":
+    """Create an NvcreExecutor configured for an NVCRE-enabled Kubernetes cluster.
+
+    Args:
+        namespace: Kubernetes namespace to submit WorkloadRuns into.
+        container_image: Container image to run (e.g. ``nvcr.io/nvidia/nemo:dev``).
+        nodes: Number of nodes to allocate.
+        num_gpus_per_node: Number of GPUs per node.
+        image_pull_secret: Name of the Kubernetes image pull secret for nvcr.io.
+        workdir_pvc: Name of the PVC to mount as the working directory.
+        workdir_pvc_path: Mount path for the PVC inside the container.
+        workdir_local_path: Optional local directory merged into the job directory before upload.
+        node_selector: Kubernetes node selector labels for targeting specific nodes.
+        volumes: Additional Kubernetes volume specs to attach to the pod.
+        volume_mounts: Additional Kubernetes volume mount specs.
+        timeout_per_job: Maximum wall-clock time per job (e.g. ``"24h"``).
+        kubeconfig: Path to the kubeconfig file. Defaults to the cluster default.
+        kube_context: Kubernetes context to use from the kubeconfig.
+        gang_scheduler_name: Name of the gang scheduler (e.g. ``"kai-scheduler"``).
+
+    Returns:
+        A configured NvcreExecutor instance.
+    """
+    from nemo_run.core.execution.nvcre import NvcreExecutor
+    return NvcreExecutor(
+        namespace=namespace,
+        container_image=container_image,
+        num_nodes=nodes,
+        gpus_per_node=num_gpus_per_node,
+        image_pull_secret=image_pull_secret,
+        node_selector=node_selector or {},
+        workdir_pvc=workdir_pvc,
+        workdir_pvc_path=workdir_pvc_path,
+        workdir_local_path=workdir_local_path,
+        volumes=volumes or [],
+        volume_mounts=volume_mounts or [],
+        timeout_per_job=timeout_per_job,
+
+        kubeconfig=kubeconfig,
+        kube_context=kube_context,
+        gang_scheduler_name=gang_scheduler_name,
+    )
