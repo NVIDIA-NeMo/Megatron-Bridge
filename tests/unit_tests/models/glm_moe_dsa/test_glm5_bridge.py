@@ -158,17 +158,40 @@ def test_megatron_config_export_keeps_generic_moe_aliases() -> None:
 
 def test_megatron_config_export_does_not_emit_training_seq_length_as_max_position_embeddings() -> None:
     """``seq_length`` is the fine-tuning context, not the model's context capability; leave it to the reference."""
-    mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=8, seq_length=8192))
+    mapped_config = GLM5Bridge.megatron_to_hf_config(
+        SimpleNamespace(
+            num_moe_experts=8,
+            num_layers=4,
+            seq_length=8192,
+            hybrid_layer_pattern="D-DE",
+            dsa_indexer_topk_freq=1,
+            dsa_indexer_skip_topk_offset=0,
+        )
+    )
 
     assert "max_position_embeddings" not in mapped_config
     assert mapped_config["num_experts"] == 8
+    assert mapped_config["num_hidden_layers"] == 2
+    assert mapped_config["first_k_dense_replace"] == 1
 
 
 def test_megatron_config_export_reference_supplies_max_position_embeddings() -> None:
     """With a reference config, the exported value must be the reference one (1048576 for GLM-5.2), not seq_length."""
     from megatron.bridge.models.conversion.utils import conform_config_to_reference
 
-    mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=256, seq_length=8192))
+    mapped_config = GLM5Bridge.megatron_to_hf_config(
+        SimpleNamespace(
+            num_moe_experts=256,
+            num_layers=156,
+            seq_length=8192,
+            hybrid_layer_pattern="D-" * 3 + "DE" * 75,
+            dsa_indexer_topk_freq=4,
+            dsa_indexer_skip_topk_offset=3,
+        )
+    )
+    assert mapped_config["num_hidden_layers"] == 78
+    assert mapped_config["index_topk_freq"] == 4
+    assert mapped_config["index_skip_topk_offset"] == 3
     reference = {"max_position_embeddings": 1048576, "n_routed_experts": 256}
     conformed = conform_config_to_reference(mapped_config, reference)
 
