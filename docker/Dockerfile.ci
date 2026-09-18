@@ -45,7 +45,7 @@ finally:
 PY
 
 ARG INSTALL_DEEPEP=True
-ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
+ARG DEEPEP_COMMIT=10d4dd7377d5bce900fbb4b80cce863764892b95
 ARG REINSTALL_NVSHMEM=True
 
 ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
@@ -127,6 +127,7 @@ ARG UV_CACHE_PRUNE_ARGS
 
 # Install the main-branch environment from an immutable baseline context before
 # dispatched MCore metadata can invalidate this expensive dependency layer.
+# Mamba is built from patched source after the final sync below.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
@@ -137,8 +138,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
             CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
             CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
-        uv sync --locked --only-group build && \
-        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
+        uv sync --locked --only-group build --no-install-package mamba-ssm && \
+        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
     fi
 
 RUN rm -rf 3rdparty/Megatron-LM
@@ -147,6 +148,8 @@ COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=docker/common/install_mamba.sh,target=/opt/install_mamba.sh \
+    --mount=type=bind,source=docker/patches/mamba.patch,target=/opt/mamba.patch \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
     export TMS_CUDA_MAJOR="$("${CUDA_HOME:-/usr/local/cuda}"/bin/nvcc --version | sed -n 's/.*release \([0-9][0-9]*\).*/\1/p' | head -1)" && \
     test -n "$TMS_CUDA_MAJOR" && \
@@ -164,12 +167,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     pip install nvidia-cutlass-dsl[cu13]==4.5.0 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
-        uv sync --only-group build && \
-        uv sync --link-mode copy --all-extras --all-groups --no-group diffusion; \
+        uv sync --only-group build --no-install-package mamba-ssm && \
+        uv sync --link-mode copy --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
     elif [ -z "$BASELINE_MCORE_REF" ]; then \
-        uv sync --locked --only-group build && \
-        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
+        uv sync --locked --only-group build --no-install-package mamba-ssm && \
+        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
     fi && \
+    bash /opt/install_mamba.sh /opt/Megatron-Bridge/uv.lock /opt/mamba.patch && \
     # uv may retain the baseline editable MCore wheel when only its source tree changes.
     # Rebuild the dispatched checkout so its optional dataset helper is present.
     uv pip install --no-deps --reinstall -e 3rdparty/Megatron-LM && \

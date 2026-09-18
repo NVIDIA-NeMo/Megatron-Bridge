@@ -14,6 +14,7 @@
 
 import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -241,29 +242,44 @@ class TestTemporaryDistributedContext:
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once_with()
 
+    @pytest.mark.parametrize("inherited_env", [False, True])
+    @pytest.mark.parametrize("raise_in_context", [False, True])
     @pytest.mark.skipif(
         not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
         reason="requires torch.distributed with gloo",
     )
-    def test_temporary_distributed_context_real_gloo_single_process(self, monkeypatch):
-        """End-to-end single-process init with the real gloo backend.
-
-        No TCPStore rendezvous is used, so this works without usable
-        MASTER_ADDR/MASTER_PORT settings and avoids rendezvous port contention.
-        """
+    def test_temporary_distributed_context_real_gloo_single_process(
+        self, monkeypatch, inherited_env, raise_in_context
+    ):
+        """Initialize, use, and clean up an isolated group, including on exceptions."""
         for var in ("MASTER_ADDR", "MASTER_PORT"):
             monkeypatch.delenv(var, raising=False)
-
-        with (
-            patch("megatron.bridge.training.model_load_save.parallel_state"),
-            patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
-            temporary_distributed_context(backend="gloo"),
-        ):
-            assert dist.is_initialized()
-            assert dist.get_world_size() == 1
-            assert dist.get_rank() == 0
+        if inherited_env:
+            monkeypatch.setenv("MASTER_ADDR", "203.0.113.1")
+            monkeypatch.setenv("MASTER_PORT", "not-a-port")
 
         assert not dist.is_initialized()
+        for _ in range(2):
+            expected_error = (
+                pytest.raises(RuntimeError, match="context body failed") if raise_in_context else nullcontext()
+            )
+            with (
+                patch("megatron.bridge.training.model_load_save.parallel_state") as mock_parallel_state,
+                patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
+            ):
+                with expected_error, temporary_distributed_context(backend="gloo"):
+                    assert dist.is_initialized()
+                    assert dist.get_world_size() == 1
+                    assert dist.get_rank() == 0
+                    value = torch.tensor([7.0])
+                    dist.all_reduce(value)
+                    assert value.item() == 7.0
+                    if raise_in_context:
+                        raise RuntimeError("context body failed")
+
+                mock_parallel_state.initialize_model_parallel.assert_called_once_with()
+                mock_parallel_state.destroy_model_parallel.assert_called_once_with()
+            assert not dist.is_initialized()
 
 
 class TestGetOrInitializePgCollection:
