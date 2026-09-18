@@ -20,6 +20,7 @@ import re
 import sys
 
 from argument_parser import parse_cli_args
+from utils.debug_tracebacks import periodic_debug_tracebacks
 from utils.utils import PerfRecipeNotFoundError, get_perf_optimized_recipe, get_perf_recipe_by_name
 
 
@@ -179,7 +180,8 @@ def main() -> None:
     """Parse the final training arguments and run the workload once."""
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
-    _run_training(args, cli_overrides)
+    with periodic_debug_tracebacks():
+        _run_training(args, cli_overrides)
 
 
 if __name__ == "__main__":
