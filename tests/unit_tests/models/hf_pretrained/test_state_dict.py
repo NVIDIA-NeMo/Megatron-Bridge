@@ -565,9 +565,8 @@ class TestSafeTensorsStateSourceResolve:
     def test_pretrained_base_passes_revision(self):
         class DummyPreTrained(PreTrainedBase):
             def __init__(self, model_name_or_path, revision=None):
+                super().__init__(revision=revision)
                 self.model_name_or_path = model_name_or_path
-                self.revision = revision
-                self._state_dict_accessor = None
 
             def _load_config(self):
                 pass

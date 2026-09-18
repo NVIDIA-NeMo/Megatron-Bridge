@@ -443,6 +443,9 @@ class SafeTensorsStateSource(StateSource):
     Args:
         path: The path to the directory containing the `.safetensors` files
               and/or the index file. Can also be a Hugging Face Hub model ID.
+        revision: Optional Hugging Face Hub revision (branch, tag, or commit sha)
+                  to resolve `path` at when it is a Hub model ID. Ignored when
+                  `path` is a local directory.
     """
 
     def __init__(self, path: Union[str, Path], revision: Optional[str] = None):
@@ -534,7 +537,8 @@ class SafeTensorsStateSource(StateSource):
         """
         Resolves a model name or path to a local directory.
         If the path is not a local directory, it is treated as a Hugging
-        Face Hub model ID, and the corresponding files are downloaded.
+        Face Hub model ID, and the corresponding files are downloaded at
+        `revision` (defaulting to the repository's main branch).
         """
         local_path = Path(model_name_or_path)
         if local_path.is_dir():
@@ -547,21 +551,19 @@ class SafeTensorsStateSource(StateSource):
 
             # Not a local directory, so we assume it's a model ID
             # on the Hugging Face Hub.
-            download_kwargs = {
-                "repo_id": str(model_name_or_path),
-                "allow_patterns": [
-                    "*.safetensors",
-                    "model.safetensors.index.json",
-                ],
-                # Ignore other large files.
-                "ignore_patterns": ["*.bin", "*.pt", "*.pth"],
-            }
-            if revision is not None:
-                download_kwargs["revision"] = revision
-            if HF_HUB_OFFLINE:
-                download_kwargs["local_files_only"] = True
-
-            return Path(snapshot_download(**download_kwargs))
+            return Path(
+                snapshot_download(
+                    repo_id=str(model_name_or_path),
+                    revision=revision,
+                    local_files_only=HF_HUB_OFFLINE,
+                    allow_patterns=[
+                        "*.safetensors",
+                        "model.safetensors.index.json",
+                    ],
+                    # Ignore other large files.
+                    ignore_patterns=["*.bin", "*.pt", "*.pth"],
+                )
+            )
         except (ImportError, HfHubHTTPError, ValueError) as e:
             logger.warning(
                 f"Failed to download '{model_name_or_path}' from HuggingFace Hub: {e}. "
