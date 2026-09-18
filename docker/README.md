@@ -50,6 +50,20 @@ normal dependency solve in `pyproject.toml`. The installer consumes `scripts/dif
 which pins package versions and accepted artifact hashes; its header records the regeneration
 command. Do not enable this argument for the NeMo Framework image stack or other release images.
 
+### Mamba build workaround
+
+Both dependency-install paths skip installing `mamba-ssm` during `uv sync`, while still
+installing its dependencies. After the last sync, `common/install_mamba.sh` downloads the
+Mamba 2.3.1 sdist specified in the resolved `uv.lock`, verifies its SHA-256 hash, applies
+`patches/mamba.patch`, and installs it without resolving dependencies again.
+
+The patch removes hardcoded C++17 flags from both CUDA-extension compiler argument lists,
+allowing PyTorch to select its required C++ standard. The installer forces a source build
+so Mamba cannot substitute an unpatched release wheel. It rejects a different locked version
+or source: revisit the workaround when upgrading Mamba, and remove it once the selected
+release supports the container's PyTorch headers without patching. A plain `uv sync` run
+later does not apply this Docker-only workaround.
+
 ---
 
 ## NeMo Framework image stack
@@ -184,5 +198,7 @@ docker build \
 | `common/install_nccl.sh` | Reinstall NCCL from the public NVIDIA CUDA apt repo |
 | `common/install_cudnn.sh` | Reinstall cuDNN from the public NVIDIA CUDA apt repo |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |
+| `common/install_mamba.sh` | Build the locked Mamba sdist with the local C++ standard patch |
 | `patches/deepep.patch` | Patch applied to DeepEP during CI image build |
+| `patches/mamba.patch` | Let Mamba's CUDA extension inherit PyTorch's C++ standard |
 | `patches/vllm.patch` | Patch applied to vLLM after install in fw-base |
