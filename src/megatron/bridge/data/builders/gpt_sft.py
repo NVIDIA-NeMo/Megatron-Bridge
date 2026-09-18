@@ -681,6 +681,8 @@ def build_gpt_sft_split(
             effective_metadata_path = pack_metadata_path
 
     options = dict(dataset_kwargs or {})
+    if not is_not_packing:
+        options.pop("chat_template", None)
     chat = options.pop("chat", False)
     use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", True)
     chat_loss_mode = options.pop("chat_loss_mode", "assistant")
