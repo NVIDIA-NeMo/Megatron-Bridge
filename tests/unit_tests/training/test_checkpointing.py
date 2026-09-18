@@ -19,7 +19,7 @@ import tempfile
 from contextlib import ExitStack
 from functools import partial
 from pathlib import Path
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import numpy as np
 import pytest
@@ -3403,6 +3403,27 @@ class TestLoadModelWeightsFromCheckpoint:
 class TestLoadModelStateDictHelper:
     """Tests for _load_model_state_dict strict fallback behavior and logging."""
 
+    @pytest.fixture(autouse=True)
+    def _disable_gtp_load_context(self, monkeypatch):
+        monkeypatch.setattr("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", False)
+
+    @patch("megatron.core.tensor_parallel.gtp_api.gtp_native_fp8_load_context", create=True)
+    @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
+    def test_load_model_state_dict_wraps_gtp_native_fp8_loads(self, mock_load_context):
+        module = Mock()
+        load_return = Mock(missing_keys=[], unexpected_keys=[])
+        module.load_state_dict.side_effect = [Exception("strict mismatch"), load_return]
+        contexts = [MagicMock(), MagicMock()]
+        mock_load_context.side_effect = contexts
+
+        _load_model_state_dict(module, {"w": 1}, strict=True)
+
+        assert mock_load_context.call_count == 2
+        mock_load_context.assert_any_call(module)
+        for context in contexts:
+            context.__enter__.assert_called_once_with()
+            context.__exit__.assert_called_once()
+
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     def test_load_model_state_dict_strict_fallback(self, mock_print_rank_0):
         module = Mock()
@@ -5325,6 +5346,69 @@ class TestLayerWiseOptimizerCheckpointing:
         # For torch_dist format, save_state_dict_to_file must NOT be called.
         mock_layer_wise_optim.save_state_dict_to_file.assert_not_called()
 
+    def test_save_local_checkpoint_uses_gtp_data_distribution_rank(self, save_checkpoint_fixtures):
+        """Local LayerWise checkpoint filenames include the GTP-remat rank."""
+        from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
+
+        class StopAfterLayerWiseSave(Exception):
+            pass
+
+        cfg = save_checkpoint_fixtures["mock_cfg"]
+        cfg.model = Mock()
+        cfg.checkpoint.non_persistent_ckpt_type = "local"
+        cfg.checkpoint.save_rng = False
+
+        pg_collection = Mock()
+        pg_collection.dp.rank.return_value = 2
+        data_distribution_group = Mock()
+        data_distribution_group.rank.return_value = 5
+
+        local_checkpoint_manager = Mock()
+        local_checkpoint_manager.local_ckpt_dir = "/ckpts/local_nonpersistent"
+        checkpointing_context = {"local_checkpoint_manager": local_checkpoint_manager}
+
+        optimizer = Mock(spec=LayerWiseDistributedOptimizer)
+        optimizer.__class__ = LayerWiseDistributedOptimizer
+        optimizer.is_stub_optimizer = False
+        optimizer.save_state_dict_to_file.side_effect = StopAfterLayerWiseSave
+
+        rerun_state_machine = Mock()
+        rerun_state_machine.state_dict.return_value = {}
+
+        with (
+            patch("megatron.bridge.training.checkpointing.fault_tolerance.on_checkpointing_start"),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.get_rerun_state_machine",
+                return_value=rerun_state_machine,
+            ),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.ensure_directory_exists"),
+            patch(
+                "megatron.bridge.training.checkpointing.get_data_distribution_group",
+                return_value=data_distribution_group,
+            ) as mock_get_data_distribution_group,
+            pytest.raises(StopAfterLayerWiseSave),
+        ):
+            save_checkpoint(
+                save_checkpoint_fixtures["mock_state"],
+                save_checkpoint_fixtures["mock_model"],
+                optimizer,
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context=checkpointing_context,
+                non_persistent_ckpt=True,
+                pg_collection=pg_collection,
+            )
+
+        mock_get_data_distribution_group.assert_called_once_with(pg_collection, cfg.model)
+        optimizer.save_state_dict_to_file.assert_called_once_with(
+            "/ckpts/local_nonpersistent/layer_wise_optimizer_5.pt"
+        )
+
     # -----------------------------------------------------------------------
     # Load-side tests
     # -----------------------------------------------------------------------
@@ -5395,9 +5479,12 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_pg_collection.tp.size.return_value = 1
         mock_pg_collection.pp.rank.return_value = 0
         mock_pg_collection.pp.size.return_value = 1
-        mock_pg_collection.dp.rank.return_value = 2  # non-zero to verify path construction
+        mock_pg_collection.dp.rank.return_value = 2
         mock_pg_collection.dp_cp.rank.return_value = 0
         mock_get_pg_collection.return_value = mock_pg_collection
+
+        mock_data_distribution_group = Mock()
+        mock_data_distribution_group.rank.return_value = 5
 
         mock_train_state = Mock()
         mock_train_state.step = 500
@@ -5431,16 +5518,23 @@ class TestLayerWiseOptimizerCheckpointing:
         # Mock() auto-creates attributes, making hasattr(..., "megatron_mimo_parallelism_config") True.
         del load_checkpoint_fixtures["mock_cfg"].model.megatron_mimo_parallelism_config
 
-        load_checkpoint(
-            load_checkpoint_fixtures["mock_state"],
-            load_checkpoint_fixtures["mock_model"],
-            mock_layer_wise_optim,
-            load_checkpoint_fixtures["mock_scheduler"],
-            checkpointing_context=checkpointing_context,
-            pg_collection=mock_pg_collection,
-        )
+        with patch(
+            "megatron.bridge.training.checkpointing.get_data_distribution_group",
+            return_value=mock_data_distribution_group,
+        ) as mock_get_data_distribution_group:
+            load_checkpoint(
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                mock_layer_wise_optim,
+                load_checkpoint_fixtures["mock_scheduler"],
+                checkpointing_context=checkpointing_context,
+                pg_collection=mock_pg_collection,
+            )
 
-        expected_path = f"{local_ckpt_dir}/layer_wise_optimizer_2.pt"
+        mock_get_data_distribution_group.assert_called_once_with(
+            mock_pg_collection, load_checkpoint_fixtures["mock_cfg"].model
+        )
+        expected_path = f"{local_ckpt_dir}/layer_wise_optimizer_5.pt"
         mock_layer_wise_optim.load_state_dict_from_file.assert_called_once_with(expected_path)
 
     @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False)
