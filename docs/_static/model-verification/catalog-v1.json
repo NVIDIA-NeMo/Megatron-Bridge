@@ -6250,7 +6250,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "1c459be13a9a229de15a90de8bcad0bc21ad767a",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -6267,24 +6267,24 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-pretrain-h100",
-          "expected_result": "Exactly 64 H100s completed all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and full/uniform one-layer language recompute, selective vision recompute, and 25% optimizer-state CPU offload plus the recipe's BF16 precision-aware optimizer produced finite loss, zero skipped or NaN iterations, and the resolved ConfigContainer. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 64 H100s completed all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and full/uniform one-layer language recompute, selective vision recompute, and 25% optimizer-state CPU offload plus the recipe's BF16 precision-aware optimizer produced finite loss, zero skipped or NaN iterations, and the resolved ConfigContainer. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-29",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.104368,
-            "initial_loss": 2.999004,
-            "last_10_steps_model_tflops_per_gpu_avg": 130.34,
-            "last_10_steps_step_time_ms_avg": 49743.2,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1646.858
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "a3fc1e2e6b970b17cfea247ad1f7b840be67e522",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -6310,24 +6310,24 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-pretrain-gb200",
-          "expected_result": "On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1. Natural dropless routing, finite loss, zero skipped or NaN iterations, no active language or vision recompute, scoped Transformer Engine CUDA-graph capture, and the resolved ConfigContainer are required. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1. Natural dropless routing, finite loss, zero skipped or NaN iterations, no active language or vision recompute, scoped Transformer Engine CUDA-graph capture, and the resolved ConfigContainer are required. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-28",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.038754,
-            "initial_loss": 3.062157,
-            "last_10_steps_model_tflops_per_gpu_avg": 257.33,
-            "last_10_steps_step_time_ms_avg": 20385.85,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 3214.779
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "2f1c677ee0f948b3842a16ce052190557ed71981",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -6344,24 +6344,24 @@
             "moe_dispatcher": "hybridep"
           },
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-sft-h100",
-          "expected_result": "Exactly 64 H100s completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, HybridEP flex dispatch, fixed expert capacity, selective language recompute with vision recompute disabled, and the precision-aware optimizer produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 64 H100s completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, HybridEP flex dispatch, fixed expert capacity, selective language recompute with vision recompute disabled, and the precision-aware optimizer produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-28",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.293077,
-            "initial_loss": 5.412096,
-            "last_10_steps_model_tflops_per_gpu_avg": 209.98,
-            "last_10_steps_step_time_ms_avg": 30878.25,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 2653.0
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.sft.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft"
         },
         {
-          "bridge_commit": "2f1c677ee0f948b3842a16ce052190557ed71981",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -6376,19 +6376,19 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-sft-gb200",
-          "expected_result": "Exactly 64 GB200s within one NVL72 domain completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, eager all-to-all dispatch, fixed expert capacity, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 64 GB200s within one NVL72 domain completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, eager all-to-all dispatch, fixed expert capacity, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-29",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.303741,
-            "initial_loss": 5.393576,
-            "last_10_steps_model_tflops_per_gpu_avg": 135.3,
-            "last_10_steps_step_time_ms_avg": 47924.55,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1709.354
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.sft.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft"
         },
@@ -6428,7 +6428,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "215e20e596cb9fedb60fa3f8a7c4e8f618905aab",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "expert_parallel": "4",
@@ -6448,13 +6448,13 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-sft-export-inference-gb200",
-          "expected_result": "The step-100 full-SFT checkpoint exports as a native BF16 Transformers package with 43,079 indexed tensors. The post-weight-derived vision_model.summary_idxs tensor is stored as int64 [0, 1] in its own deterministic shard. The HF export reloads natively through strict Transformers loading with no missing or unexpected keys, the dynamic-resolution image processor succeeds, and greedy generation emits exactly 32 new tokens under a 32-token maximum. The literal completion is \"The user wants a description of the provided image.\\n\\n1.  **Identify the main subject:** The image is a diagram illustrating a \\\"Pre-Layern\".\n",
+          "expected_result": "Historical-only artifact observations recorded on 2026-08-30. The commands and export/reload/generation results do not establish correct synchronized, token-normalized SFT updates. This dependent item awaits export and inference from a newly validated SFT checkpoint. The step-100 full-SFT checkpoint exports as a native BF16 Transformers package with 43,079 indexed tensors. The post-weight-derived vision_model.summary_idxs tensor is stored as int64 [0, 1] in its own deterministic shard. The HF export reloads natively through strict Transformers loading with no missing or unexpected keys, the dynamic-resolution image processor succeeds, and greedy generation emits exactly 32 new tokens under a 32-token maximum. The literal completion is \"The user wants a description of the provided image.\\n\\n1.  **Identify the main subject:** The image is a diagram illustrating a \\\"Pre-Layern\".\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-30",
+          "last_verified": null,
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.sft_export_inference.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_export_inference"
         },
@@ -6505,7 +6505,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "b1d2932f32839aa5244edbb342fefc4a88714068",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -6520,24 +6520,24 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-peft-h100",
-          "expected_result": "Exactly 16 H100s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP4/PP2/CP1/EP8/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 35,540 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and two Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 16 H100s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP4/PP2/CP1/EP8/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 35,540 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and two Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-29",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.157877,
-            "initial_loss": 3.857522,
-            "last_10_steps_model_tflops_per_gpu_avg": 59.74,
-            "last_10_steps_step_time_ms_avg": 5427.27,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 754.707
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.peft.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "peft"
         },
         {
-          "bridge_commit": "2f1c677ee0f948b3842a16ce052190557ed71981",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -6552,24 +6552,24 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-peft-gb200",
-          "expected_result": "Exactly 16 GB200s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP2/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 34,537 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and eight Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 16 GB200s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP2/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 34,537 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and eight Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-28",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.260179,
-            "initial_loss": 5.485836,
-            "last_10_steps_model_tflops_per_gpu_avg": 93.55,
-            "last_10_steps_step_time_ms_avg": 3472.77,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1179.462
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.peft.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "peft"
         },
         {
-          "bridge_commit": "1c459be13a9a229de15a90de8bcad0bc21ad767a",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -6584,24 +6584,24 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-checkpoint-resume-h100",
-          "expected_result": "The distinct resume root loaded pretrain.H100 step 60 directly, restored optimizer, RNG, and Energon state, and completed exactly steps 61--120 on the same 64-H100 topology and execution fingerprint. Every resumed LM and MTP loss matched the uninterrupted reference within 1% relative plus 1e-6 absolute; the maximum absolute deltas across all 60 resumed steps were 0.013309 and 0.017865. LM deltas at sentinels 61 and 120 were 0 and 0.013309. The final full-state checkpoint contains 64 model shards and 32 Energon states.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. The distinct resume root loaded pretrain.H100 step 60 directly, restored optimizer, RNG, and Energon state, and completed exactly steps 61--120 on the same 64-H100 topology and execution fingerprint. Every resumed LM and MTP loss matched the uninterrupted reference within 1% relative plus 1e-6 absolute; the maximum absolute deltas across all 60 resumed steps were 0.013309 and 0.017865. LM deltas at sentinels 61 and 120 were 0 and 0.013309. The final full-state checkpoint contains 64 model shards and 32 Energon states.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-29",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.117677,
-            "initial_loss": 2.064014,
-            "last_10_steps_model_tflops_per_gpu_avg": 129.05,
-            "last_10_steps_step_time_ms_avg": 50238.95,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 1630.607
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "a3fc1e2e6b970b17cfea247ad1f7b840be67e522",
+          "bridge_commit": "f375ef553a06b782f5129c1bc9a060a55259da4f",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -6616,19 +6616,19 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "nemotron-3-5-super-vl-120b-a12b-checkpoint-resume-gb200",
-          "expected_result": "The distinct resume root loaded pretrain.GB200 step 60 directly, restored optimizer, RNG, and Energon state, and completed exactly steps 61--120 on the same 64-GB200 one-domain topology. Every resumed LM and MTP loss matched the uninterrupted reference within 1% relative plus 1e-6 absolute; LM deltas at sentinels 61 and 120 were 0.000077 and 0.002001. The final full-state checkpoint contains 64 model shards and 32 Energon states.\n",
+          "expected_result": "Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. The distinct resume root loaded pretrain.GB200 step 60 directly, restored optimizer, RNG, and Energon state, and completed exactly steps 61--120 on the same 64-GB200 one-domain topology. Every resumed LM and MTP loss matched the uninterrupted reference within 1% relative plus 1e-6 absolute; LM deltas at sentinels 61 and 120 were 0.000077 and 0.002001. The final full-state checkpoint contains 64 model shards and 32 Energon states.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-28",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 2.040755,
-            "initial_loss": 2.204572,
-            "last_10_steps_model_tflops_per_gpu_avg": 263.04,
-            "last_10_steps_step_time_ms_avg": 19945.03,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 3285.831
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "checkpoint_resume"
         }
@@ -6638,7 +6638,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "nemotron-3.5-super-vl-120b-a12b",
       "source_card": "examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. The recorded results below used one MTP prediction depth. Verification is being refreshed for the corrected two-depth shared-block configuration; these historical results do not verify that new training objective. They also predate the current FP32 optimizer-state and weight-decay defaults and language-only PEFT adapter targets. Each verified status below applies only to its recorded historical Bridge commit, not the current recipes. Real-data BF16 pretraining verification on 64 H100s and 64 GB200s uses DataComp image-caption samples, natural dropless expert routing, and a learned vision-pretrained checkpoint; both 120-step runs and their final checkpoints are verified. The H100 and GB200 workloads use different sequence and global batch sizes, so their losses and throughput are not convergence-comparable. The pinned eight-GPU BF16 import and distributed export are verified: the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched the immutable HF source bitwise, and the exported package reloaded natively through Transformers on eight H100s. Model-level deterministic generation remains pending. Post-SFT distributed export and dynamic-image inference are verified on four GB200s. SFT, PEFT, and checkpoint resume are verified on both H100 and GB200. The training recipes reuse the Nemotron Omni image/video stack without audio and retain the checkpoint's separate temporal embedder. The current Bridge represents one serialized HF attention+MoE block as two shared MTP prediction depths.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Historical training commands, metrics, checkpoint and reload observations are retained below, but pretrain, SFT, PEFT and checkpoint-resume correctness are unverified on both H100 and GB200. The historical shared-provider config copy could omit training finalization callbacks, so finite losses and matching resume losses do not establish synchronized, token-normalized updates. Recipe-specific reverification after the callback fix is pending. Those runs also used one MTP prediction depth and predate the current two-depth shared-block objective, FP32 optimizer-state and weight-decay defaults, and language-only PEFT adapter targets. Their metrics are not corrected-training convergence or throughput baselines. The H100 and GB200 workloads also used different sequence and global batch sizes. The pinned eight-GPU BF16 import and distributed export remain verified: all 43,078 tensors matched the immutable HF source bitwise, and the exported package reloaded natively through Transformers on eight H100s. This conversion evidence is independent of training finalization. Model-level deterministic generation remains pending. Historical post-SFT export and dynamic-image inference demonstrate artifact execution only; their dependent verification awaits a corrected SFT checkpoint. The recipes reuse the Nemotron Omni image/video stack without audio and retain the checkpoint's separate temporal embedder.\n",
       "title": "nemotron_3_5_super_vl_120b_a12b"
     },
     {

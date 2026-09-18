@@ -6,7 +6,7 @@ Megatron Bridge provides checkpoint conversion and pretraining, SFT, and PEFT re
 
 The `freeze_vision_model`, `freeze_vision_projection`, and `freeze_language_model` provider options independently control which model components are trained. The Super-VL SFT recipes freeze the vision encoder while keeping the projection and language model trainable.
 
-> Verification scope: the recorded training results below are historical and apply only to the Bridge commits recorded in the [authoritative verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/11773d712330dfca4b5354f6d8f52a298cb841e6/examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml). They used one MTP prediction depth and predate the current two-depth shared-MTP configuration, FP32 optimizer-state and weight-decay defaults, and language-only PEFT adapter targets. Verification of those current training settings remains pending; the historical “Verified” badges do not certify the current recipes. Recorded throughput is functional-verification evidence, not a canonical optimized performance result.
+> Verification scope: pretrain, SFT, PEFT, checkpoint resume, and dependent post-SFT export/inference remain unverified after the shared-provider callback fix. The commands, metrics, and artifact observations below are historical only: the copied provider configuration could omit training finalization callbacks, so finite losses and successful reloads do not establish synchronized, token-normalized updates. These runs also predate the current two-depth shared-MTP objective, FP32 optimizer-state and weight-decay defaults, and language-only PEFT targets. Pure conversion verification is unaffected. Historical throughput is not a corrected-training or optimized-performance baseline.
 
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
@@ -75,31 +75,31 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-pretrain-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-pretrain-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-sft-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-sft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-sft-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-sft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -117,17 +117,17 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-peft-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-peft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-peft-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-peft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-peft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -228,35 +228,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-29</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>2.999004</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.104368</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>49,743.200 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>130.340 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,646.858 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -272,42 +272,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exactly 64 H100s completed all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and full/uniform one-layer language recompute, selective vision recompute, and 25% optimizer-state CPU offload plus the recipe&#x27;s BF16 precision-aware optimizer produced finite loss, zero skipped or NaN iterations, and the resolved ConfigContainer. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.
+        <p>Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 64 H100s completed all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and full/uniform one-layer language recompute, selective vision recompute, and 25% optimizer-state CPU offload plus the recipe&#x27;s BF16 precision-aware optimizer produced finite loss, zero skipped or NaN iterations, and the resolved ConfigContainer. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-super-vl-120b-a12b-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.062157</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.038754</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>20,385.850 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>257.330 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,214.779 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -323,42 +323,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1. Natural dropless routing, finite loss, zero skipped or NaN iterations, no active language or vision recompute, scoped Transformer Engine CUDA-graph capture, and the resolved ConfigContainer are required. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.
+        <p>Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer steps from the learned vision-pretrained checkpoint on DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1. Natural dropless routing, finite loss, zero skipped or NaN iterations, no active language or vision recompute, scoped Transformer Engine CUDA-graph capture, and the resolved ConfigContainer are required. Full optimizer/RNG checkpoints at steps 60 and 120 each contain all 64 distributed model shards and 32 Energon data-parallel states.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-super-vl-120b-a12b-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-sft-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>5.412096</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.293077</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>30,878.250 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>209.980 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>2,653.000 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -374,42 +374,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exactly 64 H100s completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, HybridEP flex dispatch, fixed expert capacity, selective language recompute with vision recompute disabled, and the precision-aware optimizer produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.
+        <p>Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 64 H100s completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, HybridEP flex dispatch, fixed expert capacity, selective language recompute with vision recompute disabled, and the precision-aware optimizer produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-super-vl-120b-a12b-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-29</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>5.393576</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.303741</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>47,924.550 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>135.300 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,709.354 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -425,7 +425,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exactly 64 GB200s within one NVL72 domain completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, eager all-to-all dispatch, fixed expert capacity, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.
+        <p>Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 64 GB200s within one NVL72 domain completed 100 BF16 SFT optimizer steps from the immutable source checkpoint on 128,000 DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 1280/1. The shifted production loss masks contain 2,900,779 supervised tokens. Natural routing, eager all-to-all dispatch, fixed expert capacity, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The model-only step-100 checkpoint contains all 64 distributed shards and 32 Energon states and reloaded successfully. This dataset verifies image-caption batching; it does not contain video samples.
 </p>
       </section>
     </article>
@@ -522,35 +522,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-5-super-vl-120b-a12b-peft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-peft-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-29</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.857522</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.157877</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>5,427.270 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>59.740 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>754.707 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -566,42 +566,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exactly 16 H100s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP4/PP2/CP1/EP8/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 35,540 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and two Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.
+        <p>Historical-only observations recorded on 2026-08-29. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 16 H100s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP4/PP2/CP1/EP8/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 35,540 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and two Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-super-vl-120b-a12b-peft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-peft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>5.485836</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.260179</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>3,472.770 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>93.550 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,179.462 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -617,7 +617,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exactly 16 GB200s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP2/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 34,537 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and eight Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.
+        <p>Historical-only observations recorded on 2026-08-28. The command, metrics and artifact observations do not establish synchronized, token-normalized training updates. Recipe-specific reverification after the shared-provider callback fix is pending. Exactly 16 GB200s completed the rank-32, alpha-32, zero-dropout LoRA objective for 100 optimizer steps from the immutable source checkpoint on 1,600 DataComp image-caption samples at TP2/PP1/CP1/EP16/ETP1 and GBS/MBS 16/1. The shifted production loss masks contain 34,537 supervised tokens. Frozen base weights, natural routing, dropless all-to-all dispatch, and no active language or vision recompute produced finite loss with zero skipped or NaN iterations. The step-100 adapter contains all 16 distributed shards and eight Energon states and reloaded successfully. This dataset does not contain video samples. This historical recipe used unqualified adapter targets that also matched vision and projector modules; it does not verify the current language-only adapter placement.
 </p>
       </section>
     </article>
