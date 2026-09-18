@@ -80,7 +80,7 @@ jobs:
     secrets: inherit  # pragma: allowlist secret
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@refs/pull/566/head # exact audited SHA 4f53d6ac1833b0a87b3d73a4f3b2fd4c169118eb
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@4ba12f712f03d20c9fe60ddb959117ceec7fdd74
     needs: [pre-flight]
     if: |
       !cancelled() && !failure()
