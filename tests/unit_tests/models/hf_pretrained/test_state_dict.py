@@ -540,14 +540,15 @@ class TestSafeTensorsStateSourceResolve:
     """Test SafeTensorsStateSource._resolve_path with revision and offline mode."""
 
     def test_resolve_path_with_revision(self, tmp_path):
-        source = SafeTensorsStateSource("some/model-repo", revision="b5968e9190ef")
+        revision = "b5968e9190ef"  # pragma: allowlist secret
+        source = SafeTensorsStateSource("some/model-repo", revision=revision)
         with patch("huggingface_hub.snapshot_download") as mock_download:
             mock_download.return_value = str(tmp_path)
             resolved = source.path
             mock_download.assert_called_once()
             _, kwargs = mock_download.call_args
             assert kwargs.get("repo_id") == "some/model-repo"
-            assert kwargs.get("revision") == "b5968e9190ef"
+            assert kwargs.get("revision") == revision
             assert resolved == tmp_path
 
     def test_resolve_path_offline_mode(self, tmp_path, monkeypatch):
