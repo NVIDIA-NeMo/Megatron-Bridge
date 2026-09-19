@@ -34,6 +34,7 @@ bridge-tech-details.md
 :hidden:
 
 models/README.md
+models/bagel/bagel.md
 models/bailing/index.md
 models/deepseek/index.md
 models/ernie/ernie45.md

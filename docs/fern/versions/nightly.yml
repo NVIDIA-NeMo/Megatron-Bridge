@@ -34,6 +34,10 @@ navigation:
   - page: Supported Models
     path: ./nightly/pages/models/README.mdx
   - contents:
+    - page: BAGEL
+      path: ./nightly/pages/models/bagel/bagel.mdx
+    section: BAGEL
+  - contents:
     - page: EXAONE and K-EXAONE
       path: ./nightly/pages/models/exaone/exaone.mdx
     section: EXAONE
