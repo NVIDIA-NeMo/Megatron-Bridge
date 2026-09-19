@@ -8,205 +8,449 @@ Current inventory: **25 model cards** and **356 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
-## Models
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
-Choose a model to inspect its recorded import/export, training, and precision combinations.
+## Verified configurations
 
-<div class="verification-provider-grid verification-model-directory">
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>DeepSeek</strong>
-      <span>2 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="deepseek/deepseek-v3.html#verified-deepseek-v3">
-        <strong title="deepseek-ai/DeepSeek-V3">DeepSeek-V3</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="deepseek/deepseek-v4.html#verified-deepseek-v4-flash">
-        <strong title="deepseek-ai/DeepSeek-V4-Flash">DeepSeek-V4-Flash</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-bagel"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
     </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>Google</strong>
-      <span>2 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="gemma/gemma3-vl.html#verified-gemma-3-4b-it">
-        <strong title="google/gemma-3-4b-it">gemma-3-4b-it</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="gemma/gemma4-vl.html#verified-gemma-4-26b-a4b-it">
-        <strong title="google/gemma-4-26B-A4B-it">gemma-4-26B-A4B-it</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
     </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>LG AI EXAONE</strong>
-      <span>1 model</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="exaone/exaone.html#verified-k-exaone-2">
-        <strong title="LGAI-EXAONE/K-EXAONE-2.0-750B-A37B">K-EXAONE-2.0-750B-A37B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>Meta</strong>
-      <span>1 model</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="muse_glimmer/muse-glimmer.html#verified-muse-glimmer-30b">
-        <strong title="meta-models/Muse-Glimmer-30B">Muse-Glimmer-30B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>MiniMax</strong>
-      <span>1 model</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="minimax/minimax-m3.html#verified-minimax-m3">
-        <strong title="MiniMaxAI/MiniMax-M3">MiniMax-M3</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>Moonshot AI</strong>
-      <span>2 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="kimi/kimi-k3.html#verified-kimi-k3">
-        <strong title="moonshotai/Kimi-K3">Kimi-K3</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="moonlight/moonlight.html#verified-moonlight-16b-a3b">
-        <strong title="moonshotai/Moonlight-16B-A3B">Moonlight-16B-A3B</strong>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="" data-hardware="" data-status="unsupported" data-entry="bagel-hf-to-megatron-cpu" aria-controls="bagel-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="bagel-hf-to-megatron-gpu" aria-controls="bagel-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>NVIDIA</strong>
-      <span>6 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="nemotron/nemotron-3-omni.html#verified-nemotron-3-nano-omni-30b-a3b-reasoning">
-        <strong title="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16">Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="nemotron/nemotron3-nano.html#verified-nemotron-3-nano-30b-a3b">
-        <strong title="nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16">NVIDIA-Nemotron-3-Nano-30B-A3B-BF16</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="nemotron/nemotron3-nano-4b.html#verified-nemotron-3-nano-4b">
-        <strong title="nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16">NVIDIA-Nemotron-3-Nano-4B-BF16</strong>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="" data-hardware="" data-status="unsupported" data-entry="bagel-megatron-to-hf-cpu" aria-controls="bagel-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="" data-hardware="" data-status="unsupported" data-entry="bagel-megatron-to-hf-gpu" aria-controls="bagel-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="bagel-pretrain-h100" aria-controls="bagel-pretrain-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · H100</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </a>
-      <a class="verification-model-link" href="nemotron/nemotron3-super.html#verified-nemotron-3-super-120b-a12b">
-        <strong title="nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16">NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="nemotron/nemotron3-ultra.html#verified-nemotron-3-ultra-550b-a55b">
-        <strong title="nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16">NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16</strong> <!-- pragma: allowlist secret -->
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="nemotron/nemotron3.5-lightning.html#verified-nemotron-3.5-lightning">
-        <strong title="nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16">NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>OpenAI</strong>
-      <span>2 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="gpt_oss/gpt-oss-120b.html#verified-gpt-oss-120b">
-        <strong title="openai/gpt-oss-120b">gpt-oss-120b</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="gpt_oss/gpt-oss-20b.html#verified-gpt-oss-20b">
-        <strong title="openai/gpt-oss-20b">gpt-oss-20b</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>Qwen</strong>
-      <span>5 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="qwen/qwen3-235b-a22b.html#verified-qwen3-235b-a22b">
-        <strong title="Qwen/Qwen3-235B-A22B">Qwen3-235B-A22B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="qwen/qwen3-30b-a3b.html#verified-qwen3-30b-a3b">
-        <strong title="Qwen/Qwen3-30B-A3B">Qwen3-30B-A3B</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </a>
-      <a class="verification-model-link" href="qwen/qwen3-8b.html#verified-qwen3-8b">
-        <strong title="Qwen/Qwen3-8B">Qwen3-8B</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
-      </a>
-      <a class="verification-model-link" href="qwen/qwen3.6-35b-a3b.html#verified-qwen3.6-35b-a3b">
-        <strong title="Qwen/Qwen3.6-35B-A3B">Qwen3.6-35B-A3B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-      <a class="verification-model-link" href="qwen/qwen3.8-27b.html#verified-qwen3.8-27b">
-        <strong title="Qwen/Qwen3.8-27B">Qwen3.8-27B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>StepFun</strong>
-      <span>1 model</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="stepfun/step35.html#verified-step35-flash">
-        <strong title="stepfun-ai/Step-3.5-Flash">Step-3.5-Flash</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
-      </a>
-    </div>
-  </section>
-  <section class="verification-provider-card">
-    <header class="verification-provider-heading">
-      <strong>Z.ai</strong>
-      <span>2 models</span>
-    </header>
-    <div class="verification-provider-models">
-      <a class="verification-model-link" href="glm/glm5.html#verified-glm5">
-        <strong title="zai-org/GLM-5">GLM-5</strong>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="bagel-sft-h100" aria-controls="bagel-sft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H100</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </a>
-      <a class="verification-model-link" href="glm/glm5-2.html#verified-glm5-2">
-        <strong title="zai-org/GLM-5.2">GLM-5.2</strong>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="" data-hardware="H100" data-status="unsupported" data-entry="bagel-sft-long-context-h100" aria-controls="bagel-sft-long-context-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H100</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="" data-hardware="H100" data-status="unsupported" data-entry="bagel-peft-h100" aria-controls="bagel-peft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H100</strong>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </span>
+      <span class="verification-combination-meta">Precision not specified</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="bagel-pretrain-fsdp-h100" aria-controls="bagel-pretrain-fsdp-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · FSDP · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="bagel-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="bagel-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>BAGEL native-checkpoint initialization currently runs as part of GPU model construction and is not registered with the maintained public CPU conversion launcher.
+</p>
+      </section>
+    </article>
+    <article id="bagel-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="bagel-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-01</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 1 --hf-model ByteDance-Seed/BAGEL-7B-MoT --hf-revision 5019f57d168e5816e8f3f701b17cc816bb7cf24b --megatron-path work/model-verification/bagel/hf-to-megatron --torch-dtype bfloat16</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU reload completed without missing or unexpected checkpoint keys; all 56 MoT language-layer input-norm tensors used as regression sentinels exactly matched the official EMA values.
+</p>
+      </section>
+    </article>
+    <article id="bagel-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="bagel-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging Face checkpoint is not implemented by the public CPU converter.
+</p>
+      </section>
+    </article>
+    <article id="bagel-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="bagel-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging Face checkpoint is not implemented by the public GPU converter.
+</p>
+      </section>
+    </article>
+    <article id="bagel-pretrain-h100" class="verification-model-detail" data-entry-detail="bagel-pretrain-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-01</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.9585528</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>1.242196</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>16,383.960 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>195.540 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>2,250.005 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>57.060 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>70.154 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe bagel_7b_pretrain_8gpu_h100_bf16_config --mode pretrain --max_steps 10 model.bagel_repo=work/dependencies/Bagel model.model_path=work/model-verification/bagel/native model.vae_path=work/model-verification/bagel/native/ae.safetensors model.native_model_checkpoint=work/model-verification/bagel/native/ema.safetensors model.native_model_seed=336 model.native_world_size=8 model.validate_native_checkpoint_metadata=false model.reference_training_seed=336 model.reference_training_world_size=8 model.reset_reference_training_rng=true dataset.dataset_root=work/data/bagel-wds dataset.bagel_repo=work/dependencies/Bagel dataset.tokenizer_model=work/model-verification/bagel/native dataset.seed=42 dataset.data_seed=42 rng.seed=42 checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false dataset.dataloader_load=null checkpoint.save=work/model-verification/bagel/pretrain/checkpoints dataset.dataloader_save=work/model-verification/bagel/pretrain/checkpoints checkpoint.save_interval=10 checkpoint.async_save=false validation.eval_iters=0 validation.eval_interval=null logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/bagel/pretrain/run_config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final step reports CE 0.9156674, MSE 0.3265290, and total loss 1.242196. The final-10 averages include first-step compilation and are 16,383.960 ms and 195.540 model TFLOP/s/GPU; 2,250.005 token slots/GPU/s uses the fixed 36,864 maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and iteration-10 model, optimizer, RNG, and per-DP dataloader state are persisted. A separate same-topology public-launcher load restored step 10 and exited without executing an additional optimizer step.
+</p>
+      </section>
+    </article>
+    <article id="bagel-sft-h100" class="verification-model-detail" data-entry-detail="bagel-sft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H100</h4>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </a>
-    </div>
-  </section>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The BAGEL fine-tuning recipe must complete a bounded pinned-data run with finite losses, all required metrics, and a reloadable checkpoint.
+</p>
+      </section>
+    </article>
+    <article id="bagel-sft-long-context-h100" class="verification-model-detail" data-entry-detail="bagel-sft-long-context-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H100</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The current BAGEL integration does not expose a maintained packed long-context fine-tuning recipe with context parallelism.
+</p>
+      </section>
+    </article>
+    <article id="bagel-peft-h100" class="verification-model-detail" data-entry-detail="bagel-peft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H100</h4>
+        <span class="verification-status verification-status--unsupported" title="Unsupported">× Unsupported</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>NOT SPECIFIED</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>BAGEL LoRA and other parameter-efficient fine-tuning workflows are not implemented by the current integration.
+</p>
+      </section>
+    </article>
+    <article id="bagel-pretrain-fsdp-h100" class="verification-model-detail" data-entry-detail="bagel-pretrain-fsdp-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · FSDP · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-08-31</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>14.68331</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>10.809916</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>7,697.160 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>234.268 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>4,428.810 tokens/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Peak allocated memory</dt>
+            <dd>58.594 GiB</dd>
+          </div>
+          <div>
+            <dt>Peak reserved memory</dt>
+            <dd>62.919 GiB</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe bagel_7b_pretrain_32gpu_h100_bf16_config --mode pretrain --max_steps 30 model.bagel_repo=work/dependencies/Bagel model.model_path=work/model-verification/bagel/native model.vae_path=work/model-verification/bagel/native/ae.safetensors model.reference_training_seed=1344 model.reference_training_world_size=32 model.reset_reference_training_rng=true dataset.dataset_root=work/data/bagel-wds dataset.bagel_repo=work/dependencies/Bagel dataset.tokenizer_model=work/model-verification/bagel/native dataset.seed=42 dataset.data_seed=42 rng.seed=42 checkpoint.load=work/model-verification/bagel/seed42-mcore-init checkpoint.load_optim=true checkpoint.load_rng=true dataset.dataloader_load=work/model-verification/bagel/seed42-mcore-init ddp.overlap_grad_reduce=false ddp.overlap_param_gather=true ddp.fsdp_double_buffer=false checkpoint.save=null checkpoint.save_interval=0 validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,428.810 logical tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical tokens include text, ViT, VAE-latent, and special tokens and exclude physical padding. The variable packed sequence length averages 34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is 58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU under official BAGEL. Do not compute a relative speedup: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.
+</p>
+      </section>
+    </article>
+  </div>
 </div>
 
-## Verification status
-
-Statuses are explicit: ✅ **verified**, ⚪ **unverified**, ❌ **unsupported**, and ➖ **not applicable**. A model page may summarize mixed concrete states as partially verified.
-
-A partially verified model contains a mix of verified and pending or unsupported configurations. Selectors expose only exact card leaves and never fabricate combinations.
-
-The versioned normalized data is available as [`catalog-v1.json`](../_static/model-verification/catalog-v1.json).
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->
