@@ -107,7 +107,9 @@ jobs:
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
-      build-wheel-env: '{"TMS_CUDA_MAJOR":"13"}'
+      # The packaging image lacks the NCCL headers needed by TE's optional EP build.
+      # This wheel-packaging job does not exercise expert-parallel communication.
+      build-wheel-env: '{"TMS_CUDA_MAJOR":"13","NVTE_WITH_NCCL_EP":"0"}'
       extra-no-build-isolation-packages: "grpcio-tools"
       restrict-to-admins: true
     secrets: inherit  # pragma: allowlist secret
