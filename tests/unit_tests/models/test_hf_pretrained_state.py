@@ -86,6 +86,24 @@ def test_safetensors_index_accepts_relative_safetensors_shard_filename(tmp_path)
     assert source.key_to_filename_map == {"model.weight": "nested/model-00001-of-00002.safetensors"}
 
 
+def test_safetensors_state_source_resolves_hub_id_with_pinned_revision(tmp_path, monkeypatch) -> None:
+    import huggingface_hub
+
+    calls: list[dict] = []
+
+    def fake_snapshot_download(**kwargs):
+        calls.append(kwargs)
+        return str(tmp_path)
+
+    monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot_download)
+
+    source = SafeTensorsStateSource("org/model", revision="0123456789abcdef")
+
+    assert source.path == tmp_path
+    assert calls[0]["repo_id"] == "org/model"
+    assert calls[0]["revision"] == "0123456789abcdef"
+
+
 def test_resolve_output_shard_path_rejects_escaping_filename(tmp_path) -> None:
     with pytest.raises(ValueError, match="escapes output directory"):
         _resolve_output_shard_path(tmp_path, "../evil.safetensors")

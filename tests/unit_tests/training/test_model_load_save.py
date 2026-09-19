@@ -932,6 +932,23 @@ class TestLoadMegatronModel:
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_single_rank_flex_fallback_disables_shared_expert_overlap(
+        self, mock_load_model_config, mock_build_and_load
+    ):
+        """The allgather fallback must not leave moe_shared_expert_overlap enabled."""
+        cfg = Mock()
+        cfg.moe_token_dispatcher_type = "flex"
+        cfg.moe_shared_expert_overlap = True
+        mock_load_model_config.return_value = (cfg, None)
+        mock_build_and_load.return_value = object()
+
+        load_megatron_model("/ckpt", model_type=None, return_state_dict=False, use_cpu_init=True)
+
+        assert cfg.moe_token_dispatcher_type == "allgather"
+        assert cfg.moe_shared_expert_overlap is False
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_load_megatron_model_disables_cuda_graphs_for_hybrid_configs(
         self, mock_load_model_config, mock_build_and_load
     ):

@@ -2368,6 +2368,35 @@ class TestDynamicSparseAttentionFlops:
         values.update(overrides)
         return MockConfigContainer(model=MockModelConfig(**values))
 
+    @pytest.mark.parametrize("mtp", [0, 1])
+    @pytest.mark.parametrize("frequency", [1, 4])
+    def test_glm_hybrid_flops_match_logical_gpt_blocks(self, mtp, frequency):
+        kwargs = dict(
+            num_layers=6,
+            num_moe_experts=4,
+            moe_layer_freq=[0, 0, 1, 1, 1, 1],
+            moe_ffn_hidden_size=16,
+            ffn_hidden_size=32,
+            mtp_num_layers=mtp,
+            dsa_indexer_topk_freq=frequency,
+            dsa_indexer_skip_topk_offset=3,
+        )
+        reference = self._dsa_config(**kwargs)
+        candidate = self._dsa_config(
+            **{
+                **kwargs,
+                "num_layers": 12,
+                "moe_layer_freq": [0, 0] * 2 + [0, 1] * 4,
+                "hybrid_layer_pattern": "D-D-|DEDEDEDE" + ("/DE" if mtp else ""),
+                "is_hybrid_model": True,
+            }
+        )
+        assert num_floating_point_operations(candidate, batch_size=2) == num_floating_point_operations(
+            reference, batch_size=2
+        )
+        assert candidate.model.num_layers == 12
+        assert len(candidate.model.moe_layer_freq) == 12
+
     def test_dsa_exact_toy_formula(self):
         """A one-layer toy covers absorbed sparse MLA and every lightning-indexer matmul."""
         # At S=4 and top-k=2, the causal selected counts are [1, 2, 2, 2],
