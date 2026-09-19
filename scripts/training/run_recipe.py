@@ -128,8 +128,8 @@ if TYPE_CHECKING:
     from megatron.bridge.training.config import ConfigContainer
 
 
-PublicMode = Literal["pretrain", "sft", "lora", "dora"]
-TrainMode = Literal["pretrain", "finetune"]
+PublicMode = Literal["pretrain", "sft", "lora", "dora", "dpo"]
+TrainMode = Literal["pretrain", "finetune", "dpo"]
 
 
 IMPORT_TIME_RECIPE_ENV_VARS = frozenset({"NVTE_CPU_OFFLOAD_V1"})
@@ -174,7 +174,7 @@ def _build_parser() -> argparse.ArgumentParser:
     recipe_selection.add_argument("--recipe", help="Complete recipe function name.")
     selection.add_argument(
         "--mode",
-        choices=["pretrain", "sft", "lora", "dora"],
+        choices=["pretrain", "sft", "lora", "dora", "dpo"],
         help="Training mode; inferred from a conventional --recipe name when omitted.",
     )
     selection.add_argument(
@@ -289,7 +289,9 @@ def _common_config_overrides(args: argparse.Namespace) -> list[str]:
 
 def _train_mode(mode: PublicMode) -> TrainMode:
     """Map the public mode to a training loop."""
-    return "pretrain" if mode == "pretrain" else "finetune"
+    if mode in {"pretrain", "dpo"}:
+        return mode
+    return "finetune"
 
 
 def _infer_mode(args: argparse.Namespace) -> None:
@@ -298,6 +300,20 @@ def _infer_mode(args: argparse.Namespace) -> None:
         args.mode = infer_recipe_mode(args.recipe)
     if args.mode is None:
         raise ValueError("Unable to infer training mode; pass --mode or use a conventional --recipe name.")
+
+
+def _resolve_step_for_mode(step_name: str, mode: PublicMode) -> str:
+    """Pair dpo_step with DPO mode: the DPO loss lives in its forward step, so no other step fits."""
+    step = step_name.lower()
+    if mode == "dpo":
+        if step == "llm_step":
+            return "dpo_step"
+        if step != "dpo_step":
+            raise ValueError(f"--step-func {step_name} is incompatible with --mode dpo: DPO trains with dpo_step.")
+        return step
+    if step == "dpo_step":
+        raise ValueError(f"--step-func dpo_step is incompatible with --mode {mode}: dpo_step requires --mode dpo.")
+    return step_name
 
 
 def _validate_recipe_mode(recipe_name: str, mode: PublicMode) -> None:
@@ -442,6 +458,10 @@ def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigC
     """Apply a public dataset selection to a recipe config."""
     if args.dataset is None:
         return recipe
+    if args.mode == "dpo":
+        raise ValueError(
+            f"Mode 'dpo' is incompatible with dataset '{args.dataset}': DPO recipes own their preference dataset."
+        )
 
     recipe.dataset = build_dataset_config(recipe, args.dataset)
     requested_train_mode = _train_mode(args.mode)
@@ -530,6 +550,7 @@ def main(argv: list[str] | None = None) -> None:
         recipe_name,
         native_energon_packing=native_energon_packing,
     )
+    step_func_name = _resolve_step_for_mode(step_func_name, args.mode)
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,

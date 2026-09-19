@@ -14,9 +14,16 @@
 
 import os
 
+import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge import AutoBridge
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    DPODatasetConfig,
+    HFDatasetSourceConfig,
+)
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -32,6 +39,7 @@ from megatron.bridge.training.config import (
     TrainingConfig,
     ValidationConfig,
 )
+from megatron.bridge.training.dpo import DPOLossConfig
 
 
 def _pretrain_common() -> ConfigContainer:
@@ -232,6 +240,65 @@ def _sft_common() -> ConfigContainer:
         peft=None,
     )
 
+    return cfg
+
+
+def _dpo_common(hf_path: str, *, seq_length: int = 4096, revision: str | None = None) -> ConfigContainer:
+    """Create a base DPO ConfigContainer for one HF reference model.
+
+    Builds on ``_sft_common`` and applies the loss contract that
+    ``validate_dpo_run_config`` enforces (per-token loss, no collective
+    averaging, fp32 CE, PP=CP=1). The dataset is a preference-pair
+    skeleton over ``hf_path``'s tokenizer; every run must still point at its
+    scored reference artifact and reference weights, typically via
+    ``dataset.ref_artifact=...`` and ``--pretrained_checkpoint``.
+
+    Args:
+        hf_path: HF id or local path of the reference model; also the tokenizer.
+        seq_length: Pair sequence length; must match the scoring run.
+        revision: HF revision to pin the model config and tokenizer to.
+
+    Returns:
+        ConfigContainer: Base configuration for DPO training.
+    """
+    cfg = _sft_common()
+    hf_kwargs = {"revision": revision} if revision else {}
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, torch_dtype=torch.bfloat16, **hf_kwargs).to_megatron_provider(
+        load_weights=False
+    )
+    cfg.tokenizer.tokenizer_model = hf_path
+    cfg.tokenizer.hf_tokenizer_kwargs = hf_kwargs
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = seq_length
+    cfg.model.mtp_num_layers = None
+
+    # DPO loss contract (validate_dpo_run_config enforces all but the CE-fusion
+    # knob, which stays off to match the scorer's unfused CE rounding).
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.ddp.average_in_collective = False
+
+    cfg.dataset = DPODatasetConfig(
+        tokenizer_name=hf_path,
+        seq_length=seq_length,
+        source=HFDatasetSourceConfig(path_or_dataset="HuggingFaceH4/ultrafeedback_binarized", split="train_prefs"),
+        ref_artifact=None,  # required per run: the offline scorer's artifact for this source
+    )
+    cfg.dpo = DPOLossConfig()
+
+    # Batch sizes are row-denominated (one pair == two rows) and must be even.
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 4
+    cfg.validation.eval_iters = 0  # enable via dataset.validation_* + validation.eval_*
+
+    cfg.optimizer.lr = 1e-6
+    cfg.optimizer.min_lr = 0.0
+    cfg.scheduler.lr_warmup_iters = 0
     return cfg
 
 
