@@ -35,7 +35,8 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "num_hidden_layers": 2,
     # ---- Attention ----
     "num_attention_heads": 16,
-    "num_key_value_heads": 4,
+    # MLA expands latent keys to every attention head; do not apply extra GQA repetition.
+    "num_key_value_heads": 16,
     "head_dim": 64,
     "qk_head_dim": 128,
     "qk_nope_head_dim": 96,
@@ -315,6 +316,7 @@ class TestGLM5Conversion:
         with open(config_file) as f:
             saved_config = json.load(f)
 
+        assert saved_config["num_hidden_layers"] == HF_GLM5_TOY_MODEL_CONFIG["num_hidden_layers"]
         assert saved_config["model_type"] == "glm_moe_dsa"
         assert saved_config["hidden_size"] == HF_GLM5_TOY_MODEL_CONFIG["hidden_size"]
         assert saved_config["num_attention_heads"] == HF_GLM5_TOY_MODEL_CONFIG["num_attention_heads"]
@@ -323,7 +325,8 @@ class TestGLM5Conversion:
         assert saved_config["moe_intermediate_size"] == HF_GLM5_TOY_MODEL_CONFIG["moe_intermediate_size"]
 
     @pytest.mark.run_only_on("GPU")
-    def test_glm52_indexshare_strict_roundtrip(self, glm52_indexshare_toy_model_path, tmp_path):
+    @pytest.mark.parametrize("pp,ep", [(1, 2), (2, 1)])
+    def test_glm52_indexshare_strict_roundtrip(self, glm52_indexshare_toy_model_path, tmp_path, pp, ep):
         """Full layers round-trip exactly while shared layers omit indexer tensors."""
         test_output_dir = tmp_path / "glm52_indexshare"
         test_output_dir.mkdir(exist_ok=True)
@@ -347,7 +350,9 @@ class TestGLM5Conversion:
             "--output-dir",
             str(test_output_dir),
             "--ep",
-            "2",
+            str(ep),
+            "--pp",
+            str(pp),
             "--strict",
             "--atol",
             "0",
@@ -374,3 +379,18 @@ class TestGLM5Conversion:
         from tests.functional_tests.utils import autoconfig_roundtrip
 
         autoconfig_roundtrip(glm5_toy_model_path, tmp_path)
+
+
+def test_glm_hybrid_config_coordinates():
+    """A serialized HF config must not inherit physical Hybrid layer counts."""
+    from transformers import GlmMoeDsaConfig
+
+    from megatron.bridge import AutoBridge
+    from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
+    from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
+
+    config = GlmMoeDsaConfig(**HF_GLM52_INDEXSHARE_TOY_MODEL_CONFIG)
+    provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+    assert isinstance(provider, GLM5ModelProvider)
+    assert provider.num_layers == 2 * config.num_hidden_layers
+    assert GLM5Bridge.megatron_to_hf_config(provider)["num_hidden_layers"] == config.num_hidden_layers
