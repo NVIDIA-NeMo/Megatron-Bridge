@@ -68,7 +68,7 @@ def validate_container_runtime(args: argparse.Namespace) -> None:
     for name, value in (("--enroot-root", args.enroot_root), ("--container-image", args.container_image)):
         if not value or not Path(value).is_absolute() or ".." in Path(value).parts or value == "/":
             raise ValueError(f"{name} must be an absolute cluster-side path for direct Enroot.")
-        if any(char in value for char in ("\n", "\r", ":", ",")):
+        if any(char.isspace() or char in ":," for char in value):
             raise ValueError(f"{name} contains unsupported mount/path characters.")
     if not args.container_image.endswith((".sqsh", ".squashfs")):
         raise ValueError("Direct Enroot requires an existing .sqsh or .squashfs image; it never imports images.")
@@ -107,12 +107,15 @@ def apply_container_runtime(
             raise ValueError("Direct Enroot mount paths must not contain parent traversal.")
         source, destination = str(Path(source)), str(Path(destination))
         mode = parts[2] if len(parts) == 3 else "rw"
-        if mode not in ("ro", "rw") or any(c in mount for c in ("\n", "\r", ",")):
+        if any(char.isspace() or char == "," for char in mount):
+            raise ValueError("Direct Enroot mount paths must not contain whitespace or commas.")
+        if mode not in ("ro", "rw"):
             raise ValueError("Direct Enroot mount options must be ro or rw.")
         if destination in ("/", "/tmp", "/var/tmp") or destination == args.enroot_root:
             raise ValueError("Direct Enroot reserves root, temporary and runtime mounts.")
         host_paths.append(source)
-        enroot_mounts.append(f"{source}:{destination}:none:bind,{mode}")
+        # Explicit options suppress Enroot's default destination creation.
+        enroot_mounts.append(f"{source}:{destination}:none:bind,{mode},x-create=auto")
     names = sorted(set(env_names) | set(task.env))
     if any(not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) for name in names):
         raise ValueError("Direct Enroot environment entries must be variable names, not values.")

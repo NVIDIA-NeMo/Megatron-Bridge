@@ -103,6 +103,13 @@ def test_rejects_ambiguous_or_incompatible_options(overrides):
         runtime.validate_container_runtime(arguments(**overrides))
 
 
+@pytest.mark.parametrize("name", ["enroot_root", "container_image"])
+@pytest.mark.parametrize("space", [" ", "\t", "\n", "\r", "\v", "\f"])
+def test_rejects_whitespace_in_runtime_paths(name, space):
+    with pytest.raises(ValueError, match="unsupported mount/path characters"):
+        runtime.validate_container_runtime(arguments(**{name: f"/shared/a{space}b.sqsh"}))
+
+
 def test_environment_defaults_and_explicit_selection(monkeypatch):
     monkeypatch.setenv("BRIDGE_CONTAINER_RUNTIME", "enroot")
     monkeypatch.setenv("BRIDGE_ENROOT_ROOT", "/shared/runtime")
@@ -142,6 +149,15 @@ def test_wrapper_disables_pyxis_preserves_resources_and_secret_names(render, mon
 )
 def test_rejects_unsafe_mounts(render, mount):
     with pytest.raises(ValueError):
+        render(mounts=[mount])
+
+
+@pytest.mark.parametrize("source", [True, False])
+@pytest.mark.parametrize("space", [" ", "\t", "\n", "\r", "\v", "\f"])
+def test_rejects_whitespace_in_mount_paths(render, source, space):
+    path = f"/shared/a{space}b"
+    mount = f"{path}:/opt/data" if source else f"/shared/source:{path}"
+    with pytest.raises(ValueError, match="whitespace"):
         render(mounts=[mount])
 
 
@@ -195,8 +211,8 @@ def test_rank_wrapper_executes_with_lustre_paths_and_exact_arguments(render, fak
     captured = (tmp_path / "capture").read_bytes().decode().split("\0")[:-1]
     assert captured[0] == "start"
     assert "--container-image" not in captured
-    assert f"{tmp_path}:/opt/Megatron-Bridge:none:bind,ro" in captured
-    assert any("/tmp:none:bind,rw" in arg for arg in captured)
+    assert f"{tmp_path}:/opt/Megatron-Bridge:none:bind,ro,x-create=auto" in captured
+    assert any("/tmp:none:bind,rw,x-create=dir" in arg for arg in captured)
     assert "SLURM_PROCID" in captured
     assert "PYTHONPATH" in captured
     assert "TMPDIR=/tmp" in captured
@@ -247,7 +263,7 @@ def test_explicit_cache_is_validated_and_mounted(render, fake_host, tmp_path, mo
     result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     captured = (tmp_path / "capture").read_bytes().decode().split("\0")
-    assert f"{cache}:{cache}:none:bind,rw" in captured
+    assert f"{cache}:{cache}:none:bind,rw,x-create=dir" in captured
     assert "HF_HOME" in captured
     assert not any(value.startswith("HF_HOME=") for value in captured)
 
@@ -261,16 +277,42 @@ def test_explicit_missing_cache_fails_before_start(render, fake_host, tmp_path, 
     assert not (tmp_path / "capture").exists()
 
 
+@pytest.mark.parametrize("space", [" ", "\t", "\n", "\r", "\v", "\f"])
+def test_explicit_whitespace_cache_fails_before_start(render, fake_host, tmp_path, monkeypatch, space):
+    cache = tmp_path / f"cache{space}name"
+    cache.mkdir()
+    monkeypatch.setenv("HF_HOME", str(cache))
+    wrapped, _, _ = render(fake_host, env_names=["HF_HOME"])
+    result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "invalid cache path for HF_HOME" in result.stderr
+    assert not (tmp_path / "capture").exists()
+
+
+@pytest.mark.parametrize("mode", ["ro", "rw"])
+def test_file_mount_and_all_managed_mounts_request_destination_creation(render, fake_host, tmp_path, mode):
+    source = tmp_path / "config.json"
+    source.write_text("{}")
+    wrapped, _, _ = render(fake_host, mounts=[f"{source}:/opt/new/config.json:{mode}"])
+    result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    captured = (tmp_path / "capture").read_bytes().decode().split("\0")
+    mounts = [captured[i + 1] for i, arg in enumerate(captured) if arg == "--mount"]
+    assert mounts[0] == f"{source}:/opt/new/config.json:none:bind,{mode},x-create=auto"
+    assert len(mounts) == 4
+    assert all(mount.endswith(",x-create=dir") for mount in mounts[1:])
+
+
 def test_managed_mounts_follow_user_ancestor_mounts(render, fake_host, tmp_path):
     wrapped, _, _ = render(fake_host, mounts=[f"{tmp_path}:/var:ro", f"{tmp_path}:{tmp_path.parent}:ro"])
     result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
     captured = (tmp_path / "capture").read_bytes().decode().split("\0")
     mounts = [captured[i + 1] for i, arg in enumerate(captured) if arg == "--mount"]
-    assert mounts[0].endswith(":/var:none:bind,ro")
+    assert mounts[0].endswith(":/var:none:bind,ro,x-create=auto")
     assert mounts[-3].split(":")[0] == mounts[-3].split(":")[1]
-    assert mounts[-2].endswith(":/tmp:none:bind,rw")
-    assert mounts[-1].endswith(":/var/tmp:none:bind,rw")
+    assert mounts[-2].endswith(":/tmp:none:bind,rw,x-create=dir")
+    assert mounts[-1].endswith(":/var/tmp:none:bind,rw,x-create=dir")
 
 
 @pytest.mark.parametrize("value", ["", "n", "no", "false", "FALSE", "0", "yes", "true", "1"])

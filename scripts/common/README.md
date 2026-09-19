@@ -20,8 +20,9 @@ Direct Enroot requires:
   SquashFS file directly (including its site-provided SquashFUSE dependencies).
 - A working container installation of Bridge or an explicit source mount such
   as `--mount /path/to/lustre/source:/opt/Megatron-Bridge:ro`. Mounts accept
-  `HOST:CONTAINER[:ro|rw]`. The backend does not package a source checkout into
-  the image or install dependencies.
+  `HOST:CONTAINER[:ro|rw]`; paths must not contain whitespace or commas.
+  Missing container mount destinations are created automatically. The backend
+  does not package a source checkout into the image or install dependencies.
 
 The generated job uses plain `srun` without Pyxis container flags. Each Slurm
 task creates a private job/rank-specific directory under the selected root,

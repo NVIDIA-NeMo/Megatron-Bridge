@@ -67,11 +67,11 @@ cache_names=(XDG_CACHE_HOME XDG_RUNTIME_DIR UV_CACHE_DIR HF_HOME TORCH_HOME
 for name in "${cache_names[@]}"; do
     if [[ " ${forward_names[*]} " == *" $name "* ]]; then
         path=${!name}
-        [[ "$path" == /* && "$path" != *:* && "$path" != *,* && "$path" != *$'\n'* ]] || fail "invalid cache path for $name"
+        [[ "$path" == /* && "$path" != *:* && "$path" != *,* && "$path" != *[[:space:]]* ]] || fail "invalid cache path for $name"
         [[ "/${path#/}/" != *"/../"* ]] || fail "cache path must not contain parent traversal: $name"
         [[ -d "$path" && $(stat -f -c %T -- "$path") == lustre ]] || fail "$name must name an existing Lustre directory"
         # Make the selected host cache available at the identical container path.
-        enroot_args+=(--mount "$path:$path:none:bind,rw")
+        enroot_args+=(--mount "$path:$path:none:bind,rw,x-create=dir")
     else
         path="$runtime_dir/cache/workload/$name"
         mkdir "$path"
@@ -80,8 +80,9 @@ for name in "${cache_names[@]}"; do
 done
 # Managed mounts must be LAST: a user mount of an ancestor (e.g. /var or the
 # Lustre user root) must not hide the temporary/runtime storage underneath it.
-enroot_args+=(--mount "$runtime_dir:$runtime_dir:none:bind,rw"
-    --mount "$runtime_dir/tmp:/tmp:none:bind,rw" --mount "$runtime_dir/var-tmp:/var/tmp:none:bind,rw")
+enroot_args+=(--mount "$runtime_dir:$runtime_dir:none:bind,rw,x-create=dir"
+    --mount "$runtime_dir/tmp:/tmp:none:bind,rw,x-create=dir"
+    --mount "$runtime_dir/var-tmp:/var/tmp:none:bind,rw,x-create=dir")
 # Short container-visible paths avoid Unix socket length limits, but are backed
 # by the Lustre bind mounts above. Do not create bytecode beside readonly source.
 enroot_args+=(--env TMPDIR=/tmp --env TMP=/tmp --env TEMP=/tmp --env PYTHONDONTWRITEBYTECODE=1)
