@@ -44,6 +44,43 @@ def split_glm_pattern(pattern: str, block_counts: list[int]) -> str:
     return "|".join(parts)
 
 
+def _partition_layer_groups(group_sizes: list[int], num_stages: int) -> list[int]:
+    """Split ordered layer groups into contiguous stages that minimize the largest stage.
+
+    Args:
+        group_sizes: Number of layers in each group, in layer order.
+        num_stages: Number of stages; must not exceed the number of groups.
+
+    Returns:
+        Number of layers in each stage. Every stage receives at least one whole group.
+    """
+
+    def stages_needed(capacity: int) -> int:
+        count, load = 1, 0
+        for size in group_sizes:
+            if load + size > capacity:
+                count, load = count + 1, 0
+            load += size
+        return count
+
+    capacity = max(group_sizes)
+    while stages_needed(capacity) > num_stages:
+        capacity += 1
+
+    stage_sizes: list[int] = []
+    start = 0
+    for stage_index in range(num_stages):
+        # Fill each stage up to the minimal capacity while leaving one group for every later stage.
+        last_start = len(group_sizes) - (num_stages - stage_index - 1)
+        end, load = start + 1, group_sizes[start]
+        while end < last_start and load + group_sizes[end] <= capacity:
+            load += group_sizes[end]
+            end += 1
+        stage_sizes.append(load)
+        start = end
+    return stage_sizes
+
+
 @dataclass
 class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
     """Construct GLM as DSA/dense/MoE Hybrid layers with MLA configuration."""
@@ -76,15 +113,12 @@ class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
             ] + [blocks]
             stages = self.pipeline_model_parallel_size
             if len(boundaries) - 1 < stages:
-                raise ValueError("GLM has fewer independent DSA sharing groups than pipeline stages.")
-            selected = [0]
-            previous = 0
-            for stage in range(1, stages):
-                candidates = range(previous + 1, len(boundaries) - (stages - stage))
-                previous = min(candidates, key=lambda index: abs(boundaries[index] * stages - blocks * stage))
-                selected.append(boundaries[previous])
-            selected.append(blocks)
-            main = split_glm_pattern(main, [end - start for start, end in zip(selected, selected[1:])])
+                raise ValueError(
+                    f"PP={stages} exceeds the {len(boundaries) - 1} DSA top-k sharing groups in {blocks} decoder layers; "
+                    "each pipeline stage must start on a layer that computes its own top-k indices."
+                )
+            group_sizes = [end - start for start, end in zip(boundaries, boundaries[1:])]
+            main = split_glm_pattern(main, _partition_layer_groups(group_sizes, stages))
         segments = main.split("|")
         if len(segments) != self.pipeline_model_parallel_size:
             raise ValueError("GLM requires exactly one nonempty pattern segment per pipeline rank.")

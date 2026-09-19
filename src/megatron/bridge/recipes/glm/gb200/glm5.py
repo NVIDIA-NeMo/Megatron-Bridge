@@ -50,7 +50,7 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     # layer and both loss heads, and 16 decoder layers there leave no room for
     # NCCL buffers when training resumes with loaded optimizer state. Every stage
     # after the first starts on a DSA top-k computing layer.
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP6_128K_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
@@ -111,7 +111,7 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
 
-    block_counts = [14, 12, 12, 12, 12, 16]
+    block_counts = [14, 16, 12, 12, 12, 12]
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     return cfg
 
