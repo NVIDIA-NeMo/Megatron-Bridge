@@ -108,6 +108,9 @@ class GLM5ModelProvider(HybridModelProvider, MLATransformerConfig):
             raise ValueError(
                 "GLM Hybrid training currently requires BF16/FP32; FP8 checkpoint import remains supported."
             )
+        # The Hybrid DSA layer uses AbsorbedMLA, which asserts sequence parallelism whenever TP > 1.
+        if self.tensor_model_parallel_size > 1:
+            self.sequence_parallel = True
         self.num_layers = len(compact)
         self.hybrid_layer_pattern = main
         self.mtp_hybrid_override_pattern = "DE" if self.mtp_num_layers else None
