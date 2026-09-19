@@ -1,5 +1,8 @@
 # Training entry points
 
+For the optional all-Lustre direct-Enroot backend, see the
+[shared container backend guide](../common/README.md). Pyxis remains the default.
+
 Megatron Bridge training provides a small public Slurm launcher:
 
 ```bash

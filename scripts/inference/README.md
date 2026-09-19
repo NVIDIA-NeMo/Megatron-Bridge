@@ -135,3 +135,8 @@ Pass `--detach` to return as soon as Slurm accepts the job. NeMo Run prints the
 experiment and job identifiers needed to inspect the logs later. Use
 `--submission-dry-run` (or `--dry-run`) to render the experiment without
 submitting it.
+
+## Optional container backend
+
+The public launcher also supports an [all-Lustre direct-Enroot backend](../common/README.md).
+Pyxis remains the default; select `--container-runtime enroot` only when needed.

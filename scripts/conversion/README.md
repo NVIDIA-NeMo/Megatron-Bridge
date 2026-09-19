@@ -204,3 +204,8 @@ secrets are inherited by Slurm without being materialized in generated job
 scripts. Use `--submission-dry-run` to inspect a rendered job and `--detach`
 when a Slurm command should return immediately after submission. Local execution
 always waits so worker failures propagate to the launcher.
+
+## Optional container backend
+
+Slurm conversion also supports an [all-Lustre direct-Enroot backend](../common/README.md).
+Pyxis remains the default; local conversion is unchanged.

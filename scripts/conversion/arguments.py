@@ -23,6 +23,7 @@ COMMON_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "common"
 if str(COMMON_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
+from container_runtime import add_container_runtime_args  # noqa: E402
 from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval  # noqa: E402
 
 
@@ -32,6 +33,7 @@ DTYPE_CHOICES = ("bfloat16", "float16", "float32")
 def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device: str = "cpu") -> None:
     """Add NeMo Run execution arguments to a conversion subcommand."""
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
     execution.add_argument(
         "--poll-interval",
         type=slurm_poll_interval,

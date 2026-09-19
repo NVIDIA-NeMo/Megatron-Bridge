@@ -35,6 +35,11 @@ COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
 if str(COMMON_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
+from container_runtime import (  # noqa: E402
+    add_container_runtime_args,
+    apply_container_runtime,
+    validate_container_runtime,
+)
 from recipe_metadata import (  # noqa: E402
     BenchmarkRecipeMetadata,
     selected_benchmark_recipe,
@@ -67,6 +72,7 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
 """,
     )
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
     execution.add_argument("--nodes", type=int, default=1, help="Number of nodes.")
     execution.add_argument(
         "--gpus-per-node",
@@ -318,6 +324,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
+    validate_container_runtime(args)
     benchmark_metadata = selected_benchmark_recipe(training_args)
     if benchmark_metadata is not None:
         validate_selected_benchmark_recipe(training_args, benchmark_metadata)
@@ -345,6 +352,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
 
     with run.Experiment(experiment_name, skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name="training")

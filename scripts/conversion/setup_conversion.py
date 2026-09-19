@@ -25,6 +25,7 @@ from pathlib import Path
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
+from container_runtime import apply_container_runtime, validate_container_runtime
 from nemo_run.config import get_nemorun_home
 from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
@@ -68,6 +69,7 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
+    validate_container_runtime(args)
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.cpu_processes_per_node < 1:
@@ -281,6 +283,7 @@ def main(argv: list[str] | None = None) -> None:
         logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
     experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
     with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:

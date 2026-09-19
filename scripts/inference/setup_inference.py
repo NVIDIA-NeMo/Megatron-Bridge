@@ -32,6 +32,11 @@ COMMON_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "common"
 if str(COMMON_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
+from container_runtime import (  # noqa: E402
+    add_container_runtime_args,
+    apply_container_runtime,
+    validate_container_runtime,
+)
 from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
@@ -71,6 +76,7 @@ unchanged to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
     execution.add_argument(
         "--poll-interval",
         type=slurm_poll_interval,
@@ -185,6 +191,7 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate Slurm resources before creating an executor."""
+    validate_container_runtime(args)
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.gpus_per_node is None or args.gpus_per_node < 1:
@@ -288,6 +295,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
 
     with run.Experiment(args.experiment_name or "inference", skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name=args.task)
