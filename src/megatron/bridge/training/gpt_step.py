@@ -574,6 +574,10 @@ def _forward_step_common(
         "position_ids": position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
+        # GPTModel forwards loss_mask to process_mtp_loss. Without it MCore falls back to
+        # torch.ones_like(labels) and the MTP loss (and its gradient) covers padding and,
+        # for answer-only SFT, the prompt. The LM loss itself is masked in loss_func below.
+        "loss_mask": loss_mask,
     }
 
     # Add packed sequence support
