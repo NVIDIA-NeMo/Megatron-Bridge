@@ -13,6 +13,13 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
+Synchronous Slurm runs check job status every 60 seconds by default. Increase
+this with `--poll-interval SECONDS` (minimum 60), or use `--detach` to submit
+without monitoring. Logs remain in the NeMo Run experiment directory; the
+waiter does not start a separate scheduler-querying log tailer. A monitoring
+error or interruption does not cancel the submitted job. Local conversion is
+unchanged.
+
 ### Megatron-LM checkpoint compatibility
 
 Training with Megatron-LM and later relying on Megatron Bridge for Hugging Face

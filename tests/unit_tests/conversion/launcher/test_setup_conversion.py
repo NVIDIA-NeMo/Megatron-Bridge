@@ -71,6 +71,70 @@ def _parse(module, *options):
     )
 
 
+@pytest.mark.parametrize("options", [[], ["--detach"], ["--submission-dry-run"]])
+def test_slurm_main_uses_shared_rate_limited_waiter(monkeypatch, options):
+    module = _load_setup_conversion_module()
+    calls = []
+
+    class Experiment:
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
+            self.jobs = [types.SimpleNamespace(id="import-gpu", state=module.AppState.SUCCEEDED)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def run(self, **kwargs):
+            calls.append(("run", kwargs))
+
+        def dryrun(self):
+            calls.append(("dryrun", {}))
+
+    module.run.Experiment = Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    monkeypatch.setattr(module, "_build_task", lambda *_args: (types.SimpleNamespace(path="worker.py"), []))
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: calls.append(("wait", kwargs)))
+    module.main(
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--device",
+            "gpu",
+            "--nodes",
+            "1",
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+            "--poll-interval",
+            "120",
+            *options,
+        ]
+    )
+    if "--submission-dry-run" in options:
+        assert calls == [("dryrun", {})]
+    else:
+        expected = [("run", {"detach": True, "tail_logs": False})]
+        if "--detach" not in options:
+            expected.append(("wait", {"poll_interval": 120}))
+        assert calls == expected
+
+
 def _parse_export(module, *options):
     return module.build_parser(include_execution=True).parse_args(
         [
@@ -466,6 +530,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
     assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
     assert executor.kwargs["srun_args"] == []
+    assert executor.kwargs["poll_estimated_start_time"] is False
     assert executor.env_vars == {}
 
 

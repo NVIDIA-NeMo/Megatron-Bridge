@@ -31,12 +31,16 @@ logger = logging.getLogger(__name__)
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
 from recipe_metadata import (  # noqa: E402
     BenchmarkRecipeMetadata,
     selected_benchmark_recipe,
     validate_selected_benchmark_recipe,
 )
+from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
@@ -135,7 +139,13 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument(
         "--wait",
         action="store_true",
-        help="Wait for the Slurm experiment to finish and stream its logs.",
+        help="Wait for the Slurm experiment to finish; logs remain in the experiment directory.",
+    )
+    execution.add_argument(
+        "--poll-interval",
+        type=slurm_poll_interval,
+        default=MIN_POLL_INTERVAL,
+        help="Seconds between Slurm status checks when waiting (minimum/default: 60).",
     )
     return parser
 
@@ -273,6 +283,7 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
         time=args.time,
+        poll_estimated_start_time=False,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
         packager=run.Packager(),
@@ -335,12 +346,14 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
-    with run.Experiment(experiment_name) as experiment:
+    with run.Experiment(experiment_name, skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name="training")
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=not args.wait, tail_logs=args.wait)
+        experiment.run(detach=True, tail_logs=False)
+        if args.wait:
+            wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
 
 
 if __name__ == "__main__":
