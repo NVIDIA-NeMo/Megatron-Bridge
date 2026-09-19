@@ -26,6 +26,7 @@ from pathlib import Path
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
 from nemo_run.config import get_nemorun_home
+from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
 
 
@@ -193,6 +194,7 @@ def _build_executor(
     if "PYTHONPATH" not in container_env:
         container_env.append("PYTHONPATH")
     executor = run.SlurmExecutor(
+        poll_estimated_start_time=False,
         account=args.account,
         partition=args.partition,
         job_name_prefix=args.experiment_name,
@@ -278,12 +280,18 @@ def main(argv: list[str] | None = None) -> None:
     if args.executor == "slurm":
         logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
-    with run.Experiment(experiment_name) as experiment:
+    experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
+    with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=args.detach, tail_logs=not args.detach)
+        if args.executor == "slurm":
+            experiment.run(detach=True, tail_logs=False)
+            if not args.detach:
+                wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
+        else:
+            experiment.run(detach=False, tail_logs=True)
     if not args.detach:
         _raise_on_failed_tasks(experiment)
 

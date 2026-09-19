@@ -20,11 +20,19 @@ import argparse
 import logging
 import os
 import shlex
+import sys
 from pathlib import Path
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
 from torchx.specs.api import AppState
+
+
+COMMON_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
+
+from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +71,12 @@ unchanged to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")
+    execution.add_argument(
+        "--poll-interval",
+        type=slurm_poll_interval,
+        default=MIN_POLL_INTERVAL,
+        help="Seconds between Slurm status checks when waiting (minimum/default: 60).",
+    )
     execution.add_argument(
         "--task",
         choices=tuple(INFERENCE_TASKS),
@@ -205,6 +219,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     # the user explicitly requests --env PATH.
     batch_env_names = ["PATH", *(name for name in env_names if name != "PATH")]
     executor = run.SlurmExecutor(
+        poll_estimated_start_time=False,
         account=args.account,
         partition=args.partition,
         nodes=args.nodes,
@@ -274,12 +289,14 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
-    with run.Experiment(args.experiment_name or "inference") as experiment:
+    with run.Experiment(args.experiment_name or "inference", skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name=args.task)
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=args.detach, tail_logs=not args.detach)
+        experiment.run(detach=True, tail_logs=False)
+        if not args.detach:
+            wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
     if not args.detach:
         _raise_on_failed_tasks(experiment)
 

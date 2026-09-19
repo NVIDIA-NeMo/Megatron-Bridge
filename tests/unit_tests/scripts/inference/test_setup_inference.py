@@ -77,6 +77,15 @@ def _launcher_args(*extra_options: str) -> list[str]:
     ]
 
 
+def test_poll_interval_is_not_forwarded_to_inference():
+    module = _load_setup_inference_module()
+    args, inference_args = module.parse_args(["--poll-interval", "120", "--prompt", "hello"])
+    assert args.poll_interval == 120
+    assert inference_args == ["--prompt", "hello"]
+    with pytest.raises(SystemExit):
+        module.parse_args(["--poll-interval", "2"])
+
+
 def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
     fake_uv = tmp_path / "uv"
     uv_args = tmp_path / "uv-args.txt"
@@ -302,6 +311,7 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
     assert executor.kwargs["ntasks_per_node"] == 1
+    assert executor.kwargs["poll_estimated_start_time"] is False
     assert executor.kwargs["gpus_per_node"] == 4
     assert executor.kwargs["exclusive"] is None
     assert "launcher" not in executor.kwargs
@@ -403,7 +413,7 @@ def test_build_task_preserves_legacy_full_prefix_argument():
 @pytest.mark.parametrize(
     ("extra_options", "expected_run", "expected_dryrun"),
     [
-        ([], [{"detach": False, "tail_logs": True}], 0),
+        ([], [{"detach": True, "tail_logs": False}], 0),
         (["--detach"], [{"detach": True, "tail_logs": False}], 0),
         (["--submission-dry-run"], [], 1),
         (["--dry-run"], [], 1),
@@ -418,10 +428,12 @@ def test_main_submission_wait_detach_and_dry_run_modes(
     module = _load_setup_inference_module()
     run_calls = []
     dryrun_calls = []
+    wait_calls = []
 
     class _Experiment:
-        def __init__(self, name):
+        def __init__(self, name, *, skip_status_at_exit):
             assert name == "inference"
+            assert skip_status_at_exit is True
             self.jobs = [types.SimpleNamespace(id="text-generation", state=module.AppState.SUCCEEDED)]
 
         def __enter__(self):
@@ -446,18 +458,21 @@ def test_main_submission_wait_detach_and_dry_run_modes(
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
     monkeypatch.setattr(module, "_build_task", lambda *_args: sentinel_task)
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: wait_calls.append(kwargs))
 
     module.main(_launcher_args("--prompt", "hello", *extra_options))
 
     assert run_calls == expected_run
     assert len(dryrun_calls) == expected_dryrun
+    assert wait_calls == ([{"poll_interval": 60}] if not extra_options else [])
 
 
 def test_main_propagates_synchronous_inference_failure(monkeypatch):
     module = _load_setup_inference_module()
 
     class _Experiment:
-        def __init__(self, _name):
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
             self.jobs = [types.SimpleNamespace(id="text-generation", state=module.AppState.FAILED)]
 
         def __enter__(self):
@@ -470,11 +485,12 @@ def test_main_propagates_synchronous_inference_failure(monkeypatch):
             pass
 
         def run(self, **kwargs):
-            assert kwargs == {"detach": False, "tail_logs": True}
+            assert kwargs == {"detach": True, "tail_logs": False}
 
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
     monkeypatch.setattr(module, "_build_task", lambda *_args: object())
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **_kwargs: None)
 
     with pytest.raises(RuntimeError, match="text-generation=FAILED"):
         module.main(_launcher_args("--prompt", "hello"))
