@@ -193,6 +193,11 @@ class _CpuTorchDistSaveShardedStrategy(TorchDistSaveShardedStrategy):
 
     def save(self, sharded_state_dict: ShardedStateDict, checkpoint_dir: Path) -> None:
         """Save CPU tensors synchronously without calling ``torch.cuda.synchronize``."""
+        if "async_strategy" not in inspect.signature(TorchDistSaveShardedStrategy.async_save).parameters:
+            # New MCore uses PyTorch's CPU-safe synchronous writer directly.
+            return super().save(sharded_state_dict, checkpoint_dir)
+
+        # Older MCore pins still stage synchronous saves through their async writer.
         async_request = self.async_save(sharded_state_dict, checkpoint_dir, async_strategy="mcore")
         preload_fn = async_request.preload_fn
         if preload_fn is not None:

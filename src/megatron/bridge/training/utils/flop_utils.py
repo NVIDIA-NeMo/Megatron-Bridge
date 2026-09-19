@@ -1095,8 +1095,8 @@ def num_floating_point_operations(
                 qk_head_dim = getattr(cfg.model, "qk_head_dim", 64)
                 qk_pos_emb_head_dim = getattr(cfg.model, "qk_pos_emb_head_dim", 0)
                 v_head_dim = getattr(cfg.model, "v_head_dim", 64)
-                o_lora_rank = getattr(cfg.model, "o_lora_rank", 0)
-                o_groups = getattr(cfg.model, "o_groups", 1)
+                o_lora_rank = cfg.model.output_projection_lora_rank
+                o_groups = cfg.model.output_projection_groups
 
                 q_term = q_lora_rank * (
                     cfg.model.hidden_size
