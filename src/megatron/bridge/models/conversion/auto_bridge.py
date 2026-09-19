@@ -1980,11 +1980,15 @@ class AutoBridge(Generic[MegatronModelT]):
                 ]
 
             model_config.finalize()
+            from megatron.bridge.training.gtp import classify_gtp_remat_chains, configure_gtp_remat
+
+            configure_gtp_remat(model_config)
             builder = model_config.get_builder_cls()(model_config)
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
             models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            classify_gtp_remat_chains(models, model_config)
             for model in models:
                 model.model_config = model_config
             succeeded = True
@@ -2025,6 +2029,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 context_parallel_size=transformer_config.context_parallel_size or 1,
                 expert_model_parallel_size=transformer_config.expert_model_parallel_size or 1,
                 expert_tensor_parallel_size=transformer_config.expert_tensor_parallel_size,
+                gtp_remat_size=transformer_config.gtp_weight_remat_size,
+                expert_gtp_remat_size=transformer_config.expert_gtp_weight_remat_size,
             )
             if torch.cuda.is_available():
                 from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed

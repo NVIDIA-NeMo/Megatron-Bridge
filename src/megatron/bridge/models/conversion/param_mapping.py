@@ -32,6 +32,7 @@ from megatron.core.utils import (
 )
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion.gtp import _get_mapping_shape, _is_gtp_param
 from megatron.bridge.models.conversion.utils import (
     get_module_and_param_from_name,
     is_modelopt_dynamic_module,
@@ -360,6 +361,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             )
         if isinstance(weight, DTensor) or _module_uses_fsdp(megatron_module):
             raise ValueError(f"{global_param_name}: local HF parameter iteration does not support DTensor/FSDP")
+        if _is_gtp_param(weight):
+            raise ValueError(
+                f"{global_param_name}: local HF parameter views cannot represent GTP sharding; "
+                "use the gathered HF weight export instead"
+            )
 
         specs = self.local_hf_param_specs(global_param_name)
         if not specs:
@@ -1297,7 +1303,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             actual_dim0_size = hf_weights.shape[0]
             # DTensor.shape is already the global shape across TP ranks, while
             # a regular Megatron parameter stores only its local TP shard.
-            expect_dim0_size = target_param.shape[0]
+            expect_dim0_size = _get_mapping_shape(target_param)[0]
             if not isinstance(target_param, DTensor):
                 expect_dim0_size *= self.tp_size
             if actual_dim0_size != expect_dim0_size:
@@ -1319,7 +1325,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -1483,13 +1489,14 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         # HF fused expert weights (e.g. down_proj) may be stored in [in, out]
         # layout while Megatron expects [out, in]. Detect via the unsharded dim:
-        # for RowParallel, dim 0 is never split, so hf_weights.shape[0] must
-        # equal target_param.shape[0].
+        # RowParallel TP does not split dim 0. GTP may split it further in storage,
+        # so compare against the logical TP-local shape.
+        target_shape = _get_mapping_shape(target_param)
         if (
             hf_weights is not None
             and hf_weights.ndim == 2
-            and hf_weights.shape[0] != target_param.shape[0]
-            and hf_weights.shape[1] == target_param.shape[0]
+            and hf_weights.shape[0] != target_shape[0]
+            and hf_weights.shape[1] == target_shape[0]
         ):
             hf_weights = hf_weights.t().contiguous()
 
@@ -1520,7 +1527,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -3151,7 +3158,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
@@ -3556,7 +3563,7 @@ class FusedGatedExpertMapping(AutoMapping):
 
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        target_shape = target_param.shape
+        target_shape = _get_mapping_shape(target_param)
 
         if target_shape[0] % 2 != 0:
             raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")

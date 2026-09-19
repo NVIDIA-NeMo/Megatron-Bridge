@@ -341,8 +341,85 @@ def memory_efficient_fp32_optimizer_state_loading(
             torch.cuda.empty_cache()
 
 
+@contextmanager
+def hybrid_optimizer_state_loading(optimizer: MegatronOptimizer | None) -> Iterator[None]:
+    """Restore native FP32 HybridDeviceOptimizer metadata omitted from parameter payloads.
+
+    Core restores Adam counters in common group metadata, while its parameter
+    loader expects every existing state tensor in the payload. For a hybrid
+    optimizer this includes a GPU ``step`` tensor introduced during loading and,
+    in fully reshardable checkpoints, the CPU working-copy ``master_param`` alias.
+    Supply the saved group counter and checkpoint FP32 parameter for those fields
+    before calling Core's ordinary tensor-copy implementation.
+
+    Args:
+        optimizer: Optimizer whose native checkpoint state is being loaded.
+    """
+    from megatron.core.optimizer import DistributedOptimizer
+    from megatron.core.optimizer.cpu_offloading.hybrid_optimizer import HybridDeviceOptimizer
+
+    sub_optimizers = getattr(optimizer, "chained_optimizers", None)
+    sub_optimizers = sub_optimizers if isinstance(sub_optimizers, (list, tuple)) else [optimizer]
+    missing_method = object()
+    patched: list[tuple[DistributedOptimizer, object]] = []
+    try:
+        for distributed in sub_optimizers:
+            if not isinstance(distributed, DistributedOptimizer):
+                continue
+            if not isinstance(distributed.optimizer, HybridDeviceOptimizer):
+                continue
+            if distributed.config.use_precision_aware_optimizer_no_fp8_or_ds_fp8:
+                continue
+            original = distributed._set_main_param_and_optimizer_states
+
+            def restore_parameter_state(
+                model_param: torch.Tensor,
+                tensors: dict[str, torch.Tensor],
+                *,
+                _outer: DistributedOptimizer = distributed,
+                _restore: Callable[[torch.Tensor, dict[str, torch.Tensor]], None] = original,
+            ) -> None:
+                group_index, group_order = _outer.model_param_group_index_map[model_param]
+                group = _outer.optimizer.param_groups[group_index]
+                main_param = group["params"][group_order]
+                current_state = _outer.optimizer.state[main_param]
+                loaded = dict(tensors)
+                step = current_state.get("step")
+                if isinstance(step, torch.Tensor) and "step" in group:
+                    # The dp_reshardable scaffold can also carry a stale CPU
+                    # counter. Saved group metadata is authoritative for both.
+                    loaded["step"] = step.new_tensor(group["step"])
+                if "master_param" in current_state:
+                    # HDO recreates its CPU working copies in its load hook.
+                    # Bind the state alias to that new copy so Core also fills
+                    # the parameter that CPU Adam will actually update.
+                    current_state["master_param"] = _outer.optimizer.param_to_inner_param[main_param]
+                    if "master_param" not in loaded:
+                        loaded["master_param"] = loaded["param"]
+                _restore(model_param, loaded)
+
+            previous = distributed.__dict__.get("_set_main_param_and_optimizer_states", missing_method)
+            setattr(distributed, "_set_main_param_and_optimizer_states", restore_parameter_state)
+            patched.append((distributed, previous))
+        yield
+    finally:
+        for distributed, previous in reversed(patched):
+            if previous is missing_method:
+                delattr(distributed, "_set_main_param_and_optimizer_states")
+            else:
+                setattr(distributed, "_set_main_param_and_optimizer_states", previous)
+
+
 def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer | None) -> bool:
-    """Refresh ``HybridDeviceOptimizer`` FP32 master copies from BF16 model parameters.
+    """Synchronize ``HybridDeviceOptimizer`` working copies after checkpoint loading.
+
+    A freshly constructed optimizer has no state when only model weights were
+    loaded. Refresh its FP32 working copies from those model weights. When
+    optimizer state was restored, preserve its full-precision masters and
+    synchronize the CPU/GPU sub-optimizers with that state instead. Rebuilding
+    restored masters from BF16 weights discards their low bits and changes the
+    next update. The pinned Core ``dp_reshardable`` loader also replaces state
+    tensors without refreshing HybridDeviceOptimizer's working copies.
 
     Workaround for an upstream Megatron-Core gap: when a checkpoint is loaded
     into the BF16 model parameters, ``reload_model_params()`` only refreshes
@@ -357,9 +434,9 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
     random init.  Training loss looks plausible at step 1 and collapses at
     step 2 because the model is no longer the one loaded from the checkpoint.
 
-    Mirrors the workaround in NVIDIA-NeMo/RL PR #2372.  Once mcore's
-    ``reload_model_params()`` walks all three FP32 levels, this helper can be
-    removed from both Bridge and RL.
+    The model-only branch mirrors NVIDIA-NeMo/RL PR #2372. This helper can
+    be removed once Core handles model-only master refresh, full-state
+    rebinding, and the restored sub-optimizer step counters.
 
     Args:
         optimizer: The Megatron optimizer returned by :func:`setup_optimizer`.
@@ -383,6 +460,30 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
         inner = getattr(distrib_opt, "optimizer", None)
         if not isinstance(inner, HybridDeviceOptimizer):
             return False
+
+        if getattr(inner, "state", None):
+            # The dp_reshardable loader restores each per-parameter "step"
+            # from a LocalNonpersistentObject in its loading scaffold. For
+            # CPU Adam this overwrites the checkpoint counter with the dummy
+            # initialization step. The saved group counter is authoritative.
+            for group in inner.param_groups:
+                if "step" not in group:
+                    continue
+                for param in group["params"]:
+                    step = inner.state.get(param, {}).get("step")
+                    if isinstance(step, torch.Tensor):
+                        step.fill_(group["step"])
+            # Full-state resume, including iteration-zero checkpoints. This
+            # binds loaded moments to the sub-optimizers and copies the saved
+            # FP32 masters into the parameters their next step will update.
+            inner._sync_hdo_state_to_sub_optimizers()
+            # Core stores Adam's step on the outer groups for checkpointing.
+            # Seed the GPU groups once, then let each sub-optimizer advance:
+            # HDO otherwise reapplies the saved step before every update.
+            inner._sync_hdo_param_groups_to_sub_optimizers()
+            for group in inner.param_groups:
+                group.pop("step", None)
+            return True
 
         # Level 1: per-DP-rank FP32 GPU shards (Adam master parameters).
         for model_group, shard_main_group in zip(
@@ -409,16 +510,15 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
         return True
 
     synced = False
-    if hasattr(optimizer, "chained_optimizers"):
-        for sub_opt in optimizer.chained_optimizers:
-            synced |= _sync_one(sub_opt)
-    else:
-        synced = _sync_one(optimizer)
+    sub_optimizers = getattr(optimizer, "chained_optimizers", None)
+    sub_optimizers = sub_optimizers if isinstance(sub_optimizers, (list, tuple)) else [optimizer]
+    for sub_opt in sub_optimizers:
+        synced |= _sync_one(sub_opt)
 
     if synced:
         G_LOGGER.info(
-            "Synced HybridDeviceOptimizer FP32 master copies from BF16 model parameters "
-            "after checkpoint load (workaround for upstream mcore reload_model_params() gap)."
+            "Synced HybridDeviceOptimizer working copies after checkpoint load, "
+            "preserving restored optimizer state when present."
         )
     return synced
 
