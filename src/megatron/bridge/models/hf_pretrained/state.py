@@ -445,8 +445,9 @@ class SafeTensorsStateSource(StateSource):
               and/or the index file. Can also be a Hugging Face Hub model ID.
     """
 
-    def __init__(self, path: Union[str, Path]):
+    def __init__(self, path: Union[str, Path], revision: Optional[str] = None):
         self.model_name_or_path = path
+        self.revision = revision
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
@@ -479,7 +480,7 @@ class SafeTensorsStateSource(StateSource):
         cache path.
         """
         if self._resolved_path_cache is None:
-            self._resolved_path_cache = self._resolve_path(self.model_name_or_path)
+            self._resolved_path_cache = self._resolve_path(self.model_name_or_path, revision=self.revision)
         return self._resolved_path_cache
 
     @property
@@ -529,7 +530,7 @@ class SafeTensorsStateSource(StateSource):
         return key_map
 
     @staticmethod
-    def _resolve_path(model_name_or_path: Union[str, Path]) -> Path:
+    def _resolve_path(model_name_or_path: Union[str, Path], revision: Optional[str] = None) -> Path:
         """
         Resolves a model name or path to a local directory.
         If the path is not a local directory, it is treated as a Hugging
@@ -541,21 +542,26 @@ class SafeTensorsStateSource(StateSource):
 
         try:
             from huggingface_hub import snapshot_download
+            from huggingface_hub.constants import HF_HUB_OFFLINE
             from huggingface_hub.utils import HfHubHTTPError
 
             # Not a local directory, so we assume it's a model ID
             # on the Hugging Face Hub.
-            return Path(
-                snapshot_download(
-                    repo_id=str(model_name_or_path),
-                    allow_patterns=[
-                        "*.safetensors",
-                        "model.safetensors.index.json",
-                    ],
-                    # Ignore other large files.
-                    ignore_patterns=["*.bin", "*.pt", "*.pth"],
-                )
-            )
+            download_kwargs = {
+                "repo_id": str(model_name_or_path),
+                "allow_patterns": [
+                    "*.safetensors",
+                    "model.safetensors.index.json",
+                ],
+                # Ignore other large files.
+                "ignore_patterns": ["*.bin", "*.pt", "*.pth"],
+            }
+            if revision is not None:
+                download_kwargs["revision"] = revision
+            if HF_HUB_OFFLINE:
+                download_kwargs["local_files_only"] = True
+
+            return Path(snapshot_download(**download_kwargs))
         except (ImportError, HfHubHTTPError, ValueError) as e:
             logger.warning(
                 f"Failed to download '{model_name_or_path}' from HuggingFace Hub: {e}. "
