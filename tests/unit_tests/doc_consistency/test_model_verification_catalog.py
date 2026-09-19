@@ -62,6 +62,7 @@ def test_catalog_discovers_every_card_without_a_model_list(catalog: dict[str, ob
 @pytest.mark.parametrize(
     ("slug", "command_fragment"),
     [
+        ("bagel", "bagel_7b_pretrain_32gpu_h100_bf16_config"),
         (
             "glm5-2",
             "glm52_pretrain_416gpu_h100_bf16_config",
