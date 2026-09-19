@@ -121,3 +121,10 @@ def test_provider_constructs_native_hybrid_model():
     assert result is constructor.return_value
     assert constructor.call_args.kwargs["config"] is provider
     assert constructor.call_args.kwargs["hybrid_stack_spec"].module is not HybridStack
+
+
+@pytest.mark.parametrize("tp,expected", [(1, False), (2, True)])
+def test_tensor_parallel_enables_sequence_parallel_for_absorbed_mla(tp, expected):
+    provider = _provider(tensor_model_parallel_size=tp, moe_token_dispatcher_type="alltoall")
+    provider.finalize()
+    assert provider.sequence_parallel is expected
