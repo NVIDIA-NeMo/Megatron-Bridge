@@ -172,6 +172,42 @@ class TestGemma4LayerSpec:
         assert layer_spec.submodules.post_self_attn_layernorm is Gemma4RMSNorm
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
 
+    def test_get_gemma4_layer_spec_local_attention_cannot_do_cp(self):
+        """The default (local) path uses DotProductAttention, which asserts CP == 1.
+
+        This is the reason Gemma4DenseProvider rejects CP > 1 without TE, so pin it: if the
+        local spec ever gained a CP-capable attention, that guard should be revisited rather
+        than left in place.
+        """
+        from megatron.core.extensions.transformer_engine import TEDotProductAttention
+
+        core_attn = get_gemma4_layer_spec().submodules.self_attention.submodules.core_attention
+
+        assert core_attn is not TEDotProductAttention
+
+    def test_get_gemma4_layer_spec_te_uses_te_attention(self):
+        """use_transformer_engine=True must route attention through TE.
+
+        That is what makes CP > 1 possible on the dense model, and what lets the head_dim=512
+        global layers reach a backend that can serve them. Asserting on the module identity
+        keeps this honest: a spec that silently fell back to the local attention would still
+        build, and would then fail only once CP was switched on.
+
+        MCore's own TEDotProductAttention is the right class here, not
+        Gemma4TEDotProductAttention: the latter reads the MoE-only interleaved_attn_pattern,
+        while MCore already applies the dense provider's window_attn_skip_freq per layer.
+        """
+        pytest.importorskip("transformer_engine")
+
+        layer_spec = get_gemma4_layer_spec(use_transformer_engine=True)
+        attn = layer_spec.submodules.self_attention
+
+        assert layer_spec.module is Gemma4DenseTransformerLayer
+        assert attn.module is Gemma4DenseSelfAttention
+        from megatron.core.extensions.transformer_engine import TEDotProductAttention
+
+        assert attn.submodules.core_attention is TEDotProductAttention
+
     def test_double_wide_mlp_only_applies_to_shared_kv_layers(self, monkeypatch):
         mlp_builders = []
 
