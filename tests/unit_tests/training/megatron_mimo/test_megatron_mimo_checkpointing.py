@@ -83,6 +83,7 @@ def _make_global_state(
         timers=timers,
         energy_monitor=None,
         cfg=SimpleNamespace(
+            ft=None,
             train=SimpleNamespace(
                 train_iters=train_iters,
                 micro_batch_size=1,
@@ -301,6 +302,7 @@ class TestPretrainMegatronMIMOSetup:
         mock_unwrap.return_value = unwrapped
 
         cfg = Mock()
+        cfg.ft = None
         cfg.checkpoint = Mock()
         cfg.checkpoint.load = None
         cfg.checkpoint.pretrained_checkpoint = None
@@ -563,6 +565,8 @@ def test_iteration_time_is_logged_once_by_shared_training_logger():
 class TestTrainMegatronMIMOCheckpointIntegration:
     """Verify train_megatron_mimo calls checkpoint_and_decide_exit with the right args."""
 
+    @patch("megatron.bridge.training.fault_tolerance.on_training_step_end")
+    @patch("megatron.bridge.training.fault_tolerance.on_training_step_start")
     @patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False)
     @patch("megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo")
     @patch("megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule")
@@ -571,7 +575,7 @@ class TestTrainMegatronMIMOCheckpointIntegration:
     @patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1)
     @patch("torch.distributed.get_rank", return_value=0)
     @patch("torch.distributed.get_world_size", return_value=1)
-    def test_calls_checkpoint_and_decide_exit_with_pg_collection(
+    def test_calls_checkpoint_and_fault_tolerance_hooks_with_pg_collection(
         self,
         mock_world_size,
         mock_rank,
@@ -581,6 +585,8 @@ class TestTrainMegatronMIMOCheckpointIntegration:
         mock_build_pg,
         mock_train_step,
         mock_ckpt_exit,
+        mock_ft_step_start,
+        mock_ft_step_end,
     ):
         from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
 
@@ -617,6 +623,8 @@ class TestTrainMegatronMIMOCheckpointIntegration:
         assert kwargs["checkpoint_manager"] is ckpt_mgr
         assert kwargs["train_data_iterator"] is train_iter
         assert kwargs["num_floating_point_operations_so_far"] == 0
+        mock_ft_step_start.assert_called_once_with(state)
+        mock_ft_step_end.assert_called_once_with(state)
 
     @patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=True)
     @patch("megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo")
@@ -1222,7 +1230,14 @@ class TestSetupMegatronMIMOCheckpointLoading:
         "megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP",
     ]
 
-    def _run_setup(self, *, load_path=None, checkpoint_exists_return=False, checkpoint_manager=None):
+    def _run_setup(
+        self,
+        *,
+        load_path=None,
+        checkpoint_exists_return=False,
+        checkpoint_manager=None,
+        ft_enabled=False,
+    ):
         """Run setup_megatron_mimo with mocks, return dict of mock handles."""
         from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 
@@ -1235,6 +1250,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
         cfg.model = Mock()
         cfg.model.fp16 = False
         cfg.model.bf16 = True
+        cfg.ft = SimpleNamespace(enable_ft_package=ft_enabled)
         cfg.optimizer = Mock()
         cfg.scheduler = SimpleNamespace(
             lr_warmup_init=0.0,
@@ -1258,6 +1274,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
         infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
         model = Mock()
+        setup_events = []
 
         local_pg = MagicMock()
         mock_optimizer = MagicMock()
@@ -1304,15 +1321,21 @@ class TestSetupMegatronMIMOCheckpointLoading:
             stack.enter_context(
                 patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer)
             )
-            stack.enter_context(
+            m_build_model = stack.enter_context(
                 patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra))
             )
+            m_build_model.side_effect = lambda *args, **kwargs: (setup_events.append("model"), (model, infra))[1]
 
             model_config = Mock(pipeline_dtype=None, bf16=True)
             stack.enter_context(
                 patch("megatron.bridge.training.setup_megatron_mimo.get_model_config", return_value=model_config)
             )
             stack.enter_context(patch("megatron.bridge.training.setup_megatron_mimo.unwrap_megatron_mimo_model"))
+            m_ft_setup = stack.enter_context(patch("megatron.bridge.training.fault_tolerance.setup"))
+            m_ft_setup.side_effect = lambda *args, **kwargs: setup_events.append("fault_tolerance")
+            m_ft_simulated = stack.enter_context(
+                patch("megatron.bridge.training.fault_tolerance.maybe_setup_simulated_fault")
+            )
             start_time_tensor = Mock()
             start_time_tensor.item.return_value = state.start_time
             stack.enter_context(patch("torch.tensor", return_value=start_time_tensor))
@@ -1321,13 +1344,25 @@ class TestSetupMegatronMIMOCheckpointLoading:
 
             mocks["checkpoint_manager"] = checkpoint_manager
             mocks["checkpoint_exists"] = m_ckpt_exists
+            mocks["fault_tolerance_setup"] = m_ft_setup
+            mocks["fault_tolerance_simulated"] = m_ft_simulated
+            mocks["cfg"] = cfg
+            mocks["state"] = state
             mocks["result"] = result
+            mocks["setup_events"] = setup_events
 
         return mocks
 
     def test_load_invoked_when_persistent_checkpoint_exists(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
         mocks["checkpoint_manager"].load.assert_called_once()
+
+    def test_enabled_fault_tolerance_initializes_monitoring(self):
+        mocks = self._run_setup(ft_enabled=True)
+
+        mocks["fault_tolerance_setup"].assert_called_once_with(mocks["cfg"], mocks["state"])
+        mocks["fault_tolerance_simulated"].assert_called_once_with(mocks["cfg"].ft)
+        assert mocks["setup_events"][:2] == ["fault_tolerance", "model"]
 
     def test_load_dispatches_through_custom_checkpoint_manager(self):
         class CustomCheckpointManager:
@@ -1397,6 +1432,7 @@ class TestSetupMegatronMIMOResumeIterators:
         build_fn.__signature__ = inspect.signature(_sig_fn)
 
         cfg = Mock()
+        cfg.ft = None
         cfg.checkpoint = SimpleNamespace(load=None, pretrained_checkpoint=None, non_persistent_ckpt_type=None)
         cfg.model = Mock(fp16=False, bf16=True)
         cfg.optimizer = Mock()
@@ -1480,6 +1516,7 @@ class TestSetupMegatronMIMOResumeIterators:
         build_fn = Mock(return_value=(iter([]), None))
 
         cfg = Mock()
+        cfg.ft = None
         cfg.checkpoint = SimpleNamespace(load=None, pretrained_checkpoint=None, non_persistent_ckpt_type=None)
         cfg.model = Mock(fp16=False, bf16=True)
         cfg.optimizer = Mock()
@@ -1565,6 +1602,7 @@ class TestSetupMegatronMIMOResumeIterators:
         build_fn.__signature__ = inspect.signature(legacy_builder)
 
         cfg = Mock()
+        cfg.ft = None
         cfg.checkpoint = SimpleNamespace(load=None, pretrained_checkpoint=None, non_persistent_ckpt_type=None)
         cfg.model = Mock(fp16=False, bf16=True)
         cfg.optimizer = Mock()
