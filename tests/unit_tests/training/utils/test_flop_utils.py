@@ -97,8 +97,8 @@ class MockModelConfig:
     qk_head_dim: int = 64
     qk_pos_emb_head_dim: int = 0
     v_head_dim: int = 64
-    o_lora_rank: int = 0
-    o_groups: int = 1
+    output_projection_lora_rank: int = 0
+    output_projection_groups: int = 1
     # Sliding window attention settings
     window_size: tuple | list | int | None = None
     window_attn_skip_freq: int | list | None = None
@@ -1074,8 +1074,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=qk_head_dim,
             qk_pos_emb_head_dim=qk_pos_emb_head_dim,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=[0, 4, 128],
             csa_window_size=window,
             dsa_indexer_n_heads=idx_n_heads,
@@ -1150,8 +1150,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=32,
             qk_pos_emb_head_dim=32,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=compress_ratios,
             csa_window_size=window,
             dsa_indexer_n_heads=idx_n_heads,
@@ -1214,7 +1214,7 @@ class TestDeepSeekV4HybridFlops:
             multi_latent_attention=True,
             experimental_attention_variant="dsv4_hybrid",
             q_lora_rank=16,
-            o_lora_rank=16,
+            output_projection_lora_rank=16,
             csa_compress_ratios=[0, 4],
             dsa_indexer_n_heads=2,
             dsa_indexer_head_dim=8,
@@ -1232,7 +1232,7 @@ class TestDeepSeekV4HybridFlops:
             multi_latent_attention=True,
             experimental_attention_variant="dsv4_hybrid",
             q_lora_rank=16,
-            o_lora_rank=16,
+            output_projection_lora_rank=16,
             csa_compress_ratios=[0, 8, 128],
             dsa_indexer_n_heads=2,
             dsa_indexer_head_dim=8,
@@ -1299,8 +1299,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=qk_head_dim,
             qk_pos_emb_head_dim=qk_pos_emb_head_dim,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=[0, 128],
             csa_window_size=window,
             gated_linear_unit=False,
@@ -1341,7 +1341,7 @@ class TestDeepSeekV4HybridFlops:
             "multi_latent_attention": True,
             "experimental_attention_variant": "dsv4_hybrid",
             "q_lora_rank": 16,
-            "o_lora_rank": 16,
+            "output_projection_lora_rank": 16,
             "csa_compress_ratios": [0, 4, 128],
             "dsa_indexer_n_heads": 2,
             "dsa_indexer_head_dim": 8,
