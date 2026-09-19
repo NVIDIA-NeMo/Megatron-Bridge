@@ -33,6 +33,30 @@ The recorded commands and results below belong to the checkpoint named in each v
 
 [Production qualification tracker #5476](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/5476) remains open. It includes repeated-MTP training semantics, precision controls, dynamic context parallelism, production recipes, checkpoint continuity, convergence, and hardware-specific performance qualification. See also the open [export context-length fix #5996](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/5996), [router-bias fix #6036](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6036), and [recipe-selection fix #5608](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/5608).
 
+## HybridModel migration
+
+The shared GLM-5/5.1/5.2/5.3 bridge constructs `HybridModel` through
+`GLM5ModelProvider`. The outer language model is Core's native `HybridModel`;
+GLM-specific runtime adaptations are supplied through the stack specification.
+Each HF block becomes a `D-` (dense) or `DE` (MoE) pair;
+78 HF blocks therefore become 156 physical Hybrid layers. Core's native
+`DSAttention` is used directly; the stack translates the HF index-sharing cadence
+into physical layer coordinates on private per-layer config copies. HF export retains the
+original layer count, and MTP uses a separate `/DE` pattern when enabled.
+
+Import the pinned HF checkpoint into a **new** Hybrid checkpoint directory.
+The generic Core GPT-to-Hybrid converter does not support this DSA architecture;
+old GPT optimizer/checkpoint resume is outside this migration. `get_model_config()`
+is not supported for this family yet; use `to_megatron_provider()`.
+
+The initial recipes use BF16 and non-VPP pipeline segments. Pattern boundaries
+must begin on DSA compute layers. Full recomputation replays an entire pipeline
+stage to preserve forward-local top-k sharing, so memory and throughput must be
+remeasured. Selective `core_attn` recomputation is rejected because its backward
+replay does not preserve the forward-local DSA sharing state. GPU round-trip,
+parity, MTP, packed CP, training and Hybrid checkpoint
+resume require fresh verification. Historical GPT results do not verify Hybrid.
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations
@@ -78,24 +102,24 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-hf-to-megatron-gpu" aria-controls="glm5-hf-to-megatron-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-hf-to-megatron-gpu" aria-controls="glm5-hf-to-megatron-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · GPU</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-megatron-to-hf-cpu" aria-controls="glm5-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-megatron-to-hf-cpu" aria-controls="glm5-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-megatron-to-hf-gpu" aria-controls="glm5-megatron-to-hf-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-megatron-to-hf-gpu" aria-controls="glm5-megatron-to-hf-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · GPU</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -145,19 +169,18 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A CPU import of the pinned Hugging Face revision must complete every mapping and create a reloadable Megatron checkpoint. This workflow is deferred by this card.
-</p>
+        <p>CPU HF-to-Hybrid import must cover every enabled parameter and save a strictly reloadable checkpoint. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="glm5-hf-to-megatron-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · GPU</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-10</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -166,24 +189,23 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 8 --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 60 --low-memory-save</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 8 --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/hybrid/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 60 --low-memory-save</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned 32-H100 import exits successfully at TP1/PP2/EP8/ETP2, completes all 6,201 distributed mapping tasks, and persists a reloadable iter_0000000 checkpoint. Reload plus exact export projection covers all 59,079 tensors and 1,487,822,475,264 tensor-payload bytes in the 78-layer inference graph with matching keys, shapes, dtypes, and values. The 791 source tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and are outside this item.
-</p>
+        <p>Distributed HF-to-Hybrid import must cover every enabled parameter and save a strictly reloadable checkpoint. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="glm5-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-26</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -192,24 +214,23 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/hybrid/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5/hybrid/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-process distributed CPU export exits successfully and writes 280 safetensors shards. The exhaustive projection audit covers all 59,079 tensors and 1,487,822,475,264 tensor-payload bytes in the 78-layer inference graph with zero missing, unexpected, shape, dtype, or value mismatches. The 791 tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and remain outside this item. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 1,629 state tensors, 743,911,199,232 parameters, and no loading discrepancies.
-</p>
+        <p>CPU Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly within the enabled MTP scope. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="glm5-megatron-to-hf-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · GPU</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-10</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -218,13 +239,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 8 --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 60 --distributed-save --save-every-n-ranks 1</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 8 --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/hybrid/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5/hybrid/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 60 --distributed-save --save-every-n-ranks 1</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-H100 distributed export exits successfully after all 6,201 mapping tasks and writes 280 safetensors shards. Of those, 278 are byte-for-byte identical to the pinned source shards; the two shards that also contain excluded MTP keys match all 63 common tensors exactly. The composite audit covers all 59,079 inference-graph tensors and 1,487,822,475,264 tensor-payload bytes with zero key, shape, dtype, or value mismatch. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 1,629 state tensors, 743,911,199,232 parameters, and no loading discrepancies.
-</p>
+        <p>Distributed Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly within the enabled MTP scope. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-pretrain-h100" class="verification-model-detail" data-entry-detail="glm5-pretrain-h100" tabindex="-1">
@@ -268,8 +288,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A public GLM-5 H100 recipe must complete a bounded 100-step run with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final checkpoint. Training is deferred by this card.
-</p>
+        <p>Complete 100 real-data Hybrid pretraining steps with finite losses and zero skipped or NaN iterations, preserving the existing convergence contract. Save a full step-50 checkpoint and the post-setup config. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-sft-h100" class="verification-model-detail" data-entry-detail="glm5-sft-h100" tabindex="-1">
@@ -313,8 +332,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A pinned-data 100-step full-SFT run must finish with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final checkpoint. Training is deferred by this card.
-</p>
+        <p>Complete 100 real-data Hybrid full-SFT steps with finite losses, unchanged data/masking/packing semantics, and a full reloadable checkpoint. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-sft-long-context-h100" class="verification-model-detail" data-entry-detail="glm5-sft-long-context-h100" tabindex="-1">
@@ -358,8 +376,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A dedicated packed long-context SFT run must complete a bounded run with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable checkpoint. Training is deferred by this card.
-</p>
+        <p>Complete the hardware recipe long-context Hybrid workload with packed CP, finite losses and zero skipped or NaN iterations. Verify causal positions and top-k sharing before scaling up. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-peft-h100" class="verification-model-detail" data-entry-detail="glm5-peft-h100" tabindex="-1">
@@ -403,8 +420,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A GLM-5 PEFT recipe with an audited adapter target set must complete a bounded run with finite loss, all five metrics, and a reloadable adapter checkpoint. Training is deferred by this card.
-</p>
+        <p>Complete 100 Hybrid LoRA steps with the original targets and hyperparameters; reload the adapter checkpoint and verify the trainable parameter set. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
   </div>

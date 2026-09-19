@@ -55,6 +55,7 @@ class _FakeMegatronProvider(SimpleNamespace):
         "moe_shared_expert_overlap",
         "moe_token_dispatcher_type",
         "mtp_num_layers",
+        "hybrid_layer_pattern",
         "num_layers_in_first_pipeline_stage",
         "num_layers_in_last_pipeline_stage",
         "persist_layer_norm",
@@ -96,6 +97,7 @@ class _FakeAutoBridge:
             dsa_indexer_topk_freq=4,
             dsa_indexer_skip_topk_offset=3,
             mtp_num_layers=None,
+            hybrid_layer_pattern="D-" * 3 + "DE" * 75,
         )
 
 
@@ -142,14 +144,14 @@ def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.microbatch_group_size_per_vp_stage is None
-    assert cfg.model.pipeline_model_parallel_layout == glm5._GLM52_PP19_200K_LAYOUT
-    stages = cfg.model.pipeline_model_parallel_layout.split("|")
-    assert [stage.count("t") for stage in stages] == [6] + [4] * 18
+    assert cfg.model.pipeline_model_parallel_layout is None
+    stages = cfg.model.hybrid_layer_pattern.split("|")
+    assert [stage.count("D") for stage in stages] == [6] + [4] * 18
     decoder_starts = []
     decoder_count = 0
     for stage in stages:
         decoder_starts.append(decoder_count)
-        decoder_count += stage.count("t")
+        decoder_count += stage.count("D")
     assert decoder_starts == [0, *range(6, 78, 4)]
     assert cfg.dataset.dataset_root == "work/data/glm5-2/synthetic-200k"
     assert cfg.dataset.hf_dataset is None
@@ -174,8 +176,8 @@ def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backe
     assert cfg.model.sequence_parallel is False
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.pipeline_model_parallel_layout is None
-    assert cfg.model.num_layers_in_first_pipeline_stage == 14
-    assert cfg.model.num_layers_in_last_pipeline_stage == 16
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
     assert cfg.model.microbatch_group_size_per_vp_stage == 6
     assert cfg.model.moe_token_dispatcher_type == dispatcher
     assert cfg.model.moe_flex_dispatcher_backend == backend
@@ -194,16 +196,16 @@ def test_glm52_gb200_128k_recipe_uses_packed_cp() -> None:
     assert cfg.model.pipeline_model_parallel_size == 6
     assert cfg.model.context_parallel_size == 32
     assert cfg.model.expert_model_parallel_size == 32
-    assert cfg.model.pipeline_model_parallel_layout == gb200_glm5._GLM52_PP6_128K_LAYOUT
+    assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.num_layers_in_first_pipeline_stage is None
     assert cfg.model.num_layers_in_last_pipeline_stage is None
-    stages = cfg.model.pipeline_model_parallel_layout.split("|")
-    assert [stage.count("t") for stage in stages] == [14, 16, 12, 12, 12, 12]
+    stages = cfg.model.hybrid_layer_pattern.split("|")
+    assert [stage.count("D") for stage in stages] == [14, 16, 12, 12, 12, 12]
     decoder_starts = []
     decoder_count = 0
     for stage in stages:
         decoder_starts.append(decoder_count)
-        decoder_count += stage.count("t")
+        decoder_count += stage.count("D")
     assert decoder_starts == [0, 14, 30, 42, 54, 66]
     assert all((start + 1 - 3) % 4 == 0 for start in decoder_starts[1:])
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -265,45 +267,14 @@ def test_glm52_gb200_recipes_do_not_depend_on_h100_recipes() -> None:
         glm5.glm52_sft_416gpu_h100_bf16_config,
     ],
 )
-def test_glm52_vpp2_default_layout_shape(recipe) -> None:
+def test_glm52_non_vpp_default_layout_shape(recipe) -> None:
     cfg = recipe()
-
-    assert cfg.model.virtual_pipeline_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_layout == glm5._GLM52_VPP2_LAYOUT
-    stages = cfg.model.pipeline_model_parallel_layout.split("|")
-    assert len(stages) == cfg.model.pipeline_model_parallel_size * cfg.model.virtual_pipeline_model_parallel_size
-    assert [stage.count("t") for stage in stages] == [
-        1,
-        1,
-        0,
-        4,
-        4,
-        4,
-        4,
-        0,
-        4,
-        4,
-        4,
-        4,
-        0,
-        4,
-        4,
-        4,
-        4,
-        0,
-        4,
-        4,
-        4,
-        4,
-        0,
-        4,
-        4,
-        4,
-    ]
-    assert sum(stage.count("t") for stage in stages) == 78
-    assert cfg.model.pipeline_model_parallel_layout.count("E") == 1
-    assert cfg.model.pipeline_model_parallel_layout.count("m") == 1
-    assert cfg.model.pipeline_model_parallel_layout.count("L") == 1
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+    stages = cfg.model.hybrid_layer_pattern.split("|")
+    assert len(stages) == cfg.model.pipeline_model_parallel_size
+    assert [stage.count("D") for stage in stages] == [6, 4] + [8] * 6 + [4] * 5
+    assert sum(stage.count("D") for stage in stages) == 78
 
 
 def test_glm52_pretrain_uses_reference_gradient_path() -> None:
