@@ -291,7 +291,6 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.dataset.preprocessing = ChatSFTPreprocessingConfig()
     cfg.dataset.do_validation = False
     cfg.dataset.do_test = False
-    cfg.dataset.offline_packing_specs.tokenizer_model_name = "glm5"
     # HybridEP needs a fixed token width; CUDA graphs are disabled, so cu_seqlens can remain dynamic.
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
