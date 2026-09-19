@@ -105,12 +105,14 @@ class TestEnergonMultiModalDataModuleFunctional:
         since we don't have a real Energon dataset available in this environment.
         """
         with (
-            patch("megatron.bridge.data.energon.base_energon_datamodule.get_train_dataset") as mock_get_dataset,
+            patch("megatron.bridge.data.energon.base_energon_datamodule.get_train_dataset") as mock_get_train_dataset,
+            patch("megatron.bridge.data.energon.base_energon_datamodule.get_val_dataset") as mock_get_val_dataset,
             patch("megatron.bridge.data.energon.base_energon_datamodule.get_savable_loader") as mock_get_loader,
         ):
             # Setup dataset mock
             mock_dataset = MagicMock()
-            mock_get_dataset.return_value = mock_dataset
+            mock_get_train_dataset.return_value = mock_dataset
+            mock_get_val_dataset.return_value = mock_dataset
 
             # Setup loader mock
             mock_loader_instance = MagicMock()
@@ -122,7 +124,8 @@ class TestEnergonMultiModalDataModuleFunctional:
             mock_get_loader.return_value = mock_loader_instance
 
             yield {
-                "get_train_dataset": mock_get_dataset,
+                "get_train_dataset": mock_get_train_dataset,
+                "get_val_dataset": mock_get_val_dataset,
                 "get_savable_loader": mock_get_loader,
                 "loader_instance": mock_loader_instance,
             }
@@ -183,13 +186,15 @@ class TestEnergonDataModuleCPHandling:
 
     @pytest.fixture
     def mock_energon(self):
-        """Mock energon dependencies (get_train_dataset, get_savable_loader)."""
+        """Mock Energon dataset builders and loader creation."""
         with (
-            patch(f"{self.MODULE_PATH}.get_train_dataset") as mock_get_dataset,
+            patch(f"{self.MODULE_PATH}.get_train_dataset") as mock_get_train_dataset,
+            patch(f"{self.MODULE_PATH}.get_val_dataset") as mock_get_val_dataset,
             patch(f"{self.MODULE_PATH}.get_savable_loader") as mock_get_loader,
         ):
             mock_dataset = MagicMock()
-            mock_get_dataset.return_value = mock_dataset
+            mock_get_train_dataset.return_value = mock_dataset
+            mock_get_val_dataset.return_value = mock_dataset
 
             mock_loader = MagicMock()
             mock_data = [{"id": i} for i in range(10)]
@@ -198,7 +203,8 @@ class TestEnergonDataModuleCPHandling:
             mock_get_loader.return_value = mock_loader
 
             yield {
-                "get_train_dataset": mock_get_dataset,
+                "get_train_dataset": mock_get_train_dataset,
+                "get_val_dataset": mock_get_val_dataset,
                 "get_savable_loader": mock_get_loader,
                 "loader": mock_loader,
             }
@@ -232,9 +238,9 @@ class TestEnergonDataModuleCPHandling:
             **kwargs,
         )
 
-    def _get_worker_config(self, mocks, call_index=0):
-        """Extract the worker_config passed to get_train_dataset."""
-        return mocks["get_train_dataset"].call_args_list[call_index][1]["worker_config"]
+    def _get_worker_config(self, mocks, dataset_builder="get_train_dataset", call_index=0):
+        """Extract the worker_config passed to an Energon dataset builder."""
+        return mocks[dataset_builder].call_args_list[call_index][1]["worker_config"]
 
     # ----------------------------------------------------------------
     # CP handling: train_dataloader
@@ -317,7 +323,7 @@ class TestEnergonDataModuleCPHandling:
         dm = self._make_datamodule(pg_collection=pg)
         dm.val_dataloader()
 
-        wc = self._get_worker_config(mock_energon)
+        wc = self._get_worker_config(mock_energon, "get_val_dataset")
         assert wc.rank == 2
         assert wc.world_size == 4
 
@@ -328,7 +334,7 @@ class TestEnergonDataModuleCPHandling:
         dm = self._make_datamodule(num_workers=4, num_val_workers=8, pg_collection=pg)
         dm.val_dataloader()
 
-        wc = self._get_worker_config(mock_energon)
+        wc = self._get_worker_config(mock_energon, "get_val_dataset")
         assert wc.num_workers == 8
 
     def test_val_dataloader_defaults_num_val_workers_to_num_workers(self, mock_energon):
@@ -338,7 +344,7 @@ class TestEnergonDataModuleCPHandling:
         dm = self._make_datamodule(num_workers=6, pg_collection=pg)
         dm.val_dataloader()
 
-        wc = self._get_worker_config(mock_energon)
+        wc = self._get_worker_config(mock_energon, "get_val_dataset")
         assert wc.num_workers == 6
 
     # ----------------------------------------------------------------
@@ -417,8 +423,24 @@ class TestEnergonDataModuleCPHandling:
         dm = self._make_datamodule(task_encoder=train_encoder, validation_task_encoder=val_encoder)
         dm.datasets_provider(MagicMock(), split="val")
 
-        _, kwargs = mock_energon["get_train_dataset"].call_args
+        _, kwargs = mock_energon["get_val_dataset"].call_args
         assert kwargs["task_encoder"] is val_encoder
+
+    def test_datasets_provider_uses_validation_recipe_for_val(self, mock_energon):
+        """Val split should use Energon's validation recipe, not the training recipe."""
+        worker_config = MagicMock()
+        dm = self._make_datamodule(max_samples_per_sequence=8)
+
+        dm.datasets_provider(worker_config, split="val")
+
+        mock_energon["get_train_dataset"].assert_not_called()
+        mock_energon["get_val_dataset"].assert_called_once()
+
+        _, kwargs = mock_energon["get_val_dataset"].call_args
+        assert kwargs["split_part"] == "val"
+        assert kwargs["worker_config"] is worker_config
+        assert kwargs["max_samples_per_sequence"] == 8
+        assert "shuffle_buffer_size" not in kwargs
 
     def test_datasets_provider_uses_train_task_encoder_for_train(self, mock_energon):
         """Train split should use the train task_encoder."""
