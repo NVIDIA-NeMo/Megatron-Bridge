@@ -187,7 +187,10 @@ def _set_recompute_overrides(
     return recipe
 
 
-def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
+def _set_moe_a2a_overlap_overrides(
+    recipe: ConfigContainer,
+    moe_a2a_overlap: Optional[bool] = None,
+) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
         if recipe.comm_overlap is None:
@@ -196,6 +199,8 @@ def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: boo
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False
+    elif moe_a2a_overlap is False and recipe.comm_overlap is not None:
+        recipe.comm_overlap.overlap_moe_expert_parallel_comm = False
 
     return recipe
 
