@@ -67,6 +67,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -444,6 +445,9 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
             "save_rng": not getattr(args, "no_save_rng", False),  # Invert no_save_rng
             "fully_parallel_save": getattr(args, "ckpt_fully_parallel_save", False),
         },
+        "rng": {
+            "data_parallel_random_init": getattr(args, "data_parallel_random_init", False),
+        },
     }
 
     return config
@@ -539,7 +543,8 @@ def get_rng_state(
     Without EP, states are sharded by (PP, TP) with DP rank as replica_id.
 
     Args:
-        data_parallel_random_init: If True, gathers RNG states across data parallel ranks.
+        data_parallel_random_init: Historical parameter name. When True, serializes one RNG state
+            per DP/CP rank. This controls checkpoint layout independently of how ranks were seeded.
         ckpt_format: The checkpoint format being used.
         pg_collection: Process group collection for accessing parallel ranks/sizes.
         module_name: Optional module name for MegatronMIMO per-module RNG namespacing.
@@ -607,6 +612,20 @@ def get_rng_state(
         rng_state_list = {f"({pp_rank}, {tp_rank})": rng_state_list}
 
     return rng_state_list
+
+
+def _checkpoint_has_per_dp_rng_states(run_config: dict[str, Any]) -> bool:
+    """Return whether a checkpoint stores one RNG state per DP/CP rank."""
+    return run_config.get("checkpoint", {}).get("save_rng_state_per_dp_rank", False) or run_config.get("rng", {}).get(
+        "data_parallel_random_init", False
+    )
+
+
+def _select_rng_state(
+    rng_state_list: list[dict[str, Any]], per_dp_rank: bool, pg_collection: ProcessGroupCollection
+) -> dict[str, Any]:
+    """Select the RNG state matching the saved checkpoint layout."""
+    return rng_state_list[pg_collection.dp_cp.rank() if per_dp_rank else 0]
 
 
 def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject | None:
@@ -1275,7 +1294,7 @@ def save_checkpoint(
     rng_state = None
     if ckpt_cfg.save_rng:
         rng_state = get_rng_state(
-            data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            data_parallel_random_init=(cfg.rng.data_parallel_random_init or cfg.checkpoint.save_rng_state_per_dp_rank),
             ckpt_format=ckpt_cfg.ckpt_format,
             pg_collection=pg_collection,
             module_name=module_name,
@@ -1314,7 +1333,7 @@ def save_checkpoint(
     # distributed checkpoint via optimizer.sharded_state_dict(), so writing separate
     # per-rank files is unnecessary and the files would never be loaded on resume.
     if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_format == "torch":
-        dp_rank = pg_collection.dp.rank()
+        dp_rank = get_data_distribution_group(pg_collection, cfg.model).rank()
         optim_checkpoint_name = os.path.join(save_dir, f"layer_wise_optimizer_{dp_rank}.pt")
         ensure_directory_exists(optim_checkpoint_name)
         if not optimizer.is_stub_optimizer:
@@ -2826,12 +2845,23 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         # In Megatron-LM, handled via adapter: FullyShardedDataParallel.load_state_dict().
         for key in list(state_dict.keys()):
             state_dict[f"module.{key}"] = state_dict.pop(key)
+
+    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+
+    load_context = contextlib.nullcontext
+    if HAVE_GTP:
+        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
+
+        load_context = partial(gtp_native_fp8_load_context, module)
+
     try:
-        module.load_state_dict(state_dict, strict=strict)
+        with load_context():
+            module.load_state_dict(state_dict, strict=strict)
     except Exception as e:
         if strict:
             # Fallback support for backward compatibility breaking changes in TransformerEngine
-            load_return = module.load_state_dict(state_dict, strict=False)
+            with load_context():
+                load_return = module.load_state_dict(state_dict, strict=False)
             missing = load_return.missing_keys
             unexpected = load_return.unexpected_keys
             non_extra = [k for k in missing + unexpected if not k.endswith("._extra_state")]
@@ -2949,6 +2979,7 @@ def _load_checkpoint_from_path(
     ignore_rng_state = False
     ignore_optimizer_state = False
     ignore_rerun_state = True
+    load_dp_rng_states = False
     run_config = None  # Initialize for later use
 
     # Step 3: Format-specific preparation
@@ -2972,6 +3003,7 @@ def _load_checkpoint_from_path(
                 "checkpoint": {
                     "save_optim": cfg.checkpoint.save_optim,
                     "save_rng": cfg.checkpoint.save_rng,
+                    "save_rng_state_per_dp_rank": cfg.checkpoint.save_rng_state_per_dp_rank,
                     "fully_parallel_save": cfg.checkpoint.fully_parallel_save,
                 },
             }
@@ -2983,6 +3015,8 @@ def _load_checkpoint_from_path(
             else:
                 print_rank_0("run_config.yaml not found, extracting config from legacy Megatron-LM checkpoint")
                 run_config = _extract_megatron_lm_args_from_state_dict(state_dict)
+
+        load_dp_rng_states = _checkpoint_has_per_dp_rng_states(run_config)
 
         # MegatronMIMO manages per-module parallelism via MegatronMIMOParallelismConfig,
         # so there is no single global (TP, PP) to compare.  Skip the
@@ -3011,7 +3045,7 @@ def _load_checkpoint_from_path(
             and run_config["checkpoint"]["save_rng"]
         ):
             gen_sd_rng_state = get_rng_state(
-                cfg.rng.data_parallel_random_init,
+                load_dp_rng_states,
                 ckpt_format,
                 pg_collection=pg_collection,
                 module_name=module_name,
@@ -3113,6 +3147,10 @@ def _load_checkpoint_from_path(
             return 0, 0
 
         tp_pp_match = True
+        # Older FSDP checkpoints do not have run_config.yaml. Preserve their historical restore
+        # behavior by falling back to the active run's RNG layout policy. New checkpoints use the
+        # saved metadata below, so restore does not depend on the current configuration.
+        load_dp_rng_states = cfg.checkpoint.save_rng_state_per_dp_rank or cfg.rng.data_parallel_random_init
         if ckpt_type == CheckpointType.LOCAL:
             state_dict_metadata = {}
         else:
@@ -3125,6 +3163,8 @@ def _load_checkpoint_from_path(
                     cfg.model.pipeline_model_parallel_size,
                 )
                 tp_pp_match = ckpt_tp_pp == run_tp_pp
+
+                load_dp_rng_states = _checkpoint_has_per_dp_rng_states(run_config)
 
             reader = _get_filesystem_reader(checkpoint_name)
             try:
@@ -3143,9 +3183,7 @@ def _load_checkpoint_from_path(
                     data_iterator=None, ckpt_format=ckpt_format, force=True
                 )
             if cfg.checkpoint.load_rng and tp_pp_match:
-                gen_sd_rng_state = get_rng_state(
-                    cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
-                )
+                gen_sd_rng_state = get_rng_state(load_dp_rng_states, ckpt_format, pg_collection=pg_collection)
             elif cfg.checkpoint.load_rng:
                 ignore_rng_state = True
                 print_rank_0(
@@ -3322,7 +3360,7 @@ def _load_checkpoint_from_path(
                     # separate per-rank file at the base local checkpoint directory rather
                     # than embedding it in the sharded distributed checkpoint.
                     # Load it back from that file here.
-                    dp_rank = pg_collection.dp.rank()
+                    dp_rank = get_data_distribution_group(pg_collection, cfg.model).rank()
                     local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
                     optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
                     optimizer.load_state_dict_from_file(optim_ckpt_path)
@@ -3384,18 +3422,11 @@ def _load_checkpoint_from_path(
                     else:
                         print_rank_0("WARNING: RNG state not found for current TP/PP rank")
                         rng_state_list = next(iter(state_dict["rng_state"].values()))
-                    rng_state = (
-                        rng_state_list[pg_collection.dp.rank()]
-                        if cfg.rng.data_parallel_random_init
-                        else rng_state_list[0]
-                    )
+                    rng_state = _select_rng_state(rng_state_list, load_dp_rng_states, pg_collection)
                 else:
                     # torch_dist format: ShardedObject
-                    rng_state = (
-                        state_dict["rng_state"][pg_collection.dp.rank()]
-                        if cfg.rng.data_parallel_random_init
-                        else state_dict["rng_state"][0]
-                    )
+                    rng_state_list = state_dict["rng_state"]
+                    rng_state = _select_rng_state(rng_state_list, load_dp_rng_states, pg_collection)
 
                 random.setstate(rng_state["random_rng_state"])
                 np.random.set_state(rng_state["np_rng_state"])
