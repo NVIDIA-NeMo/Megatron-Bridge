@@ -522,6 +522,14 @@ class Qwen3VLTransformerBlock(TransformerBlock):
         """Forward method with activation checkpointing."""
 
         def custom(start: int, end: int):
+            # Pipeline schedules may prepare a later microbatch before this checkpoint
+            # replays. Keep each layer's PLE inputs with its own checkpoint closure.
+            ple_states = {}
+            for index in range(start, end):
+                ple = getattr(self._get_layer(index), "per_layer_embedding", None)
+                if ple is not None:
+                    ple_states[index] = (ple._ngram_ids, ple._position_in_sequence, ple._cp_packed_seq_params)
+
             def custom_forward(
                 hidden_states,
                 attention_mask,
@@ -535,32 +543,40 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                 deepstack_visual_embeds = list(deepstack_visual_embeds_args) if deepstack_visual_embeds_args else None
                 for index in range(start, end):
                     layer = self._get_layer(index)
+                    ple = getattr(layer, "per_layer_embedding", None)
+                    if ple is not None:
+                        previous_ple_state = (ple._ngram_ids, ple._position_in_sequence, ple._cp_packed_seq_params)
+                        ple._ngram_ids, ple._position_in_sequence, ple._cp_packed_seq_params = ple_states[index]
                     inner_fp8_context = (
                         get_fp8_context(self.config, layer.layer_number - 1)
                         if use_inner_fp8_context
                         else nullcontext()
                     )
-                    with inner_fp8_context:
-                        hidden_states, context = layer(
-                            hidden_states=hidden_states,
-                            attention_mask=attention_mask,
-                            context=context,
-                            context_mask=context_mask,
-                            rotary_pos_emb=rotary_pos_emb,
-                            attention_bias=attention_bias,
-                            inference_context=None,
-                            packed_seq_params=packed_seq_params,
-                            padding_mask=padding_mask,
-                        )
+                    try:
+                        with inner_fp8_context:
+                            hidden_states, context = layer(
+                                hidden_states=hidden_states,
+                                attention_mask=attention_mask,
+                                context=context,
+                                context_mask=context_mask,
+                                rotary_pos_emb=rotary_pos_emb,
+                                attention_bias=attention_bias,
+                                inference_context=None,
+                                packed_seq_params=packed_seq_params,
+                                padding_mask=padding_mask,
+                            )
 
-                        if self.pre_process and deepstack_visual_embeds is not None:
-                            l_no = layer.layer_number - 1
-                            if l_no in range(len(deepstack_visual_embeds)):
-                                hidden_states = self._deepstack_process(
-                                    hidden_states,
-                                    visual_pos_masks,
-                                    deepstack_visual_embeds[l_no],
-                                )
+                            if self.pre_process and deepstack_visual_embeds is not None:
+                                l_no = layer.layer_number - 1
+                                if l_no in range(len(deepstack_visual_embeds)):
+                                    hidden_states = self._deepstack_process(
+                                        hidden_states,
+                                        visual_pos_masks,
+                                        deepstack_visual_embeds[l_no],
+                                    )
+                    finally:
+                        if ple is not None:
+                            ple._ngram_ids, ple._position_in_sequence, ple._cp_packed_seq_params = previous_ple_state
                 return hidden_states, context
 
             return custom_forward

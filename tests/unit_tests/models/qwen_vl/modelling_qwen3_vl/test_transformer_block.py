@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from torch.utils.checkpoint import checkpoint
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -71,6 +72,69 @@ def test_forward_propagates_padding_mask_to_transformer_layer():
 
     assert output is layer.called_with["hidden_states"]
     assert layer.called_with["padding_mask"] is padding_mask
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("second_ids", [[4, 5, 6, 7], [4, 5, 6]])
+def test_checkpoint_replays_each_microbatch_with_its_ple_inputs(monkeypatch, second_ids):
+    """A later pipeline forward must not replace PLE inputs used by recompute."""
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import transformer_block as block_module
+
+    ple = SimpleNamespace(_ngram_ids=None, _position_in_sequence=None, _cp_packed_seq_params=None)
+
+    class _Layer:
+        layer_number = 1
+        per_layer_embedding = ple
+
+        def __call__(self, hidden_states, **kwargs):
+            ids = self.per_layer_embedding._ngram_ids
+            assert ids.numel() == hidden_states.shape[0]
+            torch.testing.assert_close(self.per_layer_embedding._position_in_sequence, ids * 10)
+            assert self.per_layer_embedding._cp_packed_seq_params["ids"] is ids
+            return hidden_states * (ids.float().view(-1, 1, 1) + 1), kwargs["context"]
+
+    layer = _Layer()
+    block = SimpleNamespace(
+        _get_layer=lambda index: layer,
+        config=SimpleNamespace(
+            fp8=False, distribute_saved_activations=False, recompute_method="uniform", recompute_num_layers=1
+        ),
+        num_layers_per_pipeline_rank=1,
+        pre_process=False,
+    )
+    monkeypatch.setattr(
+        block_module.tensor_parallel,
+        "checkpoint",
+        lambda forward_func, _distribute_saved_activations, *args: checkpoint(forward_func, *args, use_reentrant=True),
+    )
+
+    def run_forward(token_values):
+        ids = torch.tensor(token_values)
+        ple._ngram_ids = ids
+        ple._position_in_sequence = ids * 10
+        ple._cp_packed_seq_params = {"ids": ids}
+        hidden_states = torch.ones(len(token_values), 1, 1, requires_grad=True)
+        output = Qwen3VLTransformerBlock._checkpointed_forward(
+            block,
+            hidden_states=hidden_states,
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=None,
+            attention_bias=None,
+            packed_seq_params=None,
+            padding_mask=None,
+            use_inner_fp8_context=False,
+        )
+        return hidden_states, output
+
+    first_hidden, first_output = run_forward([1, 2, 3])
+    run_forward(second_ids)
+    later_ids = ple._ngram_ids
+    first_output.sum().backward()
+
+    torch.testing.assert_close(first_hidden.grad.flatten(), torch.tensor([2.0, 3.0, 4.0]))
+    assert ple._ngram_ids is later_ids
 
 
 @pytest.fixture(scope="module")
