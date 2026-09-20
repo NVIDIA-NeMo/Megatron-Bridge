@@ -125,13 +125,24 @@ def test_wrapper_disables_pyxis_preserves_resources_and_secret_names(render, mon
     wrapped, executor, task = render(env_names=["TOKEN"])
     assert executor.container_image is None
     assert executor.container_mounts == executor.container_env == []
-    assert executor.additional_parameters == {"segment": 1, "export": "PATH,TOKEN"}
+    assert executor.additional_parameters == {"segment": 1, "export": "PATH,HOME,PYTHONPATH,TOKEN"}
     assert wrapped.env == task.env
     assert "not-to-be-serialized" not in wrapped.inline
     assert "TOKEN" in wrapped.inline
     assert "enroot start" in wrapped.inline
     assert "enroot import" not in wrapped.inline
     subprocess.run(["bash", "-n"], input=wrapped.inline, text=True, check=True)
+
+
+def test_batch_export_preserves_host_home_and_task_environment(render, monkeypatch):
+    monkeypatch.setenv("HOME", "/home/example")
+    wrapped, executor, task = render()
+    export_names = executor.additional_parameters["export"].split(",")
+    assert {"PATH", "HOME", *task.env} <= set(export_names)
+    assert "ALL" not in export_names
+    assert all("=" not in name for name in export_names)
+    assert "/home/example" not in wrapped.inline
+    assert "HOME" not in shlex.split(wrapped.inline.split("forward_names=(", 1)[1].split(")", 1)[0])
 
 
 @pytest.mark.parametrize(

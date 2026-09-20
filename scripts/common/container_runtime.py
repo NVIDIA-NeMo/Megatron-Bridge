@@ -147,6 +147,8 @@ def apply_container_runtime(
     executor.container_image = None
     executor.container_mounts = []
     executor.container_env = []
-    # Host control commands must retain the site PATH; values/secrets remain inherited.
-    executor.additional_parameters["export"] = ",".join(dict.fromkeys(["PATH", *env_names]))
+    # Enroot needs the original HOME even with home mounting disabled. Slurm
+    # also applies this name allowlist to srun, after NeMo-Run sets task.env
+    # (including PYTHONPATH) in the batch script. Keep values/secrets inherited.
+    executor.additional_parameters["export"] = ",".join(dict.fromkeys(["PATH", "HOME", *names]))
     return run.Script(inline=inline, entrypoint="bash", env=task.env)
