@@ -17,6 +17,7 @@
 from megatron.bridge.models.bagel.data.dataset import BagelDatasetConfig
 from megatron.bridge.models.bagel.provider import BagelModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -63,6 +64,9 @@ def bagel_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = 152064
     cfg.mixed_precision = "bf16_mixed"
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -77,6 +81,9 @@ def bagel_7b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.recompute_num_layers = 23
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.fsdp_double_buffer = False
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -89,6 +96,9 @@ def bagel_7b_finetune_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.lr = 2e-5
     cfg.optimizer.min_lr = 2e-5
     cfg.logger.log_interval = 1
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
