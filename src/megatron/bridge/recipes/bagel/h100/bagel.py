@@ -96,6 +96,9 @@ def bagel_7b_finetune_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.lr = 2e-5
     cfg.optimizer.min_lr = 2e-5
     cfg.logger.log_interval = 1
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

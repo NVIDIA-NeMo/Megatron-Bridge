@@ -34,7 +34,7 @@ navigation:
   - page: Supported Models
     path: ./nightly/pages/models/README.mdx
   - contents:
-    - page: BAGEL
+    - page: BAGEL-7B-MoT
       path: ./nightly/pages/models/bagel/bagel.mdx
     section: BAGEL
   - contents:

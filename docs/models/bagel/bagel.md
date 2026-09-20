@@ -1,8 +1,16 @@
-# BAGEL
+# BAGEL-7B-MoT
 
-BAGEL-7B-MoT uses Megatron MIMO for text-to-image, image-editing, and vision-language training. The Bridge integration includes native checkpoint initialization and Megatron FSDP recipes.
+Megatron Bridge supports BAGEL pretraining and fine-tuning with text-to-image,
+image editing, and vision-language objectives through Megatron MIMO. The H100
+recipes use Megatron FSDP; the verification records below distinguish completed
+runs from unsupported or unverified capabilities.
 
-BAGEL requires a compatible Megatron-LM dev revision and the optional BAGEL runtime dependencies. See the [BAGEL training example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/bagel) for setup and current limitations. The configurations below retain the verification status of each recorded workflow.
+BAGEL requires the tested Megatron-LM `dev` revision and the `bagel` extra.
+The Megatron-LM revision pinned by Bridge `main` does not support its runtime.
+Follow the [BAGEL training guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/bagel/README.md)
+for dependency setup, checkpoint initialization, training, and direct inference.
+See the [BAGEL data tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/bagel/README.md)
+for dataset preparation.
 
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
@@ -418,7 +426,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>4,428.810 tokens/s/GPU</dd>
+            <dd>4,789.299 tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
@@ -442,7 +450,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,428.810 logical tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical tokens include text, ViT, VAE-latent, and special tokens and exclude physical padding. The variable packed sequence length averages 34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is 58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU under official BAGEL. Do not compute a relative speedup: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.
+        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,789.299 token slots/GPU/s using 36,864 maximum packed sequence slots and GBS 32 across 32 GPUs. The separately measured logical throughput is 4,428.810 tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical tokens include text, ViT, VAE-latent, and special tokens and exclude physical padding. The variable packed sequence length averages 34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is 58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU under official BAGEL. Do not compute a relative speedup: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.
 </p>
       </section>
     </article>

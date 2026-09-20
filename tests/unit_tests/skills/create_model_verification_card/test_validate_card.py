@@ -19,6 +19,7 @@ pytestmark = pytest.mark.unit
 # the public command topology: (sequence_or_pack_length, global_batch_size, GPUs).
 TRAINING_THROUGHPUT_INPUTS = {
     ("bagel", "pretrain", "H100"): (36864, 8, 8),
+    ("bagel", "pretrain_fsdp", "H100"): (36864, 32, 32),
     ("deepseek-v3", "pretrain_performance", "H100"): (4096, 16384, 1024),
     ("deepseek-v3", "pretrain_performance", "GB200"): (4096, 4096, 256),
     ("deepseek-v3", "pretrain_performance", "GB300"): (4096, 4096, 256),
@@ -127,16 +128,6 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
     ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
     ("qwen3.8-27b", "pretrain_performance", "GB200"): (4096, 32, 16),
-}
-
-
-# Variable-length runs report measured logical tokens instead of fixed slots.
-# BAGEL's card records the mean over steps 21-30, including text, ViT,
-# VAE-latent, and special tokens but excluding physical padding:
-# (logical_tokens_per_step, GPUs). Do not substitute the packing capacity or
-# the separately reported steps 6-30 average sequence length.
-TRAINING_LOGICAL_TOKEN_INPUTS = {
-    ("bagel", "pretrain_fsdp", "H100"): (1090856.3, 32),
 }
 
 
@@ -500,16 +491,11 @@ def test_shipped_training_tps_matches_audited_token_slot_inputs():
                     for point in leaf.get("points", []):
                         verified_leaves[(slug, item_name, hardware, point["num_gpus"])] = point
 
-    assert TRAINING_THROUGHPUT_INPUTS.keys().isdisjoint(TRAINING_LOGICAL_TOKEN_INPUTS)
-    audited_inputs = {
-        key: (sequence_or_pack_length * global_batch_size, total_gpus)
-        for key, (sequence_or_pack_length, global_batch_size, total_gpus) in TRAINING_THROUGHPUT_INPUTS.items()
-    }
-    audited_inputs.update(TRAINING_LOGICAL_TOKEN_INPUTS)
-    assert verified_leaves.keys() == audited_inputs.keys()
-    for leaf_key, (tokens_per_step, total_gpus) in audited_inputs.items():
+    assert verified_leaves.keys() == TRAINING_THROUGHPUT_INPUTS.keys()
+    for leaf_key, (sequence_or_pack_length, global_batch_size, total_gpus) in TRAINING_THROUGHPUT_INPUTS.items():
         metrics = verified_leaves[leaf_key]["metrics"]
-        expected_tps_per_gpu = tokens_per_step / (metrics["last_10_steps_step_time_ms_avg"] / 1000) / total_gpus
+        token_slots_per_step = sequence_or_pack_length * global_batch_size
+        expected_tps_per_gpu = token_slots_per_step / (metrics["last_10_steps_step_time_ms_avg"] / 1000) / total_gpus
 
         assert metrics["last_10_steps_tokens_per_second_per_gpu_avg"] == pytest.approx(
             expected_tps_per_gpu, abs=0.0005
