@@ -32,8 +32,8 @@ model:
   architecture: GlmMoeDsaForCausalLM
   min_transformers_version: 5.12.1
 verification_environment:
-  base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: 26a22d90ca6c34294644e8387ab433904295969d
+  base_container: nvcr.io/nvidia/nemo:26.08.rc3
+  bridge_commit: 005c60f74d943886ea26cad29144d0b9b4222fd1
 items:
   hf_to_megatron_cpu:
     status: unverified

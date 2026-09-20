@@ -213,7 +213,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
       </a>
       <a class="verification-model-link" href="glm/glm5-2.html#verified-glm5-2">
         <strong title="zai-org/GLM-5.2">GLM-5.2</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
     </div>
   </section>
