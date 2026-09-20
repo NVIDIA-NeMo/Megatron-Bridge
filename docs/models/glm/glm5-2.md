@@ -103,24 +103,24 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-2-hf-to-megatron-gpu" aria-controls="glm5-2-hf-to-megatron-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-2-hf-to-megatron-gpu" aria-controls="glm5-2-hf-to-megatron-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-2-megatron-to-hf-cpu" aria-controls="glm5-2-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-2-megatron-to-hf-cpu" aria-controls="glm5-2-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-2-megatron-to-hf-gpu" aria-controls="glm5-2-megatron-to-hf-gpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-2-megatron-to-hf-gpu" aria-controls="glm5-2-megatron-to-hf-gpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · GPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -210,12 +210,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="glm5-2-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="glm5-2-hf-to-megatron-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-19</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -224,23 +224,23 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 13 --gpus-per-node 8 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 13 --ep 8 --etp 1</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 1 --distributed-timeout-minutes 60 --low-memory-save</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed HF-to-Hybrid import must cover every enabled parameter and save a strictly reloadable checkpoint. Hybrid execution has not yet been verified.</p>
+        <p>Distributed HF-to-Hybrid import on 16 GB200 GPUs maps all 5916 pinned source tensors through GLM5Bridge (shared-indexer layers carry no indexer tensors) and saves a 1.4 TB distributed checkpoint (iter_0000000 with run_config.yaml) in about 12 minutes. The checkpoint is strictly reloadable, as exercised by the GPU export. The appended MTP layer stays disabled by default.</p>
       </section>
     </article>
     <article id="glm5-2-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="glm5-2-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-19</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -249,23 +249,23 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/cpu-megatron --hf-path work/model-verification/glm5-2/hybrid/cpu-hf-export --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5-2/hybrid/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly within the enabled MTP scope. Hybrid execution has not yet been verified.</p>
+        <p>Distributed CPU Hybrid-to-HF export with 32 Gloo processes on the host memory of 4 GB200 nodes strictly reloads the imported checkpoint and writes 279 safetensors shards plus model.safetensors.index.json in about 30 minutes. All 58794 exported tensors match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default, and shared-indexer layers carry no indexer tensors on either side. Weights stay on CPU, but Megatron-Core&#x27;s CUDA RNG tracker still requires a visible CUDA device on each node during model-parallel initialization, so the run cannot execute on GPU-less nodes. generation_config.json is preserved from the source because Transformers strict validation rejects re-saving it.</p>
       </section>
     </article>
     <article id="glm5-2-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="glm5-2-megatron-to-hf-gpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · GPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-19</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -274,12 +274,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 13 --gpus-per-node 8 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron --hf-path work/model-verification/glm5-2/hybrid/gpu-hf-export-exact --torch-dtype bfloat16 --distributed-save --tp 1 --pp 13 --ep 8 --etp 1</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5-2/hybrid/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 1 --distributed-timeout-minutes 60 --distributed-save --save-every-n-ranks 1</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly within the enabled MTP scope. Hybrid execution has not yet been verified.</p>
+        <p>Distributed Hybrid-to-HF export on 16 GB200 GPUs strictly reloads the imported checkpoint and writes 279 safetensors shards plus model.safetensors.index.json in about 13 minutes. All 58794 exported tensors match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default, and shared-indexer layers carry no indexer tensors on either side. generation_config.json is preserved from the source because Transformers strict validation rejects re-saving it.</p>
       </section>
     </article>
     <article id="glm5-2-pretrain-h100" class="verification-model-detail" data-entry-detail="glm5-2-pretrain-h100" tabindex="-1">
