@@ -27,10 +27,7 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-    FullyShardedDataParallelV1,
-    FullyShardedDataParallelV2,
-)
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -641,8 +638,8 @@ def _update_model_config_funcs(
     # requirement, not an overlap optimization (mirrors Megatron-LM #7186). Without it,
     # every backward finalizes the DP-outer axis and only the last microbatch's gradient
     # reaches the optimizer.
-    if isinstance(model[0], FullyShardedDataParallelV2) or (
-        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1))
+    if isinstance(model[0], FullyShardedDataParallel) or (
+        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallel))
         and ddp_config.overlap_grad_reduce
     ):
         assert model_config.no_sync_func is None, (
