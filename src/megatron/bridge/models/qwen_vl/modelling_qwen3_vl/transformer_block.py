@@ -801,6 +801,11 @@ class Qwen3VLTransformerBlock(TransformerBlock):
                     ):
                         hidden_states = self.group_prefetch_offload_commit_async(hidden_states)
 
+        # MTP's gated-residual branch consumes the full residual-stream tensor;
+        # the main LM head still consumes the contracted output below.
+        if self.config.mtp_num_layers and self.post_process and self.config.enable_mhc_connections:
+            self._mtp_multistream = hidden_states
+
         # Final layer norm.
         if self.final_layernorm is not None:
             hidden_states = self.final_layernorm(hidden_states)

@@ -34,15 +34,27 @@ therefore used unpatched so QSA stays intact.
 """
 
 import torch
+from megatron.core.extensions.transformer_engine import TEColumnParallelLinear
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
+from megatron.core.models.hybrid.hybrid_block import HybridStackSubmodules
+from megatron.core.transformer.hyper_connection import GatedResidualMTPHiddenNorm, GatedResidualOutputMixer
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+    QKVMapping,
+    ReplicatedMapping,
+)
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
+from megatron.bridge.models.gpt_provider import mtp_block_spec
 from megatron.bridge.models.qwen.qwen4_exp_bridge import (
     Qwen4ExpBridge,
     get_qwen4_exp_hf_lm_prefix,
@@ -71,6 +83,48 @@ class Qwen4ExpVLMoEModelProvider(Qwen35VLMoEModelProvider):
         a mRoPE shim for standard attention and would replace the QSA modules).
         """
         return get_transformer_block_with_experimental_attention_variant_spec(self, vp_stage=vp_stage, pp_rank=pp_rank)
+
+    def build_mtp_spec(self, vp_stage=None):
+        """Build the single QSA/MoE MTP layer with gated residual stream mixing."""
+        spec = mtp_block_spec(self, vp_stage=vp_stage)
+        if spec is not None:
+            for layer_spec in spec.layer_specs:
+                layer_spec.submodules.hnorm = GatedResidualMTPHiddenNorm
+                layer_spec.submodules.e_proj = TEColumnParallelLinear
+                layer_spec.submodules.h_proj = TEColumnParallelLinear
+                layer_spec.submodules.layer_norm = GatedResidualOutputMixer
+        return spec
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
+        """Provide a VL model with an MTP HybridStack on its final pipeline stage."""
+        if not self.mtp_num_layers:
+            return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+        self.vision_config.torch_dtype = self.params_dtype
+        language_spec = self.build_language_spec(vp_stage=vp_stage)
+        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
+        # The published MTP layer is one full QSA attention layer followed by MoE.
+        # Reuse the corresponding decoder spec so HC, QSA and expert dispatch agree.
+        full_attention_spec = get_transformer_block_with_experimental_attention_variant_spec(self).layer_specs[-1]
+        model = Qwen3VLModel(
+            language_transformer_config=self,
+            language_transformer_layer_spec=language_spec,
+            vision_transformer_config=self.vision_config,
+            pre_process=pre_process,
+            post_process=post_process,
+            pg_collection=self._pg_collection,
+            mtp_block_spec=mtp_spec,
+            mtp_layer_pattern="*",
+            mtp_hybrid_submodules=HybridStackSubmodules(attention_layer=full_attention_spec),
+            vp_stage=vp_stage,
+        )
+        if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
+            model.freeze(
+                freeze_language_model=self.freeze_language_model,
+                freeze_vision_model=self.freeze_vision_model,
+                freeze_vision_projection=self.freeze_vision_projection,
+            )
+        return model
 
 
 @MegatronModelBridge.register_bridge(
@@ -176,8 +230,11 @@ class Qwen4ExpVLBridge(Qwen4ExpBridge):
             provider.ple_eos_token_id = eos_token_id
             provider.ple_unigram_vocab_size = text_config.vocab_size
 
-        # MTP: the checkpoint carries a 1-layer MTP head; it is not built for the Megatron model.
-        provider.mtp_num_layers = None
+        provider.mtp_num_layers = getattr(text_config, "mtp_num_hidden_layers", 0) or None
+        if provider.mtp_num_layers not in (None, 1):
+            raise ValueError(f"Qwen4-Exp VL supports one MTP layer, got {provider.mtp_num_layers}")
+        if provider.mtp_num_layers:
+            provider.mtp_loss_scaling_factor = 0.1
 
         # --- VL overrides: mRoPE + vision tower + modality token ids ---
         provider.position_embedding_type = "mrope"
@@ -215,7 +272,81 @@ class Qwen4ExpVLBridge(Qwen4ExpBridge):
             megatron_prefix="language_model.",
         )
         mapping_list.extend(_get_vision_mappings())
+        if getattr(text_config, "mtp_num_hidden_layers", 0):
+            mapping_list.extend(self._get_mtp_mappings())
         return MegatronMappingRegistry(*mapping_list)
+
+    @staticmethod
+    def _get_mtp_mappings() -> list:
+        """Map the published QSA/MoE/HC MTP head to the MCore hybrid MTP path."""
+        mp = "language_model.mtp.layers.0."
+        hp = "mtp."
+        inner = f"{mp}mtp_model_layer.layers.0."
+        hf_inner = "mtp.layers.0."
+        mappings = [
+            AutoMapping(f"{mp}enorm.weight", f"{hp}pre_fc_norm_embedding.weight"),
+            AutoMapping(f"{mp}hnorm.weight", f"{hp}pre_fc_norm_hidden.weight"),
+            AutoMapping(f"{mp}e_proj.weight", f"{hp}fc_embedding.weight"),
+            AutoMapping(f"{mp}h_proj.weight", f"{hp}fc_hidden.weight"),
+            QKVMapping(
+                megatron_param=f"{inner}self_attention.linear_qkv.weight",
+                q=f"{hf_inner}self_attn.q_proj.weight",
+                k=f"{hf_inner}self_attn.k_proj.weight",
+                v=f"{hf_inner}self_attn.v_proj.weight",
+            ),
+        ]
+        for megatron_name, hf_name in (
+            ("mlp.router.weight", "mlp.gate.weight"),
+            ("self_attention.q_layernorm.weight", "self_attn.q_norm.weight"),
+            ("self_attention.k_layernorm.weight", "self_attn.k_norm.weight"),
+            ("self_attention.linear_proj.weight", "self_attn.o_proj.weight"),
+            ("mlp.shared_experts.linear_fc2.weight", "mlp.shared_expert.down_proj.weight"),
+        ):
+            mappings.append(AutoMapping(f"{inner}{megatron_name}", f"{hf_inner}{hf_name}"))
+        for name in ("index_qk_proj.weight", "q_layernorm.weight", "k_layernorm.weight"):
+            mappings.append(
+                ReplicatedMapping(f"{inner}self_attention.indexer.{name}", f"{hf_inner}self_attn.indexer.{name}")
+            )
+        mappings.extend(
+            Qwen4ExpBridge._hyper_connection_mappings(
+                f"{inner}self_attention_hyper_connection.", f"{hf_inner}attn_hyper_connection.", True
+            )
+        )
+        mappings.extend(
+            Qwen4ExpBridge._hyper_connection_mappings(
+                f"{inner}mlp_hyper_connection.", f"{hf_inner}mlp_hyper_connection.", True
+            )
+        )
+        mappings.extend(
+            Qwen4ExpBridge._hyper_connection_mappings(f"{mp}final_layernorm.", f"{hp}hyper_connection_mixer.", False)
+        )
+        mappings.append(
+            GatedMLPMapping(
+                megatron_param=f"{inner}mlp.shared_experts.linear_fc1.weight",
+                gate=f"{hf_inner}mlp.shared_expert.gate_proj.weight",
+                up=f"{hf_inner}mlp.shared_expert.up_proj.weight",
+            )
+        )
+        mappings.append(
+            ReplicatedMapping(f"{inner}mlp.shared_experts.gate_weight", f"{hf_inner}mlp.shared_expert_gate.weight")
+        )
+        for megatron_fc1, megatron_fc2 in (
+            ("experts.linear_fc1.weight*", "experts.linear_fc2.weight*"),
+            ("experts.local_experts.*.linear_fc1.weight", "experts.local_experts.*.linear_fc2.weight"),
+        ):
+            mappings.extend(
+                [
+                    FusedGatedExpertMapping(
+                        megatron_param=f"{inner}mlp.{megatron_fc1}",
+                        hf_param=f"{hf_inner}mlp.experts.gate_up_proj",
+                    ),
+                    FusedExpertMapping(
+                        megatron_param=f"{inner}mlp.{megatron_fc2}",
+                        hf_param=f"{hf_inner}mlp.experts.down_proj",
+                    ),
+                ]
+            )
+        return mappings
 
 
 __all__ = [

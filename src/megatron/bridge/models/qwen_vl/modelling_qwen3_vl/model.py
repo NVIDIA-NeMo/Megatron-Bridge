@@ -75,6 +75,24 @@ def _select_sequence(
     return val.index_select(seq_dim, index).contiguous()
 
 
+def _select_packed_cp_if_full_sequence(
+    val: torch.Tensor | None,
+    index: torch.Tensor,
+    *,
+    full_sequence_length: int,
+) -> tuple[torch.Tensor | None, bool]:
+    """Select packed CP tokens once; an already-local tensor stays local."""
+    if val is None:
+        return None, False
+    if val.size(1) == full_sequence_length:
+        return _select_sequence(val, index, seq_dim=1), True
+    if val.size(1) == index.numel():
+        return val, False
+    raise ValueError(
+        f"Packed CP metadata expects {full_sequence_length} full or {index.numel()} local tokens, got {val.size(1)}"
+    )
+
+
 def _get_packed_seq_padding_mask(
     packed_seq_params: PackedSeqParams | None,
     *,
@@ -285,6 +303,8 @@ class Qwen3VLModel(MegatronModule):
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection = None,
         mtp_block_spec: Optional[ModuleSpec] = None,
+        mtp_layer_pattern: Optional[str] = None,
+        mtp_hybrid_submodules: Optional[object] = None,
         vp_stage: Optional[int] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
@@ -397,6 +417,8 @@ class Qwen3VLModel(MegatronModule):
                 share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
                 mtp_block_spec=mtp_block_spec,
+                mtp_layer_pattern=mtp_layer_pattern,
+                mtp_hybrid_submodules=mtp_hybrid_submodules,
                 vp_stage=vp_stage,
                 pg_collection=pg_collection,
             )
@@ -980,10 +1002,13 @@ class Qwen3VLModel(MegatronModule):
         return_sliced_loss_mask = False
         if packed_seq_params is not None:
             if packed_cp_index is not None:
-                labels = _select_sequence(labels, packed_cp_index, seq_dim=1)
+                labels, _ = _select_packed_cp_if_full_sequence(
+                    labels, packed_cp_index, full_sequence_length=full_sequence_length
+                )
                 if loss_mask is not None:
-                    loss_mask = _select_sequence(loss_mask, packed_cp_index, seq_dim=1)
-                    return_sliced_loss_mask = True
+                    loss_mask, return_sliced_loss_mask = _select_packed_cp_if_full_sequence(
+                        loss_mask, packed_cp_index, full_sequence_length=full_sequence_length
+                    )
         elif cp_size > 1:
             labels, _ = _split_if_full_sequence(
                 labels,
@@ -1000,6 +1025,22 @@ class Qwen3VLModel(MegatronModule):
                     cp_rank=cp_rank,
                     full_sequence_length=full_sequence_length,
                 )
+
+        if kwargs.get("mtp_kwargs") is not None:
+            mtp_kwargs = dict(kwargs["mtp_kwargs"])
+            if packed_cp_index is not None:
+                mtp_kwargs["mtp_labels"], _ = _select_packed_cp_if_full_sequence(
+                    mtp_kwargs["mtp_labels"], packed_cp_index, full_sequence_length=full_sequence_length
+                )
+            elif packed_seq_params is None and cp_size > 1:
+                mtp_kwargs["mtp_labels"], _ = _split_if_full_sequence(
+                    mtp_kwargs["mtp_labels"],
+                    cp_size=cp_size,
+                    seq_dim=1,
+                    cp_rank=cp_rank,
+                    full_sequence_length=full_sequence_length,
+                )
+            kwargs["mtp_kwargs"] = mtp_kwargs
 
         output = self.language_model(
             input_ids=lm_input_ids,

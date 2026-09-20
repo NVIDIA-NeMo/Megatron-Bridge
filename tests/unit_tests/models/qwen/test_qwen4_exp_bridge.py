@@ -19,7 +19,9 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -31,6 +33,9 @@ from megatron.bridge.models.qwen.qwen4_exp_bridge import (
     linear_attention_pattern_from_hf,
     ple_local_rows_from_shards,
 )
+from megatron.bridge.models.qwen.qwen4_exp_vl_bridge import Qwen4ExpVLBridge
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import _select_packed_cp_if_full_sequence
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 
 
 def _text_config_dict(num_layers=8):
@@ -179,8 +184,168 @@ class TestQwen4ExpProvider:
         provider.finalize()
         assert provider.ple_layer_ids == [2]
 
+    def test_vl_mtp_follows_checkpoint_config(self, mock_pretrained):
+        bridge = Qwen4ExpVLBridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+        assert provider.mtp_num_layers == 1
+        assert provider.mtp_loss_scaling_factor == 0.1
+
+        mock_pretrained.config.text_config.mtp_num_hidden_layers = 0
+        provider = bridge.provider_bridge(mock_pretrained)
+        assert provider.mtp_num_layers is None
+
+    def test_vl_mtp_labels_preserve_main_logits(self):
+        labels = torch.tensor([[1, 2]])
+        hidden_states = torch.ones(2, 1, 2)
+
+        class Decoder:
+            calls = 0
+
+            def __call__(self, **kwargs):
+                self.calls += 1
+                self._mtp_multistream = torch.full((2, 1, 8), float(self.calls))
+                return hidden_states
+
+        decoder = Decoder()
+        model = SimpleNamespace(
+            config=SimpleNamespace(ple_layer_ids=[]),
+            mtp_process=False,
+            _preprocess=lambda **kwargs: (hidden_states, None, None, None, None),
+            decoder=decoder,
+            _postprocess=lambda **kwargs: kwargs,
+        )
+        forwarded = Qwen3VLGPTModel.forward(
+            model,
+            input_ids=labels,
+            position_ids=None,
+            attention_mask=None,
+            mtp_kwargs={"mtp_labels": labels},
+        )
+        assert forwarded["labels"] is labels
+        torch.testing.assert_close(forwarded["mhc_multistream"], torch.ones(2, 1, 8))
+        assert not hasattr(decoder, "_mtp_multistream")
+        second = Qwen3VLGPTModel.forward(
+            model,
+            input_ids=labels,
+            position_ids=None,
+            attention_mask=None,
+            mtp_kwargs={"mtp_labels": labels},
+        )
+        torch.testing.assert_close(second["mhc_multistream"], torch.full((2, 1, 8), 2.0))
+        assert not hasattr(decoder, "_mtp_multistream")
+        output_layer = lambda states, **kwargs: (states + 1, None)
+        logits = forwarded["output_processor"](
+            hidden_states=hidden_states,
+            output_layer=output_layer,
+            output_weight=None,
+            runtime_gather_output=False,
+            scale_logits=lambda tensor: tensor * 2,
+        )
+        torch.testing.assert_close(logits, ((hidden_states + 1) * 2).transpose(0, 1).contiguous())
+        native = GPTModel._postprocess(
+            SimpleNamespace(
+                share_embeddings_and_output_weights=False,
+                post_process=True,
+                output_layer=output_layer,
+                _scale_logits=lambda tensor: tensor * 2,
+                config=SimpleNamespace(mtp_num_layers=0),
+            ),
+            hidden_states=hidden_states,
+            input_ids=None,
+            position_ids=None,
+            rotary_pos_emb=None,
+            rotary_pos_cos=None,
+            rotary_pos_sin=None,
+            labels=None,
+        )
+        torch.testing.assert_close(logits, native)
+
+    def test_vl_mtp_first_pipeline_stage_does_not_forward_streams(self):
+        hidden_states = torch.ones(2, 1, 2)
+        model = SimpleNamespace(
+            config=SimpleNamespace(ple_layer_ids=[]),
+            mtp_process=False,
+            _preprocess=lambda **kwargs: (hidden_states, None, None, None, None),
+            decoder=lambda **kwargs: hidden_states,
+            _postprocess=lambda **kwargs: kwargs,
+        )
+        forwarded = Qwen3VLGPTModel.forward(
+            model,
+            input_ids=torch.ones(1, 2, dtype=torch.long),
+            position_ids=None,
+            attention_mask=None,
+        )
+        assert "mhc_multistream" not in forwarded
+
+    def test_vl_packed_cp_accepts_local_mtp_labels_and_mask(self):
+        index = torch.tensor([0, 2, 5])
+        full = torch.arange(6).unsqueeze(0)
+        local = full.index_select(1, index)
+
+        selected, did_select = _select_packed_cp_if_full_sequence(full, index, full_sequence_length=6)
+        torch.testing.assert_close(selected, local)
+        assert did_select
+
+        selected, did_select = _select_packed_cp_if_full_sequence(local, index, full_sequence_length=6)
+        torch.testing.assert_close(selected, local)
+        assert not did_select
+
+        with pytest.raises(ValueError, match="full or 3 local tokens"):
+            _select_packed_cp_if_full_sequence(torch.zeros(1, 4), index, full_sequence_length=6)
+
 
 class TestQwen4ExpMappings:
+    def test_vl_mtp_maps_all_published_parameters(self):
+        registry = MegatronMappingRegistry(*Qwen4ExpVLBridge._get_mtp_mappings())
+        expected = {
+            "mtp.pre_fc_norm_embedding.weight",
+            "mtp.pre_fc_norm_hidden.weight",
+            "mtp.fc_embedding.weight",
+            "mtp.fc_hidden.weight",
+            *(
+                f"mtp.hyper_connection_mixer.{name}"
+                for name in ("hc_norm.weight", "input_mix_weight_down.weight", "input_mix_weight_up.weight")
+            ),
+            *(
+                f"mtp.layers.0.{part}_hyper_connection.{name}"
+                for part in ("attn", "mlp")
+                for name in (
+                    "hc_norm.weight",
+                    "input_mix_weight_down.weight",
+                    "input_mix_weight_up.weight",
+                    "block_inject_weight.weight",
+                )
+            ),
+            *(
+                f"mtp.layers.0.self_attn.{name}"
+                for name in (
+                    "q_proj.weight",
+                    "k_proj.weight",
+                    "v_proj.weight",
+                    "o_proj.weight",
+                    "q_norm.weight",
+                    "k_norm.weight",
+                    "indexer.index_qk_proj.weight",
+                    "indexer.q_layernorm.weight",
+                    "indexer.k_layernorm.weight",
+                )
+            ),
+            *(
+                f"mtp.layers.0.mlp.{name}"
+                for name in (
+                    "gate.weight",
+                    "shared_expert.gate_proj.weight",
+                    "shared_expert.up_proj.weight",
+                    "shared_expert.down_proj.weight",
+                    "shared_expert_gate.weight",
+                    "experts.gate_up_proj",
+                    "experts.down_proj",
+                )
+            ),
+        }
+        assert len(expected) == 31
+        assert all(registry.hf_to_megatron_lookup(name) is not None for name in expected)
+
     def test_mapping_registry_covers_all_components(self, mock_pretrained, vl_config):
         bridge = Qwen4ExpBridge()
         bridge.hf_pretrained = mock_pretrained
