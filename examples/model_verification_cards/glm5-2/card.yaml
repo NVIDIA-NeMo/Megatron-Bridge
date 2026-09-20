@@ -43,7 +43,7 @@ model:
   min_transformers_version: 5.12.1
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc3
-  bridge_commit: 005c60f74d943886ea26cad29144d0b9b4222fd1
+  bridge_commit: fc668edc894255bc1d20043af179a09646046289
 items:
   hf_to_megatron_cpu:
     status: unverified

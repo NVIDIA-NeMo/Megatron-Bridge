@@ -10842,10 +10842,10 @@
     {
       "architecture": "GlmMoeDsaForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.08.rc3",
-      "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+      "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
       "entries": [
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10862,7 +10862,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -10891,7 +10891,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -10918,7 +10918,7 @@
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -10947,7 +10947,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -10964,7 +10964,7 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -10993,7 +10993,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11016,7 +11016,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11039,7 +11039,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11056,7 +11056,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11079,7 +11079,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11102,7 +11102,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11136,10 +11136,10 @@
     {
       "architecture": "GlmMoeDsaForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.08.rc3",
-      "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+      "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
       "entries": [
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "nodes": "1"
@@ -11162,7 +11162,7 @@
           "workflow": "hf_to_megatron_cpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -11191,7 +11191,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -11218,7 +11218,7 @@
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -11247,7 +11247,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "4",
@@ -11276,7 +11276,7 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -11305,7 +11305,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -11339,7 +11339,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11372,7 +11372,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "context_parallel": "2",
@@ -11406,7 +11406,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11438,7 +11438,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "expert_parallel": "32",
@@ -11469,7 +11469,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -11486,7 +11486,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -11519,7 +11519,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11551,7 +11551,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -11584,7 +11584,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11616,7 +11616,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -11650,7 +11650,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "005c60f74d943886ea26cad29144d0b9b4222fd1",
+          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
           "command_topologies": [
             {
               "gpus_per_node": "4",
