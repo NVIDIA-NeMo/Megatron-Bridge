@@ -109,10 +109,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-megatron-to-hf-cpu" aria-controls="glm5-megatron-to-hf-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-megatron-to-hf-cpu" aria-controls="glm5-megatron-to-hf-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Export · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -200,12 +200,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="glm5-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="glm5-megatron-to-hf-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Export · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-19</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -219,7 +219,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly within the enabled MTP scope. Hybrid execution has not yet been verified.</p>
+        <p>Distributed CPU Hybrid-to-HF export with 32 Gloo processes on the host memory of 4 GB200 nodes strictly reloads the imported checkpoint and writes 280 safetensors shards plus model.safetensors.index.json in about 28 minutes. All 59079 exported tensors match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default. Weights stay on CPU, but Megatron-Core&#x27;s CUDA RNG tracker still requires a visible CUDA device on each node during model-parallel initialization, so the run cannot execute on GPU-less nodes. generation_config.json is preserved from the source because Transformers strict validation rejects re-saving it.</p>
       </section>
     </article>
     <article id="glm5-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="glm5-megatron-to-hf-gpu" tabindex="-1">
