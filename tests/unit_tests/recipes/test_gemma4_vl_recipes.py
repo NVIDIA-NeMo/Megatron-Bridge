@@ -18,7 +18,7 @@ import importlib
 import os
 
 import pytest
-from megatron.core.transformer.utils import set_attention_backend
+from megatron.core.transformer import utils as transformer_utils
 
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
@@ -45,6 +45,10 @@ class _FakeAutoBridge:
         return _FakeModelCfg()
 
 
+@pytest.mark.skipif(
+    not hasattr(transformer_utils, "set_attention_backend"),
+    reason="Requires MCore's standalone attention-backend helper",
+)
 @pytest.mark.parametrize("recipe_name", ["gemma4_vl_26b_sft_config", "gemma4_vl_26b_peft_config"])
 def test_gemma4_vl_recipes_allow_unfused_global_attention(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
     """512-wide global heads need the unfused fallback when FlashAttention cannot run."""
@@ -54,7 +58,7 @@ def test_gemma4_vl_recipes_allow_unfused_global_attention(monkeypatch: pytest.Mo
     cfg = getattr(_gemma4_vl_module, recipe_name)()
     model_config = Gemma4ModelProvider(attention_backend=cfg.model.attention_backend)
 
-    set_attention_backend(model_config)
+    transformer_utils.set_attention_backend(model_config)
 
     assert model_config.global_head_dim == 512
     assert os.environ["NVTE_UNFUSED_ATTN"] == "1"

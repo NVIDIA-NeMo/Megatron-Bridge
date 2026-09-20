@@ -19,14 +19,18 @@ from unittest.mock import Mock
 
 import pytest
 from megatron.core import parallel_state, rerun_state_machine
+from megatron.core.transformer import utils as transformer_utils
 from megatron.core.transformer.enums import AttnBackend
-from megatron.core.transformer.utils import set_attention_backend
 
 from tests.functional_tests import utils
 from tests.functional_tests.test_groups.recipes import test_nemotronh_recipes_finetune as fixtures
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(
+    not hasattr(transformer_utils, "set_attention_backend"),
+    reason="Requires MCore's standalone attention-backend helper",
+)
 @pytest.mark.parametrize(
     "fixture_class,fixture_name",
     [
@@ -46,7 +50,7 @@ def test_checkpoint_conversion_does_not_constrain_finetune_attention(
     monkeypatch.setattr(rerun_state_machine, "destroy_rerun_state_machine", Mock())
 
     def import_checkpoint(**kwargs):
-        set_attention_backend(
+        transformer_utils.set_attention_backend(
             SimpleNamespace(
                 attention_backend=AttnBackend.auto,
                 batch_invariant_mode=False,
@@ -58,7 +62,7 @@ def test_checkpoint_conversion_does_not_constrain_finetune_attention(
     fixture = getattr(fixture_class, fixture_name).__wrapped__
     fixture(fixture_class(), "toy-checkpoint", tmp_path_factory, tmp_path)
 
-    set_attention_backend(
+    transformer_utils.set_attention_backend(
         SimpleNamespace(
             attention_backend=AttnBackend.fused,
             batch_invariant_mode=False,
