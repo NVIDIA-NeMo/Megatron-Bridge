@@ -1,21 +1,24 @@
-# Agent-readable model verification card. Hybrid commands are pending verification.
+# Agent-readable model verification card. Hybrid GPU import, GPU/CPU export and inference are verified; training items are pending.
 title: glm5_2
 summary: 'Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing
   and throughput metrics are functional verification observations, not standalone optimized performance results.
-  The GLM family now uses HybridModel with separate DSA and dense/MoE layers. All Hybrid verification is pending.
-  The environment below identifies the historical GPT baseline, not verification of the Hybrid implementation; its
-  results remain in Git history. Import directly from the pinned HF revision into a fresh Hybrid checkpoint root.
+  The GLM family now uses HybridModel with separate DSA and dense/MoE layers. Distributed GPU import, GPU and CPU
+  export, and deterministic legacy full-prefix inference of the Hybrid implementation are verified on GB200; the
+  remaining items are pending.
+  Historical GPT results remain in Git history. Import directly from the pinned HF revision into a fresh Hybrid
+  checkpoint root.
   Old GPT checkpoints and optimizer states are not migration inputs. Training must retain MTP1 and the original
   DSA top-k sharing schedule; non-VPP recipes require fresh evidence.'
 verification_index:
   model_level:
-    unverified:
-    - hf_to_megatron_cpu
+    verified:
     - hf_to_megatron_gpu
     - megatron_to_hf_cpu
     - megatron_to_hf_gpu
-    - manual_forward_pass
     - inference
+    unverified:
+    - hf_to_megatron_cpu
+    - manual_forward_pass
   training:
     H100:
       unverified:
@@ -39,8 +42,8 @@ model:
   architecture: GlmMoeDsaForCausalLM
   min_transformers_version: 5.12.1
 verification_environment:
-  base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7
+  base_container: nvcr.io/nvidia/pytorch:26.07-py3
+  bridge_commit: 26a22d90ca6c34294644e8387ab433904295969d
 items:
   hf_to_megatron_cpu:
     status: unverified
@@ -54,39 +57,53 @@ items:
     expected_result: CPU HF-to-Hybrid import must cover every enabled parameter and save a strictly reloadable checkpoint.
       Hybrid execution has not yet been verified.
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: './scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 13 --gpus-per-node 8
+    command: './scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 4
       --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron
-      --torch-dtype bfloat16 --tp 1 --pp 13 --ep 8 --etp 1
+      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 1 --distributed-timeout-minutes 60 --low-memory-save
 
       '
-    last_verified: null
-    expected_result: Distributed HF-to-Hybrid import must cover every enabled parameter and save a strictly reloadable
-      checkpoint. Hybrid execution has not yet been verified.
+    last_verified: 2026-09-19
+    expected_result: Distributed HF-to-Hybrid import on 16 GB200 GPUs maps all 5916 pinned source tensors through
+      GLM5Bridge (shared-indexer layers carry no indexer tensors) and saves a 1.4 TB distributed checkpoint
+      (iter_0000000 with run_config.yaml) in about 12 minutes. The checkpoint is strictly reloadable, as exercised
+      by the GPU export. The appended MTP layer stays disabled by default.
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: './scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2
-      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/cpu-megatron
-      --hf-path work/model-verification/glm5-2/hybrid/cpu-hf-export --torch-dtype bfloat16
+    command: './scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node
+      8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5-2/hybrid/cpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks
+      1 --no-progress
 
       '
-    last_verified: null
-    expected_result: CPU Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly
-      within the enabled MTP scope. Hybrid execution has not yet been verified.
+    last_verified: 2026-09-19
+    expected_result: Distributed CPU Hybrid-to-HF export with 32 Gloo processes on the host memory of 4 GB200 nodes
+      strictly reloads the imported checkpoint and writes 279 safetensors shards plus model.safetensors.index.json in
+      about 30 minutes. All 58794 exported tensors match the pinned source keys, shapes, dtypes and values exactly;
+      the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default,
+      and shared-indexer layers carry no indexer tensors on either side. Weights stay on CPU, but Megatron-Core's
+      CUDA RNG tracker still requires a visible CUDA device on each node during model-parallel initialization, so
+      the run cannot execute on GPU-less nodes. generation_config.json is preserved from the source because
+      Transformers strict validation rejects re-saving it.
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: './scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 13 --gpus-per-node 8
-      --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron
-      --hf-path work/model-verification/glm5-2/hybrid/gpu-hf-export-exact --torch-dtype bfloat16 --distributed-save
-      --tp 1 --pp 13 --ep 8 --etp 1
+    command: './scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 4
+      --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/glm5-2/hybrid/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp
+      1 --distributed-timeout-minutes 60 --distributed-save --save-every-n-ranks 1
 
       '
-    last_verified: null
-    expected_result: Distributed Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values
-      exactly within the enabled MTP scope. Hybrid execution has not yet been verified.
+    last_verified: 2026-09-19
+    expected_result: Distributed Hybrid-to-HF export on 16 GB200 GPUs strictly reloads the imported checkpoint and
+      writes 279 safetensors shards plus model.safetensors.index.json in about 13 minutes. All 58794 exported tensors
+      match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer
+      (model.layers.78.*) are excluded because MTP is disabled by default, and shared-indexer layers carry no indexer
+      tensors on either side. generation_config.json is preserved from the source because Transformers strict
+      validation rejects re-saving it.
   manual_forward_pass:
     status: unverified
     precision: bf16
@@ -99,16 +116,17 @@ items:
       predictions. Record max and mean absolute differences. Also compare the corresponding GPT graph on fixed weights
       and inputs. Hybrid execution has not yet been verified.
   inference:
-    status: unverified
+    status: verified
     precision: bf16
-    command: ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8 --task legacy-full-prefix-generation --hf_model_path
+    command: ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task legacy-full-prefix-generation --hf_model_path
       zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --prompt "Write one concise sentence
       explaining why deterministic tests matter:" --apply-chat-template --thinking-mode disabled --max_new_tokens
-      16 --legacy-full-prefix --tp 1 --pp 4 --ep 8 --etp 1
-    last_verified: null
-    expected_result: Hybrid deterministic greedy inference must repeat the recorded completion and generated token
-      count. DSA full-prefix compatibility inference is not an optimized decode benchmark. Hybrid execution has
-      not yet been verified.
+      16 --legacy-full-prefix --tp 1 --pp 2 --ep 8 --etp 1
+    last_verified: 2026-09-19
+    expected_result: 'Hybrid deterministic greedy inference on 16 GB200 GPUs generates exactly 16 tokens (the
+      max_new_tokens bound; no eos_token_id is emitted). The decoded completion is two lines: "1.  **Analyze the
+      Request:**" (two spaces after the period) followed by a newline and "    *   **Topic:**" (four leading
+      spaces). DSA full-prefix compatibility inference is not an optimized decode benchmark.'
   pretrain:
     H100:
       status: unverified

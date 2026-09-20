@@ -1,21 +1,21 @@
-# Agent-readable model verification card. Hybrid GPU conversion and inference are verified; training items are pending.
+# Agent-readable model verification card. Hybrid GPU import, GPU/CPU export and inference are verified; training items are pending.
 title: glm5
 summary: 'Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing
   and throughput metrics are functional verification observations, not standalone optimized performance results.
-  The GLM family now uses HybridModel with separate DSA and dense/MoE layers. Distributed GPU import, GPU export and
-  deterministic legacy full-prefix inference of the Hybrid implementation are verified on GB200; the remaining items
-  are pending. Historical GPT results remain in Git history. Import directly from the pinned HF revision into a fresh Hybrid checkpoint root. Old GPT checkpoints
+  The GLM family now uses HybridModel with separate DSA and dense/MoE layers. Distributed GPU import, GPU and CPU
+  export, and deterministic legacy full-prefix inference of the Hybrid implementation are verified on GB200; the
+  remaining items are pending. Historical GPT results remain in Git history. Import directly from the pinned HF revision into a fresh Hybrid checkpoint root. Old GPT checkpoints
   and optimizer states are not migration inputs. Base conversion and inference exclude the appended MTP layer unless
   explicitly enabled.'
 verification_index:
   model_level:
     verified:
     - hf_to_megatron_gpu
+    - megatron_to_hf_cpu
     - megatron_to_hf_gpu
     - inference
     unverified:
     - hf_to_megatron_cpu
-    - megatron_to_hf_cpu
     - manual_forward_pass
   training:
     H100:
@@ -33,7 +33,7 @@ model:
   min_transformers_version: 5.12.1
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.07-py3
-  bridge_commit: 5db9c262411cf4561d44cdf76a134b423fdaacc2
+  bridge_commit: 26a22d90ca6c34294644e8387ab433904295969d
 items:
   hf_to_megatron_cpu:
     status: unverified
@@ -56,7 +56,7 @@ items:
       The checkpoint is strictly reloadable, as exercised by the verified GPU export. The appended MTP layer stays
       disabled by default.
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: './scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node
       8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
@@ -65,9 +65,14 @@ items:
       1 --no-progress
 
       '
-    last_verified: null
-    expected_result: CPU Hybrid-to-HF export must match the pinned source keys, shapes, dtypes and values exactly
-      within the enabled MTP scope. Hybrid execution has not yet been verified.
+    last_verified: 2026-09-19
+    expected_result: Distributed CPU Hybrid-to-HF export with 32 Gloo processes on the host memory of 4 GB200 nodes
+      strictly reloads the imported checkpoint and writes 280 safetensors shards plus model.safetensors.index.json in
+      about 28 minutes. All 59079 exported tensors match the pinned source keys, shapes, dtypes and values exactly;
+      the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default.
+      Weights stay on CPU, but Megatron-Core's CUDA RNG tracker still requires a visible CUDA device on each node
+      during model-parallel initialization, so the run cannot execute on GPU-less nodes. generation_config.json is
+      preserved from the source because Transformers strict validation rejects re-saving it.
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
