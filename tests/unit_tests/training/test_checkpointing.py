@@ -1909,6 +1909,7 @@ def load_checkpoint_fixtures():
     mock_state.cfg = mock_cfg
 
     mock_model = [Mock()]
+    mock_model[0].parameters.return_value = []
     mock_optimizer = Mock()
     mock_scheduler = Mock()
 
@@ -3184,6 +3185,7 @@ class TestLoadModelWeightsFromCheckpoint:
     def mock_model(self):
         """Create a mock model for testing."""
         model = Mock()
+        model.parameters.return_value = []
         model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
         return [model]
 
@@ -3191,8 +3193,10 @@ class TestLoadModelWeightsFromCheckpoint:
     def mock_multiple_models(self):
         """Create multiple mock models for testing."""
         model1 = Mock()
+        model1.parameters.return_value = []
         model1.sharded_state_dict.return_value = {"weight1": torch.randn(10, 10)}
         model2 = Mock()
+        model2.parameters.return_value = []
         model2.sharded_state_dict.return_value = {"weight2": torch.randn(5, 5)}
         return [model1, model2]
 
@@ -3813,6 +3817,7 @@ class TestMegatronLMCompatibility:
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
         mock_unwrap.return_value = [Mock()]
+        mock_unwrap.return_value[0].parameters.return_value = []
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
