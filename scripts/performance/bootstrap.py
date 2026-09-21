@@ -21,8 +21,6 @@ from pathlib import Path
 
 from argument_parser import parse_cli_args
 
-from megatron.bridge.perf_recipes.environment import ONE_GPU_PER_RANK_ENV
-
 
 ENTRYPOINT_PERFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
@@ -52,13 +50,23 @@ def _apply_recipe_environment(recipe) -> None:
         os.environ.setdefault(name, str(value))
 
 
-def _apply_one_gpu_per_rank() -> None:
-    """Restrict CUDA_VISIBLE_DEVICES to this rank's GPU when the recipe sets the marker.
+def uses_ncclep(recipe) -> bool:
+    """Return True when the resolved recipe dispatches MoE tokens through NCCL EP."""
+    model = getattr(recipe, "model", None)
+    return getattr(model, "moe_flex_dispatcher_backend", None) == "ncclep"
 
-    Runs before CUDA initialization. If the launcher already exposes exactly one device, nothing
-    changes; if it exposes several (Slurm's default per-node list), the local rank selects one.
+
+def _apply_one_gpu_per_rank(recipe) -> None:
+    """Restrict CUDA_VISIBLE_DEVICES to this rank's GPU for NCCL EP recipes.
+
+    The NCCL EP buffers are allocated with ncclMemAlloc, which maps them into every GPU visible to
+    the process; on Grace+Blackwell nodes each mapped GPU adds ~11 us to every munmap of the
+    process, i.e. host-side overhead on every training step. Runs before CUDA initialization. If
+    the launcher already exposes exactly one device, nothing changes; if it exposes several
+    (Slurm's default per-node list), the local rank selects one. ``run_script.py`` then selects
+    device 0 (``dist.external_gpu_device_mapping``).
     """
-    if os.environ.get(ONE_GPU_PER_RANK_ENV, "0") != "1":
+    if not uses_ncclep(recipe):
         return
     local_rank = os.environ.get("LOCAL_RANK") or os.environ.get("SLURM_LOCALID")
     if local_rank is None:
@@ -89,7 +97,7 @@ def main() -> None:
     args, cli_overrides = parser.parse_known_args()
     recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
     _apply_recipe_environment(recipe)
-    _apply_one_gpu_per_rank()
+    _apply_one_gpu_per_rank(recipe)
     _exec_training(target_name)
 
 

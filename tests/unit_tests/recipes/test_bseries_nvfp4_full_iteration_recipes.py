@@ -141,7 +141,6 @@ def test_qwen3_235b_blackwell_nvfp4_full_iteration_stack(
         assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size
     else:
         assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-        assert cfg.env_vars["MBRIDGE_ONE_GPU_PER_RANK"] == 1
         assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
 

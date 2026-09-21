@@ -133,7 +133,6 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-    assert cfg.env_vars["MBRIDGE_ONE_GPU_PER_RANK"] == 1
     assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
 

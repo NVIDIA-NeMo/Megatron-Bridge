@@ -19,7 +19,7 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES, ONE_GPU_PER_RANK_ENV
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
@@ -218,13 +218,12 @@ def _remove_recipe_env(recipe: ConfigContainer, name: str, protected_env_names: 
 def apply_one_gpu_per_rank_device_mapping(recipe: ConfigContainer) -> ConfigContainer:
     """Select device 0 when ``bootstrap.py`` exposed only this rank's GPU.
 
-    ``bootstrap.py`` installs the recipe ``env_vars`` and, for recipes carrying
-    ``ONE_GPU_PER_RANK_ENV``, narrows ``CUDA_VISIBLE_DEVICES`` to the rank's GPU before the trainer
-    imports torch. The trainer must then use device 0 instead of the local rank. Both conditions are
-    read from the live process environment, so a launch that did not go through ``bootstrap.py``
-    (or a recipe without the marker) keeps the default local-rank device selection.
+    For NCCL EP recipes ``bootstrap.py`` narrows ``CUDA_VISIBLE_DEVICES`` to the rank's GPU before
+    the trainer imports torch, so the trainer must use device 0 instead of the local rank. The
+    visible-device count is read from the live process environment, so a launch that did not go
+    through ``bootstrap.py`` (several devices visible) keeps the default local-rank selection.
     """
-    if os.environ.get(ONE_GPU_PER_RANK_ENV, "0") != "1":
+    if getattr(recipe.model, "moe_flex_dispatcher_backend", None) != "ncclep":
         return recipe
     visible_devices = [device for device in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if device]
     if len(visible_devices) == 1:

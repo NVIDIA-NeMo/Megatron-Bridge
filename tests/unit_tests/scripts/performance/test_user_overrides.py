@@ -27,7 +27,6 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
 from argument_parser import parse_cli_args
 from utils.overrides import apply_one_gpu_per_rank_device_mapping, set_user_overrides
 
-from megatron.bridge.perf_recipes.environment import ONE_GPU_PER_RANK_ENV
 from megatron.bridge.recipes.gpt.h100.vanilla_gpt import vanilla_gpt_pretrain_1gpu_h100_bf16_config
 
 
@@ -62,20 +61,17 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("marker", "visible", "expected"),
+    ("backend", "visible", "expected"),
     [
-        ("1", "2", True),  # bootstrap.py narrowed the process to one GPU
-        ("1", "0,1,2,3", False),  # marker set but the launcher exposed the whole node
-        (None, "2", False),  # one visible GPU without the marker: plain local-rank mapping
+        ("ncclep", "2", True),  # bootstrap.py narrowed the process to one GPU
+        ("ncclep", "0,1,2,3", False),  # NCCL EP but the launcher exposed the whole node
+        ("hybridep", "2", False),  # one visible GPU on another backend: plain local-rank mapping
     ],
 )
-def test_one_gpu_per_rank_device_mapping_follows_process_environment(monkeypatch, marker, visible, expected):
-    if marker is None:
-        monkeypatch.delenv(ONE_GPU_PER_RANK_ENV, raising=False)
-    else:
-        monkeypatch.setenv(ONE_GPU_PER_RANK_ENV, marker)
+def test_one_gpu_per_rank_device_mapping_follows_backend_and_environment(monkeypatch, backend, visible, expected):
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
     recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.moe_flex_dispatcher_backend = backend
     assert recipe.dist.external_gpu_device_mapping is False
 
     updated = apply_one_gpu_per_rank_device_mapping(recipe)

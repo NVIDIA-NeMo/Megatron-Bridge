@@ -151,7 +151,7 @@ def test_bootstrap_exec_preserves_argv_and_environment(monkeypatch):
     ],
 )
 def test_bootstrap_one_gpu_per_rank_restricts_visible_devices(monkeypatch, visible_before, local_rank, expected):
-    monkeypatch.setenv(bootstrap.ONE_GPU_PER_RANK_ENV, "1")
+    recipe = SimpleNamespace(model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep"))
     monkeypatch.delenv("LOCAL_RANK", raising=False)
     monkeypatch.setenv("SLURM_LOCALID", local_rank)
     if visible_before is None:
@@ -159,17 +159,18 @@ def test_bootstrap_one_gpu_per_rank_restricts_visible_devices(monkeypatch, visib
     else:
         monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible_before)
 
-    bootstrap._apply_one_gpu_per_rank()
+    bootstrap._apply_one_gpu_per_rank(recipe)
 
     assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == expected
 
 
-def test_bootstrap_one_gpu_per_rank_is_opt_in(monkeypatch):
-    monkeypatch.delenv(bootstrap.ONE_GPU_PER_RANK_ENV, raising=False)
+@pytest.mark.parametrize("backend", ["hybridep", "deepep", None])
+def test_bootstrap_one_gpu_per_rank_only_for_ncclep(monkeypatch, backend):
+    recipe = SimpleNamespace(model=SimpleNamespace(moe_flex_dispatcher_backend=backend))
     monkeypatch.setenv("LOCAL_RANK", "2")
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
 
-    bootstrap._apply_one_gpu_per_rank()
+    bootstrap._apply_one_gpu_per_rank(recipe)
 
     assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
 

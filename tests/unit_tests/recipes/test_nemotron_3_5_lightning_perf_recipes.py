@@ -536,7 +536,6 @@ def test_gb300_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
         assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
         assert cfg.model.moe_use_grouped_tensor is True
         assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-        assert cfg.env_vars["MBRIDGE_ONE_GPU_PER_RANK"] == 1
         assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
     else:
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"

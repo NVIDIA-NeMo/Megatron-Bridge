@@ -172,7 +172,6 @@ def test_deepseek_v3_gb300_large_scale_matches_final_r050_config() -> None:
     assert cfg.model.fp8_output_proj is True
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-    assert cfg.env_vars["MBRIDGE_ONE_GPU_PER_RANK"] == 1
     assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
 

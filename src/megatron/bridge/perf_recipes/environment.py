@@ -25,19 +25,12 @@ COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
     "TORCH_NCCL_HIGH_PRIORITY": 1,
 }
 
-# Marker read by scripts/performance/bootstrap.py: expose only this rank's GPU to the training
-# process (CUDA_VISIBLE_DEVICES=<local rank>); the flat runner then selects device 0
-# (dist.external_gpu_device_mapping). The NCCL EP buffers are allocated with ncclMemAlloc, which maps
-# them into every GPU visible to the process; on Grace+Blackwell nodes (ATS) each mapped GPU adds
-# ~11 us to every munmap of the process, i.e. host-side overhead on every training step.
-ONE_GPU_PER_RANK_ENV = "MBRIDGE_ONE_GPU_PER_RANK"
-
 # Process settings for the NCCL EP flex dispatcher backend on GB300 recipes; splat into the recipe's
-# inline ``env_vars`` next to ``_enable_ncclep``.
+# inline ``env_vars`` next to ``_enable_ncclep``. (The one-GPU-per-rank launch fix for NCCL EP needs
+# no env var: scripts/performance/bootstrap.py keys it on the recipe's dispatcher backend.)
 NCCL_EP_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
     # Hierarchical-topology pull mode of the NCCL EP plugin (faster than the default push mode on NVL72).
     "NCCL_EP_HT_EM_PULL_PUSH": 1,
-    ONE_GPU_PER_RANK_ENV: 1,
 }
 
 # HybridEP tuning, read by DeepEP's HybridEPBuffer. Megatron Core only builds that buffer when
