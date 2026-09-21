@@ -72,39 +72,10 @@ H100/GB200 variants and legacy aliases) accept the same source options:
 from megatron.bridge.recipes.nemotronh import nemotron_3_super_sft_config
 
 cfg = nemotron_3_super_sft_config(
-    hf_path="nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth",
+    hf_path="nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
     text_only=True,
     revision="<checkpoint-commit>",
     trust_remote_code=True,
 )
 cfg.checkpoint.pretrained_checkpoint = "/workspace/super-text/iter_0000000"
 ```
-
-The source is selected before the recipe applies its training settings. No
-optimizer, precision, routing, loss, schedule, parallelism, or PEFT policy is
-copied or changed. Supplying `hf_path` also selects that checkpoint's tokenizer;
-omitting it preserves the existing Super recipe defaults. `perf_recipes/` is
-unchanged.
-
-## Verification contract
-
-"Same behavior as Super" means the same architecture, parameter namespaces,
-conversion semantics and recipe policy for the selected language config. It
-does not mean identical outputs to a differently trained Super checkpoint.
-
-Required runtime gates before claiming full verification:
-
-1. Exact language and MTP HF→Megatron→HF round-trip, including TP/PP/EP layouts;
-   no missing, unexpected, or uninitialized language parameters.
-2. Text logits versus the source HF language submodule using identical weights,
-   tokenizer and prompts: cosine similarity at least 0.99 and matching next
-   token; separately record deterministic generation.
-3. Matched short pretrain/SFT runs from the text view versus a standalone text
-   reference with the same weights. Check main/MTP losses, gradients and optimizer
-   updates; save/resume must preserve both prediction depths and shared weights.
-4. Post-SFT export/reload and PEFT merge/export/reload, using unchanged Super
-   recipes. Check parameter coverage and inference again after training.
-
-CPU unit checks cover lazy selection, strict language/MTP coverage, streaming
-export and exact toy HF text-logit preservation. These do not establish MCore
-conversion, distributed execution, MTP training, or real-checkpoint parity.
