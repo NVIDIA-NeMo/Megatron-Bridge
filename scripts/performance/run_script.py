@@ -59,7 +59,7 @@ def _dump_env_rank0() -> None:
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply Hydra and argparse overrides to a flat performance recipe."""
     from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
-    from utils.utils import explicit_environment_override_names
+    from utils.utils import apply_target_topology_environment, explicit_environment_override_names
 
     if not hasattr(recipe, "env_vars"):
         logger.warning(
@@ -68,6 +68,7 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
         )
         recipe.env_vars = {}
     base_env_vars = dict(recipe.env_vars)
+    base_expert_model_parallel_size = getattr(recipe.model, "expert_model_parallel_size", 1)
     base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
     comm_overlap = getattr(recipe, "comm_overlap", None)
     base_moe_a2a_overlap = bool(
@@ -85,13 +86,20 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
             recipe.env_vars[name] = hydra_env_vars[name]
         else:
             recipe.env_vars.pop(name, None)
-    return _apply_flat_cli_environment_compatibility(
+    recipe = _apply_flat_cli_environment_compatibility(
         recipe,
         args,
         base_dispatcher_backend=base_dispatcher_backend,
         base_moe_a2a_overlap=base_moe_a2a_overlap,
         protected_env_names=protected_env_names,
     )
+    if getattr(recipe.model, "expert_model_parallel_size", 1) != base_expert_model_parallel_size:
+        apply_target_topology_environment(
+            recipe,
+            gpu=args.gpu,
+            protected_env_names=protected_env_names,
+        )
+    return recipe
 
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):

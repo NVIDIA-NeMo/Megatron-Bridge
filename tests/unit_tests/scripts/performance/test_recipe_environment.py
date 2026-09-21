@@ -518,6 +518,65 @@ def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
     assert calls == [("overrides", base_recipe, cli_overrides, args)]
 
 
+def test_flat_hydra_ep_override_updates_hybridep_topology_environment(monkeypatch):
+    """A model EP override must update the environment consumed by HybridEP."""
+    recipe = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        },
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=32,
+            moe_flex_dispatcher_backend="hybridep",
+        ),
+        comm_overlap=None,
+    )
+    args = SimpleNamespace(
+        gpu="vr200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="qwen",
+        model_recipe_name="qwen3_235b_a22b",
+        task="pretrain",
+    )
+
+    def apply_hydra(config, overrides):
+        assert overrides == ["model.expert_model_parallel_size=64"]
+        config.model.expert_model_parallel_size = 64
+        return config
+
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_cli_overrides = apply_hydra
+    override_utils.set_user_overrides = lambda config, _args: config
+    override_utils._apply_flat_cli_environment_compatibility = lambda config, *_args, **_kwargs: config
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+    environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
+    environment_module.HYBRID_EP_ENV_NAMES = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes", types.ModuleType("megatron.bridge.perf_recipes"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes.environment", environment_module)
+
+    result = run_script._apply_perf_recipe_overrides(
+        recipe,
+        ["model.expert_model_parallel_size=64"],
+        args,
+    )
+
+    assert result.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+
+
 def test_flat_deterministic_environment_reaches_training_exec(monkeypatch):
     """The flat training interpreter must start with deterministic process values."""
     from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
