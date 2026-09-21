@@ -194,12 +194,14 @@ class Qwen3VLGPTModel(GPTModel):
         """
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
+        mtp_input_mask = None
         if mtp_kwargs is not None:
             if labels is not None:
                 raise ValueError("Pass either main-loss labels or mtp_kwargs, not both")
-            if set(mtp_kwargs) != {"mtp_labels"}:
-                raise ValueError("mtp_kwargs must contain only mtp_labels")
+            if set(mtp_kwargs) != {"mtp_labels", "mtp_input_mask"}:
+                raise ValueError("mtp_kwargs must contain mtp_labels and mtp_input_mask")
             labels = mtp_kwargs["mtp_labels"]
+            mtp_input_mask = mtp_kwargs["mtp_input_mask"]
 
             # MCore needs labels to compute its auxiliary MTP loss. Relax computes
             # the main SFT loss externally from logits, so bypass the internal CE.
@@ -307,6 +309,7 @@ class Qwen3VLGPTModel(GPTModel):
             inference_context=inference_context,
             output_processor=output_processor,
             output_processor_context=output_processor_context,
+            mtp_input_mask=mtp_input_mask,
             **({"mhc_multistream": mhc_multistream} if mhc_multistream is not None else {}),
         )
 

@@ -1075,6 +1075,71 @@ class TestQwen3VLModel:
         assert torch.equal(local_loss_mask, loss_mask.index_select(1, cp_index))
         assert torch.equal(output, torch.ones(1))
 
+    def test_forward_builds_mtp_mask_after_packed_cp_partition(self, monkeypatch):
+        """The MTP conditioning mask follows the same packed CP slice as input IDs."""
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+        cp_index = torch.tensor([0, 3, 4, 7], dtype=torch.long)
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_packed_seq_cp_partition_indices",
+            lambda *args, **kwargs: cp_index,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.last_kwargs = None
+
+            def __call__(self, **kwargs):
+                self.last_kwargs = kwargs
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(sequence_parallel=False),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 2),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                pp=object(),
+            ),
+            language_model=language_model,
+            image_token_id=1,
+            video_token_id=2,
+            use_dist_train=False,
+        )
+        input_ids = torch.tensor([[1, 11, 12, 13, 2, 14, 15, 16]])
+        position_ids = torch.arange(8).view(1, 1, 8).expand(3, -1, -1).clone()
+        mtp_labels = input_ids.roll(-1, dims=-1)
+        packed_seq_params = _make_packed_seq_params([0, 8])
+
+        output = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            packed_seq_params=packed_seq_params,
+            mtp_kwargs={"mtp_labels": mtp_labels},
+        )
+
+        local_ids = input_ids.index_select(1, cp_index)
+        assert torch.equal(output, torch.ones(1))
+        assert language_model.last_kwargs is not None
+        assert torch.equal(language_model.last_kwargs["input_ids"], local_ids)
+        assert torch.equal(
+            language_model.last_kwargs["mtp_kwargs"]["mtp_input_mask"],
+            (local_ids != model.image_token_id) & (local_ids != model.video_token_id),
+        )
+        assert torch.equal(
+            language_model.last_kwargs["mtp_kwargs"]["mtp_labels"],
+            mtp_labels.index_select(1, cp_index),
+        )
+
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(120)
     def test_forward_non_dist_train(self, hf_config):

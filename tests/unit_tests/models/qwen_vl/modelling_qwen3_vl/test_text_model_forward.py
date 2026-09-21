@@ -42,6 +42,7 @@ class _DummyDecoder:
 class _DummyModel:
     def __init__(self):
         self.decoder = _DummyDecoder()
+        self.config = SimpleNamespace(ple_layer_ids=[], sequence_parallel=False)
         self.mtp_process = False
         self.preprocess_output = None
         self.preprocess_kwargs = None
@@ -115,6 +116,25 @@ def test_forward_forwards_output_processor_hook():
     assert dummy.postprocess_args["output_processor_context"] is output_processor_context
 
 
+def test_forward_passes_mtp_conditioning_mask_to_postprocess():
+    """MTP forwards the mask that excludes visual placeholder embeddings."""
+    dummy = _DummyModel()
+    labels = torch.tensor([[2, 3, 4, 0]])
+    mtp_input_mask = torch.tensor([[True, False, True, True]])
+
+    output = Qwen3VLGPTModel.forward(
+        dummy,
+        input_ids=torch.tensor([[1, 2, 3, 0]]),
+        position_ids=torch.arange(4).unsqueeze(0),
+        attention_mask=torch.ones((1, 4), dtype=torch.long),
+        mtp_kwargs={"mtp_labels": labels, "mtp_input_mask": mtp_input_mask},
+    )
+
+    assert output == "ok"
+    assert dummy.postprocess_args["labels"] is labels
+    assert dummy.postprocess_args["mtp_input_mask"] is mtp_input_mask
+
+
 def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
     """The MTP embedding wrapper must not fall back to global tensor-parallel state."""
     expected_group = object()
@@ -138,7 +158,7 @@ def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
     class _DummyMTPModel(_DummyModel):
         def __init__(self):
             super().__init__()
-            self.config = SimpleNamespace(sequence_parallel=True)
+            self.config = SimpleNamespace(ple_layer_ids=[], sequence_parallel=True)
             self.embedding = _DummyEmbedding()
             self.mtp_process = True
             self.pg_collection = SimpleNamespace(tp=expected_group)
@@ -296,7 +316,7 @@ def test_mtp_postprocess_receives_padded_boundaries():
     class _DummyMTPModel(_DummyModel):
         def __init__(self):
             super().__init__()
-            self.config = SimpleNamespace(sequence_parallel=False)
+            self.config = SimpleNamespace(ple_layer_ids=[], sequence_parallel=False)
             self.mtp_process = True
 
     dummy = _DummyMTPModel()

@@ -1040,6 +1040,11 @@ class Qwen3VLModel(MegatronModule):
                     cp_rank=cp_rank,
                     full_sequence_length=full_sequence_length,
                 )
+            if lm_input_ids is None:
+                raise ValueError("Qwen3-VL MTP requires input_ids to build its conditioning mask")
+            mtp_kwargs["mtp_input_mask"] = (lm_input_ids != self.image_token_id) & (
+                lm_input_ids != self.video_token_id
+            )
             kwargs["mtp_kwargs"] = mtp_kwargs
 
         output = self.language_model(
