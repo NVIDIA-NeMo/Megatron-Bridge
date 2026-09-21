@@ -39,9 +39,10 @@ The shared GLM-5/5.1/5.2/5.3 bridge constructs `HybridModel` through
 `GLM5ModelProvider`. The outer language model is Core's native `HybridModel`;
 GLM-specific runtime adaptations are supplied through the stack specification.
 Each HF block becomes a `D-` (dense) or `DE` (MoE) pair;
-78 HF blocks therefore become 156 physical Hybrid layers. Core's native
-`DSAttention` is used directly; the stack translates the HF index-sharing cadence
-into physical layer coordinates on private per-layer config copies. HF export retains the
+78 HF blocks therefore become 156 physical Hybrid layers. A thin `GLMDSAttention`
+subclass reads the per-forward index-sharing state from a context variable owned by
+the GLM stage; the stack translates the HF index-sharing cadence into physical layer
+coordinates on private per-layer config copies. HF export retains the
 original layer count, and MTP uses a separate `/DE` pattern when enabled.
 
 Import the pinned HF checkpoint into a **new** Hybrid checkpoint directory.
