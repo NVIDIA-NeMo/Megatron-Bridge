@@ -212,6 +212,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         | None = None,
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+        use_layer_wise_distributed_optimizer: bool = False,
         pg_collection: ProcessGroupCollection | None = None,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
@@ -302,6 +303,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             init_model_with_meta_device=init_model_with_meta_device,
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
             pg_collection=pg_collection,
         )
 
@@ -587,6 +589,7 @@ def get_model(
     ]
     | None = None,
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
+    use_layer_wise_distributed_optimizer: bool = False,
     *,
     pg_collection: ProcessGroupCollection,
 ) -> list[MegatronModule]:
@@ -715,6 +718,7 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
             pg_collection=pg_collection,
         )
 

@@ -12,7 +12,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 def _minimal_pro_provider() -> MLAModelProvider:
     provider = MLAModelProvider(
         # ---- 基础架构 ----
-        num_layers=7,
+        num_layers=8,
         hidden_size=2048, 
         ffn_hidden_size=2048,
         num_attention_heads=8,
@@ -67,7 +67,7 @@ def _minimal_pro_provider() -> MLAModelProvider:
     provider.mscale_all_dim = 1.0
 
     # ---- CSA ----
-    provider.csa_compress_ratios = [0,0,0,4,128,4,128]
+    provider.csa_compress_ratios = [0,0,0,4,128,4,128,4]
     provider.csa_window_size = 128
     provider.dsa_indexer_n_heads = 64
     provider.dsa_indexer_head_dim = 128
@@ -100,7 +100,7 @@ def _minimal_pro_provider() -> MLAModelProvider:
     provider.moe_n_hash_layers = 0
     provider.actual_vocab_size = 129280
     provider.activation_func_clamp_value = 10.0
-    provider.moe_layer_freq = [1] * 7
+    provider.moe_layer_freq = [1] * 8
     provider.moe_shared_expert_intermediate_size = 2048
 
     # ---- Others ----
@@ -122,11 +122,11 @@ def deepseek_v4_pro_smoketest_1gpu_config() -> ConfigContainer:
     cfg.model = _minimal_pro_provider()
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.seq_length = 512
@@ -148,6 +148,10 @@ def deepseek_v4_pro_smoketest_1gpu_config() -> ConfigContainer:
 
     cfg.model.recompute_granularity = None
     cfg.model.cuda_graph_impl = "none"
+
+    cfg.optimizer.optimizer = 'muon'
+    cfg.optimizer.use_layer_wise_distributed_optimizer = True
+    cfg.optimizer.use_layer_wise_param_layout = True
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None

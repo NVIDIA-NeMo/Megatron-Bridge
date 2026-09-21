@@ -2160,6 +2160,15 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
         config.ddp.use_distributed_optimizer = True
         config.optimizer.use_distributed_optimizer = True
 
+    if config.optimizer.use_layer_wise_param_layout != config.ddp.use_layer_wise_param_layout:
+        warn_rank_0(
+            f"use_layer_wise_param_layout settings were not in sync: "
+            f"ddp.use_layer_wise_param_layout={config.ddp.use_layer_wise_param_layout}, "
+            f"optimizer.use_layer_wise_param_layout={config.optimizer.use_layer_wise_param_layout}. "
+            f"Automatically syncing from optimizer to ddp."
+        )
+        config.ddp.use_layer_wise_param_layout = config.optimizer.use_layer_wise_param_layout
+
     ddp_overlap = config.ddp.overlap_param_gather
     optimizer_overlap = config.optimizer.overlap_param_gather
 
