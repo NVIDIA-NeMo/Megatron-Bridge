@@ -453,9 +453,9 @@ class SafeTensorsStateSource(StateSource):
     def __init__(
         self,
         path: str | Path,
+        revision: str | None = None,
         *,
         key_prefix: str | None = None,
-        revision: str | None = None,
         hub_kwargs: dict[str, object] | None = None,
     ) -> None:
         if key_prefix is not None and (not key_prefix or not key_prefix.endswith(".")):
@@ -464,7 +464,7 @@ class SafeTensorsStateSource(StateSource):
         self.key_prefix = key_prefix
         self.revision = revision
         self.hub_kwargs = dict(hub_kwargs or {})
-        self._lazy_hub = key_prefix is not None or revision is not None or hub_kwargs is not None
+        self._lazy_hub = key_prefix is not None or hub_kwargs is not None
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
@@ -506,7 +506,7 @@ class SafeTensorsStateSource(StateSource):
                     index = self._download_file("model.safetensors")
                 self._resolved_path_cache = index.parent
             else:
-                self._resolved_path_cache = self._resolve_path(self.model_name_or_path)
+                self._resolved_path_cache = self._resolve_path(self.model_name_or_path, revision=self.revision)
         return self._resolved_path_cache
 
     def _download_file(self, filename: str) -> Path:
@@ -573,11 +573,12 @@ class SafeTensorsStateSource(StateSource):
         return self._key_to_filename_map_cache
 
     @staticmethod
-    def _resolve_path(model_name_or_path: Union[str, Path]) -> Path:
+    def _resolve_path(model_name_or_path: Union[str, Path], revision: Optional[str] = None) -> Path:
         """
         Resolves a model name or path to a local directory.
         If the path is not a local directory, it is treated as a Hugging
-        Face Hub model ID, and the corresponding files are downloaded.
+        Face Hub model ID, and the corresponding files are downloaded at
+        `revision` (defaulting to the repository's main branch).
         """
         local_path = Path(model_name_or_path)
         if local_path.is_dir():
@@ -585,6 +586,7 @@ class SafeTensorsStateSource(StateSource):
 
         try:
             from huggingface_hub import snapshot_download
+            from huggingface_hub.constants import HF_HUB_OFFLINE
             from huggingface_hub.utils import HfHubHTTPError
 
             # Not a local directory, so we assume it's a model ID
@@ -592,6 +594,8 @@ class SafeTensorsStateSource(StateSource):
             return Path(
                 snapshot_download(
                     repo_id=str(model_name_or_path),
+                    revision=revision,
+                    local_files_only=HF_HUB_OFFLINE,
                     allow_patterns=[
                         "*.safetensors",
                         "model.safetensors.index.json",

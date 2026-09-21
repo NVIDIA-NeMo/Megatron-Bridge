@@ -18,6 +18,8 @@ pytestmark = pytest.mark.unit
 # Audited from recipe-owned GBS, the resolved card sequence or pack length, and
 # the public command topology: (sequence_or_pack_length, global_batch_size, GPUs).
 TRAINING_THROUGHPUT_INPUTS = {
+    ("bagel", "pretrain", "H100"): (36864, 8, 8),
+    ("bagel", "pretrain_fsdp", "H100"): (36864, 32, 32),
     ("deepseek-v3", "pretrain_performance", "H100"): (4096, 16384, 1024),
     ("deepseek-v3", "pretrain_performance", "GB200"): (4096, 4096, 256),
     ("deepseek-v3", "pretrain_performance", "GB300"): (4096, 4096, 256),
@@ -94,14 +96,6 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3.5-lightning", "checkpoint_resume", "GB200"): (8192, 512, 8),
     ("nemotron-3.5-lightning", "pretrain_performance", "H100"): (8192, 512, 16),
     ("nemotron-3.5-lightning", "pretrain_performance", "GB200"): (8192, 512, 8),
-    ("nemotron-3.5-super-vl-120b-a12b", "pretrain", "H100"): (4096, 1280, 64),
-    ("nemotron-3.5-super-vl-120b-a12b", "pretrain", "GB200"): (8192, 512, 64),
-    ("nemotron-3.5-super-vl-120b-a12b", "sft", "H100"): (4096, 1280, 64),
-    ("nemotron-3.5-super-vl-120b-a12b", "sft", "GB200"): (4096, 1280, 64),
-    ("nemotron-3.5-super-vl-120b-a12b", "peft", "H100"): (4096, 16, 16),
-    ("nemotron-3.5-super-vl-120b-a12b", "peft", "GB200"): (4096, 16, 16),
-    ("nemotron-3.5-super-vl-120b-a12b", "checkpoint_resume", "H100"): (4096, 1280, 64),
-    ("nemotron-3.5-super-vl-120b-a12b", "checkpoint_resume", "GB200"): (8192, 512, 64),
     ("qwen3-30b-a3b", "pretrain", "H100"): (4096, 1024, 16),
     ("qwen3-30b-a3b", "pretrain", "GB200"): (4096, 512, 8),
     ("qwen3-30b-a3b", "sft", "H100"): (2048, 32, 16),

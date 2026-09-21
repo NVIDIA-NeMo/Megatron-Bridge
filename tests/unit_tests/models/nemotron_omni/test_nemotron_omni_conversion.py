@@ -26,8 +26,9 @@ from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, get_model_bridge
+from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
@@ -540,6 +541,27 @@ def test_nemotron_omni_export_preserves_source_only_buffers():
         assert torch.equal(exported_buffers[name], source_tensor)
 
 
+def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sourceless():
+    bridge = NemotronOmniBridge()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    source_tensors = {
+        name: torch.full((2,), index, dtype=torch.float32) for index, name in enumerate(bridge._HF_PASSTHROUGH_KEYS)
+    }
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = ["language_model.weight", *source_tensors]
+    hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
+    converted = HFSourcedWeightTuple("language_model.weight", torch.ones(1), ("decoder.weight",))
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])) as stream:
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained, with_megatron_names=True))
+
+    assert stream.call_args.kwargs["with_megatron_names"] is True
+    assert exported[0] == converted
+    assert all(type(item) is HFSourcedWeightTuple for item in exported[1:])
+    assert {item.param_name for item in exported[1:]} == set(source_tensors)
+    assert all(item.megatron_param_names == () and item.megatron_param_name is None for item in exported[1:])
+
+
 def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
     modeling_path = tmp_path / "modeling.py"
     modeling_path.write_text("from .configuration import NemotronOmniConfig\n")
@@ -594,6 +616,48 @@ def test_nemotron_35_super_vl_export_closes_summary_idxs_buffer(tmp_path):
 def test_nemotron_35_super_vl_export_requires_weight_index(tmp_path):
     with pytest.raises(FileNotFoundError, match="missing its weight index"):
         Nemotron35SuperVLBridge().postprocess_hf_export_weights(tmp_path)
+
+
+@pytest.mark.parametrize("config_only", [False, True])
+@pytest.mark.parametrize("omit_learned_weight", [False, True])
+def test_nemotron_35_super_vl_strict_reexport_preserves_summary_buffer(tmp_path, config_only, omit_learned_weight):
+    bridge = Nemotron35SuperVLBridge()
+    first_export = tmp_path / "first-export"
+    first_export.mkdir()
+    learned_key = "language_model.weight"
+    learned_weight = torch.ones(1)
+    save_file({learned_key: learned_weight}, first_export / "model.safetensors")
+    (first_export / "config.json").write_text(json.dumps({"vision_config": {"summary_idxs": [0, 1]}}))
+    (first_export / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {"total_size": 4}, "weight_map": {learned_key: "model.safetensors"}})
+    )
+    bridge.postprocess_hf_export_weights(first_export)
+
+    # Use the completed first export as the next source, including its newly
+    # indexed summary buffer. Exercise the real stream and strict shard writer.
+    source = SafeTensorsStateSource(first_export)
+    if config_only:
+        hf_pretrained = PretrainedConfig()
+        hf_pretrained.name_or_path = str(first_export)
+    else:
+        hf_pretrained = Mock(spec=PreTrainedCausalLM)
+        hf_pretrained.state = StateDict(source)
+    converted = [] if omit_learned_weight else [HFWeightTuple(learned_key, learned_weight)]
+    second_export = tmp_path / "second-export"
+
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(converted)):
+        exported = bridge.stream_weights_megatron_to_hf([], hf_pretrained)
+        if omit_learned_weight:
+            with pytest.raises(RuntimeError, match="1 tensors from the original checkpoint were not written"):
+                source.save_generator(exported, second_export, strict=True)
+            return
+        source.save_generator(exported, second_export, strict=True)
+
+    reexported = StateDict(SafeTensorsStateSource(second_export))
+    assert set(reexported) == {learned_key, "vision_model.summary_idxs"}
+    assert torch.equal(reexported[learned_key], learned_weight)
+    assert torch.equal(reexported["vision_model.summary_idxs"], torch.tensor([0, 1], dtype=torch.long))
+    assert json.loads((second_export / "model.safetensors.index.json").read_text())["metadata"]["total_size"] == 20
 
 
 def test_nemotron_omni_config_only_export_preserves_source_only_buffers(tmp_path):

@@ -44,7 +44,12 @@ from megatron.core.activations import squared_relu
 from safetensors.torch import save_file
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import (
+    HFSourcedWeightTuple,
+    HFWeightTuple,
+    MegatronModelBridge,
+    WeightConversionTask,
+)
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ReplicatedMapping,
@@ -331,7 +336,8 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         conversion_tasks: list[WeightConversionTask] | None = None,
         merge_adapter_weights: bool = True,
         weight_dtype: torch.dtype | None = None,
-    ) -> Iterable[HFWeightTuple]:
+        with_megatron_names: bool = False,
+    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
         """Export model weights and preserve immutable source-only buffers."""
         yield from super().stream_weights_megatron_to_hf(
             megatron_model,
@@ -341,7 +347,11 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
         )
+        # Passthrough tensors are copied straight from the HF checkpoint and have no
+        # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
+        passthrough_sources = () if with_megatron_names else None
 
         state = getattr(hf_pretrained, "state", None)
         source = getattr(state, "source", None)
@@ -362,7 +372,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             # refit packs it into one buffer) cannot mix devices.
             if not cpu and tensor.device.type == "cpu" and torch.cuda.is_available():
                 tensor = tensor.to(device=torch.cuda.current_device())
-            yield from HFWeightTuple(name, tensor).iter_finalized(cpu=cpu)
+            yield from HFWeightTuple(name, tensor).iter_finalized(cpu=cpu, megatron_param_names=passthrough_sources)
 
 
 @MegatronModelBridge.register_bridge(
@@ -375,6 +385,9 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
 
     _HF_SUMMARY_IDXS_BUFFER = "vision_model.summary_idxs"
+    # A previous export includes this derived buffer in its source index. Keep
+    # it in the stream so strict re-export succeeds before postprocessing runs.
+    _HF_PASSTHROUGH_KEYS = (*NemotronOmniBridge._HF_PASSTHROUGH_KEYS, _HF_SUMMARY_IDXS_BUFFER)
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
 

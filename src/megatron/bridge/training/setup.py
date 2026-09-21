@@ -27,6 +27,10 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+    FullyShardedDataParallelV1,
+    FullyShardedDataParallelV2,
+)
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -34,6 +38,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.multi_token_prediction import get_mtp_ranks
+from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
@@ -58,7 +63,6 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -473,7 +477,8 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, HybridModelConfig)) else cfg.model,
+        # Providers may copy their configuration while constructing the model.
+        get_model_config(model[0]),
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
@@ -632,10 +637,19 @@ def _update_model_config_funcs(
     peft_enabled: bool = False,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
-    if isinstance(model[0], (DistributedDataParallel, *MEGATRON_FSDP_TYPES)) and ddp_config.overlap_grad_reduce:
+    # DDP and MFSDP v1 only reduce during backward when overlap_grad_reduce is on, so
+    # without it there is nothing to suppress. MFSDP v2 always reduces in backward, so
+    # no_sync is how the schedule marks a non-final microbatch -- a correctness
+    # requirement, not an overlap optimization (mirrors Megatron-LM #7186). Without it,
+    # every backward finalizes the DP-outer axis and only the last microbatch's gradient
+    # reaches the optimizer.
+    if isinstance(model[0], FullyShardedDataParallelV2) or (
+        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1))
+        and ddp_config.overlap_grad_reduce
+    ):
         assert model_config.no_sync_func is None, (
-            "When overlap_grad_reduce is True, config.no_sync_func must be None; "
-            "a custom no_sync_func is not supported when overlapping grad-reduce"
+            "config.no_sync_func must be None when the wrapper supplies its own no_sync "
+            "(overlap_grad_reduce, or Megatron-FSDP v2); a custom no_sync_func is not supported"
         )
         model_config.no_sync_func = [model_chunk.no_sync for model_chunk in model]
         if len(model) == 1:

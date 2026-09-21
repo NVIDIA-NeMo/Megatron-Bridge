@@ -301,7 +301,18 @@ def _nemotron_3_super_pretrain_64gpu_h100_bf16_config(
     cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config(
         hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
     )
-    return _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
+    cfg = _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
 
 
 # =============================================================================

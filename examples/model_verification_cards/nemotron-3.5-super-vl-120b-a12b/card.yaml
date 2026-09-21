@@ -9,28 +9,26 @@ summary: >
   The model ID is the release-facing name. Recorded revisions and results
   refer to historical development checkpoints, not verification of the release
   repository; the displayed commands require an available matching checkpoint.
-  The recorded results below used one MTP prediction depth. Verification is
-  being refreshed for the corrected two-depth shared-block configuration;
-  these historical results do not verify that new training objective.
-  They also predate the current FP32 optimizer-state and weight-decay defaults
-  and language-only PEFT adapter targets. Each verified status below applies
-  only to its recorded historical Bridge commit, not the current recipes.
-  Real-data BF16 pretraining verification on 64 H100s and 64 GB200s
-  uses DataComp image-caption samples, natural dropless expert routing, and a
-  learned vision-pretrained checkpoint; both 120-step runs and their final
-  checkpoints are verified. The H100 and GB200 workloads use different
-  sequence and global batch sizes, so their losses and throughput are not
-  convergence-comparable. The
-  pinned eight-GPU BF16 import and distributed export are verified:
-  the saved Megatron checkpoint reloaded for export, all 43,078 tensors matched
-  the immutable HF source bitwise, and the exported package reloaded natively
-  through Transformers on eight H100s. Model-level deterministic generation
-  remains pending. Post-SFT distributed export and
-  dynamic-image inference are verified on four GB200s. SFT, PEFT, and
-  checkpoint resume are verified on both H100 and GB200. The training recipes
+  Historical training commands, metrics, checkpoint and reload observations
+  are retained below, but pretrain, SFT, PEFT and checkpoint-resume correctness
+  are unverified on both H100 and GB200. The historical shared-provider config
+  copy could omit training finalization callbacks, so finite losses and
+  matching resume losses do not establish synchronized, token-normalized
+  updates. Recipe-specific reverification after the callback fix is pending.
+  Those runs also used one MTP prediction depth and predate the current
+  two-depth shared-block objective, FP32 optimizer-state and weight-decay
+  defaults, and language-only PEFT adapter targets. Their metrics are not
+  corrected-training convergence or throughput baselines. The H100 and GB200
+  workloads also used different sequence and global batch sizes.
+  The pinned eight-GPU BF16 import and distributed export remain verified:
+  all 43,078 tensors matched the immutable HF source bitwise, and the exported
+  package reloaded natively through Transformers on eight H100s. This
+  conversion evidence is independent of training finalization. Model-level
+  deterministic generation remains pending. Historical post-SFT export and
+  dynamic-image inference demonstrate artifact execution only; their
+  dependent verification awaits a corrected SFT checkpoint. The recipes
   reuse the Nemotron Omni image/video stack without audio and retain the
-  checkpoint's separate temporal embedder. The current Bridge represents one
-  serialized HF attention+MoE block as two shared MTP prediction depths.
+  checkpoint's separate temporal embedder.
 verification_index:
   model_level:
     verified:
@@ -43,11 +41,9 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain, sft, peft, checkpoint_resume]
-      unverified: [sft_export_inference, sft_long_context]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
-      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
-      unverified: [sft_long_context]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
   hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
@@ -141,9 +137,9 @@ items:
 
   pretrain:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a  # pragma: allowlist secret
+      # Historical execution: Bridge 1c459be13a9a229de15a90de8bcad0bc21ad767a on 2026-08-29.  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -163,14 +159,23 @@ items:
         model.recompute_num_layers=1 model.recompute_modules=null
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
-      last_verified: 2026-08-29
+      last_verified: null
       metrics:
-        initial_loss: 2.999004
-        final_loss: 2.104368
-        last_10_steps_step_time_ms_avg: 49743.2
-        last_10_steps_model_tflops_per_gpu_avg: 130.34
-        last_10_steps_tokens_per_second_per_gpu_avg: 1646.858
+        # Historical-only initial_loss: 2.999004
+        initial_loss: null
+        # Historical-only final_loss: 2.104368
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 49743.2
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 130.34
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 1646.858
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        Historical-only observations recorded on 2026-08-29. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         Exactly 64 H100s completed all 120 optimizer steps from the learned
         vision-pretrained checkpoint on DataComp image-caption samples at
         TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. Natural dropless routing and
@@ -182,9 +187,9 @@ items:
         shards and 32 Energon data-parallel states.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522  # pragma: allowlist secret
+      # Historical execution: Bridge a3fc1e2e6b970b17cfea247ad1f7b840be67e522 on 2026-08-28.  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
         cuda_graph:
@@ -203,14 +208,23 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-pretrain-config/ConfigContainer.yaml
-      last_verified: 2026-08-28
+      last_verified: null
       metrics:
-        initial_loss: 3.062157
-        final_loss: 2.038754
-        last_10_steps_step_time_ms_avg: 20385.85
-        last_10_steps_model_tflops_per_gpu_avg: 257.33
-        last_10_steps_tokens_per_second_per_gpu_avg: 3214.779
+        # Historical-only initial_loss: 3.062157
+        initial_loss: null
+        # Historical-only final_loss: 2.038754
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 20385.85
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 257.33
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 3214.779
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        Historical-only observations recorded on 2026-08-28. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         On exactly 64 GB200s within one NVL72 domain, complete all 120 optimizer
         steps from the learned vision-pretrained checkpoint on DataComp
         image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS 512/1.
@@ -222,9 +236,9 @@ items:
 
   sft:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981  # pragma: allowlist secret
+      # Historical execution: Bridge 2f1c677ee0f948b3842a16ce052190557ed71981 on 2026-08-28.  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -244,14 +258,23 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-config/ConfigContainer.yaml
-      last_verified: 2026-08-28
+      last_verified: null
       metrics:
-        initial_loss: 5.412096
-        final_loss: 2.293077
-        last_10_steps_step_time_ms_avg: 30878.25
-        last_10_steps_model_tflops_per_gpu_avg: 209.98
-        last_10_steps_tokens_per_second_per_gpu_avg: 2653.0
+        # Historical-only initial_loss: 5.412096
+        initial_loss: null
+        # Historical-only final_loss: 2.293077
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 30878.25
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 209.98
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 2653.0
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        Historical-only observations recorded on 2026-08-28. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         Exactly 64 H100s completed 100 BF16 SFT optimizer steps from the
         immutable source checkpoint on 128,000 DataComp image-caption samples
         at TP1/PP2/CP1/EP32/ETP1 and GBS/MBS 1280/1. The shifted production
@@ -264,9 +287,9 @@ items:
         image-caption batching; it does not contain video samples.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981  # pragma: allowlist secret
+      # Historical execution: Bridge 2f1c677ee0f948b3842a16ce052190557ed71981 on 2026-08-29.  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
@@ -285,14 +308,23 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-config/ConfigContainer.yaml
-      last_verified: 2026-08-29
+      last_verified: null
       metrics:
-        initial_loss: 5.393576
-        final_loss: 2.303741
-        last_10_steps_step_time_ms_avg: 47924.55
-        last_10_steps_model_tflops_per_gpu_avg: 135.3
-        last_10_steps_tokens_per_second_per_gpu_avg: 1709.354
+        # Historical-only initial_loss: 5.393576
+        initial_loss: null
+        # Historical-only final_loss: 2.303741
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 47924.55
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 135.3
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 1709.354
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        Historical-only observations recorded on 2026-08-29. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         Exactly 64 GB200s within one NVL72 domain completed 100 BF16 SFT
         optimizer steps from the immutable source checkpoint on 128,000
         DataComp image-caption samples at TP2/PP1/CP1/EP64/ETP1 and GBS/MBS
@@ -335,9 +367,9 @@ items:
         count recorded under the 32-token maximum.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 215e20e596cb9fedb60fa3f8a7c4e8f618905aab  # pragma: allowlist secret
+      # Historical execution: Bridge 215e20e596cb9fedb60fa3f8a7c4e8f618905aab on 2026-08-30.  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -361,8 +393,12 @@ items:
           --max-new-tokens 32 --chat-template --separate-image-processing
           --trust-remote-code --device cuda --device-map balanced_low_0
           --dtype bfloat16
-      last_verified: 2026-08-30
+      last_verified: null
       expected_result: >
+        Historical-only artifact observations recorded on 2026-08-30. The
+        commands and export/reload/generation results do not establish correct
+        synchronized, token-normalized SFT updates. This dependent item awaits
+        export and inference from a newly validated SFT checkpoint.
         The step-100 full-SFT checkpoint exports as a native BF16 Transformers
         package with 43,079 indexed tensors. The post-weight-derived
         vision_model.summary_idxs tensor is stored as int64 [0, 1] in its own
@@ -407,9 +443,9 @@ items:
 
   peft:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: b1d2932f32839aa5244edbb342fefc4a88714068  # pragma: allowlist secret
+      # Historical execution: Bridge b1d2932f32839aa5244edbb342fefc4a88714068 on 2026-08-29.  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
@@ -427,14 +463,23 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-peft-config/ConfigContainer.yaml
-      last_verified: 2026-08-29
+      last_verified: null
       metrics:
-        initial_loss: 3.857522
-        final_loss: 2.157877
-        last_10_steps_step_time_ms_avg: 5427.27
-        last_10_steps_model_tflops_per_gpu_avg: 59.74
-        last_10_steps_tokens_per_second_per_gpu_avg: 754.707
+        # Historical-only initial_loss: 3.857522
+        initial_loss: null
+        # Historical-only final_loss: 2.157877
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 5427.27
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 59.74
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 754.707
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        Historical-only observations recorded on 2026-08-29. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         Exactly 16 H100s completed the rank-32, alpha-32, zero-dropout LoRA
         objective for 100 optimizer steps from the immutable source checkpoint
         on 1,600 DataComp image-caption samples at TP4/PP2/CP1/EP8/ETP1 and
@@ -449,9 +494,9 @@ items:
         current language-only adapter placement.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 2f1c677ee0f948b3842a16ce052190557ed71981  # pragma: allowlist secret
+      # Historical execution: Bridge 2f1c677ee0f948b3842a16ce052190557ed71981 on 2026-08-28.  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4
@@ -469,14 +514,23 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true logger.tensorboard_dir=null
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-peft-config/ConfigContainer.yaml
-      last_verified: 2026-08-28
+      last_verified: null
       metrics:
-        initial_loss: 5.485836
-        final_loss: 2.260179
-        last_10_steps_step_time_ms_avg: 3472.77
-        last_10_steps_model_tflops_per_gpu_avg: 93.55
-        last_10_steps_tokens_per_second_per_gpu_avg: 1179.462
+        # Historical-only initial_loss: 5.485836
+        initial_loss: null
+        # Historical-only final_loss: 2.260179
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 3472.77
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 93.55
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 1179.462
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
+        Historical-only observations recorded on 2026-08-28. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         Exactly 16 GB200s completed the rank-32, alpha-32, zero-dropout LoRA
         objective for 100 optimizer steps from the immutable source checkpoint
         on 1,600 DataComp image-caption samples at TP2/PP1/CP1/EP16/ETP1 and
@@ -492,9 +546,9 @@ items:
 
   checkpoint_resume:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 1c459be13a9a229de15a90de8bcad0bc21ad767a  # pragma: allowlist secret
+      # Historical execution: Bridge 1c459be13a9a229de15a90de8bcad0bc21ad767a on 2026-08-29.  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8
@@ -513,13 +567,19 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-resume-config/ConfigContainer.yaml
-      last_verified: 2026-08-29
+      last_verified: null
       metrics:
-        initial_loss: 2.064014
-        final_loss: 2.117677
-        last_10_steps_step_time_ms_avg: 50238.95
-        last_10_steps_model_tflops_per_gpu_avg: 129.05
-        last_10_steps_tokens_per_second_per_gpu_avg: 1630.607
+        # Historical-only initial_loss: 2.064014
+        initial_loss: null
+        # Historical-only final_loss: 2.117677
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 50238.95
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 129.05
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 1630.607
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      # Historical comparison only; not proof of correct training updates.
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [61, 120]
@@ -527,6 +587,10 @@ items:
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
       expected_result: >
+        Historical-only observations recorded on 2026-08-29. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         The distinct resume root loaded pretrain.H100 step 60 directly,
         restored optimizer, RNG, and Energon state, and completed exactly steps
         61--120 on the same 64-H100 topology and execution fingerprint. Every
@@ -537,9 +601,9 @@ items:
         model shards and 32 Energon states.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: a3fc1e2e6b970b17cfea247ad1f7b840be67e522  # pragma: allowlist secret
+      # Historical execution: Bridge a3fc1e2e6b970b17cfea247ad1f7b840be67e522 on 2026-08-28.  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4
@@ -553,13 +617,19 @@ items:
         logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-resume-config/ConfigContainer.yaml
-      last_verified: 2026-08-28
+      last_verified: null
       metrics:
-        initial_loss: 2.204572
-        final_loss: 2.040755
-        last_10_steps_step_time_ms_avg: 19945.03
-        last_10_steps_model_tflops_per_gpu_avg: 263.04
-        last_10_steps_tokens_per_second_per_gpu_avg: 3285.831
+        # Historical-only initial_loss: 2.204572
+        initial_loss: null
+        # Historical-only final_loss: 2.040755
+        final_loss: null
+        # Historical-only last_10_steps_step_time_ms_avg: 19945.03
+        last_10_steps_step_time_ms_avg: null
+        # Historical-only last_10_steps_model_tflops_per_gpu_avg: 263.04
+        last_10_steps_model_tflops_per_gpu_avg: null
+        # Historical-only last_10_steps_tokens_per_second_per_gpu_avg: 3285.831
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      # Historical comparison only; not proof of correct training updates.
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [61, 120]
@@ -567,6 +637,10 @@ items:
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
       expected_result: >
+        Historical-only observations recorded on 2026-08-28. The command,
+        metrics and artifact observations do not establish synchronized,
+        token-normalized training updates. Recipe-specific reverification
+        after the shared-provider callback fix is pending.
         The distinct resume root loaded pretrain.GB200 step 60 directly,
         restored optimizer, RNG, and Energon state, and completed exactly steps
         61--120 on the same 64-GB200 one-domain topology. Every resumed LM and
