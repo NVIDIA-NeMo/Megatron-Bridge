@@ -16,6 +16,7 @@
 
 import copy
 from contextlib import nullcontext
+from contextvars import ContextVar
 from typing import Any
 
 import torch
@@ -23,44 +24,51 @@ from megatron.core import tensor_parallel
 from megatron.core.models.hybrid.hybrid_block import HybridStack
 from megatron.core.models.hybrid.hybrid_layer_allocation import validate_segment_layers
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.experimental_attention_variant.dsa import DSAttention
 from megatron.core.transformer.experimental_attention_variant.dsa_layer_config import DSALayerConfig
 from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionLayer
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 
+# Per-forward DSA index-sharing state: (top-k holder, top-k length holder).
+_FORWARD_STATE: ContextVar[tuple[dict[int, torch.Tensor], dict[int, torch.Tensor]] | None] = ContextVar(
+    "glm_dsa_forward_state", default=None
+)
+
+
+class GLMDSAttention(DSAttention):
+    """Read index-sharing state from the enclosing GLM stage forward instead of carrier attributes."""
+
+    def _get_index_share_topk_holder(
+        self, packed_seq_params: PackedSeqParams | None, attention_mask: torch.Tensor | None = None
+    ) -> dict[int, torch.Tensor]:
+        state = _FORWARD_STATE.get()
+        if state is None:
+            return super()._get_index_share_topk_holder(packed_seq_params, attention_mask)
+        return state[0]
+
+    def _get_index_share_topk_length_holder(
+        self, packed_seq_params: PackedSeqParams | None, attention_mask: torch.Tensor | None = None
+    ) -> dict[int, torch.Tensor]:
+        state = _FORWARD_STATE.get()
+        if state is None:
+            return super()._get_index_share_topk_length_holder(packed_seq_params, attention_mask)
+        return state[1]
+
+
 def _forward_glm_stack(stack: HybridStack, hidden_states: Any, attention_mask: Any, **kwargs: Any) -> torch.Tensor:
     def run(value: torch.Tensor) -> torch.Tensor:
-        # Native DSA reads its cache from packed metadata, the attention mask,
-        # or the layer config (in that order). Bind one shared cache for this
-        # invocation to every possible carrier, then restore previous bindings.
-        # A whole-stage checkpoint invokes this again with fresh caches during
-        # replay, so outstanding microbatches never reuse each other's indices.
-        holders = {DSAttention._HOLDER_ATTR: {}, DSAttention._LENGTH_HOLDER_ATTR: {}}
-        carriers = [attention_mask, kwargs.get("packed_seq_params")]
-        carriers.extend((kwargs.get("packed_seq_params_by_layout") or {}).values())
-        carriers.extend(module.config for module in stack.modules() if isinstance(module, DSAttention))
-        missing = object()
-        previous = []
-        seen = set()
+        # One fresh state per stage invocation, including each checkpoint replay,
+        # so outstanding microbatches never reuse each other's top-k indices.
+        token = _FORWARD_STATE.set(({}, {}))
         try:
-            for carrier in carriers:
-                if carrier is None or id(carrier) in seen:
-                    continue
-                seen.add(id(carrier))
-                for name, holder in holders.items():
-                    previous.append((carrier, name, getattr(carrier, name, missing)))
-                    setattr(carrier, name, holder)
             return HybridStack.forward(stack, value, attention_mask, **kwargs)
         finally:
-            for carrier, name, old in reversed(previous):
-                if old is missing:
-                    delattr(carrier, name)
-                else:
-                    setattr(carrier, name, old)
+            _FORWARD_STATE.reset(token)
 
     if stack.config.recompute_granularity == "full" and stack.training:
-        # Replay each sharing group together with fresh native DSA cache bindings.
+        # Replay each sharing group together with fresh native DSA state.
         def recompute(value: torch.Tensor) -> torch.Tensor:
             original = stack.config
             stack.config = copy.copy(original)
@@ -96,7 +104,7 @@ class GLMHybridStack(HybridStack):
                 if isinstance(layer_config, DSALayerConfig) and (layer_config.dsa_indexer_topk_freq or 1) > 1:
                     # DSA occupies physical layers 1, 3, 5, ... in D-/DE pairs.
                     # Express the HF cadence in those coordinates without changing
-                    # provider/HF metadata or subclassing Core's DSAttention.
+                    # provider/HF metadata.
                     layer_config.dsa_indexer_topk_freq *= 2
                     layer_config.dsa_indexer_skip_topk_offset = (
                         2 * max(layer_config.dsa_indexer_skip_topk_offset or 0, 1) - 1
@@ -141,6 +149,8 @@ def glm_hybrid_stack_spec(config: Any) -> ModuleSpec:
     """Return a private GLM spec without mutating Core's shared specification."""
     spec = copy.deepcopy(hybrid_stack_spec)
     spec.module = GLMHybridStack
+    # The nested MTP stack is built from the same dsa_layer submodules.
+    spec.submodules.dsa_layer.submodules.self_attention.submodules.core_attention.module = GLMDSAttention
     for layer_spec in spec.submodules.mtp_block_spec.submodules.layer_specs:
         layer_spec.module = GLMHybridMTPLayer
     return spec
