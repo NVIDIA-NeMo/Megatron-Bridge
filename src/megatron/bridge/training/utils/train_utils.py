@@ -30,7 +30,7 @@ from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
-from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
+from megatron.core.utils import get_data_parallel_group_if_dtensor, get_pg_rank, to_local_if_dtensor
 
 from megatron.bridge.models.common.heads import (
     LinearForLastLayer as LinearForLastLayer,
@@ -237,20 +237,31 @@ def calc_params_l2_norm(
     sharded_moe_params_data = []
     data_parallel_group = None
     pg_collection = get_pg_collection(model)
+    gtp_rank = get_pg_rank(pg_collection.gtp_remat)
+    expert_gtp_group = pg_collection.expt_gtp_remat
+    expert_gtp_rank = get_pg_rank(expert_gtp_group)
 
     for model_chunk in model:
         for param in model_chunk.parameters():
             data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
+            is_gtp = getattr(param, "is_gtp_weight_remat", False)
             # MCore uses allreduce=False to mark parameters that use expert-parallel process groups.
             uses_expert_parallel_groups = not getattr(param, "allreduce", True)
-            is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(
+            # GTP parameters are unique across TP ranks. Other parameters still need TP filtering.
+            if not is_gtp and not param_is_not_tensor_parallel_duplicate(
                 param,
                 tp_group=pg_collection.tp,
                 expert_tp_group=pg_collection.expt_tp,
-            )
-            if not is_not_tp_duplicate:
+            ):
                 continue
-            assert is_not_tp_duplicate
+
+            # Parameters that are not GTP-sharded are replicated across the corresponding GTP axis.
+            if uses_expert_parallel_groups:
+                if not is_gtp and expert_gtp_rank != 0:
+                    continue
+            elif not is_gtp and gtp_rank != 0:
+                continue
+
             if uses_expert_parallel_groups:
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
@@ -359,6 +370,15 @@ def calc_params_l2_norm(
         group=pg_collection.expt_dp,
     )
     moe_norm_2 += sharded_moe_norm_2
+
+    # Expert model parallel excludes expert GTP. This reduction collects both unique GTP shards
+    # and ordinary expert parameters, which are counted only on expert GTP rank zero above.
+    if expert_gtp_group is not None:
+        torch.distributed.all_reduce(
+            moe_norm_2,
+            op=torch.distributed.ReduceOp.SUM,
+            group=expert_gtp_group,
+        )
 
     # Reduce norm across model parallel groups (dense and expert).
     # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
