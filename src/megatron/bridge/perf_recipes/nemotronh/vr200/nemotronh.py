@@ -18,19 +18,19 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
 )
 from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
+    _build_nemotron_3_nano_gb300_bf16,
     _build_nemotron_3_nano_gb300_mxfp8,
+    _build_nemotron_3_super_gb300_bf16,
     _build_nemotron_3_super_gb300_mxfp8,
-    nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    _build_nemotron_3_super_gb300_nvfp4,
+    _nemotron_3_ultra_gb300_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
-    nemotron_3_super_pretrain_64gpu_gb300_bf16_config,
-    nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
-    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
 )
 
 
 def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, BF16 (alias of GB300)."""
-    cfg = nemotron_3_nano_pretrain_8gpu_gb300_bf16_config()
+    cfg = _build_nemotron_3_nano_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -124,7 +124,7 @@ def nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, BF16 (alias of GB300)."""
-    cfg = nemotron_3_super_pretrain_64gpu_gb300_bf16_config()
+    cfg = _build_nemotron_3_super_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -181,7 +181,7 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, NVFP4 (alias of GB300)."""
-    cfg = nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config()
+    cfg = _build_nemotron_3_super_gb300_nvfp4()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -209,7 +209,11 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300)."""
-    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config()
+    cfg = _nemotron_3_ultra_gb300_fp8mx_config(
+        num_gpus=256,
+        expert_model_parallel_size=64,
+        global_batch_size=256,
+    )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

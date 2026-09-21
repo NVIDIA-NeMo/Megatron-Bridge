@@ -30,6 +30,9 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 
 pytestmark = pytest.mark.unit
 
+# GB300 perf recipes dispatch through NCCL EP (no HybridEP topology in their environment).
+_NCCLEP_RECIPES = {qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config}
+
 
 @pytest.fixture(autouse=True)
 def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,7 +119,8 @@ def test_qwen3_235b_blackwell_nvfp4_full_iteration_stack(
     assert cfg.model.use_te_rng_tracker is True
     assert cfg.rng.te_rng_tracker is True
 
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    expected_dispatcher_backend = "ncclep" if recipe in _NCCLEP_RECIPES else "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == expected_dispatcher_backend
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.moe_paged_stash is True
@@ -132,8 +136,13 @@ def test_qwen3_235b_blackwell_nvfp4_full_iteration_stack(
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == expected_avoid_record_streams
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == expected_nvlink_domain_size
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size
+    if expected_dispatcher_backend == "hybridep":
+        assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == expected_nvlink_domain_size
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size
+    else:
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert cfg.env_vars["MBRIDGE_ONE_GPU_PER_RANK"] == 1
+        assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
 
     actual_parallelism = (

@@ -144,17 +144,36 @@ def test_deepseek_v3_gb200_large_scale_matches_r050_fp8mx_base() -> None:
 def test_deepseek_v3_gb300_large_scale_matches_final_r050_config() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg)
+    # GB300 keeps the r0.5.0 full-iteration MXFP8 stack but dispatches through NCCL EP.
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.model.offload_modules == []
+    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
+    assert cfg.model.moe_paged_stash is True
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert cfg.train.global_batch_size == 256
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.virtual_pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.pipeline_model_parallel_layout == "Et*4|(t*4|)*14tmL"
     assert cfg.model.recompute_modules == []
-    assert cfg.model.cuda_graph_impl == "full_iteration"
     assert cfg.model.fp8_output_proj is True
     assert cfg.mixed_precision.fp8_dot_product_attention is True
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars["MBRIDGE_ONE_GPU_PER_RANK"] == 1
+    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
 
 
 def test_deepseek_v3_b300_mxfp8_preserves_r050_hybridep_settings() -> None:

@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for DeepSeek V3."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
@@ -24,11 +25,11 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS, NCCL_EP_PERF_ENV_VARS
 
 
-def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB300, BF16."""
+def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
+    """Shared HybridEP BF16 base for the DeepSeek V3 256-GPU GB300 recipe and its VR200 alias."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _deepseek_v3_common(cfg)
@@ -53,6 +54,13 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, BF16, NCCL EP."""
+    cfg = _build_deepseek_v3_gb300_bf16()
+    _enable_ncclep(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -64,16 +72,11 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        **NCCL_EP_PERF_ENV_VARS,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -121,14 +124,12 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB300, MXFP8."""
+def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
+    """Shared HybridEP MXFP8 base for the DeepSeek V3 256-GPU GB300 recipe and its VR200 alias."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     _deepseek_v3_common(cfg)
@@ -152,6 +153,13 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=True)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, NCCL EP."""
+    cfg = _build_deepseek_v3_gb300_fp8mx()
+    _enable_ncclep(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -163,11 +171,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        **NCCL_EP_PERF_ENV_VARS,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -176,14 +181,12 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB300, NVFP4."""
+def _build_deepseek_v3_gb300_nvfp4() -> ConfigContainer:
+    """Shared HybridEP NVFP4 base for the DeepSeek V3 256-GPU GB300 recipe and its VR200 alias."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _deepseek_v3_common(cfg)
@@ -206,6 +209,13 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, NVFP4, NCCL EP."""
+    cfg = _build_deepseek_v3_gb300_nvfp4()
+    _enable_ncclep(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -217,16 +227,11 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        **NCCL_EP_PERF_ENV_VARS,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
@@ -258,8 +263,6 @@ def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -275,6 +278,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
+    _enable_ncclep(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -286,11 +290,8 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        **NCCL_EP_PERF_ENV_VARS,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
@@ -298,8 +299,6 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -338,10 +337,14 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # CuTeDSL fused grouped MLP (moe_a2a_overlap disabled).
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
+    # The fused grouped MLP (ScaledSwiGLU) does not support moe_act recomputation; keep the other
+    # selective-recompute modules inherited from the FSDP base.
+    cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
 
     cfg.mixed_precision.fp8_dot_product_attention = False
 
     cfg.model.moe_router_force_load_balancing = True
+    _enable_ncclep(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -353,11 +356,8 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        **NCCL_EP_PERF_ENV_VARS,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
@@ -366,8 +366,6 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -390,11 +388,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContai
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank (inherited from the 256-GPU MXFP8 recipe).
+        **NCCL_EP_PERF_ENV_VARS,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -403,8 +398,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContai
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -468,7 +461,5 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_partial_cg_dev_config() -> ConfigCon
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg

@@ -21,6 +21,8 @@ from pathlib import Path
 
 from argument_parser import parse_cli_args
 
+from megatron.bridge.perf_recipes.environment import ONE_GPU_PER_RANK_ENV
+
 
 ENTRYPOINT_PERFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
@@ -50,6 +52,27 @@ def _apply_recipe_environment(recipe) -> None:
         os.environ.setdefault(name, str(value))
 
 
+def _apply_one_gpu_per_rank() -> None:
+    """Restrict CUDA_VISIBLE_DEVICES to this rank's GPU when the recipe sets the marker.
+
+    Runs before CUDA initialization. If the launcher already exposes exactly one device, nothing
+    changes; if it exposes several (Slurm's default per-node list), the local rank selects one.
+    """
+    if os.environ.get(ONE_GPU_PER_RANK_ENV, "0") != "1":
+        return
+    local_rank = os.environ.get("LOCAL_RANK") or os.environ.get("SLURM_LOCALID")
+    if local_rank is None:
+        return
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    devices = visible.split(",") if visible else None
+    if devices is not None and len(devices) == 1:
+        return
+    if devices is None:
+        os.environ["CUDA_VISIBLE_DEVICES"] = local_rank
+    elif int(local_rank) < len(devices):
+        os.environ["CUDA_VISIBLE_DEVICES"] = devices[int(local_rank)]
+
+
 def _exec_training(target_name: str) -> None:
     """Replace the bootstrap process with the selected training entrypoint."""
     target_path = Path(__file__).resolve().parent / target_name
@@ -66,6 +89,7 @@ def main() -> None:
     args, cli_overrides = parser.parse_known_args()
     recipe, target_name = _prepare_recipe_and_target(args, cli_overrides)
     _apply_recipe_environment(recipe)
+    _apply_one_gpu_per_rank()
     _exec_training(target_name)
 
 

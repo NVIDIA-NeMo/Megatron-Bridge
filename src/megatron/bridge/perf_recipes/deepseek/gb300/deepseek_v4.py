@@ -15,23 +15,30 @@
 
 import torch
 
-from megatron.bridge.perf_recipes._common import _benchmark_common
+from megatron.bridge.perf_recipes._common import _benchmark_common, _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
 )
-from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS, NCCL_EP_PERF_ENV_VARS
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
 
-def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
+def _build_deepseek_v4_flash_gb300_fp8mx() -> ConfigContainer:
+    """Shared HybridEP MXFP8 base for the DeepSeek V4 Flash GB300 recipe and its B300 derivative."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
 
     cfg.model.expert_model_parallel_size = 32
     cfg.train.micro_batch_size = 2
+    return cfg
+
+
+def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, NCCL EP."""
+    cfg = _build_deepseek_v4_flash_gb300_fp8mx()
+    _enable_ncclep(cfg)
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -40,16 +47,13 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        **NCCL_EP_PERF_ENV_VARS,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -132,6 +136,5 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
