@@ -6,6 +6,10 @@ model provider: no vision encoder, projector, video embedder, or audio module is
 built. The default remains full VL. Other families, including Qwen 3.5, do not
 yet implement this option and reject it explicitly.
 
+The VL bridge selects the language config and filters `language_model.*` weights
+through the ordinary `PreTrainedCausalLM` wrapper. The existing `NemotronHBridge`
+performs conversion; there is no separate text-only model or pretrained subclass.
+
 ```python
 from megatron.bridge import AutoBridge
 

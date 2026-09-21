@@ -7,7 +7,7 @@ from safetensors.torch import load_file, save_file
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hf_pretrained.text_only import TextOnlyPreTrainedCausalLM, _LanguageModelStateSource
+from megatron.bridge.models.hf_pretrained.text_only import _LanguageModelStateSource, create_text_only_pretrained
 
 
 pytestmark = pytest.mark.unit
@@ -102,14 +102,50 @@ def test_wrapper_retains_revision_and_drops_media_artifacts(checkpoint):
     original.config = PretrainedConfig()
     original.config._commit_hash = "resolved"
     config = PretrainedConfig(architectures=["NemotronHForCausalLM"])
-    wrapper = TextOnlyPreTrainedCausalLM(original, config=config, prefix="language_model.")
+    wrapper = create_text_only_pretrained(original, config=config, prefix="language_model.")
+    assert type(wrapper) is PreTrainedCausalLM
+    assert wrapper._text_only
+    assert not original._text_only
+    assert original.OPTIONAL_ARTIFACTS == ["generation_config", "processor", "image_processor"]
+    assert original.custom_file_patterns == ["*.py"]
     assert wrapper.config is config
     assert wrapper.init_kwargs["revision"] == "resolved"
-    assert wrapper.OPTIONAL_ARTIFACTS == ["generation_config"]
+    assert wrapper.processor is None
+    assert wrapper.image_processor is None
     assert not wrapper.has_model
     assert set(wrapper.state) == {"backbone.embeddings.weight", "mtp.layers.0.weight"}
     with pytest.raises(NotImplementedError, match="standalone HF export"):
         _ = wrapper.model
+
+
+def test_projection_does_not_change_regular_wrapper_loading(checkpoint, monkeypatch):
+    path, _ = checkpoint
+    original = PreTrainedCausalLM.from_pretrained(path, device="cpu")
+    original.config = PretrainedConfig()
+    selected = create_text_only_pretrained(original, config=PretrainedConfig(), prefix="language_model.")
+    model = Mock()
+    model.to.return_value = model
+    load = Mock(return_value=model)
+    monkeypatch.setattr("megatron.bridge.models.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained", load)
+    with pytest.raises(NotImplementedError, match="standalone HF export"):
+        _ = selected.model
+    load.assert_not_called()
+    assert original.model is model
+    load.assert_called_once()
+    assert load.call_args.args == (path,)
+
+
+def test_projection_does_not_load_media_artifacts(checkpoint, tmp_path, monkeypatch):
+    path, _ = checkpoint
+    source = PreTrainedCausalLM.from_pretrained(path)
+    source.config = PretrainedConfig()
+    selected = create_text_only_pretrained(source, config=PretrainedConfig(), prefix="language_model.")
+    selected.tokenizer = Mock()
+    selected.generation_config = None
+    monkeypatch.setattr(PreTrainedCausalLM, "_load_processor", Mock(side_effect=AssertionError("media load")))
+    monkeypatch.setattr(PreTrainedCausalLM, "_load_image_processor", Mock(side_effect=AssertionError("media load")))
+    selected.save_artifacts(tmp_path / "text-artifacts")
+    selected.tokenizer.save_pretrained.assert_called_once()
 
 
 def test_native_nemotron_text_export_preserves_logits(tmp_path):
@@ -164,7 +200,7 @@ def test_wrapper_artifacts_reload_as_native_text_without_remote_code(checkpoint,
     original.config = PretrainedConfig()
     config = NemotronHConfig(num_nextn_predict_layers=2)
     config.architectures = ["NemotronHForCausalLM"]
-    wrapper = TextOnlyPreTrainedCausalLM(original, config=config, prefix="language_model.")
+    wrapper = create_text_only_pretrained(original, config=config, prefix="language_model.")
     wrapper.tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=Tokenizer(models.WordLevel({"<unk>": 0, "hello": 1}, unk_token="<unk>")),
         unk_token="<unk>",

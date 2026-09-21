@@ -55,7 +55,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
-from megatron.bridge.models.hf_pretrained.text_only import TextOnlyPreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
@@ -364,7 +363,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
-        self.text_only = isinstance(hf_pretrained, TextOnlyPreTrainedCausalLM)
+        self.text_only = getattr(hf_pretrained, "_text_only", False) is True
         self.hf_model_id: Optional[str] = None
         init_kwargs = getattr(hf_pretrained, "init_kwargs", {})
         revision = init_kwargs.get("revision") if isinstance(init_kwargs, dict) else None
@@ -2267,7 +2266,7 @@ class AutoBridge(Generic[MegatronModelT]):
     def _text_only_pretrained_from_path(self, path: str | Path) -> PreTrainedCausalLM:
         """Reuse a pinned source when checkpoint initialization names it again."""
         current = self.hf_pretrained
-        if isinstance(current, TextOnlyPreTrainedCausalLM) and str(path) == str(current.model_name_or_path):
+        if isinstance(current, PreTrainedCausalLM) and self.text_only and str(path) == str(current.model_name_or_path):
             return current
         source_kwargs = getattr(current, "init_kwargs", {})
         kwargs = {

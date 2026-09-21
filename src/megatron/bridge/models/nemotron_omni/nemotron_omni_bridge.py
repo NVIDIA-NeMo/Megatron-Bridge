@@ -394,7 +394,7 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         num_nextn_predict_layers. Super VL instead stores a serialized-block
         count there; normalize it without duplicating the shared MTP weights.
         """
-        from megatron.bridge.models.hf_pretrained.text_only import TextOnlyPreTrainedCausalLM
+        from megatron.bridge.models.hf_pretrained.text_only import create_text_only_pretrained
 
         config = copy.deepcopy(hf_pretrained.config.llm_config)
         self._validate_shared_mtp_config(config)
@@ -403,7 +403,7 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
             del config.auto_map
         config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
         config.mtp_use_repeated_layer = True
-        return TextOnlyPreTrainedCausalLM(hf_pretrained, config=config, prefix="language_model.")
+        return create_text_only_pretrained(hf_pretrained, config=config, prefix="language_model.")
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""

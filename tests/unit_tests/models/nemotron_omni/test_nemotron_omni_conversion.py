@@ -164,6 +164,7 @@ def test_super_vl_text_only_uses_native_super_bridge_and_shared_mtp(tmp_path):
     source = PreTrainedCausalLM.from_pretrained(tmp_path)
     source.config = full_config
     text = Nemotron35SuperVLBridge().text_only_pretrained(source)
+    assert type(text) is PreTrainedCausalLM
     bridge = AutoBridge(text)
     assert isinstance(bridge._model_bridge, NemotronHBridge)
     provider = bridge.to_megatron_provider(load_weights=False)

@@ -15,7 +15,6 @@
 """Lazy standalone language-checkpoint views of nested multimodal weights."""
 
 from pathlib import Path
-from typing import NoReturn
 
 import torch
 from transformers import PretrainedConfig
@@ -107,55 +106,52 @@ class _LanguageModelStateSource(SafeTensorsStateSource):
         return result
 
 
-class TextOnlyPreTrainedCausalLM(PreTrainedCausalLM):
-    """Present nested language weights as a standalone causal-LM checkpoint.
+def create_text_only_pretrained(
+    source: PreTrainedCausalLM, *, config: PretrainedConfig, prefix: str
+) -> PreTrainedCausalLM:
+    """Select language weights for conversion through an existing text bridge.
 
-    The config must describe the language model, not the original multimodal
-    wrapper. Conversion and export use the existing text model bridge unchanged.
-    Model families opt in explicitly after validating their config semantics.
+    No HF model is instantiated. The ordinary pretrained wrapper receives the
+    model-specific text config and a lazy, prefix-filtered checkpoint source.
+
+    Args:
+        source: Original multimodal checkpoint wrapper.
+        config: Standalone language config validated by the model's bridge.
+        prefix: Language subtree prefix to remove from checkpoint keys.
+
+    Returns:
+        A standard pretrained wrapper containing only the language checkpoint.
     """
-
-    OPTIONAL_ARTIFACTS = ["generation_config"]
-
-    def __init__(self, source: PreTrainedCausalLM, *, config: PretrainedConfig, prefix: str) -> None:
-        kwargs = dict(source.init_kwargs)
-        if kwargs.get("subfolder"):
-            raise ValueError(
-                "text_only=True does not yet support HF subfolder checkpoints; use a local model directory."
-            )
-        revision = getattr(source.config, "_commit_hash", None) or kwargs.get("revision")
-        if revision is not None:
-            kwargs["revision"] = revision
-        super().__init__(
+    kwargs = dict(source.init_kwargs)
+    if kwargs.get("subfolder"):
+        raise ValueError("text_only=True does not yet support HF subfolder checkpoints; use a local model directory.")
+    revision = getattr(source.config, "_commit_hash", None) or kwargs.get("revision")
+    if revision is not None:
+        kwargs["revision"] = revision
+    pretrained = PreTrainedCausalLM(
+        source.model_name_or_path,
+        device=source.device,
+        torch_dtype=source.torch_dtype,
+        trust_remote_code=source.trust_remote_code,
+        **kwargs,
+    )
+    pretrained.config = config
+    pretrained._text_only = True
+    # Mark media artifacts absent without changing the wrapper's shared defaults
+    # or triggering AutoProcessor against the original multimodal repository.
+    pretrained._processor = None
+    pretrained._image_processor = None
+    pretrained.custom_file_patterns = []
+    pretrained._state_dict_accessor = StateDict(
+        _LanguageModelStateSource(
             source.model_name_or_path,
-            device=source.device,
-            torch_dtype=source.torch_dtype,
-            trust_remote_code=source.trust_remote_code,
-            **kwargs,
+            prefix=prefix,
+            revision=revision,
+            hub_kwargs={
+                key: kwargs[key]
+                for key in ("token", "cache_dir", "local_files_only", "force_download")
+                if key in kwargs
+            },
         )
-        self.config = config
-        self.custom_file_patterns = []
-        self._language_prefix = prefix
-        self._hub_kwargs = {
-            key: kwargs[key] for key in ("token", "cache_dir", "local_files_only", "force_download") if key in kwargs
-        }
-
-    @property
-    def state(self) -> StateDict:
-        """Return the lazy language-only state, including serialized MTP weights."""
-        if self._state_dict_accessor is None:
-            self._state_dict_accessor = StateDict(
-                _LanguageModelStateSource(
-                    self.model_name_or_path,
-                    prefix=self._language_prefix,
-                    revision=self.init_kwargs.get("revision"),
-                    hub_kwargs=self._hub_kwargs,
-                )
-            )
-        return self._state_dict_accessor
-
-    def _load_model(self) -> NoReturn:
-        # Transformers' prefix heuristics are not a safe substitute for the
-        # explicit conversion view. Inference is supported on the exported
-        # standalone text checkpoint, not this lazy source wrapper.
-        raise NotImplementedError("Use the Megatron text model or load its standalone HF export for inference.")
+    )
+    return pretrained
