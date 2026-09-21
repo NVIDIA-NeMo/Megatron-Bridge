@@ -126,7 +126,7 @@ def deepseek_v4_pro_smoketest_1gpu_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.seq_length = 512
@@ -163,14 +163,13 @@ def deepseek_v4_pro_smoketest_1gpu_config() -> ConfigContainer:
     cfg.dataset.dataloader_type = "single"
 
     cfg.train.train_iters = 1
-    cfg.train.global_batch_size = 1
+    cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = False
 
     cfg.validation.eval_interval = 0
     cfg.checkpoint.save_interval = 0
     cfg.logger.log_interval = 1
-
 
     cfg.dist.enable_megatron_core_experimental = True
     cfg.ddp.use_megatron_fsdp = False
