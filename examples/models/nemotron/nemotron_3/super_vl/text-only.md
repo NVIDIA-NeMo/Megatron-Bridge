@@ -14,7 +14,7 @@ performs conversion; there is no separate text-only model or pretrained subclass
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
-    "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth",
+    "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
     text_only=True,
     trust_remote_code=True,
     revision="<checkpoint-commit>",
@@ -33,7 +33,7 @@ The shared CLI accepts `--text-only` for import and export. For example, in a
 GPU-enabled environment with sufficient aggregate memory:
 
 ```bash
-HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
 HF_REVISION='<checkpoint-commit>'
 
 bash scripts/conversion/convert.sh import \

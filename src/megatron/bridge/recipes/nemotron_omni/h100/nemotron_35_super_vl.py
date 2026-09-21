@@ -31,8 +31,9 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.training.config import ConfigContainer
 
 
-NEMOTRON_35_SUPER_VL_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
-NEMOTRON_35_SUPER_VL_HF_REVISION = "e86197a3bad449de618a5835f26835ce770c6f10"  # pragma: allowlist secret
+NEMOTRON_35_SUPER_VL_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B"
+# Do not pin the release repository to a development checkpoint's commit.
+NEMOTRON_35_SUPER_VL_HF_REVISION: str | None = None
 
 
 def _nemotron_35_super_vl_base() -> ConfigContainer:

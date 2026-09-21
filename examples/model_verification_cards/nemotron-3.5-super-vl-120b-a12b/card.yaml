@@ -6,6 +6,9 @@ summary: >
   Performance disclaimer: this card does not record a canonical pretrain
   performance result; reported timing and throughput metrics are functional
   verification observations, not standalone optimized performance results.
+  The model ID is the release-facing name. Recorded revisions and results
+  refer to historical development checkpoints, not verification of the release
+  repository; the displayed commands require an available matching checkpoint.
   The recorded results below used one MTP prediction depth. Verification is
   being refreshed for the corrected two-depth shared-block configuration;
   these historical results do not verify that new training objective.
@@ -46,7 +49,7 @@ verification_index:
       verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
       unverified: [sft_long_context]
 model:
-  hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+  hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
   hf_revision: e86197a3bad449de618a5835f26835ce770c6f10  # pragma: allowlist secret
   architecture: NemotronH_Omni_Reasoning_V3
   min_transformers_version: "5.12.1"
@@ -70,7 +73,7 @@ items:
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
       --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
       --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron
       --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
@@ -98,7 +101,7 @@ items:
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8
-      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+      --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
       --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
       --megatron-path
       work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron/iter_0000000
@@ -310,7 +313,7 @@ items:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 8
-          --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+          --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
           --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
           --megatron-path
           work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft/iter_0000100
@@ -340,7 +343,7 @@ items:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 4
-          --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth
+          --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
           --hf-revision e86197a3bad449de618a5835f26835ce770c6f10
           --megatron-path
           work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft/iter_0000100
