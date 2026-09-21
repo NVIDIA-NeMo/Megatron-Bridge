@@ -86,6 +86,21 @@ def test_poll_interval_is_not_forwarded_to_inference():
         module.parse_args(["--poll-interval", "2"])
 
 
+@pytest.mark.parametrize("option", ["--additional-slurm-params", "--additional_slurm_params"])
+def test_additional_slurm_parameters_are_not_forwarded_to_inference(option):
+    module = _load_setup_inference_module()
+    args, inference_args = module.parse_args([option, "segment=1;reservation=testing", "--prompt", "hello"])
+    assert args.additional_slurm_params == {"segment": "1", "reservation": "testing"}
+    assert inference_args == ["--prompt", "hello"]
+
+
+@pytest.mark.parametrize("value", ["", "segment", "=1", "segment=", "segment=1;"])
+def test_additional_slurm_parameters_reject_malformed_pairs(value):
+    module = _load_setup_inference_module()
+    with pytest.raises(SystemExit):
+        module.parse_args(["--additional-slurm-params", value])
+
+
 def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
     fake_uv = tmp_path / "uv"
     uv_args = tmp_path / "uv-args.txt"
@@ -286,7 +301,8 @@ def test_parse_mounts_rejects_empty_paths(value):
         module._parse_mounts([value])
 
 
-def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, monkeypatch):
+@pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])
+def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, monkeypatch, additional):
     module = _load_setup_inference_module()
 
     class _SlurmExecutor:
@@ -305,6 +321,7 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
             "1",
             "--srun-arg=--mpi=pmix",
             "--srun-arg=--container-writable",
+            *additional,
         )
     )
 
@@ -317,7 +334,10 @@ def test_slurm_executor_uses_srun_native_tasks_and_keeps_secrets_out(tmp_path, m
     assert "launcher" not in executor.kwargs
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["container_env"] == ["HF_TOKEN"]
-    assert executor.kwargs["additional_parameters"] == {"export": "PATH,HF_TOKEN"}
+    expected_parameters = {"export": "PATH,HF_TOKEN"}
+    if additional:
+        expected_parameters["segment"] = "1"
+    assert executor.kwargs["additional_parameters"] == expected_parameters
     assert executor.kwargs["container_mounts"] == ["/host:/container"]
     assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
     assert executor.env_vars == {}

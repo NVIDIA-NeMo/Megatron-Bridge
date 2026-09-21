@@ -124,6 +124,12 @@ of inference tasks. Small inference jobs share nodes by default; use
 `--mem` to request a specific amount of host memory when the cluster default is
 not sufficient.
 
+Pass allocation-level settings with
+`--additional-slurm-params 'segment=1;reservation=testing'`, using the training
+launcher's semicolon-separated `KEY=VALUE` format. Values become sbatch
+parameters, not srun flags or inference-worker arguments. The launcher retains
+control of `export` to preserve name-only environment forwarding.
+
 ## Output, failures, and detached jobs
 
 By default the command waits for inference and exits nonzero if the NeMo Run

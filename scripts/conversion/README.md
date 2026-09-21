@@ -125,6 +125,12 @@ cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
+For allocation-level settings, pass
+`--additional-slurm-params 'segment=1;reservation=testing'` with `--executor slurm`.
+This uses the same semicolon-separated `KEY=VALUE` format as the training launcher.
+Values become sbatch parameters, not srun flags or conversion-worker arguments.
+The launcher retains control of `export` to preserve name-only environment forwarding.
+
 ## Distributed round-trip validation
 
 Like `import` and `export`, the `roundtrip` command runs the shared

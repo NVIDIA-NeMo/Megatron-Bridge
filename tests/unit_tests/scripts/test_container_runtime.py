@@ -361,6 +361,9 @@ def test_all_public_launchers_apply_the_backend(monkeypatch, tmp_path, family, l
         assert args.container_runtime == "enroot"
         assert args.enroot_root == "/storage/runtime"
         assert "--container-runtime" not in kw["task"].args
+        assert args.additional_slurm_params == {"segment": "1"}
+        assert kw["executor"].additional_parameters["segment"] == "1"
+        assert "--additional-slurm-params" not in kw["task"].args
         calls.append(kw)
         return sentinel
 
@@ -396,6 +399,8 @@ def test_all_public_launchers_apply_the_backend(monkeypatch, tmp_path, family, l
         "--gpus-per-node",
         "1",
         "--submission-dry-run",
+        "--additional-slurm-params",
+        "segment=1",
     ]
     if family.startswith("conversion"):
         argv = [

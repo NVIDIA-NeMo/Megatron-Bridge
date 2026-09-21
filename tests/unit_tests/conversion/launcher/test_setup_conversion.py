@@ -156,6 +156,32 @@ def _parse_roundtrip(module, *options):
     )
 
 
+@pytest.mark.parametrize("parse", [_parse, _parse_export, _parse_roundtrip])
+@pytest.mark.parametrize("option", ["--additional-slurm-params", "--additional_slurm_params"])
+def test_additional_slurm_parameters_are_not_forwarded_to_conversion(parse, option):
+    module = _load_setup_conversion_module()
+    args = parse(module, "--executor", "slurm", option, "segment=1;reservation=testing")
+
+    assert args.additional_slurm_params == {"segment": "1", "reservation": "testing"}
+    worker_args = module.conversion_worker_args(args)
+    assert option not in worker_args
+    assert "segment=1;reservation=testing" not in worker_args
+
+
+@pytest.mark.parametrize("value", ["", "segment", "=1", "segment=", "segment=1;"])
+def test_additional_slurm_parameters_reject_malformed_pairs(value):
+    module = _load_setup_conversion_module()
+    with pytest.raises(SystemExit):
+        _parse(module, "--additional-slurm-params", value)
+
+
+def test_local_conversion_rejects_additional_slurm_parameters():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--additional-slurm-params", "segment=1")
+    with pytest.raises(ValueError, match="only supported by the Slurm executor"):
+        module._validate_args(args)
+
+
 def test_setup_import_is_lightweight(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -494,7 +520,8 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
 
 
-def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
+@pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])
+def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch, additional):
     module = _load_setup_conversion_module()
 
     class _SlurmExecutor:
@@ -517,6 +544,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
         "image.sqsh",
         "--experiment-name",
         "mb4909-nano4b-conversion",
+        *additional,
     )
     module._validate_args(args)
 
@@ -528,7 +556,10 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
-    assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
+    expected_parameters = {"export": "HF_TOKEN,PYTHONPATH"}
+    if additional:
+        expected_parameters["segment"] = "1"
+    assert executor.kwargs["additional_parameters"] == expected_parameters
     assert executor.kwargs["srun_args"] == []
     assert executor.kwargs["poll_estimated_start_time"] is False
     assert executor.env_vars == {}

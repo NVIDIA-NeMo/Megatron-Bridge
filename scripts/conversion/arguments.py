@@ -24,6 +24,7 @@ if str(COMMON_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
 from container_runtime import add_container_runtime_args  # noqa: E402
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
 from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval  # noqa: E402
 
 
@@ -34,6 +35,7 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
     """Add NeMo Run execution arguments to a conversion subcommand."""
     execution = parser.add_argument_group("Execution")
     add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
     execution.add_argument(
         "--poll-interval",
         type=slurm_poll_interval,

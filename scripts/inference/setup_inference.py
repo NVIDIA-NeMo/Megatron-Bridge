@@ -37,6 +37,7 @@ from container_runtime import (  # noqa: E402
     apply_container_runtime,
     validate_container_runtime,
 )
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
 from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
@@ -77,6 +78,7 @@ unchanged to the selected repository entry point.
     )
     execution = parser.add_argument_group("Execution")
     add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
     execution.add_argument(
         "--poll-interval",
         type=slurm_poll_interval,
@@ -241,7 +243,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
         container_image=args.container_image,
         container_mounts=mounts,
         container_env=env_names,
-        additional_parameters={"export": ",".join(batch_env_names)},
+        additional_parameters={**args.additional_slurm_params, "export": ",".join(batch_env_names)},
         srun_args=args.srun_args,
         **gpu_kwargs,
     )

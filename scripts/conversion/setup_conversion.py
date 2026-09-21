@@ -94,6 +94,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--exclusive is only supported by the Slurm executor.")
         if args.srun_args:
             raise ValueError("--srun-arg is only supported by the Slurm executor.")
+        if args.additional_slurm_params:
+            raise ValueError("--additional-slurm-params is only supported by the Slurm executor.")
         if args.mount:
             raise ValueError("--mount is only supported by the Slurm executor; mount paths before local execution.")
     elif not args.account or not args.partition:
@@ -213,7 +215,7 @@ def _build_executor(
         container_image=args.container_image,
         container_mounts=mounts,
         container_env=container_env,
-        additional_parameters={"export": ",".join(container_env)},
+        additional_parameters={**args.additional_slurm_params, "export": ",".join(container_env)},
         srun_args=args.srun_args,
         **cpu_kwargs,
         **gpu_kwargs,

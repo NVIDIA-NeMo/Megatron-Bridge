@@ -45,6 +45,7 @@ from recipe_metadata import (  # noqa: E402
     selected_benchmark_recipe,
     validate_selected_benchmark_recipe,
 )
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
 from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
@@ -73,6 +74,7 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     )
     execution = parser.add_argument_group("Execution")
     add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
     execution.add_argument("--nodes", type=int, default=1, help="Number of nodes.")
     execution.add_argument(
         "--gpus-per-node",
@@ -85,13 +87,6 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
-    execution.add_argument(
-        "--additional-slurm-params",
-        "--additional_slurm_params",
-        type=_parse_additional_slurm_params,
-        default={},
-        help="Additional sbatch parameters as semicolon-separated KEY=VALUE pairs.",
-    )
     execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
@@ -184,17 +179,6 @@ def _parse_mounts(values: list[str]) -> list[str]:
         if mount not in mounts:
             mounts.append(mount)
     return mounts
-
-
-def _parse_additional_slurm_params(value: str) -> dict[str, str]:
-    """Parse semicolon-separated Slurm executor parameters."""
-    parameters: dict[str, str] = {}
-    for item in value.split(";"):
-        key, separator, parameter_value = item.partition("=")
-        if not separator or not key or not parameter_value:
-            raise argparse.ArgumentTypeError("--additional-slurm-params expects semicolon-separated KEY=VALUE pairs.")
-        parameters[key] = parameter_value
-    return parameters
 
 
 def _validate_args(
