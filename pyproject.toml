@@ -143,7 +143,10 @@ override-dependencies = [
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
     # TODO: Remove this cap once huggingface/transformers#46381 is merged and included in a Transformers release.
     "tokenizers>=0.22.0,<0.23",                             # tokenizers 0.23 renames RobertaProcessing's 'cls' kwarg to 'cls_token'; transformers still passes cls= (breaks CLIPTokenizer)
-    "nvidia-cudnn-frontend==1.26.0",
+    "nvidia-cudnn-frontend==1.28.0",
+    # Match MCore main: cuDNN Frontend 1.28 needs the newer TileLang/TVM FFI family.
+    "tilelang==0.1.12",
+    "apache-tvm-ffi==0.1.11",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
     "fastapi<0.139.2",                                      # 0.139.2 fails with ray 2.55.1 at least
     "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
@@ -169,7 +172,7 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.18.0+27486e03"
+version = "2.19.0+5e52befd"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
@@ -179,7 +182,7 @@ requires-dist = [
     "onnxscript",
     "onnx",
     "nvdlfw-inspect",
-    "nvidia-cudnn-frontend>=1.25.0",
+    "nvidia-cudnn-frontend>=1.28.0",
 ]
 
 [[tool.uv.dependency-metadata]]
@@ -196,11 +199,15 @@ requires-dist = []
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "27486e03cfc1fa41f6932dcecdc47c71c47eac3e" }
+transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "5e52befd5262c06289106338c308079d6adb391f" }
 flashinfer-python = { index = "flashinfer" }
 flashinfer-cubin = { index = "flashinfer" }
 
 [project.optional-dependencies]
+bagel = [
+    "opencv-python-headless>=4.7.0.72",
+    "safetensors>=0.4.5",
+]
 recipes = [
     "nemo-run",
 ]
@@ -257,7 +264,7 @@ build = [
     "numpy",
     "ninja",
     "nvidia-mathdx",
-    "nvidia-cudnn-frontend>=1.25.0",
+    "nvidia-cudnn-frontend>=1.28.0",
 ]
 # CVE-carrying WAN diffusion codecs, needed only by WAN video caching
 # (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed

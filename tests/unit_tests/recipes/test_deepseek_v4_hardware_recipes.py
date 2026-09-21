@@ -106,6 +106,9 @@ def test_mxfp8_recipes_keep_training_precision_contract(
 def test_flash_mxfp8_recipe_uses_activation_offload_to_fit() -> None:
     cfg = flash_fp8_config()
 
+    assert cfg.model.dsa_kernel_backend == "cudnn"
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.recompute_modules == ["moe_act", "mhc", "mla_up_proj"]
     assert cfg.model.fine_grained_activation_offloading is True
     assert cfg.model.offload_modules == ["core_attn", "attn_proj"]
@@ -200,7 +203,7 @@ def test_flash_high_scale_recipe_preserves_real_training_contract() -> None:
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
-    assert cfg.model.dsa_kernel_backend == "none"
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.quant_recipe is not None
     assert cfg.model.moe_router_padding_for_fp8 is True
     assert cfg.mixed_precision.fp8_param_gather is True

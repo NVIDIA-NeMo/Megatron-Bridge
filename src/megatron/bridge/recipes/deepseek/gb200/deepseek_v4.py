@@ -149,7 +149,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """
     cfg = deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config()
 
-    cfg.model.dsa_kernel_backend = "none"
+    # Keep cuDNN attention enabled when indexer training is disabled.
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]

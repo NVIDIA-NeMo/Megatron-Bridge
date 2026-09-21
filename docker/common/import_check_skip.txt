@@ -22,7 +22,6 @@ deep_ep
 deep_ep_cpp
 hybrid_ep_cpp
 torch_tensorrt
-PyNvVideoCodec  # dlopens driver-provided libnvidia-encode.so.1 at import
 quack  # imports nvidia-cutlass-dsl MLIR libs, which dlopen libcuda at import
 peft # transitively imports optional CUDA-backed modules that dlopen libcuda
 transformer_engine # dlopens libcuda at import
