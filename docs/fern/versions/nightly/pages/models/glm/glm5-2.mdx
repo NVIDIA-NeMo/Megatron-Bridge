@@ -89,7 +89,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <div class="verification-hardware-controls" aria-label="GPU filter">
         <span>GPU</span>
         <button type="button" class="is-active" data-hardware="">All</button>
-        <button type="button" data-hardware="H100">H100</button>
         <button type="button" data-hardware="GB200">GB200</button>
       </div>
       <span class="verification-combination-count" aria-live="polite"></span>
@@ -124,23 +123,9 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-2-pretrain-h100" aria-controls="glm5-2-pretrain-h100" aria-pressed="false">
-      <span class="verification-combination-heading">
-        <strong>Pretrain · H100</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </span>
-      <span class="verification-combination-meta">BF16</span>
-    </button>
     <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-2-pretrain-gb200" aria-controls="glm5-2-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </span>
-      <span class="verification-combination-meta">BF16</span>
-    </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-2-sft-h100" aria-controls="glm5-2-sft-h100" aria-pressed="false">
-      <span class="verification-combination-heading">
-        <strong>SFT · H100</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -152,23 +137,9 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-2-sft-long-context-h100" aria-controls="glm5-2-sft-long-context-h100" aria-pressed="false">
-      <span class="verification-combination-heading">
-        <strong>Long Context · H100</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </span>
-      <span class="verification-combination-meta">BF16</span>
-    </button>
     <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-2-sft-long-context-gb200" aria-controls="glm5-2-sft-long-context-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </span>
-      <span class="verification-combination-meta">BF16</span>
-    </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-2-peft-h100" aria-controls="glm5-2-peft-h100" aria-pressed="false">
-      <span class="verification-combination-heading">
-        <strong>LoRA · H100</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -282,56 +253,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <p>Distributed Hybrid-to-HF export on 16 GB200 GPUs strictly reloads the imported checkpoint and writes 279 safetensors shards plus model.safetensors.index.json in about 13 minutes. All 58794 exported tensors match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default, and shared-indexer layers carry no indexer tensors on either side. generation_config.json is preserved from the source because Transformers strict validation rejects re-saving it.</p>
       </section>
     </article>
-    <article id="glm5-2-pretrain-h100" class="verification-model-detail" data-entry-detail="glm5-2-pretrain-h100" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>Pretrain · H100</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
-        <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_glm52_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null model.hybrid_layer_pattern=&#x27;D-D-D-DEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDE|DEDEDEDE&#x27; --save_dir work/model-verification/glm5-2/hybrid/pretrain-reference/checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
-        </div>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>Complete 100 real-data Hybrid pretraining steps with finite losses and zero skipped or NaN iterations, preserving the existing convergence contract. Save a full step-50 checkpoint and the post-setup config. Hybrid execution has not yet been verified.</p>
-      </section>
-    </article>
     <article id="glm5-2-pretrain-gb200" class="verification-model-detail" data-entry-detail="glm5-2-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
@@ -380,56 +301,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>Complete 100 real-data Hybrid pretraining steps with finite losses and zero skipped or NaN iterations, preserving the existing convergence contract. Save a full step-50 checkpoint and the post-setup config. Hybrid execution has not yet been verified.</p>
-      </section>
-    </article>
-    <article id="glm5-2-sft-h100" class="verification-model-detail" data-entry-detail="glm5-2-sft-h100" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>SFT · H100</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
-        <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 52 --gpus-per-node 8 --recipe glm52_sft_416gpu_h100_bf16_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps 100 --seq_length 2048 dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32 model.context_parallel_size=2 model.virtual_pipeline_model_parallel_size=null model.hybrid_layer_pattern=&#x27;D-D-D-DEDEDE|DEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDE|DEDEDEDE|DEDEDEDE|DEDEDEDE|DEDEDEDE&#x27; --save_dir work/model-verification/glm5-2/hybrid/sft-functional/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
-        </div>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>Complete 100 real-data Hybrid full-SFT steps with finite losses, unchanged data/masking/packing semantics, and a full reloadable checkpoint. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-2-sft-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-gb200" tabindex="-1">
@@ -482,56 +353,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <p>Complete 100 real-data Hybrid full-SFT steps with finite losses, unchanged data/masking/packing semantics, and a full reloadable checkpoint. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
-    <article id="glm5-2-sft-long-context-h100" class="verification-model-detail" data-entry-detail="glm5-2-sft-long-context-h100" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>Long Context · H100</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
-        <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 76 --gpus-per-node 8 --recipe glm52_sft_608gpu_h100_bf16_200k_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps 20 --seq_length 200000 dataset.dataset_root=work/data/glm5-2/synthetic-200k-260 train.empty_unused_memory_level=2 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
-        </div>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>Complete the hardware recipe long-context Hybrid workload with packed CP, finite losses and zero skipped or NaN iterations. Verify causal positions and top-k sharing before scaling up. Hybrid execution has not yet been verified.</p>
-      </section>
-    </article>
     <article id="glm5-2-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-long-context-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · GB200</h4>
@@ -580,56 +401,6 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>Complete the hardware recipe long-context Hybrid workload with packed CP, finite losses and zero skipped or NaN iterations. Verify causal positions and top-k sharing before scaling up. Hybrid execution has not yet been verified.</p>
-      </section>
-    </article>
-    <article id="glm5-2-peft-h100" class="verification-model-detail" data-entry-detail="glm5-2-peft-h100" tabindex="-1">
-      <header class="verification-model-detail-heading">
-        <h4>LoRA · H100</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
-      </header>
-      <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
-        <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
-      </dl>
-      <section class="verification-recorded-metrics">
-        <h5>Recorded metrics</h5>
-        <dl class="verification-metric-list">
-          <div>
-            <dt>Initial loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Final loss</dt>
-            <dd>None</dd>
-          </div>
-          <div>
-            <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
-          </div>
-          <div>
-            <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
-          </div>
-          <div>
-            <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
-          </div>
-        </dl>
-      </section>
-      <section class="verification-command-section">
-        <h5>Exact command</h5>
-        <div class="verification-command">
-          <div class="verification-command-heading">
-            <span>Command</span>
-            <button type="button" class="verification-copy-command">Copy</button>
-          </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 26 --gpus-per-node 8 --recipe glm52_peft_208gpu_h100_bf16_config --mode lora --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps 100 --seq_length 2048 dataset.hf_output_root=work/data/glm5-2/tulu3-peft-pad4 --save_dir work/model-verification/glm5-2/hybrid/peft-lora/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
-        </div>
-      </section>
-      <section class="verification-expected-result">
-        <h5>Expected result</h5>
-        <p>Complete 100 Hybrid LoRA steps with the original targets and hyperparameters; reload the adapter checkpoint and verify the trainable parameter set. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
     <article id="glm5-2-peft-gb200" class="verification-model-detail" data-entry-detail="glm5-2-peft-gb200" tabindex="-1">

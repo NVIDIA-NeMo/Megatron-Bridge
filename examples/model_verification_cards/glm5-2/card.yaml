@@ -20,14 +20,6 @@ verification_index:
     - hf_to_megatron_cpu
     - manual_forward_pass
   training:
-    H100:
-      unverified:
-      - pretrain
-      - sft
-      - sft_export_inference
-      - sft_long_context
-      - peft
-      - checkpoint_resume
     GB200:
       unverified:
       - pretrain
@@ -128,30 +120,6 @@ items:
       Request:**" (two spaces after the period) followed by a newline and "    *   **Topic:**" (four leading
       spaces). DSA full-prefix compatibility inference is not an optimized decode benchmark.'
   pretrain:
-    H100:
-      status: unverified
-      precision: bf16
-      command: './scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config
-        --mode pretrain --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100 --lr 3e-4 --min_lr
-        3e-5 --warmup_iters 40 ''dataset.blend=[["work/data/wikitext103/wikitext103_glm52_text_document"],null]''
-        dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
-        model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null
-        model.hybrid_layer_pattern=''D-D-D-DEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDE|DEDEDEDE''
-        --save_dir work/model-verification/glm5-2/hybrid/pretrain-reference/checkpoints --save_interval 50 logger.log_interval=1
-        logger.log_throughput=true logger.tensorboard_dir=null
-
-        '
-      last_verified: null
-      expected_result: Complete 100 real-data Hybrid pretraining steps with finite losses and zero skipped or NaN
-        iterations, preserving the existing convergence contract. Save a full step-50 checkpoint and the post-setup
-        config. Hybrid execution has not yet been verified.
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      enabled_features: {}
     GB200:
       status: unverified
       precision: bf16
@@ -177,27 +145,6 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   sft:
-    H100:
-      status: unverified
-      precision: bf16
-      command: './scripts/training/train.sh --nodes 52 --gpus-per-node 8 --recipe glm52_sft_416gpu_h100_bf16_config
-        --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps
-        100 --seq_length 2048 dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32 model.context_parallel_size=2
-        model.virtual_pipeline_model_parallel_size=null model.hybrid_layer_pattern=''D-D-D-DEDEDE|DEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDE|DEDEDEDE|DEDEDEDE|DEDEDEDE|DEDEDEDE''
-        --save_dir work/model-verification/glm5-2/hybrid/sft-functional/checkpoints --save_interval 100 logger.log_interval=1
-        logger.log_throughput=true logger.tensorboard_dir=null
-
-        '
-      last_verified: null
-      expected_result: Complete 100 real-data Hybrid full-SFT steps with finite losses, unchanged data/masking/packing
-        semantics, and a full reloadable checkpoint. Hybrid execution has not yet been verified.
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      enabled_features: {}
     GB200:
       status: unverified
       precision: bf16
@@ -219,25 +166,6 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   sft_export_inference:
-    H100:
-      status: unverified
-      precision: bf16
-      depends_on: sft
-      last_verified: null
-      expected_result: Export the verified Hybrid SFT checkpoint, strictly reload it in Transformers, and record
-        deterministic greedy completion and actual token count. Hybrid execution has not yet been verified.
-      commands:
-      - './scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 52 --gpus-per-node 8 --hf-model
-        zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/sft-functional/checkpoints/iter_0000100
-        --hf-path work/model-verification/glm5-2/hybrid/sft-hf-export --torch-dtype bfloat16 --distributed-save
-        --tp 1 --pp 13 --ep 32 --etp 1
-
-        '
-      - 'uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py --hf-model work/model-verification/glm5-2/hybrid/sft-hf-export
-        --prompt "Write one concise sentence explaining why deterministic tests matter:" --max-new-tokens 8 --chat-template
-        --disable-thinking --device cpu --dtype bfloat16
-
-        '
     GB200:
       status: unverified
       precision: bf16
@@ -247,26 +175,6 @@ items:
         deterministic greedy completion and actual token count. Hybrid execution has not yet been verified.
       commands: null
   sft_long_context:
-    H100:
-      status: unverified
-      precision: bf16
-      command: './scripts/training/train.sh --nodes 76 --gpus-per-node 8 --recipe glm52_sft_608gpu_h100_bf16_200k_config
-        --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps
-        20 --seq_length 200000 dataset.dataset_root=work/data/glm5-2/synthetic-200k-260 train.empty_unused_memory_level=2
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-
-        '
-      last_verified: null
-      expected_result: Complete the hardware recipe long-context Hybrid workload with packed CP, finite losses and
-        zero skipped or NaN iterations. Verify causal positions and top-k sharing before scaling up. Hybrid execution
-        has not yet been verified.
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      enabled_features: {}
     GB200:
       status: unverified
       precision: bf16
@@ -288,25 +196,6 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   peft:
-    H100:
-      status: unverified
-      precision: bf16
-      command: './scripts/training/train.sh --nodes 26 --gpus-per-node 8 --recipe glm52_peft_208gpu_h100_bf16_config
-        --mode lora --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps
-        100 --seq_length 2048 dataset.hf_output_root=work/data/glm5-2/tulu3-peft-pad4 --save_dir work/model-verification/glm5-2/hybrid/peft-lora/checkpoints
-        --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-
-        '
-      last_verified: null
-      expected_result: Complete 100 Hybrid LoRA steps with the original targets and hyperparameters; reload the
-        adapter checkpoint and verify the trainable parameter set. Hybrid execution has not yet been verified.
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      enabled_features: {}
     GB200:
       status: unverified
       precision: bf16
@@ -327,38 +216,6 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   checkpoint_resume:
-    H100:
-      status: unverified
-      precision: bf16
-      depends_on: pretrain
-      command: './scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config
-        --mode pretrain --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100 --lr 3e-4 --min_lr
-        3e-5 --warmup_iters 40 ''dataset.blend=[["work/data/wikitext103/wikitext103_glm52_text_document"],null]''
-        dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
-        model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null
-        model.hybrid_layer_pattern=''D-D-D-DEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDEDEDEDEDE|DEDEDEDE|DEDEDEDE''
-        --load_dir work/model-verification/glm5-2/hybrid/pretrain-reference/checkpoints --save_dir work/model-verification/glm5-2/hybrid/pretrain-resume/checkpoints
-        --save_interval 0 checkpoint.ckpt_step=50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-
-        '
-      last_verified: null
-      expected_result: Resume the matching Hybrid pretrain step-50 checkpoint through step 100, restoring optimizer,
-        scheduler, RNG and data order. Compare steps 51 and 100 with the uninterrupted reference within 1e-6 absolute
-        plus 1% relative tolerance. Hybrid execution has not yet been verified.
-      metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      resume_comparison:
-        reference_item: pretrain
-        sentinel_steps:
-        - 51
-        - 100
-        loss_relative_tolerance: 0.01
-        loss_absolute_tolerance: 1.0e-06
-        sentinels_match: null
     GB200:
       status: unverified
       precision: bf16

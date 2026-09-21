@@ -89,7 +89,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <div class="verification-hardware-controls" aria-label="GPU filter">
         <span>GPU</span>
         <button type="button" class="is-active" data-hardware="">All</button>
-        <button type="button" data-hardware="H100">H100</button>
+        <button type="button" data-hardware="GB200">GB200</button>
       </div>
       <span class="verification-combination-count" aria-live="polite"></span>
     </div>
@@ -123,30 +123,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-pretrain-h100" aria-controls="glm5-pretrain-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-pretrain-gb200" aria-controls="glm5-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
-        <strong>Pretrain · H100</strong>
+        <strong>Pretrain · GB200</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-sft-h100" aria-controls="glm5-sft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-sft-gb200" aria-controls="glm5-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
-        <strong>SFT · H100</strong>
+        <strong>SFT · GB200</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-sft-long-context-h100" aria-controls="glm5-sft-long-context-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-sft-long-context-gb200" aria-controls="glm5-sft-long-context-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
-        <strong>Long Context · H100</strong>
+        <strong>Long Context · GB200</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="glm5-peft-h100" aria-controls="glm5-peft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-peft-gb200" aria-controls="glm5-peft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
-        <strong>LoRA · H100</strong>
+        <strong>LoRA · GB200</strong>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -247,13 +247,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <p>Distributed Hybrid-to-HF export on 16 GB200 GPUs strictly reloads the imported checkpoint and writes 280 safetensors shards plus model.safetensors.index.json in about 10 minutes. All 59079 exported tensors match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default. generation_config.json is preserved from the source because Transformers strict validation rejects re-saving it.</p>
       </section>
     </article>
-    <article id="glm5-pretrain-h100" class="verification-model-detail" data-entry-detail="glm5-pretrain-h100" tabindex="-1">
+    <article id="glm5-pretrain-gb200" class="verification-model-detail" data-entry-detail="glm5-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
-        <h4>Pretrain · H100</h4>
+        <h4>Pretrain · GB200</h4>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
         <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
@@ -291,13 +291,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <p>Complete 100 real-data Hybrid pretraining steps with finite losses and zero skipped or NaN iterations, preserving the existing convergence contract. Save a full step-50 checkpoint and the post-setup config. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
-    <article id="glm5-sft-h100" class="verification-model-detail" data-entry-detail="glm5-sft-h100" tabindex="-1">
+    <article id="glm5-sft-gb200" class="verification-model-detail" data-entry-detail="glm5-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
-        <h4>SFT · H100</h4>
+        <h4>SFT · GB200</h4>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
         <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
@@ -335,13 +335,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <p>Complete 100 real-data Hybrid full-SFT steps with finite losses, unchanged data/masking/packing semantics, and a full reloadable checkpoint. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
-    <article id="glm5-sft-long-context-h100" class="verification-model-detail" data-entry-detail="glm5-sft-long-context-h100" tabindex="-1">
+    <article id="glm5-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="glm5-sft-long-context-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
-        <h4>Long Context · H100</h4>
+        <h4>Long Context · GB200</h4>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
         <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
@@ -379,13 +379,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
         <p>Complete the hardware recipe long-context Hybrid workload with packed CP, finite losses and zero skipped or NaN iterations. Verify causal positions and top-k sharing before scaling up. Hybrid execution has not yet been verified.</p>
       </section>
     </article>
-    <article id="glm5-peft-h100" class="verification-model-detail" data-entry-detail="glm5-peft-h100" tabindex="-1">
+    <article id="glm5-peft-gb200" class="verification-model-detail" data-entry-detail="glm5-peft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
-        <h4>LoRA · H100</h4>
+        <h4>LoRA · GB200</h4>
         <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
-        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
         <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
