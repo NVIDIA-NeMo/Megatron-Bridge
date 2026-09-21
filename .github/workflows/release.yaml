@@ -108,7 +108,8 @@ jobs:
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
       build-wheel-env: '{"TMS_CUDA_MAJOR":"13"}'
-      extra-no-build-isolation-packages: "grpcio-tools"
+      # TE needs the pinned Frontend headers before its non-isolated build starts.
+      extra-no-build-isolation-packages: "grpcio-tools nvidia-cudnn-frontend==1.28.0"
       restrict-to-admins: true
     secrets: inherit  # pragma: allowlist secret
 

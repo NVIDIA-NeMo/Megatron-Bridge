@@ -501,6 +501,7 @@ class TestPEFTCheckpointLoading:
 
         # Create mock model
         mock_model = [Mock()]
+        mock_model[0].parameters.return_value = []
         mock_model[0].load_state_dict = Mock()
 
         # Call load_checkpoint
@@ -626,6 +627,7 @@ class TestPEFTCheckpointLoading:
 
         # Create mock model
         mock_model = [Mock()]
+        mock_model[0].parameters.return_value = []
         mock_model[0].load_state_dict = Mock()
 
         # Call load_checkpoint
@@ -766,6 +768,8 @@ class TestPEFTCheckpointLoading:
 
         # Create mock models (2 chunks for pipeline parallelism)
         mock_model = [Mock(), Mock()]
+        for model in mock_model:
+            model.parameters.return_value = []
         mock_model[0].load_state_dict = Mock()
         mock_model[1].load_state_dict = Mock()
 
