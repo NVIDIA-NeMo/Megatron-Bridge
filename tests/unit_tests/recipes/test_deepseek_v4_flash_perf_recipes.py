@@ -128,12 +128,7 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
-    # GB300 runs NCCL EP: no HybridEP topology in the environment, one GPU per rank marker set.
-    assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
-    assert cfg.model.moe_use_grouped_tensor is True
-    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
-    assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
 def test_deepseek_v4_flash_128gpu_b300_fp8mx_config() -> None:

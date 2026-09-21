@@ -17,12 +17,12 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import ConfigContainer
 from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
     _build_qwen35_vl_35b_a3b_gb300_bf16,
-    _build_qwen35_vl_397b_a17b_gb300_bf16,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
     qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config,
     qwen35_vl_122b_a10b_pretrain_32gpu_gb300_fp8cs_config,
     qwen35_vl_122b_a10b_pretrain_32gpu_gb300_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
 )
@@ -186,7 +186,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× VR200, BF16 (alias of GB300)."""
-    cfg = _build_qwen35_vl_397b_a17b_gb300_bf16()
+    cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

@@ -264,8 +264,8 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def _build_qwen35_vl_397b_a17b_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Qwen3.5-VL 397B-A17B GB300 recipes."""
+def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
+    """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, BF16, EP=64."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _qwen35_vl_common(cfg)
@@ -292,16 +292,6 @@ def _build_qwen35_vl_397b_a17b_gb300_bf16() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
     _enable_partial_cuda_graphs(cfg)
-    return cfg
-
-
-def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
-    """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, BF16, EP=32, NCCL EP."""
-    cfg = _build_qwen35_vl_397b_a17b_gb300_bf16()
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -313,8 +303,11 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -324,7 +317,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, FP8 current-scaling."""
-    cfg = _build_qwen35_vl_397b_a17b_gb300_bf16()
+    cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -351,7 +344,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, MXFP8."""
-    cfg = _build_qwen35_vl_397b_a17b_gb300_bf16()
+    cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
