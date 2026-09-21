@@ -145,10 +145,22 @@ def test_deepseek_v3_gb200_large_scale_matches_r050_fp8mx_base() -> None:
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
 
 
-def test_deepseek_v3_gb300_mxfp8_real_routing_budget() -> None:
+def test_deepseek_v3_gb300_mxfp8_eager_real_routing() -> None:
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
 
-    _assert_full_iteration_hybridep_mxfp8(cfg, expert_rank_capacity_factor=8)
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.fp8_output_proj is True
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.virtual_pipeline_model_parallel_size == 4
