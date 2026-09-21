@@ -35,7 +35,7 @@ def _select_text(source, *, config):
     from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import Nemotron35SuperVLBridge
 
     config.num_nextn_predict_layers = 1
-    config.mtp_hybrid_override_pattern = "*E"
+    config.mtp_layers_block_type = ["attention", "moe"]
     source.config.llm_config = config
     return Nemotron35SuperVLBridge().text_only_pretrained(source)
 
