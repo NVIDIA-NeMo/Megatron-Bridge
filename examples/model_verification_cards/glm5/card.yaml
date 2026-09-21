@@ -18,7 +18,7 @@ verification_index:
     - hf_to_megatron_cpu
     - manual_forward_pass
   training:
-    H100:
+    GB200:
       unverified:
       - pretrain
       - sft
@@ -111,7 +111,7 @@ items:
       generated tokens are special tokens removed by skip_special_tokens decoding. DSA full-prefix compatibility
       inference is not an optimized decode benchmark.'
   pretrain:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       command: null
@@ -127,7 +127,7 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   sft:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       command: null
@@ -142,7 +142,7 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   sft_export_inference:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       depends_on: sft
@@ -151,7 +151,7 @@ items:
         deterministic greedy completion and actual token count. Hybrid execution has not yet been verified.
       commands: null
   sft_long_context:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       command: null
@@ -167,7 +167,7 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   peft:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       command: null
@@ -182,7 +182,7 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       enabled_features: {}
   checkpoint_resume:
-    H100:
+    GB200:
       status: unverified
       precision: bf16
       depends_on: pretrain
