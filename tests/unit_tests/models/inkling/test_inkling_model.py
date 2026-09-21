@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core.transformer.mlp import MLPSubmodules
 from transformers.models.inkling.modeling_inkling import (
     InklingShortConvolution as HFShortConvolution,
 )
@@ -28,6 +29,7 @@ from transformers.models.inkling.modeling_inkling import (
 
 from megatron.bridge.models.inkling import InklingModelProvider
 from megatron.bridge.models.inkling.modeling_inkling import (
+    InklingDenseMLP,
     InklingShortConvolution,
     joint_router_weights,
     relative_attention,
@@ -35,6 +37,44 @@ from megatron.bridge.models.inkling.modeling_inkling import (
 
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="Native fused SwiGLU requires CUDA")
+def test_dense_mlp_bf16_activation_uses_single_fp32_round():
+    class IdentityLinear(torch.nn.Module):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def forward(self, hidden):
+            return hidden, None
+
+    config = InklingModelProvider(
+        num_layers=1,
+        hidden_size=8,
+        ffn_hidden_size=8,
+        num_attention_heads=1,
+        gated_linear_unit=True,
+        activation_func=torch.nn.functional.silu,
+        add_bias_linear=False,
+        bias_activation_fusion=False,
+        params_dtype=torch.bfloat16,
+    )
+    config.finalize()
+    # Identity projections isolate activation while retaining the real native MLP forward.
+    model = InklingDenseMLP(config, submodules=MLPSubmodules(IdentityLinear, IdentityLinear), ffn_hidden_size=8).cuda()
+    assert config.bias_activation_fusion is False  # The routed/shared MLP policy is unchanged.
+    torch.manual_seed(45)
+    hidden = torch.randn(4, 16, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+    reference = hidden.detach().float().requires_grad_()
+    gate, up = reference.chunk(2, dim=-1)
+    expected = (torch.nn.functional.silu(gate) * up).to(hidden.dtype)
+    actual, bias = model(hidden)
+    assert bias is None
+    torch.testing.assert_close(actual, expected, rtol=0, atol=0)
+    gradient = torch.randn_like(actual)
+    actual.backward(gradient)
+    expected.backward(gradient)
+    torch.testing.assert_close(hidden.grad, reference.grad.to(hidden.dtype), rtol=0, atol=0)
 
 
 @pytest.mark.parametrize("window", [None, 3])

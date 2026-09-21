@@ -40,8 +40,15 @@ on H200 with full-layer recomputation. It checks all 42 checkpoint tensors,
 forward/backward parity against Transformers, nonzero LoRA export (20 tensors),
 merged export, and native base/adapter checkpoint restore. Operator tests also
 compare relative-attention and convolution gradients against Transformers.
+The BF16 dense-activation test checks native fused SwiGLU outputs and gradients
+against FP32 activation followed by one output cast.
 FP32 internal router/convolution weights retain the imported BF16 values but
 export in FP32 unless an export dtype is requested.
 
 Full Inkling-Small training, serving parity, and capacity qualification remain
 pending; the tiny-model checks do not qualify the 276B checkpoint.
+
+Related implementations include Miles' [Inkling model](https://github.com/radixark/miles/pull/1683)
+and [native LoRA](https://github.com/radixark/miles/pull/2122) support. Those use
+ISEEKYAN/mbridge and SGLang; this integration uses NVIDIA Megatron-Bridge's
+conversion and PEFT interfaces.

@@ -392,9 +392,12 @@ class InklingMoELayer(MoELayer):
 
 
 class InklingDenseMLP(MLP):
-    """Native SwiGLU with the published dense-layer output scale."""
+    """Native fused SwiGLU with the published dense-layer output scale."""
 
     def __init__(self, config, *args, **kwargs) -> None:
+        # Keep dense activation intermediates in FP32 until the output cast.
+        config = copy(config)
+        config.bias_activation_fusion = True
         super().__init__(config, *args, **kwargs)
         self.global_scale = nn.Parameter(torch.ones(1, dtype=config.params_dtype))
         self.global_scale.sequence_parallel = config.sequence_parallel
