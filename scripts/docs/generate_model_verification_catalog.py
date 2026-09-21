@@ -87,6 +87,7 @@ DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
     }
 )
 MODEL_PAGE_PATHS = {
+    "bagel": "models/bagel/bagel.md",
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
     "gemma-3-4b-it": "models/gemma/gemma3-vl.md",

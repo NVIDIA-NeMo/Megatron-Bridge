@@ -2,6 +2,7 @@
 
 import argparse
 import importlib.util
+import json
 import os
 import shlex
 import subprocess
@@ -277,6 +278,101 @@ def test_explicit_cache_is_validated_and_mounted(render, fake_host, tmp_path, mo
     assert f"{cache}:{cache}:none:bind,rw,x-create=dir" in captured
     assert "HF_HOME" in captured
     assert not any(value.startswith("HF_HOME=") for value in captured)
+
+
+@pytest.mark.parametrize(
+    "forwarded",
+    [
+        {},
+        {"HF_HOME": "home"},
+        {"HUGGINGFACE_HUB_CACHE": "legacy-hub"},
+        {"HF_HUB_CACHE": "hub"},
+        {"HF_HOME": "home", "HUGGINGFACE_HUB_CACHE": "legacy-hub", "HF_HUB_CACHE": "hub"},
+        {"HF_HOME": "home", "TRANSFORMERS_CACHE": "transformers"},
+        {"HF_HOME": "home", "HF_MODULES_CACHE": "modules", "HF_DATASETS_CACHE": "datasets"},
+    ],
+)
+def test_hf_cache_defaults_follow_forwarded_precedence(render, fake_host, tmp_path, monkeypatch, forwarded):
+    pytest.importorskip("huggingface_hub")
+    cache_names = (
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "HUGGINGFACE_HUB_CACHE",
+        "TRANSFORMERS_CACHE",
+        "HF_MODULES_CACHE",
+        "HF_DATASETS_CACHE",
+    )
+    # Unforwarded values must not influence the worker, even if set on the host.
+    for name in cache_names:
+        monkeypatch.setenv(name, str(tmp_path / "unforwarded-host" / name))
+    explicit = {name: str(tmp_path / leaf) for name, leaf in forwarded.items()}
+    for name, path in explicit.items():
+        Path(path).mkdir()
+        monkeypatch.setenv(name, path)
+    wrapped, _, _ = render(fake_host, env_names=list(forwarded))
+    result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    captured = (tmp_path / "capture").read_bytes().decode().split("\0")[:-1]
+    worker_env = dict(os.environ)
+    for index, argument in enumerate(captured[:-1]):
+        if argument == "--env":
+            name, separator, value = captured[index + 1].partition("=")
+            worker_env[name] = value if separator else os.environ[name]
+    runtime_root = next(tmp_path.glob("job-123-rank-2-*"))
+    home = explicit.get("HF_HOME", str(runtime_root / "cache/workload/HF_HOME"))
+    hub = explicit.get("HF_HUB_CACHE", explicit.get("HUGGINGFACE_HUB_CACHE", home + "/hub"))
+    defaults = {
+        "HF_HOME": home,
+        "HF_HUB_CACHE": hub,
+        "HUGGINGFACE_HUB_CACHE": hub,
+        "TRANSFORMERS_CACHE": hub,
+        "HF_MODULES_CACHE": home + "/modules",
+        "HF_DATASETS_CACHE": home + "/datasets",
+    }
+    for name in cache_names:
+        assert worker_env[name] == explicit.get(name, defaults[name])
+        if name in explicit or worker_env[name].startswith(str(runtime_root) + "/"):
+            assert Path(worker_env[name]).is_dir()
+    # Exercise the installed package's actual resolution, not only our argv.
+    resolved = subprocess.check_output(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "import json,sys; from huggingface_hub import constants; "
+            "sys.stdout.write(json.dumps([constants.HF_HOME, constants.HF_HUB_CACHE]))",
+        ],
+        env=worker_env,
+        text=True,
+    )
+    assert json.loads(resolved) == [home, hub]
+
+
+def test_forwarded_hf_home_does_not_create_unused_cache_directories(render, fake_host, tmp_path, monkeypatch):
+    home = tmp_path / "prepopulated-home"
+    (home / "hub").mkdir(parents=True)
+    home.chmod(0o555)
+    monkeypatch.setenv("HF_HOME", str(home))
+    try:
+        wrapped, _, _ = render(fake_host, env_names=["HF_HOME"])
+        result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
+        assert result.returncode == 0, result.stderr
+        assert sorted(path.name for path in home.iterdir()) == ["hub"]
+    finally:
+        home.chmod(0o755)
+
+
+def test_invalid_hub_alias_fails_before_creating_dependent_defaults(render, fake_host, tmp_path, monkeypatch):
+    home = tmp_path / "forwarded-home"
+    home.mkdir()
+    monkeypatch.setenv("HF_HOME", str(home))
+    monkeypatch.setenv("HUGGINGFACE_HUB_CACHE", str(tmp_path / "missing-hub"))
+    wrapped, _, _ = render(fake_host, env_names=["HF_HOME", "HUGGINGFACE_HUB_CACHE"])
+    result = subprocess.run(["bash"], input=wrapped.inline, text=True, capture_output=True)
+    assert result.returncode != 0
+    assert "HUGGINGFACE_HUB_CACHE must name" in result.stderr
+    assert list(home.iterdir()) == []
+    assert not (tmp_path / "capture").exists()
 
 
 def test_explicit_missing_cache_fails_before_start(render, fake_host, tmp_path, monkeypatch):

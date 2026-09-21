@@ -33,7 +33,9 @@ and root-filesystem writes are disabled.
 
 Common application caches default to subdirectories of that runtime directory.
 Explicitly forwarded cache variables must name existing Lustre directories;
-the backend mounts them at the same paths. Container `/tmp` and `/var/tmp` are
+the backend mounts them at the same paths. Forwarding `HF_HOME` also preserves
+its Hub, modules, and datasets cache defaults; explicitly forwarded cache
+overrides take precedence. Container `/tmp` and `/var/tmp` are
 Lustre-backed bind mounts, keeping Unix socket paths short. Source bytecode
 writes are disabled. Model/data/output paths and application-specific cache or
 build settings still belong to the caller; ensure those also use explicit

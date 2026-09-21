@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **26 model cards** and **374 concrete configurations**.
+Current inventory: **27 model cards** and **387 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -13,6 +13,18 @@ Each model page lets you select import/export, pretraining, benchmarking, SFT, L
 Choose a model to inspect its recorded import/export, training, and precision combinations.
 
 <div class="verification-provider-grid verification-model-directory">
+  <section class="verification-provider-card">
+    <header class="verification-provider-heading">
+      <strong>ByteDance-Seed</strong>
+      <span>1 model</span>
+    </header>
+    <div class="verification-provider-models">
+      <a class="verification-model-link" href="bagel/bagel.html#verified-bagel">
+        <strong title="ByteDance-Seed/BAGEL-7B-MoT">BAGEL-7B-MoT</strong>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+      </a>
+    </div>
+  </section>
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
       <strong>DeepSeek</strong>

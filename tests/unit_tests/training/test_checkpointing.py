@@ -24,8 +24,11 @@ from unittest.mock import MagicMock, Mock, mock_open, patch
 import numpy as np
 import pytest
 import torch
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
-from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
+from megatron.core.dist_checkpointing.strategies.torch import (
+    TorchDistLoadShardedStrategy,
+    TorchDistSaveShardedStrategy,
+)
 from megatron.core.msc_utils import MultiStorageClientFeature
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
@@ -78,6 +81,12 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.utils.instantiate_utils import InstantiationException
+
+
+try:
+    from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
+except ModuleNotFoundError:
+    AsyncRequest = None
 
 
 class _DummyClass:
@@ -875,6 +884,28 @@ class TestSaveCheckpoint:
         written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
         assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
 
+    def test_cpu_torch_dist_strategy_roundtrip_without_cuda(self, tmp_path):
+        """CPU checkpoint conversion must save and reload real tensor values."""
+        if torch.distributed.is_initialized():
+            pytest.skip("Requires an isolated CPU process group")
+        torch.distributed.init_process_group("gloo", store=torch.distributed.HashStore(), rank=0, world_size=1)
+        expected = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        try:
+            with (
+                patch("torch.cuda.is_available", return_value=False),
+                patch("torch.cuda.synchronize", side_effect=AssertionError("CPU save must not synchronize CUDA")),
+            ):
+                _CpuTorchDistSaveShardedStrategy().save(
+                    {"weight": ShardedTensor.from_rank_offsets("weight", expected)}, tmp_path
+                )
+                loaded = TorchDistLoadShardedStrategy().load(
+                    {"weight": ShardedTensor.from_rank_offsets("weight", torch.empty_like(expected))}, tmp_path
+                )
+            torch.testing.assert_close(loaded["weight"], expected)
+        finally:
+            torch.distributed.destroy_process_group()
+
+    @pytest.mark.skipif(AsyncRequest is None, reason="Legacy MCore async implementation is not present")
     def test_cpu_torch_dist_strategy_uses_blocking_preload(self, tmp_path):
         """CPU checkpoint staging must not synchronize an unavailable CUDA device."""
         preload_modes = []
@@ -898,7 +929,7 @@ class TestSaveCheckpoint:
         original_current_device = torch.cuda.current_device
 
         with (
-            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request),
+            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request, autospec=True),
             patch("torch.distributed.barrier"),
         ):
             strategy.save({}, tmp_path)
@@ -1878,6 +1909,7 @@ def load_checkpoint_fixtures():
     mock_state.cfg = mock_cfg
 
     mock_model = [Mock()]
+    mock_model[0].parameters.return_value = []
     mock_optimizer = Mock()
     mock_scheduler = Mock()
 
@@ -3153,6 +3185,7 @@ class TestLoadModelWeightsFromCheckpoint:
     def mock_model(self):
         """Create a mock model for testing."""
         model = Mock()
+        model.parameters.return_value = []
         model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
         return [model]
 
@@ -3160,8 +3193,10 @@ class TestLoadModelWeightsFromCheckpoint:
     def mock_multiple_models(self):
         """Create multiple mock models for testing."""
         model1 = Mock()
+        model1.parameters.return_value = []
         model1.sharded_state_dict.return_value = {"weight1": torch.randn(10, 10)}
         model2 = Mock()
+        model2.parameters.return_value = []
         model2.sharded_state_dict.return_value = {"weight2": torch.randn(5, 5)}
         return [model1, model2]
 
@@ -3200,7 +3235,7 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
-    def test_load_model_weights_single_model_success(
+    def test_load_model_weights_single_model_with_strictness_diagnostics(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
@@ -3214,11 +3249,11 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_full_state_dict,
         mock_metadata,
     ):
-        """Test successful loading of weights for a single model."""
+        """Test loading a model when strictness also returns diagnostics."""
         # Setup mocks
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
-        mock_dist_ckpt.load.return_value = mock_full_state_dict
+        mock_dist_ckpt.load.return_value = (mock_full_state_dict, set(), set())
         mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
@@ -3240,7 +3275,7 @@ class TestLoadModelWeightsFromCheckpoint:
                 checkpoint_path="/test/checkpoint",
                 model=mock_model,
                 fully_parallel_load=False,
-                dist_ckpt_strictness="assume_ok_unexpected",
+                dist_ckpt_strictness="return_all",
                 strict=True,
             )
 
@@ -3782,6 +3817,7 @@ class TestMegatronLMCompatibility:
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
         mock_unwrap.return_value = [Mock()]
+        mock_unwrap.return_value[0].parameters.return_value = []
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
@@ -4782,6 +4818,32 @@ class TestCheckpointPathOverride:
         mock_dist_ckpt.load.assert_called_once()
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
+
+    @pytest.mark.parametrize("strictness", ["return_unexpected", "return_all"])
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_unwraps_strictness_result(self, mock_dist_ckpt, mock_strategy_cls, strictness):
+        """Strictness diagnostics must not replace the loaded state dictionary."""
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        loaded_state_dict = {"checkpoint_version": 3.0, "model": {}}
+        mock_strategy_cls.return_value = Mock()
+        mock_dist_ckpt.load.return_value = (loaded_state_dict, set(), set())
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+
+        state_dict, _, _, _ = _load_global_dist_base_checkpoint(
+            load_dir="/checkpoints",
+            ckpt_cfg=CheckpointConfig(dist_ckpt_strictness=strictness),
+            rank0=False,
+            sharded_state_dict={"model": {}},
+            iteration=1000,
+            release=False,
+            pg_collection=mock_pg,
+        )
+
+        assert state_dict.get("checkpoint_version") == 3.0
+        assert mock_dist_ckpt.load.call_args.kwargs["strict"] == strictness
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_load_fsdp_dtensor_uses_override_rank0(self):
@@ -6282,12 +6344,11 @@ class TestAsyncCheckpointScheduling:
     """Test async request handoff to the NVRx worker."""
 
     def test_schedule_async_save_forwards_nvrx_request(self):
-        """The NVRx queue must ignore the inherited stale strategy value."""
+        """The NVRx queue must receive the original async request unchanged."""
         async_queue = Mock()
         state = Mock()
         state.async_calls_queue = async_queue
         state.cfg.checkpoint = CheckpointConfig()
-        assert state.cfg.checkpoint.async_strategy == "mcore"
         state.cfg.checkpoint.async_save = True
         nvrx_request = NVRxAsyncRequest(
             async_fn=Mock(),

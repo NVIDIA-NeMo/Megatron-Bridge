@@ -385,6 +385,9 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
 
     _HF_SUMMARY_IDXS_BUFFER = "vision_model.summary_idxs"
+    # A previous export includes this derived buffer in its source index. Keep
+    # it in the stream so strict re-export succeeds before postprocessing runs.
+    _HF_PASSTHROUGH_KEYS = (*NemotronOmniBridge._HF_PASSTHROUGH_KEYS, _HF_SUMMARY_IDXS_BUFFER)
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
 

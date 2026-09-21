@@ -72,11 +72,31 @@ for name in "${cache_names[@]}"; do
         [[ -d "$path" && $(stat -f -c %T -- "$path") == lustre ]] || fail "$name must name an existing Lustre directory"
         # Make the selected host cache available at the identical container path.
         enroot_args+=(--mount "$path:$path:none:bind,rw,x-create=dir")
-    else
-        path="$runtime_dir/cache/workload/$name"
-        mkdir "$path"
-        enroot_args+=(--env "$name=$path")
     fi
+done
+# Resolve HF's dependent defaults only from explicitly forwarded settings, never
+# from unrelated host environment values. Validate all explicit paths above
+# before creating any dependent directory (the hub alias may appear later).
+hf_home="$runtime_dir/cache/workload/HF_HOME"
+if [[ " ${forward_names[*]} " == *" HF_HOME "* ]]; then hf_home="$HF_HOME"; fi
+hf_hub="$hf_home/hub"
+if [[ " ${forward_names[*]} " == *" HUGGINGFACE_HUB_CACHE "* ]]; then hf_hub="$HUGGINGFACE_HUB_CACHE"; fi
+if [[ " ${forward_names[*]} " == *" HF_HUB_CACHE "* ]]; then hf_hub="$HF_HUB_CACHE"; fi
+for name in "${cache_names[@]}"; do
+    if [[ " ${forward_names[*]} " == *" $name "* ]]; then continue; fi
+    case "$name" in
+        HF_HOME) path="$hf_home" ;;
+        HF_HUB_CACHE|HUGGINGFACE_HUB_CACHE|TRANSFORMERS_CACHE) path="$hf_hub" ;;
+        HF_MODULES_CACHE) path="$hf_home/modules" ;;
+        HF_DATASETS_CACHE) path="$hf_home/datasets" ;;
+        *) path="$runtime_dir/cache/workload/$name" ;;
+    esac
+    if [[ "$path" == "$runtime_dir/"* ]]; then
+        mkdir -p "$path"
+    elif [[ -e "$path" || -L "$path" ]]; then
+        [[ -d "$path" && $(stat -f -c %T -- "$path") == lustre ]] || fail "$name must resolve to Lustre storage"
+    fi
+    enroot_args+=(--env "$name=$path")
 done
 # Managed mounts must be LAST: a user mount of an ancestor (e.g. /var or the
 # Lustre user root) must not hide the temporary/runtime storage underneath it.
