@@ -59,7 +59,8 @@ def test_vlm_mapping_prefixes_text_weights_and_nested_tp_mappings():
 
 
 @pytest.mark.parametrize("gate_lower_bound", [-5.0, -1.0])
-def test_glm53_provider_precision_contract(gate_lower_bound):
+@pytest.mark.parametrize("kda_disable_fp8", [False, True])
+def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
     config_module = pytest.importorskip("transformers.models.glm5_next.configuration_glm5_next")
     config = config_module.Glm5NextConfig(
         text_config={
@@ -83,6 +84,12 @@ def test_glm53_provider_precision_contract(gate_lower_bound):
     assert not provider.mhc_learned_output_contract
     assert provider.kda_two_stage_gates
     assert provider.kda_lower_bound == gate_lower_bound
+    provider.apply_overrides_and_finalize(overrides={"kda_disable_fp8": kda_disable_fp8})
+    kda_config = create_layer_config(provider, "K")
+    assert kda_config.kda_disable_fp8 is kda_disable_fp8
+    assert kda_config.kda_two_stage_gates
+    assert kda_config.kda_safe_gate
+    assert kda_config.kda_lower_bound == gate_lower_bound
 
 
 @pytest.mark.parametrize("index", [0, 1, 2])
