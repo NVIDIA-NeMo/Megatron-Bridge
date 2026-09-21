@@ -14,6 +14,7 @@
 
 import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -187,12 +188,8 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.tempfile.TemporaryDirectory")
-    def test_temporary_distributed_context_gloo(self, mock_tmpdir, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_gloo(self, mock_parallel_state, mock_dist):
         """Test temporary distributed context with gloo backend."""
-        rendezvous_dir = Path(tempfile.gettempdir()) / "bridge-rendezvous"
-        mock_tmpdir.return_value.name = str(rendezvous_dir)
-
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
             patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed,
@@ -201,39 +198,34 @@ class TestTemporaryDistributedContext:
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="gloo", init_method=(rendezvous_dir / "rendezvous").as_uri(), world_size=1, rank=0
+            backend="gloo", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
+        mock_dist.HashStore.assert_called_once_with()
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
         mock_seed.assert_not_called()
-        mock_tmpdir.return_value.cleanup.assert_called_once()
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.tempfile.TemporaryDirectory")
-    def test_temporary_distributed_context_uses_isolated_rendezvous(self, mock_tmpdir, mock_parallel_state, mock_dist):
-        """Test that the standalone context does not reuse an ambient torchrun store."""
-        rendezvous_dir = Path(tempfile.gettempdir()) / "bridge-rendezvous"
-        mock_tmpdir.return_value.name = str(rendezvous_dir)
-
-        with temporary_distributed_context(backend="gloo"):
-            pass
+    def test_temporary_distributed_context_ignores_rendezvous_env(self, mock_parallel_state, mock_dist):
+        """Rendezvous env vars must not leak into the temporary context init."""
+        with patch.dict(os.environ, {"MASTER_ADDR": "203.0.113.1", "MASTER_PORT": "1"}):
+            with temporary_distributed_context(backend="gloo"):
+                pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="gloo", init_method=(rendezvous_dir / "rendezvous").as_uri(), world_size=1, rank=0
+            backend="gloo", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
-        mock_tmpdir.return_value.cleanup.assert_called_once()
+        mock_dist.HashStore.assert_called_once_with()
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.tempfile.TemporaryDirectory")
     @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
-    def test_temporary_distributed_context_nccl(self, mock_seed, mock_tmpdir, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_nccl(self, mock_seed, mock_parallel_state, mock_dist):
         """Test temporary distributed context with nccl backend."""
-        rendezvous_dir = Path(tempfile.gettempdir()) / "bridge-rendezvous"
-        mock_tmpdir.return_value.name = str(rendezvous_dir)
-
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True),
             patch("megatron.bridge.training.model_load_save.torch.cuda.device_count", return_value=1),
@@ -242,13 +234,53 @@ class TestTemporaryDistributedContext:
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="nccl", init_method=(rendezvous_dir / "rendezvous").as_uri(), world_size=1, rank=0
+            backend="nccl", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
+        mock_dist.HashStore.assert_called_once_with()
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
         mock_seed.assert_called_once_with(0)
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
-        mock_dist.destroy_process_group.assert_called_once()
-        mock_tmpdir.return_value.cleanup.assert_called_once()
+        mock_dist.destroy_process_group.assert_called_once_with()
+
+    @pytest.mark.parametrize("inherited_env", [False, True])
+    @pytest.mark.parametrize("raise_in_context", [False, True])
+    @pytest.mark.skipif(
+        not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
+        reason="requires torch.distributed with gloo",
+    )
+    def test_temporary_distributed_context_real_gloo_single_process(
+        self, monkeypatch, inherited_env, raise_in_context
+    ):
+        """Initialize, use, and clean up an isolated group, including on exceptions."""
+        for var in ("MASTER_ADDR", "MASTER_PORT"):
+            monkeypatch.delenv(var, raising=False)
+        if inherited_env:
+            monkeypatch.setenv("MASTER_ADDR", "203.0.113.1")
+            monkeypatch.setenv("MASTER_PORT", "not-a-port")
+
+        assert not dist.is_initialized()
+        for _ in range(2):
+            expected_error = (
+                pytest.raises(RuntimeError, match="context body failed") if raise_in_context else nullcontext()
+            )
+            with (
+                patch("megatron.bridge.training.model_load_save.parallel_state") as mock_parallel_state,
+                patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
+            ):
+                with expected_error, temporary_distributed_context(backend="gloo"):
+                    assert dist.is_initialized()
+                    assert dist.get_world_size() == 1
+                    assert dist.get_rank() == 0
+                    value = torch.tensor([7.0])
+                    dist.all_reduce(value)
+                    assert value.item() == 7.0
+                    if raise_in_context:
+                        raise RuntimeError("context body failed")
+
+                mock_parallel_state.initialize_model_parallel.assert_called_once_with()
+                mock_parallel_state.destroy_model_parallel.assert_called_once_with()
+            assert not dist.is_initialized()
 
 
 class TestGetOrInitializePgCollection:
