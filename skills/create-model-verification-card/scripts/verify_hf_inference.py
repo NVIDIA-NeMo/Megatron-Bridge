@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -35,6 +37,15 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--image",
         help="Optional local image path or URL. Uses the model processor and a multimodal chat template.",
+    )
+    parser.add_argument(
+        "--separate-image-processing",
+        action="store_true",
+        help=(
+            "Render the chat template as text, then pass a PIL image to the processor separately. "
+            "Use this for processors whose image preprocessor does not accept the tensor produced by "
+            "Transformers' structured-chat media loader."
+        ),
     )
     parser.add_argument("--max-new-tokens", required=True, type=int, help="Maximum number of tokens to generate.")
     parser.add_argument("--chat-template", action="store_true", help="Format the prompt as a user chat turn.")
@@ -77,6 +88,8 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--disable-thinking requires --chat-template")
     if args.image and not args.chat_template:
         parser.error("--image requires --chat-template")
+    if args.separate_image_processing and not args.image:
+        parser.error("--separate-image-processing requires --image")
     return args
 
 
@@ -98,10 +111,47 @@ def _image_content(image: str) -> dict[str, str]:
     return {"type": "image", location_key: image}
 
 
+def _load_pil_image(image: str) -> Any:
+    """Load one local or public HTTP image into RGB PIL form."""
+    from PIL import Image
+
+    if urlparse(image).scheme in {"http", "https"}:
+        from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
+
+        is_safe, reason = is_safe_public_http_url(image)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image}")
+        with safe_url_open(image) as response:
+            with Image.open(io.BytesIO(response.read())) as loaded:
+                return loaded.convert("RGB")
+
+    with Image.open(Path(image)) as loaded:
+        return loaded.convert("RGB")
+
+
 def _prepare_inputs(processor: Any, args: argparse.Namespace) -> Any:
     """Prepare text-only or processor-native multimodal model inputs."""
     if args.image:
         template_options = {"enable_thinking": False} if args.disable_thinking else {}
+        if args.separate_image_processing:
+            image_token = getattr(processor, "image_token", "<image>")
+            formatted_prompt = processor.apply_chat_template(
+                [{"role": "user", "content": f"{image_token}\n{args.prompt}"}],
+                tokenize=False,
+                add_generation_prompt=True,
+                **template_options,
+            )
+            inputs = processor(
+                text=[formatted_prompt],
+                images=[_load_pil_image(args.image)],
+                return_tensors="pt",
+            )
+            # Some custom processors return media-layout metadata used only while rendering
+            # placeholders. Transformers generation rejects keys absent from the model's public
+            # forward signature even when that model accepts arbitrary keyword arguments.
+            for key in ("num_patches", "num_tokens", "imgs_sizes"):
+                inputs.pop(key, None)
+            return inputs
         messages = [
             {
                 "role": "user",
@@ -160,10 +210,17 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
 
     dtype = getattr(torch, args.dtype)
     if args.image:
-        from transformers import AutoModelForMultimodalLM, AutoProcessor
+        from transformers import AutoConfig, AutoModelForImageTextToText, AutoModelForMultimodalLM, AutoProcessor
 
+        config = AutoConfig.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
         processor = AutoProcessor.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        model_cls = AutoModelForMultimodalLM
+        auto_map = getattr(config, "auto_map", None) or {}
+        # Keep the broader multimodal loader for built-in models, including Omni.
+        # Some remote-code VLMs register only the image-text auto class.
+        if "AutoModelForImageTextToText" in auto_map and "AutoModelForMultimodalLM" not in auto_map:
+            model_cls = AutoModelForImageTextToText
+        else:
+            model_cls = AutoModelForMultimodalLM
     else:
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -174,6 +231,8 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         "trust_remote_code": args.trust_remote_code,
         "output_loading_info": True,
     }
+    if args.image:
+        model_kwargs["config"] = config
     if args.device_map:
         model_kwargs["device_map"] = args.device_map
     model, loading_info = model_cls.from_pretrained(args.hf_model, **model_kwargs)
