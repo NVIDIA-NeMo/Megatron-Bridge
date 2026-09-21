@@ -39,6 +39,9 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8, NCCL EP."""
     cfg = _build_deepseek_v4_flash_gb300_fp8mx()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
 
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

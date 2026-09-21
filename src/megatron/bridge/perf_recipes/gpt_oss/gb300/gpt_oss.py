@@ -239,6 +239,9 @@ def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× GB300, FP8-MX, NCCL EP."""
     cfg = _build_gpt_oss_120b_gb300_fp8mx()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

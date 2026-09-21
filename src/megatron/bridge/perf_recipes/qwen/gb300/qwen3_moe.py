@@ -230,6 +230,9 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB300, BF16, EP=8, NCCL EP."""
     cfg = _build_qwen3_30b_a3b_gb300_bf16()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -339,6 +342,9 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB300, MXFP8, EP=8, NCCL EP."""
     cfg = _build_qwen3_30b_a3b_gb300_fp8mx()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -400,6 +406,9 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, BF16, PP=4 EP=32, NCCL EP."""
     cfg = _build_qwen3_235b_a22b_gb300_bf16()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -509,6 +518,9 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, MXFP8, PP=4 EP=32, NCCL EP."""
     cfg = _build_qwen3_235b_a22b_gb300_fp8mx()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -620,6 +632,9 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = 12
     _enable_hybridep_full_iteration_nvfp4(cfg)
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

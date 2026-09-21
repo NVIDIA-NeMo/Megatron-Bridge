@@ -104,10 +104,6 @@ def _enable_ncclep(cfg: ConfigContainer) -> None:
     """
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"
-    cfg.model.moe_shared_expert_overlap = False
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
 
 
 def _perf_precision(compute_dtype: str):

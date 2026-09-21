@@ -178,6 +178,9 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× GB300, MXFP8, NCCL EP."""
     cfg = _build_kimi_k2_gb300_fp8mx()
     _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
