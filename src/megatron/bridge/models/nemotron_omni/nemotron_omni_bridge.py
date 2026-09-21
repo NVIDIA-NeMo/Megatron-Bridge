@@ -394,8 +394,6 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         num_nextn_predict_layers. Super VL instead stores a serialized-block
         count there; normalize it without duplicating the shared MTP weights.
         """
-        from megatron.bridge.models.hf_pretrained.text_only import create_text_only_pretrained
-
         config = copy.deepcopy(hf_pretrained.config.llm_config)
         self._validate_shared_mtp_config(config)
         config.architectures = ["NemotronHForCausalLM"]
@@ -403,7 +401,41 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
             del config.auto_map
         config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
         config.mtp_use_repeated_layer = True
-        return create_text_only_pretrained(hf_pretrained, config=config, prefix="language_model.")
+        kwargs = dict(hf_pretrained.init_kwargs)
+        if kwargs.get("subfolder"):
+            raise ValueError(
+                "text_only=True does not yet support HF subfolder checkpoints; use a local model directory."
+            )
+        revision = getattr(hf_pretrained.config, "_commit_hash", None) or kwargs.get("revision")
+        if revision is not None:
+            kwargs["revision"] = revision
+        text = PreTrainedCausalLM(
+            hf_pretrained.model_name_or_path,
+            device=hf_pretrained.device,
+            torch_dtype=hf_pretrained.torch_dtype,
+            trust_remote_code=hf_pretrained.trust_remote_code,
+            **kwargs,
+        )
+        text.config = config
+        text._text_only = True
+        # Reuse the native text bridge with a namespace-local checkpoint view,
+        # as MIMO reuses component bridges with namespace-local registries.
+        text._state_dict_accessor = StateDict(
+            SafeTensorsStateSource(
+                hf_pretrained.model_name_or_path,
+                key_prefix="language_model.",
+                revision=revision,
+                hub_kwargs={
+                    key: kwargs[key]
+                    for key in ("token", "cache_dir", "local_files_only", "force_download")
+                    if key in kwargs
+                },
+            )
+        )
+        text._processor = None
+        text._image_processor = None
+        text.custom_file_patterns = []
+        return text
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""

@@ -7,7 +7,7 @@ from safetensors.torch import load_file, save_file
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hf_pretrained.text_only import _LanguageModelStateSource, create_text_only_pretrained
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 
 
 pytestmark = pytest.mark.unit
@@ -28,7 +28,16 @@ def checkpoint(tmp_path):
 
 
 def _source(path):
-    return _LanguageModelStateSource(path, prefix="language_model.", revision=None, hub_kwargs={})
+    return SafeTensorsStateSource(path, key_prefix="language_model.")
+
+
+def _select_text(source, *, config):
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import Nemotron35SuperVLBridge
+
+    config.num_nextn_predict_layers = 1
+    config.mtp_hybrid_override_pattern = "*E"
+    source.config.llm_config = config
+    return Nemotron35SuperVLBridge().text_only_pretrained(source)
 
 
 def test_language_keys_and_mtp_are_lazy_and_exact(checkpoint):
@@ -50,7 +59,7 @@ def test_no_language_subtree_fails_on_every_access(tmp_path):
     save_file({"vision.weight": torch.ones(1)}, tmp_path / "model.safetensors")
     source = _source(tmp_path)
     for _ in range(2):
-        with pytest.raises(ValueError, match="no language weights"):
+        with pytest.raises(ValueError, match="no weights under"):
             source.get_all_keys()
 
 
@@ -83,8 +92,8 @@ def test_hub_downloads_only_requested_shards_at_pinned_revision(checkpoint, monk
     path, _ = checkpoint
     download = Mock(side_effect=lambda repo, filename, **kwargs: str(path / filename))
     monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
-    source = _LanguageModelStateSource(
-        "org/model", prefix="language_model.", revision="immutable-revision", hub_kwargs={"local_files_only": True}
+    source = SafeTensorsStateSource(
+        "org/model", key_prefix="language_model.", revision="immutable-revision", hub_kwargs={"local_files_only": True}
     )
     assert len(source.get_all_keys()) == 2
     assert [call.args[1] for call in download.call_args_list] == ["model.safetensors.index.json"]
@@ -96,19 +105,86 @@ def test_hub_downloads_only_requested_shards_at_pinned_revision(checkpoint, monk
     assert all(call.kwargs["revision"] == "immutable-revision" for call in download.call_args_list)
 
 
+@pytest.mark.parametrize("prefix", ["", "language_model"])
+def test_source_rejects_invalid_prefix(tmp_path, prefix):
+    with pytest.raises(ValueError, match="key_prefix"):
+        SafeTensorsStateSource(tmp_path, key_prefix=prefix)
+
+
+def test_prefix_views_do_not_modify_shared_index_or_default_source(tmp_path):
+    tensors = {"text.weight": torch.ones(2), "vision.weight": torch.zeros(3)}
+    save_file(tensors, tmp_path / "mixed.safetensors")
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps({"weight_map": {key: "mixed.safetensors" for key in tensors}})
+    )
+    plain = SafeTensorsStateSource(tmp_path)
+    assert set(plain.get_all_keys()) == set(tensors)
+    for prefix in ("text.", "vision."):
+        selected = SafeTensorsStateSource(tmp_path, key_prefix=prefix)
+        assert selected.get_all_keys() == ["weight"]
+        assert selected.has_glob("weight")
+        assert not selected.has_glob(prefix + "*")
+        assert torch.equal(selected.load_tensors(["weight"])["weight"], tensors[prefix + "weight"])
+    assert set(plain.key_to_filename_map) == set(tensors)
+    assert set(SafeTensorsStateSource(tmp_path).key_to_filename_map) == set(tensors)
+    for key, tensor in plain.load_tensors(plain.get_all_keys()).items():
+        assert torch.equal(tensor, tensors[key])
+
+
+def test_selected_source_does_not_scan_other_shards_for_missing_tensor(checkpoint, monkeypatch):
+    path, _ = checkpoint
+    # The index advertises a weight absent from its designated shard.
+    source = _source(path)
+    source.key_to_filename_map["absent.weight"] = "language.safetensors"
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    monkeypatch.setattr("glob.glob", Mock(side_effect=AssertionError("unrelated shard scan")))
+    with pytest.raises(KeyError, match="absent.weight"):
+        source.load_tensors(["absent.weight"])
+
+
+def test_hub_single_file_prefix_selection(tmp_path, monkeypatch):
+    from huggingface_hub.errors import EntryNotFoundError
+
+    save_file({"text.weight": torch.ones(2), "vision.weight": torch.zeros(3)}, tmp_path / "model.safetensors")
+
+    def download(repo, filename, **kwargs):
+        assert kwargs["revision"] == "pinned"
+        if filename.endswith(".json"):
+            raise EntryNotFoundError("no index")
+        return str(tmp_path / filename)
+
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
+    source = SafeTensorsStateSource("org/model", key_prefix="text.", revision="pinned")
+    assert source.get_all_keys() == ["weight"]
+    assert torch.equal(source.load_tensors(["weight"])["weight"], torch.ones(2))
+
+
+def test_hub_revision_without_prefix_keeps_original_keys(checkpoint, monkeypatch):
+    path, weights = checkpoint
+    download = Mock(side_effect=lambda repo, filename, **kwargs: str(path / filename))
+    monkeypatch.setattr("huggingface_hub.hf_hub_download", download)
+    source = SafeTensorsStateSource("org/model", revision="pinned", hub_kwargs={"local_files_only": True})
+    assert set(source.get_all_keys()) == {*weights, "vision_model.weight"}
+    for key, tensor in source.load_tensors(list(weights)).items():
+        assert torch.equal(tensor, weights[key])
+    assert all(call.kwargs == {"revision": "pinned", "local_files_only": True} for call in download.call_args_list)
+
+
 def test_wrapper_retains_revision_and_drops_media_artifacts(checkpoint):
     path, _ = checkpoint
     original = PreTrainedCausalLM.from_pretrained(path, revision="requested", trust_remote_code=True)
     original.config = PretrainedConfig()
     original.config._commit_hash = "resolved"
     config = PretrainedConfig(architectures=["NemotronHForCausalLM"])
-    wrapper = create_text_only_pretrained(original, config=config, prefix="language_model.")
+    wrapper = _select_text(original, config=config)
     assert type(wrapper) is PreTrainedCausalLM
     assert wrapper._text_only
     assert not original._text_only
     assert original.OPTIONAL_ARTIFACTS == ["generation_config", "processor", "image_processor"]
     assert original.custom_file_patterns == ["*.py"]
-    assert wrapper.config is config
+    assert wrapper.config is not config
+    assert wrapper.config.num_nextn_predict_layers == 2
+    assert config.num_nextn_predict_layers == 1
     assert wrapper.init_kwargs["revision"] == "resolved"
     assert wrapper.processor is None
     assert wrapper.image_processor is None
@@ -122,7 +198,7 @@ def test_projection_does_not_change_regular_wrapper_loading(checkpoint, monkeypa
     path, _ = checkpoint
     original = PreTrainedCausalLM.from_pretrained(path, device="cpu")
     original.config = PretrainedConfig()
-    selected = create_text_only_pretrained(original, config=PretrainedConfig(), prefix="language_model.")
+    selected = _select_text(original, config=PretrainedConfig())
     model = Mock()
     model.to.return_value = model
     load = Mock(return_value=model)
@@ -139,7 +215,7 @@ def test_projection_does_not_load_media_artifacts(checkpoint, tmp_path, monkeypa
     path, _ = checkpoint
     source = PreTrainedCausalLM.from_pretrained(path)
     source.config = PretrainedConfig()
-    selected = create_text_only_pretrained(source, config=PretrainedConfig(), prefix="language_model.")
+    selected = _select_text(source, config=PretrainedConfig())
     selected.tokenizer = Mock()
     selected.generation_config = None
     monkeypatch.setattr(PreTrainedCausalLM, "_load_processor", Mock(side_effect=AssertionError("media load")))
@@ -200,7 +276,7 @@ def test_wrapper_artifacts_reload_as_native_text_without_remote_code(checkpoint,
     original.config = PretrainedConfig()
     config = NemotronHConfig(num_nextn_predict_layers=2)
     config.architectures = ["NemotronHForCausalLM"]
-    wrapper = create_text_only_pretrained(original, config=config, prefix="language_model.")
+    wrapper = _select_text(original, config=config)
     wrapper.tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=Tokenizer(models.WordLevel({"<unk>": 0, "hello": 1}, unk_token="<unk>")),
         unk_token="<unk>",
