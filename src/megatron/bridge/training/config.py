@@ -24,11 +24,7 @@ import torch
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
-from megatron.core.optimizer import (
-    ParamGroupOverride,
-    ParamKey,
-    get_standard_config_overrides,
-)
+from megatron.core.optimizer import ParamGroupOverride, ParamKey, get_standard_config_overrides
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -42,24 +38,15 @@ from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
-from megatron.bridge.data.base import (
-    DataloaderConfig,
-    DatasetProvider,
-)
-from megatron.bridge.data.base import (
-    DatasetBuildContext as DatasetBuildContext,
-)
+from megatron.bridge.data.base import DataloaderConfig, DatasetProvider
+from megatron.bridge.data.base import DatasetBuildContext as DatasetBuildContext
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig
 
 # Deprecated training.config import compatibility. New code imports dataset
 # Config + Builder APIs from megatron.bridge.data.builders.
-from megatron.bridge.data.builders.gpt_sft import (
-    FinetuningDatasetConfig as FinetuningDatasetConfig,
-)
-from megatron.bridge.data.builders.gpt_sft import (
-    GPTSFTDatasetConfig,
-)
+from megatron.bridge.data.builders.gpt_sft import FinetuningDatasetConfig as FinetuningDatasetConfig
+from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetConfig
 from megatron.bridge.data.builders.mock_vlm_sft import MockVLMSFTDatasetConfig
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -75,11 +62,7 @@ from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
-from megatron.bridge.utils.common_utils import (
-    get_world_size_safe,
-    print_rank_0,
-    warn_rank_0,
-)
+from megatron.bridge.utils.common_utils import get_world_size_safe, print_rank_0, warn_rank_0
 from megatron.bridge.utils.cuda_graph import (
     cuda_graph_module_names,
     is_full_iteration_cuda_graph,
@@ -1071,10 +1054,26 @@ class ConfigContainer(Container):
             ) from error
         if not requested and not is_determinism_configured():
             return
+        if not hasattr(self.model, "deterministic_mode"):
+            raise RuntimeError(
+                "Deterministic Bridge training requires a provider with a top-level "
+                "deterministic_mode setting. MegatronMIMO per-module providers need "
+                "a separate determinism adapter."
+            )
         # A previously bootstrapped process must also reject mode=False. Recipe
         # defaults cannot override launcher values or relax an active policy.
         apply_environment_variables(self)
-        configure_determinism(self.model)
+        policy = configure_determinism(self.model)
+        for name, value in self.env_vars.items():
+            effective = policy["environment"].get(name)
+            if effective is not None and str(value) != effective:
+                warnings.warn(
+                    f"Recipe env_vars[{name!r}]={str(value)!r} is overridden by the "
+                    f"early process policy value {effective!r}. Set this environment "
+                    "variable before the determinism launcher to select another supported value.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
@@ -2131,7 +2130,6 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
-    cfg._validate_and_apply_deterministic_mode()
 
 
 def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -> None:

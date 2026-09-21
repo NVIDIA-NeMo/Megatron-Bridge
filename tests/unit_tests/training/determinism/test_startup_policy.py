@@ -1,3 +1,17 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """CPU contracts for Bridge's early startup adapter and the real MCore policy.
 
 Run with ``--confcutdir=tests/unit_tests/training/determinism`` to avoid the GPU
@@ -13,6 +27,7 @@ import ast
 import importlib.util
 import os
 import sys
+import warnings
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -46,7 +61,7 @@ def _load_definitions(path: str, names: list[str], namespace: dict[str, object])
 
 @pytest.fixture
 def adapter(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    namespace: dict[str, object] = {"os": os, "torch": torch}
+    namespace: dict[str, object] = {"os": os, "torch": torch, "warnings": warnings}
     _load_definitions(
         "src/megatron/bridge/training/config.py",
         [
@@ -111,21 +126,34 @@ class StopAfterPolicy(Exception):
 @pytest.fixture
 def policy(adapter: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> Iterator[ModuleType]:
     root = Path(os.environ.get("MCORE_SOURCE_ROOT", ROOT / "3rdparty/Megatron-LM"))
-    path = root / "megatron/determinism/_policy.py"
-    assert path.is_file(), "This integration requires an MCore checkout with the shared startup API."
-    spec = importlib.util.spec_from_file_location("megatron.determinism", path)
+    path = root / "megatron/determinism/__init__.py"
+    if not path.is_file():
+        if "MCORE_SOURCE_ROOT" in os.environ:
+            pytest.fail("MCORE_SOURCE_ROOT must provide the public shared startup API (#7419).")
+        pytest.skip("Pinned MCore lacks the startup API; test with MCORE_SOURCE_ROOT for #7419.")
+    spec = importlib.util.spec_from_file_location(
+        "megatron.determinism", path, submodule_search_locations=[str(path.parent)]
+    )
     assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    monkeypatch.setitem(sys.modules, spec.name, module)
     enabled = torch.are_deterministic_algorithms_enabled()
     warn_only = torch.is_deterministic_algorithms_warn_only_enabled()
     benchmark = torch.backends.cudnn.benchmark
     deterministic = torch.backends.cudnn.deterministic
-    yield module
-    torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
-    torch.backends.cudnn.benchmark = benchmark
-    torch.backends.cudnn.deterministic = deterministic
+    fill = torch.utils.deterministic.fill_uninitialized_memory
+    with patch.dict(sys.modules):
+        for name in list(sys.modules):
+            if name == spec.name or name.startswith(spec.name + "."):
+                del sys.modules[name]
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        try:
+            yield module
+        finally:
+            torch.use_deterministic_algorithms(enabled, warn_only=warn_only)
+            torch.backends.cudnn.benchmark = benchmark
+            torch.backends.cudnn.deterministic = deterministic
+            torch.utils.deterministic.fill_uninitialized_memory = fill
 
 
 def test_defaults_and_strict_torch_policy(adapter: SimpleNamespace, policy: ModuleType) -> None:
@@ -200,7 +228,7 @@ def test_policy_precedes_validation_and_cuda_probe(
             getattr(adapter, entrypoint)(cfg)
     assert os.environ["NCCL_ALGO"] == "Ring"
     assert torch.are_deterministic_algorithms_enabled()
-    assert policy._configured_pid == os.getpid()
+    assert policy.is_determinism_configured()
 
 
 def test_resolved_comm_overlap_is_validated(adapter: SimpleNamespace, policy: ModuleType) -> None:
@@ -297,3 +325,57 @@ def test_recipe_override_supports_core_without_separate_aux_option(adapter: Simp
     adapter.apply_determinism_overrides(cfg)
     assert cfg.model.moe_router_fusion is False
     assert not hasattr(cfg.model, "moe_router_aux_loss_fusion")
+
+
+def test_recipe_value_different_from_early_default_warns(adapter, policy):
+    policy.configure_determinism({"deterministic_mode": True})
+    cfg = adapter.Config()
+    cfg.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+    with pytest.warns(UserWarning, match="CUBLAS_WORKSPACE_CONFIG.*overridden"):
+        cfg._validate_and_apply_deterministic_mode()
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+
+
+def test_mimo_without_top_level_policy_has_specific_error(adapter, policy):
+    policy.configure_determinism({"deterministic_mode": True})
+    cfg = adapter.Config()
+    del cfg.model.deterministic_mode
+    with pytest.raises(RuntimeError, match="MegatronMIMO.*separate determinism adapter"):
+        cfg._validate_and_apply_deterministic_mode()
+
+
+def test_reexec_preserves_configured_launcher(adapter, policy, monkeypatch):
+    namespace = {
+        "os": os,
+        "sys": sys,
+        "RECIPE_ENV_BOOTSTRAP_MARKER": "_TEST_RECIPE_REEXEC",
+        "apply_runtime_environment": lambda cfg: cfg,
+    }
+    _load_definitions("scripts/training/recipe_runner.py", ["bootstrap_recipe_environment"], namespace)
+    policy.configure_determinism({"deterministic_mode": True})
+    commands = []
+
+    def execute(executable, command, environment):
+        commands.append(command)
+        raise StopAfterPolicy()
+
+    monkeypatch.setattr(os, "execvpe", execute)
+    with pytest.raises(StopAfterPolicy):
+        namespace["bootstrap_recipe_environment"](adapter.Config(), script_path="run.py", argv=["--recipe", "test"])
+    assert commands == [[sys.executable, "-m", "megatron.determinism", "run.py", "--recipe", "test"]]
+
+
+def test_recipe_runner_bootstraps_before_bridge_imports(policy, monkeypatch):
+    tree = ast.parse((ROOT / "scripts/training/run_recipe.py").read_text())
+    prefix = []
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "benchmark_parallelism":
+            break
+        prefix.append(node)
+    monkeypatch.setattr(sys, "argv", ["run_recipe.py", "--deterministic"])
+    monkeypatch.setattr(sys, "path", sys.path[:])
+    exec(
+        compile(ast.Module(body=prefix, type_ignores=[]), "run_recipe.py", "exec"),
+        {"__name__": "__main__", "__file__": str(ROOT / "scripts/training/run_recipe.py")},
+    )
+    assert policy.is_determinism_configured()

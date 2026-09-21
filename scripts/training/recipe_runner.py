@@ -339,9 +339,18 @@ def bootstrap_recipe_environment(
 
     environment = dict(os.environ)
     environment[RECIPE_ENV_BOOTSTRAP_MARKER] = str(os.getpid())
+    command = [sys.executable, script_path, *argv]
+    try:
+        from megatron.determinism import is_determinism_configured
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.determinism":
+            raise
+    else:
+        if is_determinism_configured():
+            command = [sys.executable, "-m", "megatron.determinism", script_path, *argv]
     os.execvpe(
         sys.executable,
-        [sys.executable, script_path, *argv],
+        command,
         environment,
     )
     raise RuntimeError("os.execvpe returned unexpectedly")

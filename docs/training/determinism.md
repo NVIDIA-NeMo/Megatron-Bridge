@@ -43,14 +43,21 @@ early policy at the start of `ConfigContainer.validate()`, before model or other
 sub-config finalization. `initialize_megatron()` also checks the policy before its
 first CUDA probe, including for direct callers. Explicit shell/launcher environment
 settings take precedence over recipe defaults, and MCore rejects incompatible
-settings instead of silently replacing them.
+settings instead of silently replacing them. If `cfg.env_vars` requests a different
+policy value after early setup, Bridge warns and retains the established value.
+To select another supported setting (for example `CUBLAS_WORKSPACE_CONFIG=:16:8`),
+export it before starting the launcher; recipe construction happens too late.
+
+`scripts/training/run_recipe.py --deterministic` configures the early policy
+before Bridge imports. Recipe-environment re-execution preserves the determinism
+launcher, including when the outer command supplied that launcher directly.
 
 MCore supplies unset `NCCL_ALGO=Ring`, `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`, and
 `CUBLAS_WORKSPACE_CONFIG=:4096:8`, enables strict Torch deterministic algorithms,
 disables cuDNN benchmarking, and enables cuDNN deterministic mode. Its shared
 validator owns accepted NCCL choices, SSM settings, and Triton cache requirements.
 In particular, `NCCL_ALGO=Tree` is no longer accepted by Bridge's deterministic
-training path. An INFO-level `Determinism policy:` record describes effective
+training path. A DEBUG-level `Determinism policy:` record describes effective
 settings.
 
 All deterministic Bridge entrypoints need the early call or launcher before
@@ -73,7 +80,7 @@ instrumentation.
 The startup integration supports providers with a top-level deterministic-mode
 config and GPT/Hybrid model configs that proxy their transformer settings.
 MegatronMIMO's per-module providers need a separate policy adapter; its existing
-top-level check does not establish determinism for nested modules. Inference,
+top-level check rejects early deterministic startup with an explicit unsupported-provider error. Inference,
 conversion and user code that executes kernels before training startup also need
 their own early API call.
 
@@ -87,7 +94,7 @@ uv run python -m pytest --confcutdir=tests/unit_tests/training/determinism \
 
 When testing an MCore change before updating Bridge's submodule, set
 `MCORE_SOURCE_ROOT` to the checkout providing that API. This only selects the
-policy file for CPU tests; it does not change Bridge's installed MCore package.
+public policy package for CPU tests; it does not change Bridge's installed MCore package.
 The functional startup tests use real public imports, config finalization,
 single-rank NCCL initialization and a small output/gradient byte comparison in
 fresh processes. Provider and builder configs (including the early launcher), late setup, and
