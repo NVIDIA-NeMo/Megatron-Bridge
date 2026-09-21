@@ -332,7 +332,7 @@ def test_pretrain_megatron_mimo_aborts_async_state_after_training_failure():
         ),
         patch("megatron.bridge.training.pretrain_megatron_mimo.train_megatron_mimo", side_effect=failure),
         patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
-        patch("megatron.core.dist_checkpointing.strategies.filesystem_async._results_queue", None),
+        patch("nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async._results_queue", None),
         pytest.raises(RuntimeError, match="training failed") as exc_info,
     ):
         mock_dist.is_initialized.return_value = True

@@ -18,6 +18,7 @@ This module provides SFT and PEFT configurations for Gemma 4 VL 26B-A4B (MoE VLM
 """
 
 import torch
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
@@ -59,7 +60,8 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = "flash"
+    # Global attention uses 512-wide heads, which require an unfused fallback on H100.
+    cfg.model.attention_backend = AttnBackend.auto
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
 
