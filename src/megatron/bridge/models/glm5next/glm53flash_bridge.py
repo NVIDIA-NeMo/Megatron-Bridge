@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.ssm.kda_layer_config import KDALayerConfig
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.module import MegatronModule
@@ -253,7 +254,7 @@ def glm53_hybrid_stack_spec(config: HybridMLAModelProvider) -> ModuleSpec:
 
 
 @dataclass
-class GLM53FlashModelProvider(HybridMLAModelProvider):
+class GLM53FlashModelProvider(HybridMLAModelProvider, KDALayerConfig):
     """Provider for the unified GLM-5.3-Flash VLM: hybrid language stack + HF vision."""
 
     # Vision configuration (HF Glm5NextVisionConfig object, stored as-is).
