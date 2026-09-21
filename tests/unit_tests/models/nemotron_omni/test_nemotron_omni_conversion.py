@@ -242,6 +242,8 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path):
     source.config = full_config
     selected = AutoBridge(Nemotron35SuperVLBridge().text_only_pretrained(source))
     provider = selected.to_megatron_provider(load_weights=False)
+    assert provider.mtp_num_layers == 2
+    assert provider.mtp_use_repeated_layer
     (tmp_path / "run_config.yaml").touch()
     with (
         patch("megatron.bridge.training.model_load_save.load_model_config", return_value=(provider, None)),
@@ -253,7 +255,12 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path):
     assert restored.text_only
     assert isinstance(restored._model_bridge, NemotronHBridge)
     assert restored.hf_pretrained.architectures == ["NemotronHForCausalLM"]
-    assert restored.hf_pretrained.num_nextn_predict_layers == 2
+    # Native Nemotron-H exports the physical shared block count, not the
+    # number of runtime prediction depths (see NemotronHBridge).
+    assert restored.hf_pretrained.num_nextn_predict_layers == 1
+    assert restored.hf_pretrained.mtp_use_repeated_layer
+    assert selected.hf_pretrained.config.num_nextn_predict_layers == 2
+    assert full_config.llm_config.num_nextn_predict_layers == 1
     assert not hasattr(restored.hf_pretrained, "vision_config")
     assert not hasattr(restored.hf_pretrained, "auto_map")
 

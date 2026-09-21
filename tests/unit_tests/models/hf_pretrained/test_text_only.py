@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import json
 from unittest.mock import Mock
 
@@ -49,7 +50,8 @@ def _select_text(source, *, config):
     from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import Nemotron35SuperVLBridge
 
     config.num_nextn_predict_layers = 1
-    config.mtp_layers_block_type = ["attention", "moe"]
+    if not getattr(config, "mtp_layers_block_type", None):
+        config.mtp_layers_block_type = ["attention", "moe"]
     source.config.llm_config = config
     return Nemotron35SuperVLBridge().text_only_pretrained(source)
 
@@ -238,9 +240,22 @@ def test_projection_does_not_load_media_artifacts(checkpoint, tmp_path, monkeypa
     selected.tokenizer.save_pretrained.assert_called_once()
 
 
-def test_native_nemotron_text_export_preserves_logits(tmp_path):
+def test_native_nemotron_text_export_preserves_logits(tmp_path, monkeypatch):
     """HF-to-HF projection check; not a substitute for HF-to-MCore parity."""
-    from transformers.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM
+    from transformers.models.nemotron_h import NemotronHConfig, NemotronHForCausalLM, modeling_nemotron_h
+
+    # Newer Transformers prefer installed CUDA packages even on CPU. Exercise
+    # their real PyTorch fallbacks for this CPU-only artifact round-trip test.
+    for name in (
+        "causal_conv1d_fn",
+        "causal_conv1d_update",
+        "mamba2_split_conv1d_scan_combined",
+        "mamba2_selective_state_update",
+        "mamba2_chunk_scan",
+    ):
+        function = getattr(modeling_nemotron_h, name, None)
+        if callable(function):
+            monkeypatch.setattr(modeling_nemotron_h, name, inspect.unwrap(function))
 
     config = NemotronHConfig(
         vocab_size=32,
