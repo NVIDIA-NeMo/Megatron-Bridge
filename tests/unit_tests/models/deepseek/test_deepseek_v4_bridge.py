@@ -18,6 +18,7 @@ Locks in the MTP mapping layout: per-MTP-layer HC head, separate ``e_proj``
 and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 """
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -31,6 +32,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     DeepSeekV4Bridge,
     _dsv4_compress_ratios,
     _dsv4_num_hash_layers,
+    deepseek_v4_supports_fused_dsa_kernels,
 )
 
 
@@ -94,6 +96,66 @@ def _deepseek_v4_hf_config():
     )
 
 
+def _provider_with_fields(*field_names):
+    class Provider:
+        __dataclass_fields__ = dict.fromkeys(field_names)
+
+    return Provider()
+
+
+class TestDeepSeekV4OutputProjectionConfig:
+    """HF grouped-output geometry must reach either supported MCore field name."""
+
+    @pytest.mark.parametrize(
+        ("provider_fields", "expected_fields"),
+        [
+            (
+                {"output_projection_groups": 8, "output_projection_lora_rank": 1024},
+                {"output_projection_groups": 4, "output_projection_lora_rank": 256},
+            ),
+            (
+                {"o_groups": 8, "o_lora_rank": 1024},
+                {"o_groups": 4, "o_lora_rank": 256},
+            ),
+        ],
+    )
+    def test_provider_bridge_sets_ref_specific_fields(self, provider_fields, expected_fields):
+        bridge = DeepSeekV4Bridge()
+        provider = SimpleNamespace(**provider_fields)
+        hf_config = _deepseek_v4_hf_config()
+        hf_config.o_groups = 4
+        hf_config.o_lora_rank = 256
+        hf_pretrained = SimpleNamespace(config=hf_config)
+
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_blackwell_fused_kernels",
+                return_value=False,
+            ),
+        ):
+            bridge.provider_bridge(hf_pretrained)
+
+        for field, expected in expected_fields.items():
+            assert getattr(provider, field) == expected
+
+    @pytest.mark.parametrize(
+        "provider_fields",
+        [
+            {"output_projection_groups": 4, "output_projection_lora_rank": 256},
+            {"o_groups": 4, "o_lora_rank": 256},
+        ],
+    )
+    def test_megatron_to_hf_config_reads_ref_specific_fields(self, provider_fields):
+        provider = SimpleNamespace(**provider_fields)
+
+        with patch.object(MegatronModelBridge, "megatron_to_hf_config", return_value={}):
+            hf_config = DeepSeekV4Bridge.megatron_to_hf_config(provider)
+
+        assert hf_config["o_groups"] == 4
+        assert hf_config["o_lora_rank"] == 256
+
+
 class TestNativeDeepSeekV4ConfigTranslation:
     """Native Transformers DSv4 config fields must map back to MCore fields."""
 
@@ -136,6 +198,46 @@ class TestNativeDeepSeekV4ConfigTranslation:
 
         with pytest.raises(ValueError, match="contiguous prefix"):
             _dsv4_num_hash_layers(hf_config)
+
+
+class TestDeepSeekV4RouterExpertBias:
+    """DSv4 checkpoints may omit their runtime router-bias buffers."""
+
+    @staticmethod
+    def _mapping(bridge):
+        return _by_megatron(bridge.mapping_registry())["decoder.layers.*.mlp.router.expert_bias"]
+
+    def test_mapping_allows_missing_hf_bias_after_wildcard_resolution(self, bridge_without_mtp):
+        mapping = self._mapping(bridge_without_mtp)
+
+        assert isinstance(mapping, AutoMapping)
+        assert mapping.allow_hf_name_mismatch
+        assert mapping.resolve(("0",)).allow_hf_name_mismatch
+
+    def test_import_synthesizes_zero_bias_when_hf_checkpoint_omits_it(self):
+        bridge = DeepSeekV4Bridge()
+        bridge.hf_config = SimpleNamespace(n_routed_experts=8)
+
+        result = bridge.maybe_modify_loaded_hf_weight("layers.0.ffn.gate.bias", {})
+
+        assert result.dtype == torch.float32
+        assert torch.equal(result, torch.zeros(8))
+
+    def test_import_preserves_hf_bias_when_present(self):
+        bridge = DeepSeekV4Bridge()
+        bias = torch.arange(8, dtype=torch.float32)
+
+        result = bridge.maybe_modify_loaded_hf_weight("layers.0.ffn.gate.bias", {"layers.0.ffn.gate.bias": bias})
+
+        assert result is bias
+
+    def test_export_omits_bias_absent_from_source_checkpoint(self):
+        bridge = DeepSeekV4Bridge()
+        bias = torch.zeros(8)
+
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {"layers.0.ffn.gate.bias": bias}, {})
+
+        assert result == {}
 
 
 class TestDeepSeekV4QuantizedExport:
@@ -448,6 +550,30 @@ class TestDeepSeekV4MoEDispatcher:
         assert out.moe_permute_fusion_into_hybridep is False
 
 
+class TestDeepSeekV4HardwareCapabilities:
+    def test_fused_dsa_requires_compatible_compact_wrapper(self):
+        def compatible_wrapper(*, deterministic):
+            pass
+
+        modules = {
+            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=compatible_wrapper)),
+            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=object()),
+        }
+        with patch.dict(sys.modules, modules):
+            assert deepseek_v4_supports_fused_dsa_kernels() is True
+
+    def test_fused_dsa_rejects_incompatible_compact_wrapper(self):
+        def incompatible_wrapper():
+            pass
+
+        modules = {
+            "cudnn": SimpleNamespace(DSA=SimpleNamespace(indexer_forward_top_k_wrapper=incompatible_wrapper)),
+            "flash_mla": SimpleNamespace(flash_mla_sparse_fwd=object()),
+        }
+        with patch.dict(sys.modules, modules):
+            assert deepseek_v4_supports_fused_dsa_kernels() is False
+
+
 class TestDeepSeekV4HardwareDefaults:
     """DSv4 Blackwell-only fused kernels must not default on for Hopper."""
 
@@ -461,7 +587,7 @@ class TestDeepSeekV4HardwareDefaults:
     def test_provider_bridge_gates_blackwell_only_fusions(self, capability, expected):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = MagicMock()
+        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -475,13 +601,36 @@ class TestDeepSeekV4HardwareDefaults:
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
+        assert out.dsa_kernel_backend == ("cudnn" if expected else "none")
         assert out.apply_dsa_kernel_fusion is expected
+        assert out.enable_hyper_connections is True
+        assert out.num_residual_streams == hf_pretrained.config.hc_mult
         assert out.use_fused_mhc is expected
+
+    def test_provider_bridge_sets_main_mhc_fields_and_disables_dsa(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = _provider_with_fields("enable_mhc_connections", "mhc_num_residual_streams")
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_blackwell_fused_kernels",
+                return_value=True,
+            ),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.dsa_kernel_backend == "none"
+        assert out.enable_mhc_connections is True
+        assert out.mhc_num_residual_streams == hf_pretrained.config.hc_mult
+        assert out.use_fused_mhc is True
 
     def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = MagicMock()
+        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -490,13 +639,15 @@ class TestDeepSeekV4HardwareDefaults:
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
+        assert out.dsa_kernel_backend == "none"
         assert out.apply_dsa_kernel_fusion is False
+        assert out.enable_hyper_connections is True
         assert out.use_fused_mhc is False
 
     def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
-        provider = MagicMock()
+        provider = _provider_with_fields("apply_dsa_kernel_fusion", "enable_hyper_connections", "num_residual_streams")
 
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         with (
@@ -510,7 +661,9 @@ class TestDeepSeekV4HardwareDefaults:
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
+        assert out.dsa_kernel_backend == "none"
         assert out.apply_dsa_kernel_fusion is False
+        assert out.enable_hyper_connections is True
         assert out.use_fused_mhc is True
 
 

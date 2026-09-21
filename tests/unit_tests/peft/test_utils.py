@@ -33,14 +33,19 @@ from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
+    SharedOuterGroupedExpertAdapter,
     all2all_hp2sp,
+    allreduce_expert_parallel_replicated_grads,
+    enable_expert_parallel_grad_sync_in_finalize,
     enable_legacy_shared_expert_adapter_loading,
+    finalize_model_grads_with_expert_adapter_sync,
     get_adapter_attributes_from_linear,
     init_method_const,
     init_method_kaiming_uniform,
     init_method_normal,
     is_expert_linear,
     is_grouped_expert_linear,
+    mark_expert_parallel_replicated,
     pad_seq_to_mult,
     unpad_seq_to_mult,
     wildcard_match,
@@ -1121,6 +1126,63 @@ class TestParallelLinearAdapter:
         torch.testing.assert_close(mock_linear_in.weight, staged_weights[0])
         torch.testing.assert_close(mock_linear_out.weight, staged_weights[1])
 
+    @staticmethod
+    def _make_shared_expert_adapter(mock_config, mock_col_linear):
+        """Build a mocked shared grouped-expert adapter and return its (linear_in, linear_out) mocks."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(2, 2))
+        mock_linear_out.weight = nn.Parameter(torch.ones(2, 2))
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+        ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        return mock_linear_in, mock_linear_out
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_shared_adapter_hook_skips_fused_main_grad(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """With fused wgrad accumulation autograd only carries MCore's dummy; the hook must not reduce it."""
+        mock_linear_in, mock_linear_out = self._make_shared_expert_adapter(mock_config, mock_col_linear)
+        for weight in (mock_linear_in.weight, mock_linear_out.weight):
+            # MCore's fused path sets this before returning its dummy weight gradient.
+            weight.grad_added_to_main_grad = True
+
+        with (
+            patch.dict("os.environ", {"RANK": "0"}),
+            patch("torch.distributed.all_reduce") as mock_all_reduce,
+            pytest.warns(UserWarning, match="main_grad"),
+        ):
+            (mock_linear_in.weight.sum() + mock_linear_out.weight.sum()).backward()
+
+        mock_all_reduce.assert_not_called()
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_shared_adapter_hook_removed_by_finalize_sync(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Once finalize-time synchronization is enabled, backward issues no per-layer collectives."""
+        mock_linear_in, mock_linear_out = self._make_shared_expert_adapter(mock_config, mock_col_linear)
+        holder = nn.ParameterList([mock_linear_in.weight, mock_linear_out.weight])
+        assert enable_expert_parallel_grad_sync_in_finalize(holder) == 2
+
+        with patch("torch.distributed.all_reduce") as mock_all_reduce:
+            (mock_linear_in.weight.sum() + mock_linear_out.weight.sum()).backward()
+
+        mock_all_reduce.assert_not_called()
+        for weight in (mock_linear_in.weight, mock_linear_out.weight):
+            assert weight.expert_parallel_replicated is True
+            assert not hasattr(weight, "_expert_parallel_grad_hook")
+
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_grouped_expert_swiglu_sharded_state_dict_uses_expert_axis(
@@ -1412,6 +1474,164 @@ class TestParallelLinearAdapter:
         assert sharded_weight.global_shape == (2, 2)
         assert sharded_weight.replica_id == (0, 1, 3)
         assert "adapter.linear_in._extra_state" in result
+
+
+class TestExpertParallelReplicatedGradSync:
+    """Finalize-time synchronization of EP-replicated adapter gradients."""
+
+    @staticmethod
+    def _double_in_place(tensor, op=None, group=None):
+        """Stand-in for a SUM all-reduce between two ranks holding identical values."""
+        tensor.mul_(2)
+
+    def test_mark_without_expert_parallelism_only_tags_the_weight(self):
+        weight = nn.Parameter(torch.ones(2, 2))
+        mark_expert_parallel_replicated(weight, ep_group=None)
+        assert weight.expert_parallel_replicated is True
+        assert not hasattr(weight, "_expert_parallel_grad_hook")
+
+        with patch("torch.distributed.all_reduce") as mock_all_reduce:
+            weight.sum().backward()
+        mock_all_reduce.assert_not_called()
+
+    def test_allreduce_coalesces_main_grads_per_dtype(self):
+        ep_group = MockProcessGroup(size=2)
+        first = nn.Parameter(torch.ones(2, 2))
+        second = nn.Parameter(torch.ones(3))
+        third = nn.Parameter(torch.ones(2, dtype=torch.float64))
+        for index, param in enumerate((first, second, third), start=1):
+            mark_expert_parallel_replicated(param, ep_group=ep_group)
+            param.main_grad = torch.full_like(param, float(index))
+            # Fused wgrad path: the still-installed hook only saw a dummy, so finalize must reduce main_grad.
+            param.grad_added_to_main_grad = True
+        holder = nn.ParameterList([first, second, third])
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.all_reduce", side_effect=self._double_in_place) as mock_all_reduce,
+        ):
+            allreduce_expert_parallel_replicated_grads([holder], ep_group=ep_group)
+
+        # One coalesced collective for the two float32 params, one in-place collective for the float64 param.
+        assert mock_all_reduce.call_count == 2
+        for call in mock_all_reduce.call_args_list:
+            assert call.kwargs["group"] is ep_group
+            assert call.kwargs["op"] is torch.distributed.ReduceOp.SUM
+        torch.testing.assert_close(first.main_grad, torch.full_like(first, 2.0))
+        torch.testing.assert_close(second.main_grad, torch.full_like(second, 4.0))
+        torch.testing.assert_close(third.main_grad, torch.full_like(third, 6.0))
+        for param in (first, second, third):
+            assert not hasattr(param, "_expert_parallel_grad_hook")
+
+    def test_allreduce_skips_hook_summed_and_frozen_params(self):
+        ep_group = MockProcessGroup(size=2)
+        finalize_owned = nn.Parameter(torch.ones(2))
+        finalize_owned.grad = torch.full((2,), 3.0)
+        hook_summed = nn.Parameter(torch.ones(2))
+        hook_summed.grad = torch.full((2,), 5.0)
+        frozen = nn.Parameter(torch.ones(2), requires_grad=False)
+        for param in (finalize_owned, hook_summed, frozen):
+            mark_expert_parallel_replicated(param, ep_group=ep_group)
+        # Bridge's setup removes the hooks before the first step; a loop that never did keeps summing per layer,
+        # so an eagerly accumulated gradient with its hook still installed must not be summed twice.
+        assert enable_expert_parallel_grad_sync_in_finalize(nn.ParameterList([finalize_owned])) == 1
+        holder = nn.ParameterList([finalize_owned, hook_summed, frozen])
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.all_reduce", side_effect=self._double_in_place) as mock_all_reduce,
+        ):
+            allreduce_expert_parallel_replicated_grads([holder], ep_group=ep_group)
+
+        assert mock_all_reduce.call_count == 1
+        torch.testing.assert_close(finalize_owned.grad, torch.full((2,), 6.0))
+        torch.testing.assert_close(hook_summed.grad, torch.full((2,), 5.0))
+        assert not hasattr(hook_summed, "_expert_parallel_grad_hook")
+        assert frozen.grad is None
+
+    def test_allreduce_is_noop_without_expert_parallelism(self):
+        ep_group = MockProcessGroup(size=1)
+        param = nn.Parameter(torch.ones(2))
+        mark_expert_parallel_replicated(param, ep_group=ep_group)
+        param.grad = torch.ones(2)
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            allreduce_expert_parallel_replicated_grads([nn.ParameterList([param])], ep_group=ep_group)
+
+        mock_all_reduce.assert_not_called()
+        torch.testing.assert_close(param.grad, torch.ones(2))
+
+    def test_finalize_wrapper_runs_mcore_finalize_then_expert_sync(self):
+        calls = []
+        pg_collection = make_mock_pg_collection(ep_size=2)
+        model = [nn.Linear(2, 2)]
+
+        with (
+            patch(
+                "megatron.bridge.peft.utils.finalize_model_grads",
+                side_effect=lambda *args, **kwargs: calls.append("finalize"),
+            ) as mock_finalize,
+            patch(
+                "megatron.bridge.peft.utils.allreduce_expert_parallel_replicated_grads",
+                side_effect=lambda *args, **kwargs: calls.append("sync"),
+            ) as mock_sync,
+        ):
+            finalize_model_grads_with_expert_adapter_sync(
+                model, None, pg_collection=pg_collection, force_all_reduce=True
+            )
+
+        assert calls == ["finalize", "sync"]
+        mock_finalize.assert_called_once_with(model, None, pg_collection=pg_collection, force_all_reduce=True)
+        mock_sync.assert_called_once_with(model, ep_group=pg_collection.ep)
+
+    @patch("megatron.bridge.peft.utils.PackedPerExpertLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    def test_shared_outer_adapter_marks_only_the_shared_side(self, mock_col_linear, mock_row_linear, mock_packed):
+        """The shared factor is broadcast over EP and tagged; the per-expert pack is left to expert-DP."""
+        mock_config = MockModelParallelConfig()
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+        ep_group = mock_config._pg_collection.ep
+        shared = Mock()
+        shared.weight = nn.Parameter(torch.ones(2, 2))
+        per_expert = Mock()
+        per_expert.weight = nn.Parameter(torch.ones(2, 2, 2))
+        mock_col_linear.return_value = shared
+        mock_packed.return_value = per_expert
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_global_rank", return_value=7),
+            patch("torch.distributed.broadcast") as mock_broadcast,
+            patch.object(torch.Tensor, "is_cuda", new_callable=PropertyMock, return_value=True),
+        ):
+            adapter = SharedOuterGroupedExpertAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                num_local_experts=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+                input_is_parallel=False,
+                model_parallel_config=mock_config,
+            )
+
+        assert adapter.linear_in is shared
+        assert adapter.linear_out is per_expert
+        assert adapter.pg_collection is mock_config._pg_collection
+        assert adapter.ep_group is ep_group
+        assert shared.weight.expert_parallel_replicated is True
+        assert not getattr(per_expert.weight, "expert_parallel_replicated", False)
+        mock_row_linear.assert_not_called()
+        mock_broadcast.assert_called_once()
+        assert mock_broadcast.call_args.args[0] is shared.weight
+        assert mock_broadcast.call_args.kwargs == {"src": 7, "group": ep_group}
 
 
 class TestGroupedExpertLinearAdapter:
