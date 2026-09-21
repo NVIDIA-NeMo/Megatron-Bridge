@@ -24,6 +24,7 @@ from megatron.bridge.data.builders.gpt_sft import build_gpt_sft_split
 from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
+from megatron.bridge.data.packing.ragged_store import RaggedStore
 
 
 class TestConvertToOpenAIMessages:
@@ -1240,10 +1241,11 @@ class TestPackedSequenceWithChatEndToEnd:
             dataset_builder=MagicMock(return_value=mock_dataset),
         )
 
-        # Verify result is array of items with loss_mask
-        assert isinstance(result, np.ndarray)
+        # Verify result is a ragged store of items with loss_mask
+        assert isinstance(result, RaggedStore)
         assert len(result) == 1
         assert "loss_mask" in result[0]
+        result.close()
 
     def test_packed_dataset_preserves_chat_loss_mask(self):
         """Test that packed dataset preserves loss_mask from chat preprocessing."""
@@ -1368,8 +1370,6 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
             )
 
             # Verify it's a packed dataset
-            from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
-
             assert isinstance(dataset, GPTSFTPackedDataset)
 
     def test_dataset_kwargs_flow_through_builder(self, tmp_path):

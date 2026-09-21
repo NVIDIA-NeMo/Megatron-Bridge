@@ -374,6 +374,126 @@ def fill_packing_strategy(
     return output_data
 
 
+def create_hist_from_lengths(
+    runtime_lengths: np.ndarray, truncate_seq_len: int
+) -> Tuple[Dict[int, np.ndarray], List[int]]:
+    """Builds the packing histogram and length groups from an array of sequence lengths.
+
+    Equivalent to :func:`create_hist` but operates on per-sample sequence lengths
+    instead of materialized sample dicts, so it never touches sample data.
+
+    Args:
+        runtime_lengths: Array with ``len(input_ids) - 1`` per sample.
+        truncate_seq_len: Samples longer than this are skipped, mirroring ``create_hist``.
+
+    Returns:
+        groups: A dict mapping each sequence length to the array of original sample
+            indices with that length, in dataset order (stable).
+        histogram: A list with the number of samples per length in ``[0, truncate_seq_len]``.
+    """
+    logger.info("Creating histogram from sequence lengths...")
+
+    lengths = np.asarray(runtime_lengths, dtype=np.int64)
+    valid = np.flatnonzero(lengths <= truncate_seq_len)
+    num_skipped = len(lengths) - len(valid)
+
+    if num_skipped:
+        logger.warning(
+            "Skipped %d sequences longer than the maximum packed sequence length %d",
+            num_skipped,
+            truncate_seq_len,
+        )
+
+    valid_lengths = lengths[valid]
+    sort_order = np.argsort(valid_lengths, kind="stable")
+    sorted_indices = valid[sort_order]
+    sorted_lengths = valid_lengths[sort_order]
+
+    boundaries = np.searchsorted(sorted_lengths, np.arange(truncate_seq_len + 2))
+    groups = {
+        seq_len: sorted_indices[boundaries[seq_len] : boundaries[seq_len + 1]]
+        for seq_len in range(truncate_seq_len + 1)
+        if boundaries[seq_len + 1] > boundaries[seq_len]
+    }
+    histogram = np.bincount(sorted_lengths, minlength=truncate_seq_len + 1).tolist()
+
+    logger.debug("Histogram of sequence lengths")
+    logger.debug(histogram)
+
+    return groups, histogram
+
+
+def fill_packing_strategy_ragged(
+    assignments: List[List[int]],
+    store,
+    groups: Dict[int, np.ndarray],
+    pack_size: int,
+    pad_id: int,
+) -> List[Dict]:
+    """Ragged-store equivalent of :func:`fill_packing_strategy`.
+
+    Produces byte-identical packed output: the same RNG call sequence (one
+    ``np.random.permutation`` per non-empty length group in ascending order)
+    and the same bin assembly order are preserved.
+
+    Args:
+        assignments: Bin assignments from ``create_packing_strategy``.
+        store: A ``RaggedStore`` holding the materialized samples.
+        groups: Length groups from ``create_hist_from_lengths``.
+        pack_size: The maximum capacity of each bin.
+        pad_id: The tokenizer's padding token (unused, kept for signature parity).
+
+    Returns:
+        output_data: Same format as ``fill_packing_strategy``.
+    """
+    ids_column = store.column("input_ids")
+    mask_column = store.column("loss_mask") if "loss_mask" in store else None
+    answer_start_column = store.column("answer_start_idx") if "answer_start_idx" in store else None
+
+    ifile_handles = dict()
+    for seq_len in tqdm(range(pack_size + 1)):
+        group = groups.get(seq_len)
+        if group is None or len(group) == 0:
+            continue
+        perm = np.random.permutation(len(group))
+        input_ids = ids_column.gather(group)[perm].tolist()
+        if mask_column is not None and np.all(mask_column.lengths[group] > 0):
+            loss_mask = mask_column.gather(group)[perm].tolist()
+            # roll loss mask by 1 to align with labels. We want to train on the output after the last context token
+            loss_mask = [x[1:] + [False] for x in loss_mask]
+        elif answer_start_column is not None and np.all(answer_start_column.lengths[group] > 0):
+            answer_starts = answer_start_column.gather(group)[perm].reshape(-1)
+            # (answer_start_idx - 1) because we want to train on the output after the last context token
+            loss_mask = (np.arange(len(input_ids[0]))[None, :] >= (answer_starts - 1)[:, None]).tolist()
+        else:
+            err_msg = "Key errors loss_mask and answer_start_idx missing in example"
+            logging.error(err_msg)
+            raise ValueError(err_msg)
+        ifile_handles[seq_len] = (input_ids, loss_mask)
+
+    input_ids, loss_mask, seq_start_id = {}, {}, {}
+    for oindex, assignment in tqdm(enumerate(assignments), total=len(assignments)):
+        _input_ids, _loss_mask, _seq_start_id = [], [], [0]
+        for seq_length in assignment:
+            _input_ids.extend(ifile_handles[seq_length][0].pop())
+            _loss_mask.extend(ifile_handles[seq_length][1].pop())
+            _seq_start_id.append(len(_input_ids))
+        input_ids[oindex] = _input_ids
+        loss_mask[oindex] = _loss_mask
+        seq_start_id[oindex] = _seq_start_id[:-1]
+    output_data = []
+    for i in range(len(input_ids)):
+        item_dict = {
+            "input_ids": input_ids[i],
+            "loss_mask": loss_mask[i],
+            "seq_start_id": seq_start_id[i],
+        }
+        output_data.append(item_dict)
+    assert all(not seq[0] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
+    assert all(not seq[1] for seq in ifile_handles.values()), "Error: There are items left over from the assignment"
+    return output_data
+
+
 def get_seqlen_list(elem: Dict) -> Tuple[List[int], int]:
     """Extract per-sequence token counts from a packed dataset element.
 
