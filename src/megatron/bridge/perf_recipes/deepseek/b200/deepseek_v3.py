@@ -179,9 +179,13 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.mixed_precision.fp4_param_gather = False
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 2
-    cfg.model.recompute_modules = ["mla_up_proj", "layernorm", "moe_act"]
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*5|(t*4|)*14mL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     _enable_deepseek_full_iteration_nvfp4(cfg)
+    cfg.model.cuda_graph_use_single_mempool = True
+    cfg.optimizer.optimizer_cuda_graph = True
+    cfg.optimizer.store_param_remainders = False
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
+    cfg.model.recompute_modules = ["mla_up_proj", "layernorm", "mlp"]
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
