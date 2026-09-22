@@ -988,7 +988,7 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
     return None
 
 
-_AUTO_BRIDGE_CACHE: dict[tuple[str, bool], Any] = {}
+_AUTO_BRIDGE_CACHE: dict[tuple, Any] = {}
 
 
 def _clear_auto_bridge_cache() -> None:
@@ -1013,10 +1013,22 @@ def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] =
             "an HF model id."
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
+    text_only = getattr(cfg.model, "hf_model_text_only", False) is True
+    # Initialization and artifact templates may override the original HF source.
+    revision = (
+        getattr(cfg.model, "hf_model_revision", None)
+        if str(source) == str(getattr(cfg.model, "hf_model_id", None))
+        else None
+    )
     cache_key = (str(source), bool(trust_remote_code))
+    if text_only:
+        cache_key += (text_only, revision)
     bridge = _AUTO_BRIDGE_CACHE.get(cache_key)
     if bridge is None:
-        bridge = AutoBridge.from_hf_pretrained(source, trust_remote_code=trust_remote_code)
+        kwargs = {"trust_remote_code": trust_remote_code}
+        if text_only:
+            kwargs.update(text_only=True, revision=revision)
+        bridge = AutoBridge.from_hf_pretrained(source, **kwargs)
         _AUTO_BRIDGE_CACHE[cache_key] = bridge
     return bridge
 
