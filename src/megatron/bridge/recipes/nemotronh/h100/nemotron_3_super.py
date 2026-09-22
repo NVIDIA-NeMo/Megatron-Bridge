@@ -29,7 +29,36 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 NEMOTRON_3_SUPER_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
 
 
-def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+def _configure_super_source(
+    cfg: ConfigContainer, *, hf_path: str | None, text_only: bool, revision: str | None, trust_remote_code: bool
+) -> None:
+    """Choose checkpoint architecture before applying the existing recipe policy."""
+    kwargs = {}
+    if text_only:
+        kwargs["text_only"] = True
+    if revision is not None:
+        kwargs["revision"] = revision
+    if trust_remote_code:
+        kwargs["trust_remote_code"] = True
+        cfg.checkpoint.hf_trust_remote_code = True
+    bridge = AutoBridge.from_hf_pretrained(hf_path or NEMOTRON_3_SUPER_HF_MODEL_ID, **kwargs)
+    cfg.model = bridge.to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = hf_path or "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    if hf_path:
+        cfg.tokenizer.hf_tokenizer_kwargs = dict(cfg.tokenizer.hf_tokenizer_kwargs or {})
+        cfg.tokenizer.hf_tokenizer_kwargs["trust_remote_code"] = trust_remote_code
+        tokenizer_revision = bridge.hf_model_revision or revision
+        if tokenizer_revision:
+            cfg.tokenizer.hf_tokenizer_kwargs["revision"] = tokenizer_revision
+
+
+def nemotron_3_super_pretrain_16gpu_h100_bf16_config(
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Super (120B-A12B LatentMoE).
 
     This is a Latent MoE model with Multi-Token Prediction (MTP). Default parallelism:
@@ -41,7 +70,9 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (LatentMoE with MTP) — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    _configure_super_source(
+        cfg, hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
 
     # Parallelism Settings
     cfg.model.tensor_model_parallel_size = 8
@@ -54,9 +85,6 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 16
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 8192
-
-    # Tokenizer (--tokenizer-model)
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
     # Dataset Configuration
     cfg.dataset.seq_length = 8192
@@ -253,7 +281,13 @@ def _apply_nemotron_3_super_64gpu_h100_training_stack(cfg: ConfigContainer) -> C
     return cfg
 
 
-def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+def _nemotron_3_super_pretrain_64gpu_h100_bf16_config(
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
     """Return the convergence-oriented Nemotron 3 Super config for 64 H100 GPUs.
 
     The public hardware-agnostic ``nemotron_3_super_pretrain_config`` alias
@@ -264,7 +298,9 @@ def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         BF16 pretraining configuration for 64 H100 GPUs.
     """
-    cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config()
+    cfg = nemotron_3_super_pretrain_16gpu_h100_bf16_config(
+        hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
     cfg = _apply_nemotron_3_super_64gpu_h100_training_stack(cfg)
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
@@ -284,7 +320,13 @@ def _nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-def nemotron_3_super_sft_16gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_super_sft_16gpu_h100_bf16_config(
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
     """Return a full SFT config for Nemotron 3 Super (120B-A12B LatentMoE).
 
     Default parallelism: TP=8, PP=1, EP=16, SP=True
@@ -295,7 +337,9 @@ def nemotron_3_super_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    _configure_super_source(
+        cfg, hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 8
@@ -352,7 +396,6 @@ def nemotron_3_super_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
     # Training Configuration. Bounded 100-step cohort schedule, matching the
     # other H100 SFT verification recipes (GBS 32 / MBS 1 / 100 steps).
@@ -398,13 +441,21 @@ def nemotron_3_super_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_sft_16gpu_h100_bf16_32k_config() -> ConfigContainer:
+def nemotron_3_super_sft_16gpu_h100_bf16_32k_config(
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
+) -> ConfigContainer:
     """Return the 16-H100 BF16 32K full-SFT configuration.
 
     Long-context SFT uses a distinct PP8/CP2 layout rather than the default
     SFT topology.
     """
-    cfg = nemotron_3_super_sft_16gpu_h100_bf16_config()
+    cfg = nemotron_3_super_sft_16gpu_h100_bf16_config(
+        hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     # The final stage also owns the output projection and loss. Keep four
@@ -445,6 +496,11 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_config() -> ConfigContainer:
 
 def nemotron_3_super_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron 3 Super (120B-A12B LatentMoE).
 
@@ -459,7 +515,9 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
     cfg = _peft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    _configure_super_source(
+        cfg, hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -527,7 +585,6 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -562,9 +619,16 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
 
 def nemotron_3_super_peft_16gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
+    *,
+    hf_path: str | None = None,
+    text_only: bool = False,
+    revision: str | None = None,
+    trust_remote_code: bool = False,
 ) -> ConfigContainer:
     """Return the 16-H100 BF16 PEFT configuration."""
-    cfg = nemotron_3_super_peft_1gpu_h100_bf16_config(peft_scheme)
+    cfg = nemotron_3_super_peft_1gpu_h100_bf16_config(
+        peft_scheme, hf_path=hf_path, text_only=text_only, revision=revision, trust_remote_code=trust_remote_code
+    )
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 16

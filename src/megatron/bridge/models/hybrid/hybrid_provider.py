@@ -159,6 +159,9 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     hf_model_revision: str | None = None
     """Optional immutable HuggingFace revision used to construct this provider."""
 
+    hf_model_text_only: bool = False
+    """Whether the source HF checkpoint was projected to its language model."""
+
     _pg_collection: ProcessGroupCollection | None = None
 
     # MTP
