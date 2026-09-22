@@ -50,6 +50,7 @@ models/minimax/index.md
 models/mistral/index.md
 models/mimo/index.md
 models/moonlight/index.md
+models/muse_glimmer/muse-glimmer.md
 models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md

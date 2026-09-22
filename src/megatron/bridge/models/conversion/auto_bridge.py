@@ -75,6 +75,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Nano_VL_V2",
     "NemotronH_Nano_Omni_Reasoning_V3",
     "NemotronH_Super_Omni_Reasoning_V3",
+    "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
@@ -1242,6 +1243,10 @@ class AutoBridge(Generic[MegatronModelT]):
             save_every_n_ranks=save_every_n_ranks,
             weight_dtype=weight_dtype,
         )
+        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
+            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
+            if weight_postprocessor is not None:
+                weight_postprocessor(model_bridge, Path(path))
 
     def save_hf_weights(
         self,
