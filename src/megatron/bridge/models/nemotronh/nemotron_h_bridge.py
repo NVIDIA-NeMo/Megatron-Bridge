@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -249,6 +249,10 @@ class NemotronHBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
+
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """Return the already-text-only checkpoint without changing its config or weights."""
+        return hf_pretrained
 
     # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
