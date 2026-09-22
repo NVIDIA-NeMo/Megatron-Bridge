@@ -220,16 +220,11 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     recipe_prefixes = ("megatron.bridge.recipes.", "megatron.bridge.perf_recipes.")
 
-    def skip_flex_dispatcher_hardware_probe(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-
     for module_name, module in tuple(sys.modules.items()):
         if module is None or not module_name.startswith(recipe_prefixes):
             continue
         if hasattr(module, "AutoBridge"):
             monkeypatch.setattr(module, "AutoBridge", _OfflineAutoBridge)
-        if hasattr(module, "apply_flex_dispatcher_backend"):
-            monkeypatch.setattr(module, "apply_flex_dispatcher_backend", skip_flex_dispatcher_hardware_probe)
 
     flux_recipe_module = importlib.import_module("megatron.bridge.recipes.flux.h100.flux")
     monkeypatch.setattr(flux_recipe_module, "PreTrainedFlux", _OfflinePreTrainedFlux)
