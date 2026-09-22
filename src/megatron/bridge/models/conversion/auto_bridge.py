@@ -1067,7 +1067,17 @@ class AutoBridge(Generic[MegatronModelT]):
             This method is collective -- all ranks must call it.  Only rank 0
             writes files to disk; the other ranks participate in the generator
             to gather distributed (TP/PP/EP) tensors.
+
+            For language-only adapters extracted from a VL model, construct the
+            bridge from the standalone HF text base before exporting. During
+            training, set ``checkpoint.hf_source_path`` to that text base.
         """
+        if getattr(self, "text_only", False) is True:
+            raise ValueError(
+                "Adapter export from a projected VL source requires a standalone HF text base. "
+                "Set checkpoint.hf_source_path to that base, or construct AutoBridge from it before exporting."
+            )
+
         import json
 
         from safetensors.torch import save_file

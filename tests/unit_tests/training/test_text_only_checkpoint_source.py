@@ -64,3 +64,22 @@ def test_checkpoint_replacement_source_does_not_inherit_revision(monkeypatch, us
     cfg.model.hf_model_revision = "another-original-revision"
     assert checkpointing._build_auto_bridge_for_save(cfg, **kwargs) is first
     assert factory.call_count == 1
+
+
+def test_peft_sidecar_uses_standalone_text_source_override(monkeypatch, tmp_path):
+    monkeypatch.setattr(checkpointing, "_AUTO_BRIDGE_CACHE", {})
+    monkeypatch.setattr("torch.distributed.is_initialized", lambda: False)
+    monkeypatch.setattr(checkpointing, "get_rank_safe", lambda: 0)
+    bridge = Mock(text_only=False)
+    factory = Mock(return_value=bridge)
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", factory)
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(hf_model_id="org/vl", hf_model_text_only=True, hf_model_revision="original"),
+        checkpoint=SimpleNamespace(hf_source_path="org/text-base", hf_trust_remote_code=False),
+        peft=Mock(),
+    )
+    checkpointing._save_hf_adapter_weights(SimpleNamespace(cfg=cfg), [], str(tmp_path))
+    factory.assert_called_once_with("org/text-base", trust_remote_code=False, text_only=True, revision=None)
+    bridge.save_hf_adapter.assert_called_once_with(
+        [], str(tmp_path), peft_config=cfg.peft, base_model_name_or_path="org/text-base", show_progress=False
+    )

@@ -82,3 +82,23 @@ cfg = nemotron_3_super_sft_config(
 )
 cfg.checkpoint.pretrained_checkpoint = "/workspace/super-text/iter_0000000"
 ```
+
+## Export PEFT adapters
+
+For training-time HF adapter export, point the existing source override at the
+standalone text base exported above:
+
+```python
+cfg.checkpoint.hf_source_path = "/workspace/super-text-hf"
+```
+
+Use this with `cfg.checkpoint.also_save_hf_checkpoint = True`. The adapter then
+records that text base in `adapter_config.json`, matching its native Nemotron-H
+parameter names. The base must contain the same language weights used to
+initialize PEFT, not a different Nemotron 3 Super checkpoint. This setting
+selects an existing checkpoint; it does not create or convert one.
+
+For direct `save_hf_adapter()` or `export_adapter_ckpt()` calls, construct
+`AutoBridge` from the standalone text base as well. A bridge that still extracts
+language weights from a VL source rejects adapter export with guidance to set
+the text base. Full-model export is unchanged.
