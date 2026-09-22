@@ -391,6 +391,65 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
 
+    @classmethod
+    def _validate_shared_mtp_config(cls, llm_config) -> None:
+        """Validate the serialized shared block before choosing training depths."""
+        blocks, pattern = NemotronHBridge._hf_mtp_config(llm_config)
+        if blocks != cls._HF_SHARED_MTP_BLOCKS:
+            raise ValueError(f"Nemotron 3.5 Super VL requires exactly one serialized shared MTP block; got {blocks}.")
+        if pattern != "*E" or not getattr(llm_config, "mtp_use_repeated_layer", True):
+            raise ValueError("Nemotron 3.5 Super VL requires a repeated attention+MoE MTP block.")
+
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """Select the native Nemotron-H language checkpoint, excluding all media.
+
+        Standalone Nemotron-H configs express the runtime prediction depth in
+        num_nextn_predict_layers. Super VL instead stores a serialized-block
+        count there; normalize it without duplicating the shared MTP weights.
+        """
+        config = copy.deepcopy(hf_pretrained.config.llm_config)
+        self._validate_shared_mtp_config(config)
+        config.architectures = ["NemotronHForCausalLM"]
+        if hasattr(config, "auto_map"):
+            del config.auto_map
+        config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+        config.mtp_use_repeated_layer = True
+        kwargs = dict(hf_pretrained.init_kwargs)
+        if kwargs.get("subfolder"):
+            raise ValueError(
+                "text_only=True does not yet support HF subfolder checkpoints; use a local model directory."
+            )
+        revision = getattr(hf_pretrained.config, "_commit_hash", None) or kwargs.get("revision")
+        if revision is not None:
+            kwargs["revision"] = revision
+        text = PreTrainedCausalLM(
+            hf_pretrained.model_name_or_path,
+            device=hf_pretrained.device,
+            torch_dtype=hf_pretrained.torch_dtype,
+            trust_remote_code=hf_pretrained.trust_remote_code,
+            **kwargs,
+        )
+        text.config = config
+        text._text_only = True
+        # Reuse the native text bridge with a namespace-local checkpoint view,
+        # as MIMO reuses component bridges with namespace-local registries.
+        text._state_dict_accessor = StateDict(
+            SafeTensorsStateSource(
+                hf_pretrained.model_name_or_path,
+                key_prefix="language_model.",
+                revision=revision,
+                hub_kwargs={
+                    key: kwargs[key]
+                    for key in ("token", "cache_dir", "local_files_only", "force_download")
+                    if key in kwargs
+                },
+            )
+        )
+        text._processor = None
+        text._image_processor = None
+        text.custom_file_patterns = []
+        return text
+
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""
         modeling_path = path / "modeling_nemotron_h_omni.py"
@@ -406,13 +465,7 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
         # Super-VL serializes one shared MTP block in HF. Megatron training applies
         # that block at two prediction depths, with the attention+MoE parameters
         # shared across both applications.
-        serialized_mtp_blocks = int(getattr(hf_config.llm_config, "num_nextn_predict_layers", 0) or 0)
-        if serialized_mtp_blocks != self._HF_SHARED_MTP_BLOCKS:
-            raise ValueError(
-                f"Nemotron 3.5 Super VL requires exactly one serialized shared MTP block; got {serialized_mtp_blocks}."
-            )
-        if provider.mtp_hybrid_override_pattern != "*E" or not provider.mtp_use_repeated_layer:
-            raise ValueError("Nemotron 3.5 Super VL requires a repeated attention+MoE MTP block.")
+        self._validate_shared_mtp_config(hf_config.llm_config)
         provider.mtp_num_layers = self._MCORE_MTP_PREDICTION_DEPTHS
 
         provider.temporal_patch_dim = temporal_patch_dim
