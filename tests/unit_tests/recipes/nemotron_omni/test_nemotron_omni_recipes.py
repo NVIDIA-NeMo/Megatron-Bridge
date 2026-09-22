@@ -48,8 +48,8 @@ _super_vl_gb200_recipe_module = importlib.import_module(
 )
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
-_SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
-_SUPER_VL_HF_REVISION = "e86197a3bad449de618a5835f26835ce770c6f10"  # pragma: allowlist secret
+_SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B"
+_SUPER_VL_HF_REVISION = None
 _PUBLIC_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: allowlist secret
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 _TEST_HF_ID = "unit-test/nemotron-omni"
@@ -184,6 +184,8 @@ def test_8gpu_recipes_are_exported_from_h100_package():
 
 def test_super_vl_default_hf_path_matches_model_id():
     assert _super_vl_recipe_module.NEMOTRON_35_SUPER_VL_HF_MODEL_ID == _SUPER_VL_HF_ID
+    assert _super_vl_h100_recipe_module.NEMOTRON_35_SUPER_VL_HF_REVISION is None
+    assert _super_vl_gb200_recipe_module.NEMOTRON_35_SUPER_VL_HF_REVISION is None
 
 
 def test_model_family_bases_own_their_checkpoint_selection():

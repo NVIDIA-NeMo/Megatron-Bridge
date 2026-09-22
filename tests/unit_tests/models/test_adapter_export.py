@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -314,6 +314,49 @@ class TestFusedFc1NameHelpers:
 
 
 class TestSaveHfAdapter:
+    @pytest.mark.unit
+    @pytest.mark.parametrize("base_model_name_or_path", [None, "org/vl", "org/text-base"])
+    def test_projected_vl_source_requires_native_text_bridge(self, tmp_path, base_model_name_or_path):
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        bridge = MagicMock(text_only=True)
+        output = tmp_path / "adapter"
+        with patch("torch.distributed.barrier") as barrier:
+            with pytest.raises(ValueError, match="checkpoint.hf_source_path"):
+                AutoBridge.save_hf_adapter(
+                    bridge,
+                    model=[],
+                    path=output,
+                    peft_config=FakeLoRA(),
+                    base_model_name_or_path=base_model_name_or_path,
+                )
+        bridge.export_adapter_weights.assert_not_called()
+        barrier.assert_not_called()
+        assert not output.exists()
+
+    @pytest.mark.unit
+    def test_native_text_adapter_records_text_base_and_names(self, tmp_path):
+        from safetensors.torch import load_file
+
+        from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+        names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
+        tensors = [torch.randn(2, 4), torch.randn(4, 2)]
+        bridge = MagicMock(text_only=False)
+        bridge.hf_pretrained = SimpleNamespace(model_name_or_path="org/text-base")
+        bridge.export_adapter_weights.return_value = iter(
+            [_adapter_export(name, tensor) for name, tensor in zip(names, tensors)]
+        )
+        output = tmp_path / "adapter"
+        with patch("torch.distributed.is_initialized", return_value=False):
+            AutoBridge.save_hf_adapter(bridge, model=[], path=output, peft_config=FakeLoRA(dim=2))
+        config = json.loads((output / "adapter_config.json").read_text())
+        assert config["base_model_name_or_path"] == "org/text-base"
+        exported = load_file(output / "adapter_model.safetensors")
+        assert set(exported) == {f"base_model.model.{name}" for name in names}
+        for name, tensor in zip(names, tensors):
+            torch.testing.assert_close(exported[f"base_model.model.{name}"], tensor, rtol=0, atol=0)
+
     def test_convert_packed_expert_adapter_to_target_parameters(self):
         down_a = torch.tensor(
             [
