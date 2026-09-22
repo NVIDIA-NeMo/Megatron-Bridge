@@ -24,6 +24,7 @@ import pytest
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
+from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
@@ -2042,7 +2043,29 @@ class TestGemma4MoEHelpers:
         torch.testing.assert_close(residual, hidden_states)
         torch.testing.assert_close(padding_mask, torch.tensor([[True]]))
 
-    def test_transformer_layer_preserves_packed_moe_batch_semantics(self):
+    @pytest.mark.parametrize("helper_signature", ["installed", "legacy", "input_ids"])
+    def test_transformer_layer_preserves_packed_moe_batch_semantics(self, monkeypatch, helper_signature):
+        if helper_signature != "installed":
+
+            def legacy_unflatten(self, hidden_states, padding_mask, packed_seq_params):
+                mbs = hidden_states.shape[0] // packed_seq_params.tokens_per_sample
+                hidden_states = hidden_states.view(mbs, packed_seq_params.tokens_per_sample, -1)
+                return hidden_states.transpose(0, 1).contiguous(), padding_mask, mbs
+
+            def unflatten_with_input_ids(self, hidden_states, padding_mask, input_ids, packed_seq_params):
+                assert input_ids is None
+                hidden_states, padding_mask, mbs = legacy_unflatten(
+                    self, hidden_states, padding_mask, packed_seq_params
+                )
+                return hidden_states, padding_mask, input_ids, mbs
+
+            monkeypatch.setattr(
+                TransformerLayer,
+                "_maybe_unflatten_for_moe",
+                legacy_unflatten if helper_signature == "legacy" else unflatten_with_input_ids,
+                raising=False,
+            )
+
         calls = []
 
         class FakeMoE:
