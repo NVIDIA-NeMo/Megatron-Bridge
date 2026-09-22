@@ -547,6 +547,7 @@ class GLM53FlashBridge(MegatronModelBridge):
         provider.qk_head_dim = text_config.qk_head_dim  # 256
         provider.num_attention_heads = text_config.num_attention_heads  # 64
         provider.num_key_value_heads = text_config.num_key_value_heads  # 64
+        provider.mla_proj_disable_quantization = True
         # HF head_dim=0 is a NoPE sentinel, not a valid attention channel width.
         provider.kv_channels = text_config.v_head_dim  # 256
         provider.rope_type = "yarn"
@@ -567,16 +568,21 @@ class GLM53FlashBridge(MegatronModelBridge):
         provider.dsa_indexer_loss_coeff = 0.0
         provider.dsa_indexer_use_sparse_loss = False
         provider.dsa_indexer_rotate_activation = False
-        provider.dsa_indexer_kpool_fp8 = True
+        provider.dsa_indexer_qk_proj_disable_quantization = True
+        provider.dsa_indexer_kpool_use_quantization = True
+        # The HF FP8 config keeps the DSA weights projection in BF16.
+        provider.dsa_indexer_weights_proj_use_quantization = False
+        provider.dsa_indexer_weights_proj_output_dtype = "bf16"
         provider.dsa_indexer_k_norm_epsilon = 1e-6
         provider.dsa_indexer_kpool = int(getattr(text_config, "index_kpool", 1))  # 4
         provider.dsa_indexer_kpool_always_select_tail = bool(
-            getattr(text_config, "index_kpool_always_select_tail", False)
+            getattr(text_config, "index_kpool_always_select_tail", True)
         )
         provider.dsa_indexer_topk_freq = 1
         provider.dsa_indexer_skip_topk_offset = 0
 
         # ---- KDA two-stage gates ----
+        provider.kda_disable_fp8 = True
         provider.kda_two_stage_gates = True
         provider.kda_safe_gate = True
         provider.kda_lower_bound = float(text_config.linear_attn_config.get("gate_lower_bound", -5.0))
