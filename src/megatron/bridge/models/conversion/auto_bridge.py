@@ -494,11 +494,17 @@ class AutoBridge(Generic[MegatronModelT]):
             )
         text_reference = None
         if getattr(megatron_cfg, "hf_model_text_only", False) is True:
+            # A replacement reference repository need not contain the source revision.
+            revision = (
+                getattr(megatron_cfg, "hf_model_revision", None)
+                if str(hf_model_id) == str(getattr(megatron_cfg, "hf_model_id", None))
+                else None
+            )
             text_reference = cls.from_hf_pretrained(
                 hf_model_id,
                 text_only=True,
                 trust_remote_code=trust_remote_code,
-                revision=getattr(megatron_cfg, "hf_model_revision", None),
+                revision=revision,
             )
             hf_cfg = text_reference.hf_pretrained.config
         else:
@@ -513,7 +519,7 @@ class AutoBridge(Generic[MegatronModelT]):
         synthesized_config.name_or_path = hf_model_id
         bridge = cls.from_hf_config(synthesized_config)
         if text_reference is not None:
-            bridge.text_only = True
+            bridge.text_only = text_reference.text_only
             bridge.hf_model_revision = text_reference.hf_model_revision
         bridge.hf_model_id = hf_model_id
         bridge.trust_remote_code = trust_remote_code

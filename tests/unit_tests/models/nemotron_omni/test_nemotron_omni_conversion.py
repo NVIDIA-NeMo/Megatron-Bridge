@@ -208,10 +208,30 @@ def test_super_vl_auto_bridge_text_selection_is_explicit(tmp_path, text_only):
 
 @pytest.mark.unit
 def test_text_only_rejects_unimplemented_families():
-    from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+    with patch(
+        "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry",
+        return_value=_mock_omni_hf_config(),
+    ):
+        with pytest.raises(ValueError, match="NemotronOmniBridge does not support text_only"):
+            AutoBridge.from_hf_pretrained("org/omni", text_only=True)
 
-    with pytest.raises(ValueError, match="does not support text_only"):
-        MegatronModelBridge.text_only_pretrained(NemotronOmniBridge(), Mock())
+
+@pytest.mark.unit
+def test_native_nemotron_text_selection_is_a_noop(tmp_path):
+    config = PretrainedConfig(**_mock_nemotron_35_super_vl_hf_config().llm_config.to_dict())
+    config.architectures = ["NemotronHForCausalLM"]
+    with patch(
+        "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry", return_value=config
+    ) as load:
+        bridge = AutoBridge.from_hf_pretrained(tmp_path, text_only=True)
+    load.assert_called_once_with(tmp_path, trust_remote_code=False)
+    assert isinstance(bridge._model_bridge, NemotronHBridge)
+    assert bridge.hf_pretrained.config is config
+    assert bridge._model_bridge.text_only_pretrained(bridge.hf_pretrained) is bridge.hf_pretrained
+    assert not bridge.text_only
+    assert not bridge.hf_pretrained._text_only
+    assert not bridge.to_megatron_provider(load_weights=False).hf_model_text_only
+    assert config.num_nextn_predict_layers == 1
 
 
 @pytest.mark.unit
@@ -235,7 +255,8 @@ def test_text_only_reopening_same_source_preserves_pinned_wrapper(tmp_path):
 
 
 @pytest.mark.unit
-def test_text_only_auto_config_restores_native_config_and_mode(tmp_path):
+@pytest.mark.parametrize("reference_id", ["org/vl", "org/vl-mirror", "org/text-export"])
+def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, reference_id):
     full_config = _mock_nemotron_35_super_vl_hf_config()
     full_config.llm_config = PretrainedConfig(**full_config.llm_config.to_dict())
     source = PreTrainedCausalLM.from_pretrained("org/vl", revision="pinned")
@@ -244,15 +265,26 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path):
     provider = selected.to_megatron_provider(load_weights=False)
     assert provider.mtp_num_layers == 2
     assert provider.mtp_use_repeated_layer
+    reference = selected
+    if reference_id == "org/text-export":
+        native_source = PreTrainedCausalLM.from_pretrained(reference_id, revision="text-revision")
+        native_source.config = selected.hf_pretrained.config
+        reference = AutoBridge(native_source)
     (tmp_path / "run_config.yaml").touch()
     with (
         patch("megatron.bridge.training.model_load_save.load_model_config", return_value=(provider, None)),
-        patch.object(AutoBridge, "from_hf_pretrained", return_value=selected) as load,
+        patch.object(AutoBridge, "from_hf_pretrained", return_value=reference) as load,
     ):
-        restored = AutoBridge.from_auto_config(str(tmp_path), "org/vl", trust_remote_code=True)
-    load.assert_called_once_with("org/vl", text_only=True, trust_remote_code=True, revision="pinned")
+        restored = AutoBridge.from_auto_config(str(tmp_path), reference_id, trust_remote_code=True)
+    load.assert_called_once_with(
+        reference_id,
+        text_only=True,
+        trust_remote_code=True,
+        revision="pinned" if reference_id == "org/vl" else None,
+    )
     assert isinstance(restored.hf_pretrained, PretrainedConfig)
-    assert restored.text_only
+    assert restored.text_only == (reference_id != "org/text-export")
+    assert restored.hf_model_revision == reference.hf_model_revision
     assert isinstance(restored._model_bridge, NemotronHBridge)
     assert restored.hf_pretrained.architectures == ["NemotronHForCausalLM"]
     # Native Nemotron-H exports the physical shared block count, not the

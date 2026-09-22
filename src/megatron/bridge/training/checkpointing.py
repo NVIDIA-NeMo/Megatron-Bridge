@@ -1014,7 +1014,12 @@ def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] =
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
     text_only = getattr(cfg.model, "hf_model_text_only", False) is True
-    revision = getattr(cfg.model, "hf_model_revision", None)
+    # Initialization and artifact templates may override the original HF source.
+    revision = (
+        getattr(cfg.model, "hf_model_revision", None)
+        if str(source) == str(getattr(cfg.model, "hf_model_id", None))
+        else None
+    )
     cache_key = (str(source), bool(trust_remote_code))
     if text_only:
         cache_key += (text_only, revision)

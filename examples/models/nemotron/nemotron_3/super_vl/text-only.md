@@ -3,7 +3,8 @@
 Use `text_only=True` to import the language model and MTP weights directly from
 the VL checkpoint. This selects the existing Nemotron-H bridge and plain hybrid
 model provider: no vision encoder, projector, video embedder, or audio module is
-built. The default remains full VL. Other families, including Qwen 3.5, do not
+built. The default remains full VL. For a standalone Nemotron-H checkpoint,
+`text_only=True` is a no-op. Other families, including Qwen 3.5 VL, do not
 yet implement this option and reject it explicitly.
 
 The VL bridge selects the language config and filters `language_model.*` weights
@@ -26,6 +27,8 @@ provider = bridge.to_megatron_provider(load_weights=False)
 `load_weights=True` when building a model directly from HF weights, or point a
 training recipe's `checkpoint.pretrained_checkpoint` at the converted Megatron
 checkpoint. Setting a recipe's `hf_path` alone does not initialize its weights.
+The standalone HF text export can also be used as `checkpoint.pretrained_checkpoint`;
+it loads through the native text bridge without extracting a language subtree again.
 
 ## Conversion
 
