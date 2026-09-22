@@ -88,6 +88,8 @@ def _run_import(args: argparse.Namespace) -> None:
         "trust_remote_code": args.trust_remote_code,
         "overwrite": args.overwrite,
     }
+    if args.text_only:
+        common_args["text_only"] = True
     if args.device == "cpu":
         cpu_backend.import_checkpoint(**common_args)
         return
@@ -114,6 +116,8 @@ def _run_export(args: argparse.Namespace) -> None:
         "trust_remote_code": args.trust_remote_code,
         "overwrite": args.overwrite,
     }
+    if args.text_only:
+        common_args["text_only"] = True
     distributed_cpu = args.device == "cpu" and _distributed_world_size() > 1
     if args.device == "cpu" and not distributed_cpu:
         cpu_backend.export_checkpoint(**common_args)
