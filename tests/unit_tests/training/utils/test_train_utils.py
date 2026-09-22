@@ -29,6 +29,7 @@ from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
     _get_num_moe_layers,
+    _track_moe_metrics_supports_num_moe_layers,
     calc_params_l2_norm,
     create_value_head_hook,
     freeze_moe_router,
@@ -111,7 +112,18 @@ def make_default_model_config():
         moe_router_load_balancing_threshold=None,
         moe_z_loss_scale=None,
         is_hybrid_model=False,
+        cuda_graph_impl="none",
+        cuda_graph_warmup_steps=3,
+        vision_cuda_graph_impl=None,
     )
+
+
+@pytest.mark.parametrize("parameters, expected", [({"num_moe_layers": None}, True), ({}, False)])
+def test_track_moe_metrics_supports_num_moe_layers(parameters, expected):
+    """Detect the MCore signature difference without calling the helper."""
+    with mock.patch("inspect.signature") as mock_signature:
+        mock_signature.return_value.parameters = parameters
+        assert _track_moe_metrics_supports_num_moe_layers() is expected
 
 
 @pytest.mark.parametrize(
@@ -211,6 +223,7 @@ class TestTrainingLog:
 
         # Optimizer config
         config.optimizer.decoupled_lr = None
+        config.optimizer.optimizer_cuda_graph = False
 
         # Data parallel size
         config.data_parallel_size = 4
@@ -942,6 +955,27 @@ class TestTrainingLog:
         mock_report_theoretical.assert_called_once()
         mock_report_memory.assert_called_once()
 
+    @pytest.mark.parametrize(
+        (
+            "cuda_graph_impl",
+            "optimizer_cuda_graph",
+            "vision_cuda_graph_impl",
+            "iteration",
+            "expected_report_memory_flag",
+        ),
+        [
+            pytest.param("none", False, None, 1, True, id="eager-first-iteration"),
+            pytest.param("none", False, None, 2, False, id="eager-second-iteration"),
+            pytest.param("transformer_engine", False, None, 3, True, id="te-before-capture"),
+            pytest.param("transformer_engine", False, None, 4, False, id="te-after-capture"),
+            pytest.param("local", False, None, 3, True, id="local-before-capture"),
+            pytest.param("local", False, None, 4, False, id="local-after-capture"),
+            pytest.param("none", True, None, 2, True, id="optimizer-before-capture"),
+            pytest.param("none", True, None, 4, False, id="optimizer-after-capture"),
+            pytest.param("none", False, "transformer_engine", 2, True, id="vision-before-capture"),
+            pytest.param("none", False, "transformer_engine", 4, False, id="vision-after-capture"),
+        ],
+    )
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -949,7 +983,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_memory")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_theoretical_memory")
     @mock.patch("torch.distributed.get_rank")
-    def test_memory_reporting_kept_on_second_iteration(
+    def test_memory_reporting_cutoff(
         self,
         mock_get_rank,
         mock_report_theoretical,
@@ -961,8 +995,13 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        cuda_graph_impl,
+        optimizer_cuda_graph,
+        vision_cuda_graph_impl,
+        iteration,
+        expected_report_memory_flag,
     ):
-        """Test memory flag is kept on the second iteration to capture optimizer state peak."""
+        """Test memory reporting includes optimizer initialization and CUDA graph capture."""
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         mock_get_microbatches.return_value = 8
@@ -970,8 +1009,10 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
         mock_get_rank.return_value = 0
 
-        # Iteration 1 with loaded_iteration=0: flag should be kept
-        mock_global_state.train_state.step = 1
+        mock_config.model.cuda_graph_impl = cuda_graph_impl
+        mock_config.model.vision_cuda_graph_impl = vision_cuda_graph_impl
+        mock_config.optimizer.optimizer_cuda_graph = optimizer_cuda_graph
+        mock_global_state.train_state.step = iteration
         mock_config.logger.log_interval = 1
 
         result = training_log(
@@ -992,8 +1033,7 @@ class TestTrainingLog:
             loaded_iteration=0,
         )
 
-        # Flag should remain True (iteration 1 <= loaded_iteration + 1)
-        assert result is True
+        assert result is expected_report_memory_flag
         mock_report_memory.assert_called_once()
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
@@ -1051,12 +1091,22 @@ class TestTrainingLog:
         mock_report_memory.assert_called_once()
 
     @pytest.mark.parametrize(
-        ("model_num_layers", "mtp_num_layers", "hybrid_pattern", "moe_layer_freq", "expected_num_moe_layers"),
+        (
+            "model_num_layers",
+            "mtp_num_layers",
+            "hybrid_pattern",
+            "moe_layer_freq",
+            "expected_num_moe_layers",
+            "supports_num_moe_layers",
+        ),
         [
-            pytest.param(12, None, None, 2, 6, id="non_hybrid"),
-            pytest.param(4, 2, "MMME/*E/*E", None, 3, id="hybrid"),
+            pytest.param(12, None, None, 2, 6, True, id="non_hybrid-supported"),
+            pytest.param(12, None, None, 2, 6, False, id="non_hybrid-unsupported"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, True, id="hybrid-supported"),
+            pytest.param(4, 2, "MMME/*E/*E", None, 3, False, id="hybrid-unsupported"),
         ],
     )
+    @mock.patch("megatron.bridge.training.utils.train_utils._track_moe_metrics_supports_num_moe_layers")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
@@ -1075,6 +1125,7 @@ class TestTrainingLog:
         mock_get_world_size,
         mock_reduce_lr,
         mock_get_microbatches,
+        mock_supports_num_moe_layers,
         mock_config,
         mock_global_state,
         loss_dict,
@@ -1083,12 +1134,14 @@ class TestTrainingLog:
         hybrid_pattern,
         moe_layer_freq,
         expected_num_moe_layers,
+        supports_num_moe_layers,
     ):
         """Test MoE (Mixture of Experts) logging when enabled."""
         # Get fresh total_loss_dict for this test
         total_loss_dict = self.get_fresh_total_loss_dict()
 
         # Setup mocks
+        mock_supports_num_moe_layers.return_value = supports_num_moe_layers
         mock_report_l2_norm_grad.return_value = {}
         mock_report_throughput.return_value = {}
         mock_report_runtime.return_value = {}
@@ -1130,7 +1183,10 @@ class TestTrainingLog:
         assert "load_balancing_loss" in call_args.kwargs["track_names"]
         assert "z_loss" in call_args.kwargs["track_names"]
         assert call_args.kwargs["num_layers"] == model_num_layers
-        assert call_args.kwargs["num_moe_layers"] == expected_num_moe_layers
+        if supports_num_moe_layers:
+            assert call_args.kwargs["num_moe_layers"] == expected_num_moe_layers
+        else:
+            assert "num_moe_layers" not in call_args.kwargs
         assert call_args.kwargs["mtp_num_layers"] == mtp_num_layers
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
@@ -2662,7 +2718,9 @@ class TestCalcParamsL2Norm:
                 # Minimal set of groups used by calc_params_l2_norm
                 self.dp_cp = object()
                 self.expt_dp = object()
+                self.expt_gtp_remat = None
                 self.expt_tp = object()
+                self.gtp_remat = object()
                 self.mp = object()
                 self.tp = object()
                 self.tp_ep_pp = object()
@@ -2705,6 +2763,128 @@ class TestCalcParamsL2Norm:
         config = mock.MagicMock()
         config.bf16 = True
         return config
+
+    def test_gtp_param_norm_filters_replicas_and_keeps_shards(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+        _patch_pg_collection,
+    ):
+        """Non-sharded parameters are counted once while every GTP shard contributes."""
+
+        class _DenseGTPModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.norm = torch.nn.Parameter(torch.tensor([2.0], device="cuda"))
+                self.weight = torch.nn.Parameter(torch.tensor([3.0], device="cuda"))
+                self.weight.is_gtp_weight_remat = True
+
+        model = _DenseGTPModel()
+        duplicate_filter = mock.MagicMock(return_value=True)
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.mp:
+                # Rank zero contributes the replicated norm (2**2) and its GTP shard (4**2).
+                tensor.add_(20.0)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            duplicate_filter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: 1 if group is _patch_pg_collection.gtp_remat else 0,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(math.sqrt(29.0))
+        duplicate_filter.assert_called_once_with(
+            model.norm,
+            tp_group=_patch_pg_collection.tp,
+            expert_tp_group=_patch_pg_collection.expt_tp,
+        )
+
+    @pytest.mark.parametrize(
+        ("expert_gtp_rank", "remote_contribution", "expected_local_input"),
+        [
+            pytest.param(0, 9.0, 20.0, id="rank-zero-keeps-replica"),
+            pytest.param(1, 13.0, 16.0, id="nonzero-rank-drops-replica"),
+        ],
+    )
+    def test_expert_gtp_param_norm_reduces_over_expert_gtp(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+        _patch_pg_collection,
+        expert_gtp_rank,
+        remote_contribution,
+        expected_local_input,
+    ):
+        """Expert GTP shards are summed while replicated parameters contribute once."""
+
+        class _ExpertGTPModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.tensor([4.0], device="cuda"))
+                self.weight.allreduce = False
+                self.weight.is_gtp_weight_remat = True
+                self.bias = torch.nn.Parameter(torch.tensor([2.0], device="cuda"))
+                self.bias.allreduce = False
+
+        _patch_pg_collection.expt_gtp_remat = object()
+        model = _ExpertGTPModel()
+        duplicate_filter = mock.MagicMock(return_value=True)
+        expert_gtp_inputs = []
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.expt_gtp_remat:
+                expert_gtp_inputs.append(tensor.item())
+                tensor.add_(remote_contribution)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            duplicate_filter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: expert_gtp_rank if group is _patch_pg_collection.expt_gtp_remat else 0,
+        )
+        monkeypatch.setattr(
+            "torch.distributed.get_process_group_ranks",
+            lambda group: [0] if group is _patch_pg_collection.mp else [1],
+        )
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
+
+        assert expert_gtp_inputs == pytest.approx([expected_local_input])
+        assert actual_norm == pytest.approx(math.sqrt(29.0))
+        duplicate_filter.assert_called_once_with(
+            model.bias,
+            tp_group=_patch_pg_collection.tp,
+            expert_tp_group=_patch_pg_collection.expt_tp,
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -2944,6 +3124,8 @@ class TestCalcParamsL2Norm:
                 tensor.add_(12.0)
             elif group is _patch_pg_collection.expt_dp:
                 tensor.add_(16.0)
+            elif group is _patch_pg_collection.expt_gtp_remat:
+                pass
             elif group is not _patch_pg_collection.mp:
                 raise AssertionError("unexpected reduction group")
 
@@ -3156,6 +3338,8 @@ class TestCalcParamsL2Norm:
             expt_tp=expert_tp_group,
             dp_cp=reduce_group,
             expt_dp=reduce_group,
+            expt_gtp_remat=reduce_group,
+            gtp_remat=reduce_group,
             mp=reduce_group,
             tp_ep_pp=reduce_group,
         )

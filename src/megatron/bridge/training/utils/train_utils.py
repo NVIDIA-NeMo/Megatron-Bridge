@@ -30,7 +30,7 @@ from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
-from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
+from megatron.core.utils import get_data_parallel_group_if_dtensor, get_pg_rank, to_local_if_dtensor
 
 from megatron.bridge.models.common.heads import (
     LinearForLastLayer as LinearForLastLayer,
@@ -237,20 +237,31 @@ def calc_params_l2_norm(
     sharded_moe_params_data = []
     data_parallel_group = None
     pg_collection = get_pg_collection(model)
+    gtp_rank = get_pg_rank(pg_collection.gtp_remat)
+    expert_gtp_group = pg_collection.expt_gtp_remat
+    expert_gtp_rank = get_pg_rank(expert_gtp_group)
 
     for model_chunk in model:
         for param in model_chunk.parameters():
             data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
+            is_gtp = getattr(param, "is_gtp_weight_remat", False)
             # MCore uses allreduce=False to mark parameters that use expert-parallel process groups.
             uses_expert_parallel_groups = not getattr(param, "allreduce", True)
-            is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(
+            # GTP parameters are unique across TP ranks. Other parameters still need TP filtering.
+            if not is_gtp and not param_is_not_tensor_parallel_duplicate(
                 param,
                 tp_group=pg_collection.tp,
                 expert_tp_group=pg_collection.expt_tp,
-            )
-            if not is_not_tp_duplicate:
+            ):
                 continue
-            assert is_not_tp_duplicate
+
+            # Parameters that are not GTP-sharded are replicated across the corresponding GTP axis.
+            if uses_expert_parallel_groups:
+                if not is_gtp and expert_gtp_rank != 0:
+                    continue
+            elif not is_gtp and gtp_rank != 0:
+                continue
+
             if uses_expert_parallel_groups:
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
@@ -359,6 +370,15 @@ def calc_params_l2_norm(
         group=pg_collection.expt_dp,
     )
     moe_norm_2 += sharded_moe_norm_2
+
+    # Expert model parallel excludes expert GTP. This reduction collects both unique GTP shards
+    # and ordinary expert parameters, which are counted only on expert GTP rank zero above.
+    if expert_gtp_group is not None:
+        torch.distributed.all_reduce(
+            moe_norm_2,
+            op=torch.distributed.ReduceOp.SUM,
+            group=expert_gtp_group,
+        )
 
     # Reduce norm across model parallel groups (dense and expert).
     # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
@@ -593,6 +613,11 @@ def _build_moe_metric_writer(
     if comet_logger is None and mlflow_logger is None:
         return tb_writer
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
+
+
+def _track_moe_metrics_supports_num_moe_layers() -> bool:
+    """Return whether the active MCore accepts explicit MoE layer counts."""
+    return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
 
 
 def _get_num_moe_layers(model_config: Any) -> int:
@@ -1026,21 +1051,23 @@ def training_log(
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
         # No-op when neither logger is configured: the original writer is returned as-is.
         moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
-        track_moe_metrics(
-            loss_scale=moe_loss_scale,
-            iteration=iteration,
-            writer=moe_metric_writer,
-            wandb_writer=wandb_writer,
-            total_loss_dict=total_loss_dict,
-            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
-            force_initialize=True,
-            track_names=track_names,
-            num_layers=config.model.num_layers,
-            num_moe_layers=_get_num_moe_layers(config.model),
-            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
-            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
-            pg_collection=pg_collection,
-        )
+        track_moe_metrics_kwargs = {
+            "loss_scale": moe_loss_scale,
+            "iteration": iteration,
+            "writer": moe_metric_writer,
+            "wandb_writer": wandb_writer,
+            "total_loss_dict": total_loss_dict,
+            "per_layer_logging": getattr(config.model, "moe_per_layer_logging", False),
+            "force_initialize": True,
+            "track_names": track_names,
+            "num_layers": config.model.num_layers,
+            "moe_layer_freq": getattr(config.model, "moe_layer_freq", None),
+            "mtp_num_layers": getattr(config.model, "mtp_num_layers", None),
+            "pg_collection": pg_collection,
+        }
+        if _track_moe_metrics_supports_num_moe_layers():
+            track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
+        track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
@@ -1181,9 +1208,22 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            if iteration > (loaded_iteration + 1):
-                # Make sure the memory after the second iteration is reported
-                # to include optimizer state memory.
+            cuda_graphs_enabled = (
+                config.model.cuda_graph_impl != "none"
+                or config.optimizer.optimizer_cuda_graph
+                or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
+            )
+            memory_reporting_iterations = 2
+            if cuda_graphs_enabled:
+                # Capture runs at the zero-based warmup-step offset. training_log runs
+                # after that step, so warmup_steps + 1 is the post-capture iteration.
+                memory_reporting_iterations = max(
+                    memory_reporting_iterations,
+                    config.model.cuda_graph_warmup_steps + 1,
+                )
+            if iteration >= loaded_iteration + memory_reporting_iterations:
+                # Always include optimizer state memory and, when enabled, CUDA graph
+                # capture memory before disabling the one-shot report.
                 report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 

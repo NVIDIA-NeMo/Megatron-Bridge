@@ -25,7 +25,9 @@ from pathlib import Path
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
+from container_runtime import apply_container_runtime, validate_container_runtime
 from nemo_run.config import get_nemorun_home
+from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
 
 
@@ -67,6 +69,7 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
+    validate_container_runtime(args)
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.cpu_processes_per_node < 1:
@@ -91,6 +94,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--exclusive is only supported by the Slurm executor.")
         if args.srun_args:
             raise ValueError("--srun-arg is only supported by the Slurm executor.")
+        if args.additional_slurm_params:
+            raise ValueError("--additional-slurm-params is only supported by the Slurm executor.")
         if args.mount:
             raise ValueError("--mount is only supported by the Slurm executor; mount paths before local execution.")
     elif not args.account or not args.partition:
@@ -193,6 +198,7 @@ def _build_executor(
     if "PYTHONPATH" not in container_env:
         container_env.append("PYTHONPATH")
     executor = run.SlurmExecutor(
+        poll_estimated_start_time=False,
         account=args.account,
         partition=args.partition,
         job_name_prefix=args.experiment_name,
@@ -209,7 +215,7 @@ def _build_executor(
         container_image=args.container_image,
         container_mounts=mounts,
         container_env=container_env,
-        additional_parameters={"export": ",".join(container_env)},
+        additional_parameters={**args.additional_slurm_params, "export": ",".join(container_env)},
         srun_args=args.srun_args,
         **cpu_kwargs,
         **gpu_kwargs,
@@ -278,12 +284,19 @@ def main(argv: list[str] | None = None) -> None:
     if args.executor == "slurm":
         logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
-    with run.Experiment(experiment_name) as experiment:
+    experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
+    with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=args.detach, tail_logs=not args.detach)
+        if args.executor == "slurm":
+            experiment.run(detach=True, tail_logs=False)
+            if not args.detach:
+                wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
+        else:
+            experiment.run(detach=False, tail_logs=True)
     if not args.detach:
         _raise_on_failed_tasks(experiment)
 
