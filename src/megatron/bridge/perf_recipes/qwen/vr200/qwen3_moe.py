@@ -144,6 +144,10 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
 
     cfg.train.micro_batch_size = 4
 
+    from megatron.core.transformer.enums import AttnBackend
+
+    cfg.model.attention_backend = AttnBackend.auto
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
