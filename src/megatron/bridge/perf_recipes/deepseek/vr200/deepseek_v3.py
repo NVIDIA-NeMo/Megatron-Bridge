@@ -336,18 +336,20 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
     """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
 
-    Keep GBS=4096, per-layer shapes, EP=32, PP=2 and one MTP layer. Reducing
-    VPP from 8 to 2 retains the parent's first/last chunks and two four-layer
-    middle chunks. Dense DP=32 now implies 128 microbatches per iteration.
-    This reduced-depth model is not convergence-equivalent to the parent;
-    expert DP=1 omits expert-DP collectives, and memory fit needs validation.
+    Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
+    virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
+    Retain full-iteration graphs and the non-pipelined combined-1F1B MoE
+    overlap path. This reduced-depth model does not reproduce at-scale
+    pipeline traffic, convergence or memory use; GPU validation is required.
     """
     cfg = deepseek_v3_pretrain_256gpu_vr200_fp8mx_config()
     cfg.model.num_layers = 13
     # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern.
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*2tmL")
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     # Keep this explicit environment identical to the 256-GPU parent.
     cfg.env_vars = {
@@ -409,17 +411,19 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
 def deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config() -> ConfigContainer:
     """DeepSeek V3 NVFP4 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
 
-    Keep GBS=4096, per-layer shapes, EP=32, PP=2 and one MTP layer. VPP=2
-    retains the parent's five-layer first chunk, four-layer middle chunks,
-    and MTP/loss-only last chunk. There are 128 microbatches per iteration.
-    Use this reduced-depth model for feature debugging, not convergence or
-    at-scale acceptance. Expert DP=1 and GPU memory fit remain limitations.
+    Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
+    virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
+    Retain full-iteration graphs and the non-pipelined combined-1F1B MoE
+    overlap path. Use this reduced-depth model for feature and kernel
+    performance experiments, not convergence or at-scale acceptance.
     """
     cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
     cfg.model.num_layers = 13
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
-    cfg.model.virtual_pipeline_model_parallel_size = 2
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*5|(t*4|)*2mL")
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     # Keep this explicit environment identical to the 256-GPU parent.
     cfg.env_vars = {
