@@ -20,11 +20,25 @@ import argparse
 import logging
 import os
 import shlex
+import sys
 from pathlib import Path
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
 from torchx.specs.api import AppState
+
+
+COMMON_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
+
+from container_runtime import (  # noqa: E402
+    add_container_runtime_args,
+    apply_container_runtime,
+    validate_container_runtime,
+)
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
+from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval, wait_for_slurm_job  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
@@ -63,6 +77,14 @@ unchanged to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
+    execution.add_argument(
+        "--poll-interval",
+        type=slurm_poll_interval,
+        default=MIN_POLL_INTERVAL,
+        help="Seconds between Slurm status checks when waiting (minimum/default: 60).",
+    )
     execution.add_argument(
         "--task",
         choices=tuple(INFERENCE_TASKS),
@@ -75,7 +97,12 @@ unchanged to the selected repository entry point.
         "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
-        help="GPUs and inference tasks per node.",
+        help="GPUs allocated per node.",
+    )
+    execution.add_argument(
+        "--tasks-per-node",
+        type=int,
+        help="Inference tasks per node; defaults to one task per GPU.",
     )
     execution.add_argument("--cpus-per-task", type=int, help="CPUs allocated to each inference task.")
     execution.add_argument("--mem", help="Optional Slurm memory request, such as 64G.")
@@ -166,10 +193,13 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate Slurm resources before creating an executor."""
+    validate_container_runtime(args)
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.gpus_per_node is None or args.gpus_per_node < 1:
         raise ValueError("--gpus-per-node is required and must be at least 1.")
+    if args.tasks_per_node is not None and not 1 <= args.tasks_per_node <= args.gpus_per_node:
+        raise ValueError("--tasks-per-node must be between 1 and --gpus-per-node.")
     if args.cpus_per_task is not None and args.cpus_per_task < 1:
         raise ValueError("--cpus-per-task must be at least 1.")
     if any(not value.strip() for value in args.srun_args):
@@ -198,10 +228,11 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     # the user explicitly requests --env PATH.
     batch_env_names = ["PATH", *(name for name in env_names if name != "PATH")]
     executor = run.SlurmExecutor(
+        poll_estimated_start_time=False,
         account=args.account,
         partition=args.partition,
         nodes=args.nodes,
-        ntasks_per_node=args.gpus_per_node,
+        ntasks_per_node=args.tasks_per_node or args.gpus_per_node,
         cpus_per_task=args.cpus_per_task,
         mem=args.mem,
         exclusive=True if args.exclusive else None,
@@ -212,7 +243,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
         container_image=args.container_image,
         container_mounts=mounts,
         container_env=env_names,
-        additional_parameters={"export": ",".join(batch_env_names)},
+        additional_parameters={**args.additional_slurm_params, "export": ",".join(batch_env_names)},
         srun_args=args.srun_args,
         **gpu_kwargs,
     )
@@ -266,13 +297,16 @@ def main(argv: list[str] | None = None) -> None:
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
 
-    with run.Experiment(args.experiment_name or "inference") as experiment:
+    with run.Experiment(args.experiment_name or "inference", skip_status_at_exit=True) as experiment:
         experiment.add(task, executor=executor, name=args.task)
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=args.detach, tail_logs=not args.detach)
+        experiment.run(detach=True, tail_logs=False)
+        if not args.detach:
+            wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
     if not args.detach:
         _raise_on_failed_tasks(experiment)
 

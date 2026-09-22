@@ -66,11 +66,20 @@ env:
   container-registry-gb200: us-east4-docker.pkg.dev/nv-projdgxchipp-20260113193621/megatron-bridge
 
 jobs:
+  ephemeral-runner-routing:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_ephemeral_runner_routing.yml@4fe957d4ea5816af1d67fae130bbab4b434c10b3 # v1.9.2
+    with:
+      lane: ${{ vars.NEMO_CI_EPHEMERAL_LANE }}
+      legacy_label: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      run_id: ${{ github.run_id }}
+      run_attempt: ${{ github.run_attempt }}
+
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
+    needs: [ephemeral-runner-routing]
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@d0878a142525ff79366ca96fbc0b306cd8d64670 # v1.9.0
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
-      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ needs.ephemeral-runner-routing.outputs.runner_label_base }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
       default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
@@ -103,11 +112,17 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+          PR_HEAD_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').head.sha }}
+          PR_MERGE_SHA: ${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
         run: |
           if [[ "$IS_PR" == "true" ]]; then
-            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+            SHA=${PR_MERGE_SHA:-$PR_HEAD_SHA}
           else
             SHA=${GITHUB_SHA}
+          fi
+          if [[ -z "$SHA" ]]; then
+            echo "Unable to resolve a non-empty workflow revision" >&2
+            exit 1
           fi
           echo "merge_sha=${SHA}" | tee -a "$GITHUB_OUTPUT"
 
@@ -353,7 +368,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.cicd-compute-build-matrix.outputs.matrix) }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     environment: ${{ contains(matrix.registry, 'azure') && 'nemo-ci' || '' }}
     if: |
       (
@@ -546,7 +561,7 @@ jobs:
       && !cancelled()
       && needs.configure.outputs.perf_scripts_only != 'true'
     needs: [pre-flight, configure, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ startsWith(needs.pre-flight.outputs.runner_prefix, 'ephe-v2-') && format('{0}-a{1}', needs.pre-flight.outputs.runner_prefix, github.run_attempt) || needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Import_Check
     steps:
       - name: Checkout
@@ -582,7 +597,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, configure, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ startsWith(needs.pre-flight.outputs.runner_prefix, 'ephe-v2-') && format('{0}-a{1}', needs.pre-flight.outputs.runner_prefix, github.run_attempt) || needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Core_${{ matrix.shard-id }}
     env:
       TRANSFORMERS_OFFLINE: "1"
@@ -612,7 +627,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+          runner: ${{ startsWith(needs.pre-flight.outputs.runner_prefix, 'ephe-v2-') && format('{0}-a{1}', needs.pre-flight.outputs.runner_prefix, github.run_attempt) || needs.pre-flight.outputs.runner_prefix }}
 
   cicd-unit-tests-diffusion:
     if: |
@@ -626,7 +641,7 @@ jobs:
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     needs: [pre-flight, configure, cicd-container-build]
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    runs-on: ${{ startsWith(needs.pre-flight.outputs.runner_prefix, 'ephe-v2-') && format('{0}-a{1}', needs.pre-flight.outputs.runner_prefix, github.run_attempt) || needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Diffusion
     env:
       TRANSFORMERS_OFFLINE: "1"
@@ -654,7 +669,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ needs.pre-flight.outputs.runner_prefix }}
+          runner: ${{ startsWith(needs.pre-flight.outputs.runner_prefix, 'ephe-v2-') && format('{0}-a{1}', needs.pre-flight.outputs.runner_prefix, github.run_attempt) || needs.pre-flight.outputs.runner_prefix }}
 
   generate-test-matrix:
     needs: [pre-flight, configure, cicd-container-build]
@@ -726,7 +741,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     if: |
       (
         success()
@@ -765,7 +780,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   # L1: runs on main push, schedule, and PRs with "needs-more-tests" label
   cicd-functional-tests-l1:
@@ -774,7 +789,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l1) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     if: |
       (
         success()
@@ -814,7 +829,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   # L2: runs on schedule (nightly/weekly), workflow_dispatch, and PRs labeled `full-test-suite`
   cicd-functional-tests-l2:
@@ -823,7 +838,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l2) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     if: |
       (
         success()
@@ -863,7 +878,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   cicd-functional-tests-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all'
@@ -872,7 +887,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
     needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     name: ${{ matrix.script }}
     env:
       HF_HOME: /home/TestData/HF_HOME
@@ -902,7 +917,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   generate-gb200-test-matrix:
     needs: [pre-flight, configure, cicd-container-build]
@@ -974,7 +989,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l0) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     if: |
       (
         success()
@@ -1021,7 +1036,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   # GB200-L1: mirrors H100-L1 trigger conditions, runs on GB200 hardware
   cicd-functional-tests-gb200-l1:
@@ -1030,7 +1045,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l1) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     if: |
       (
         success()
@@ -1078,7 +1093,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   # GB200-L2: mirrors H100-L2 trigger conditions, runs on GB200 hardware
   cicd-functional-tests-gb200-l2:
@@ -1087,7 +1102,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l2) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     if: |
       (
         success()
@@ -1135,7 +1150,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   cicd-functional-tests-gb200-flaky:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true' && vars.DISABLE_GB200_TESTS != 'true'
@@ -1144,7 +1159,7 @@ jobs:
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
     needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
     env:
@@ -1179,7 +1194,7 @@ jobs:
           github-token: ${{ steps.app-token.outputs.token }}
           container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
-          runner: ${{ matrix.runner }}
+          runner: ${{ startsWith(matrix.runner, 'ephe-v2-') && format('{0}-a{1}', matrix.runner, github.run_attempt) || matrix.runner }}
 
   Nemo_CICD_Test:
     needs:

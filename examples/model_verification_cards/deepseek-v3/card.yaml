@@ -3,22 +3,25 @@
 
 title: deepseek_v3
 summary: >
-  The canonical pretrain_performance.H100 1024-GPU BF16,
-  pretrain_performance.GB200 256-GPU MXFP8, and pretrain_performance.GB300
-  256-GPU MXFP8 recipes are verified.
+  Distributed H100 GPU import, BF16 export, and deterministic inference are
+  verified against the pinned blockwise-FP8 checkpoint. The canonical
+  pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU
+  MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified.
+  A distributed CPU export of the same pinned checkpoint is also verified.
   Timing and throughput metrics from future functional training items remain
-  sanity checks rather than optimized performance results. Model-level
-  conversion, forward correlation, inference, functional training,
-  fine-tuning, and checkpoint-resume verification are deferred.
+  sanity checks rather than optimized performance results. CPU import, forward
+  correlation, functional training, fine-tuning, and checkpoint-resume
+  verification remain deferred.
 verification_index:
   model_level:
-    unverified:
-      - hf_to_megatron_cpu
+    verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
-      - manual_forward_pass
       - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - manual_forward_pass
   training:
     GB300:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -32,8 +35,8 @@ model:
   architecture: DeepseekV3ForCausalLM
   min_transformers_version: "5.8.0"
 verification_environment:
-  base_container: nvcr.io/nvidia/nemo:26.08.rc5
-  bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: c3836699a2e006528a1338902874f96da0f5d219  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -48,35 +51,69 @@ items:
       by this card.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8
+      --hf-model deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron-path work/model-verification/deepseek-v3/imported-megatron
+      --torch-dtype bfloat16 --low-memory-save
+      --distributed-timeout-minutes 240
+      --tp 1 --pp 4 --ep 8 --etp 1
+    last_verified: 2026-08-25
     expected_result: >
-      A distributed GPU import of the pinned blockwise-FP8 Hugging Face
-      checkpoint must complete every mapping, persist a reloadable Megatron
-      checkpoint, and pass a complete tensor audit. This workflow is deferred
-      by this card.
+      The 32-GPU import completed all 4,583 mapping tasks, blockwise-dequantized
+      the pinned FP8 source into BF16, and persisted a reloadable 32-shard
+      distributed Megatron checkpoint. A strict paired export subsequently
+      matched all 46,183 model tensors and 684,489,845,504 values exactly.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: b758d52cb3d12e3ca316d41d9527e6072a1c325b  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0
+      --exclusive --hf-model deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/deepseek-v3/cpu-hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --tp 1 --pp 4 --ep 8 --etp 1 --distributed-timeout-minutes 240
+      --distributed-save --save-every-n-ranks 1 --no-progress
+    last_verified: 2026-08-26
     expected_result: >
-      A CPU export from a verified Megatron checkpoint must preserve every
-      mapped tensor and strictly reload as DeepseekV3ForCausalLM. This workflow
-      is deferred by this card.
+      The 32-process distributed CPU export exits successfully and writes all
+      163 source-shaped shards. The index contains exactly 46,183 BF16 model
+      tensors; an exhaustive audit matches all 684,489,845,504 values against
+      the pinned source after blockwise dequantization of all 45,808 FP8
+      tensors and 59 other declared dtype normalizations. Transformers strictly
+      reloads the output as DeepseekV3ForCausalLM with all 967 state tensors and
+      no loading discrepancies.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8
+      --hf-model deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron-path work/model-verification/deepseek-v3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/deepseek-v3/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --save-every-n-ranks 1
+      --distributed-timeout-minutes 240
+      --tp 1 --pp 4 --ep 8 --etp 1
+    last_verified: 2026-08-25
     expected_result: >
-      A distributed GPU export from a verified Megatron checkpoint must
-      preserve every mapped tensor and strictly reload as
-      DeepseekV3ForCausalLM. This workflow is deferred by this card.
+      The command exited successfully and wrote all 163 source-shaped shards.
+      The index contained exactly 46,183 BF16 model tensors; an exhaustive
+      32-rank audit matched all 684,489,845,504 values against the pinned source
+      after blockwise dequantization of all 45,808 FP8 tensors. The exported
+      configuration instantiated natively as DeepseekV3ForCausalLM.
 
   manual_forward_pass:
     status: unverified
@@ -90,14 +127,26 @@ items:
       by this card.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path deepseek-ai/DeepSeek-V3
+      --hf-revision e815299b0bcbac849fa540c768ef21845365c9eb
+      --megatron_model_path work/model-verification/deepseek-v3/imported-megatron/iter_0000000
+      --tp 1 --pp 4 --ep 8 --etp 1
+      --prompt "Explain why the sky appears blue in one sentence."
+      --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
+      --legacy-full-prefix
+    last_verified: 2026-08-25
     expected_result: >
-      A synchronous deterministic Megatron generation from a verified
-      checkpoint must finish with finite logits and a recorded literal greedy
-      completion. This workflow is deferred by this card.
+      The distributed Megatron execution reloaded the verified BF16 checkpoint,
+      produced finite logits, and generated exactly 32 tokens with deterministic
+      greedy decoding, without an earlier EOS. The literal completion was "The sky appears
+      blue because shorter blue wavelengths of sunlight are scattered more
+      effectively by the Earth's atmosphere than longer red wavelengths, a
+      phenomenon known as Rayleigh scattering."
 
   pretrain:
     GB300:
@@ -216,6 +265,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 128 --gpus-per-node 8
         --recipe deepseek_v3_pretrain_1024gpu_h100_bf16_config
@@ -241,6 +291,7 @@ items:
     GB200:
       status: verified
       precision: fp8_mx
+      bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
         --recipe deepseek_v3_pretrain_256gpu_gb200_fp8mx_config
@@ -266,6 +317,7 @@ items:
     GB300:
       status: verified
       precision: fp8_mx
+      bridge_commit: 79308d0d99fb8c09b3f1a22baa68a4ffa4f4ce1e  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4
         --recipe deepseek_v3_pretrain_256gpu_gb300_fp8mx_config

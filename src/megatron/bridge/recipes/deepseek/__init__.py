@@ -34,6 +34,7 @@ from .deepseek_v3 import (
 # DeepSeek V4
 from .deepseek_v4 import (
     deepseek_v4_flash_no_mtp_sft_config,
+    deepseek_v4_flash_peft_openmath_thinking_packed_config,
     deepseek_v4_flash_pretrain_config,
     deepseek_v4_flash_pretrain_gb200_config,
     deepseek_v4_flash_pretrain_muon_config,
@@ -47,9 +48,12 @@ from .deepseek_v4 import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from .gb200.deepseek_v4 import (
+    deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config,
+    deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config,
 )
 from .gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config,
@@ -66,6 +70,8 @@ __all__ = [
     "deepseek_v3_pretrain_config_32nodes",
     "set_deepseek_v3_pipeline_model_parallel_layout",
     # DeepSeek V4
+    "deepseek_v4_flash_peft_openmath_thinking_packed_config",
+    "deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config",
     "deepseek_v4_flash_pretrain_config",
     "deepseek_v4_flash_pretrain_gb200_config",
     "deepseek_v4_flash_pretrain_muon_config",
@@ -80,6 +86,8 @@ __all__ = [
     "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config",
+    "deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config",
     "deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config",
     "deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config",
     "set_deepseek_v4_pipeline_model_parallel_layout",

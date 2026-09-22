@@ -61,6 +61,56 @@ def test_openmath_thinking_adapter_separates_reasoning_and_answer():
     ]
 
 
+def test_coderforge_adapter_decodes_messages_tools_and_execution_image():
+    messages = [
+        {"role": "user", "content": "Fix the bug."},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [{"type": "function", "function": {"name": "execute_bash", "arguments": "{}"}}],
+        },
+    ]
+    tools = [{"type": "function", "function": {"name": "execute_bash", "description": "Run a command"}}]
+
+    adapted = adapt_hf_dataset(
+        [
+            {
+                "trajectory_id": "example-run1",
+                "messages": json.dumps(messages),
+                "tools": json.dumps(tools),
+                "image": "example/eval-image",
+                "reward": 1.0,
+            }
+        ],
+        adapter_name="coderforge",
+    )
+
+    assert adapted == [
+        {
+            "messages": messages,
+            "tools": tools,
+            "trajectory_id": "example-run1",
+            "reward": 1.0,
+            "environment_image": "example/eval-image",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "error"),
+    [
+        ("messages", "not json", "must contain valid JSON"),
+        ("messages", json.dumps({"role": "user"}), "must decode to a list"),
+        ("tools", json.dumps(["not-a-tool"]), "must decode to a list"),
+    ],
+)
+def test_coderforge_adapter_rejects_invalid_json_lists(field_name, value, error):
+    row = {"messages": "[]", "tools": "[]", field_name: value}
+
+    with pytest.raises(ValueError, match=error):
+        adapt_hf_dataset([row], adapter_name="coderforge")
+
+
 @pytest.mark.parametrize(
     "ground_truth",
     [

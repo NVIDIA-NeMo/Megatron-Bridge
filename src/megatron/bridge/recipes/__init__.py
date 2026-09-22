@@ -18,6 +18,8 @@ Megatron Bridge Recipe Configurations
 This module exposes all recipe configurations from all model families.
 """
 
+from megatron.bridge.recipes.bagel import *
+from megatron.bridge.recipes.bagel.h100 import *
 from megatron.bridge.recipes.deepseek import *
 from megatron.bridge.recipes.deepseek.h100 import *
 from megatron.bridge.recipes.exaone import *
@@ -50,6 +52,8 @@ from megatron.bridge.recipes.ministral3 import *
 from megatron.bridge.recipes.ministral3.h100 import *
 from megatron.bridge.recipes.moonlight import *
 from megatron.bridge.recipes.moonlight.h100 import *
+from megatron.bridge.recipes.muse_glimmer import *
+from megatron.bridge.recipes.muse_glimmer.h100 import *
 from megatron.bridge.recipes.nemotron_omni import *
 from megatron.bridge.recipes.nemotron_omni.h100 import *
 from megatron.bridge.recipes.nemotron_vl import *

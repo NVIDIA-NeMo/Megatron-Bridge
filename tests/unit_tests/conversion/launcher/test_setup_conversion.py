@@ -71,6 +71,70 @@ def _parse(module, *options):
     )
 
 
+@pytest.mark.parametrize("options", [[], ["--detach"], ["--submission-dry-run"]])
+def test_slurm_main_uses_shared_rate_limited_waiter(monkeypatch, options):
+    module = _load_setup_conversion_module()
+    calls = []
+
+    class Experiment:
+        def __init__(self, _name, *, skip_status_at_exit):
+            assert skip_status_at_exit is True
+            self.jobs = [types.SimpleNamespace(id="import-gpu", state=module.AppState.SUCCEEDED)]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def run(self, **kwargs):
+            calls.append(("run", kwargs))
+
+        def dryrun(self):
+            calls.append(("dryrun", {}))
+
+    module.run.Experiment = Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    monkeypatch.setattr(module, "_build_task", lambda *_args: (types.SimpleNamespace(path="worker.py"), []))
+    monkeypatch.setattr(module, "wait_for_slurm_job", lambda _experiment, **kwargs: calls.append(("wait", kwargs)))
+    module.main(
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--device",
+            "gpu",
+            "--nodes",
+            "1",
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+            "--poll-interval",
+            "120",
+            *options,
+        ]
+    )
+    if "--submission-dry-run" in options:
+        assert calls == [("dryrun", {})]
+    else:
+        expected = [("run", {"detach": True, "tail_logs": False})]
+        if "--detach" not in options:
+            expected.append(("wait", {"poll_interval": 120}))
+        assert calls == expected
+
+
 def _parse_export(module, *options):
     return module.build_parser(include_execution=True).parse_args(
         [
@@ -92,6 +156,32 @@ def _parse_roundtrip(module, *options):
     )
 
 
+@pytest.mark.parametrize("parse", [_parse, _parse_export, _parse_roundtrip])
+@pytest.mark.parametrize("option", ["--additional-slurm-params", "--additional_slurm_params"])
+def test_additional_slurm_parameters_are_not_forwarded_to_conversion(parse, option):
+    module = _load_setup_conversion_module()
+    args = parse(module, "--executor", "slurm", option, "segment=1;reservation=testing")
+
+    assert args.additional_slurm_params == {"segment": "1", "reservation": "testing"}
+    worker_args = module.conversion_worker_args(args)
+    assert option not in worker_args
+    assert "segment=1;reservation=testing" not in worker_args
+
+
+@pytest.mark.parametrize("value", ["", "segment", "=1", "segment=", "segment=1;"])
+def test_additional_slurm_parameters_reject_malformed_pairs(value):
+    module = _load_setup_conversion_module()
+    with pytest.raises(SystemExit):
+        _parse(module, "--additional-slurm-params", value)
+
+
+def test_local_conversion_rejects_additional_slurm_parameters():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--additional-slurm-params", "segment=1")
+    with pytest.raises(ValueError, match="only supported by the Slurm executor"):
+        module._validate_args(args)
+
+
 def test_setup_import_is_lightweight(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -107,6 +197,79 @@ def test_cpu_backend_rejects_distributed_parallelism():
     args = _parse(module, "--tp", "2")
 
     with pytest.raises(ValueError, match="TP=PP=EP=ETP=1"):
+        module._validate_args(args)
+
+
+def test_distributed_cpu_export_accepts_compatible_topology():
+    module = _load_setup_conversion_module()
+    args = _parse_export(
+        module,
+        "--executor",
+        "slurm",
+        "--nodes",
+        "2",
+        "--cpu-processes-per-node",
+        "4",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--pp",
+        "2",
+        "--ep",
+        "4",
+        "--export-weight-dtype",
+        "bfloat16",
+    )
+
+    module._validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("parallelism_args", "message"),
+    [
+        (["--pp", "3"], r"nodes\*cpu-processes-per-node must be divisible by TP\*PP"),
+        (["--ep", "3"], r"nodes\*cpu-processes-per-node must be divisible by ETP\*EP\*PP"),
+    ],
+)
+def test_distributed_cpu_export_rejects_incompatible_topology(parallelism_args, message):
+    module = _load_setup_conversion_module()
+    args = _parse_export(
+        module,
+        "--executor",
+        "slurm",
+        "--nodes",
+        "2",
+        "--cpu-processes-per-node",
+        "4",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        *parallelism_args,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_args(args)
+
+
+def test_distributed_cpu_export_rejects_non_export_command():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--cpu-processes-per-node", "2")
+
+    with pytest.raises(ValueError, match="supports export only"):
+        module._validate_args(args)
+
+
+def test_distributed_cpu_export_requires_distributed_save():
+    module = _load_setup_conversion_module()
+    args = _parse_export(module, "--cpu-processes-per-node", "2", "--no-distributed-save")
+
+    with pytest.raises(ValueError, match="requires --distributed-save"):
         module._validate_args(args)
 
 
@@ -146,7 +309,7 @@ def test_cpu_export_rejects_export_weight_dtype():
     module = _load_setup_conversion_module()
     args = _parse_export(module, "--export-weight-dtype", "float32")
 
-    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+    with pytest.raises(ValueError, match="requires distributed CPU export or the GPU backend"):
         module._validate_args(args)
 
 
@@ -357,7 +520,8 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
 
 
-def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
+@pytest.mark.parametrize("additional", [[], ["--additional-slurm-params", "segment=1;export=ALL"]])
+def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch, additional):
     module = _load_setup_conversion_module()
 
     class _SlurmExecutor:
@@ -380,6 +544,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
         "image.sqsh",
         "--experiment-name",
         "mb4909-nano4b-conversion",
+        *additional,
     )
     module._validate_args(args)
 
@@ -391,9 +556,55 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
-    assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
+    expected_parameters = {"export": "HF_TOKEN,PYTHONPATH"}
+    if additional:
+        expected_parameters["segment"] = "1"
+    assert executor.kwargs["additional_parameters"] == expected_parameters
     assert executor.kwargs["srun_args"] == []
+    assert executor.kwargs["poll_estimated_start_time"] is False
     assert executor.env_vars == {}
+
+
+def test_slurm_distributed_cpu_executor_uses_cpu_tasks(tmp_path, monkeypatch):
+    module = _load_setup_conversion_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.Packager = lambda: "packager"
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args = _parse_export(
+        module,
+        "--executor",
+        "slurm",
+        "--nodes",
+        "2",
+        "--cpu-processes-per-node",
+        "4",
+        "--cpus-per-task",
+        "16",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--pp",
+        "2",
+        "--ep",
+        "4",
+    )
+    module._validate_args(args)
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["nodes"] == 2
+    assert executor.kwargs["ntasks_per_node"] == 4
+    assert executor.kwargs["cpus_per_task"] == 16
+    assert "gpus_per_node" not in executor.kwargs
 
 
 def test_slurm_cpu_executor_can_request_gpu_runtime(tmp_path, monkeypatch):

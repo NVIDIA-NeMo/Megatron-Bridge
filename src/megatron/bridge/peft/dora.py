@@ -108,6 +108,7 @@ class DoRA(PEFT, ModuleMatcher):
                 disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
+                replicate_adapter=attrs.replicate_adapter,
             )
             return DoRALinear(m, adapter)
         return m

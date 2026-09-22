@@ -98,7 +98,7 @@ class NemotronVLModelProvider(HybridModelProvider):
     def provide(self, pre_process=None, post_process=None, vp_stage=None):  # noqa: D401
         """Assemble a full :class:`~megatron.core.models.multimodal.llava_model.LLaVAModel`."""
 
-        language_cfg = copy.deepcopy(self)
+        language_cfg = self._copy_config_without_runtime_process_groups(deep=True)
 
         vision_cfg = copy.deepcopy(language_cfg)
         vision_cfg.sequence_parallel = False

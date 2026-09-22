@@ -21,7 +21,7 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from utils import parse_dtype, prepare_output_directory, validate_output_path
+from utils import parse_dtype, prepare_output_directory, resolve_hf_model_revision, validate_output_path
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -49,8 +49,8 @@ _ROUNDTRIP_RTOL = 1e-5
 _CONSOLE = Console()
 
 
-def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
-    """Initialize NCCL from NeMo Run's torchrun or Slurm task environment."""
+def _ensure_distributed_initialized(timeout_minutes: int | None, *, use_cpu: bool = False) -> None:
+    """Initialize a distributed process group from torchrun or Slurm task state."""
     if torch.distributed.is_initialized():
         return
     if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is not None:
@@ -64,10 +64,11 @@ def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
         if master_port is not None:
             os.environ["MASTER_PORT"] = str(master_port)
     if os.environ.get("WORLD_SIZE") is None:
-        raise RuntimeError("GPU conversion must be launched through NeMo Run's local or Slurm executor.")
-    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
-    torch.cuda.set_device(local_rank)
-    kwargs: dict[str, object] = {"backend": "nccl"}
+        raise RuntimeError("Distributed conversion must be launched through NeMo Run's local or Slurm executor.")
+    if not use_cpu:
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+        torch.cuda.set_device(local_rank)
+    kwargs: dict[str, object] = {"backend": "gloo" if use_cpu else "nccl"}
     if timeout_minutes is not None:
         kwargs["timeout"] = datetime.timedelta(minutes=timeout_minutes)
     torch.distributed.init_process_group(**kwargs)
@@ -88,7 +89,10 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
     # torch.cuda.set_device in _ensure_distributed_initialized) avoids the
     # guess, matching the pattern used by training/initialize.py's own
     # first post-init barrier.
-    torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
+    if torch.distributed.get_backend() == "gloo":
+        torch.distributed.barrier()
+    else:
+        torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
@@ -166,6 +170,7 @@ def _configure_model_provider(
     ep: int,
     etp: int,
     dtype: torch.dtype,
+    use_cpu: bool = False,
 ) -> None:
     """Apply distributed parallelism and dtype settings to a model provider."""
     model_provider.tensor_model_parallel_size = tp
@@ -174,6 +179,35 @@ def _configure_model_provider(
     model_provider.expert_tensor_parallel_size = etp
     model_provider.pipeline_dtype = dtype
     model_provider.params_dtype = dtype
+    if use_cpu:
+        model_provider.use_cpu_initialization = True
+
+
+def _uses_model_builder(bridge: AutoBridge) -> bool:
+    """Return whether the selected bridge supports native builder construction."""
+    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
+
+
+def _configure_model_config(
+    model_config,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    dtype: torch.dtype,
+    use_cpu: bool = False,
+) -> None:
+    """Apply distributed parallelism and dtype settings to a builder config."""
+    transformer = model_config.transformer
+    transformer.tensor_model_parallel_size = tp
+    transformer.pipeline_model_parallel_size = pp
+    transformer.expert_model_parallel_size = ep
+    transformer.expert_tensor_parallel_size = etp
+    transformer.pipeline_dtype = dtype
+    transformer.params_dtype = dtype
+    if use_cpu:
+        transformer.use_cpu_initialization = True
 
 
 def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
@@ -313,12 +347,22 @@ def import_checkpoint(
         torch_dtype=dtype,
         **revision_kwargs,
     )
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-    _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    if _uses_model_builder(bridge):
+        model_config = bridge.get_model_config()
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_config, pp)
+        megatron_model = bridge.get_model(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+    else:
+        model_provider = bridge.to_megatron_provider(load_weights=True)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+        model_provider.finalize()
+        model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
+        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     bridge.save_megatron_model(
         megatron_model,
@@ -334,6 +378,7 @@ def import_checkpoint(
 def export_checkpoint(
     *,
     hf_model: str,
+    hf_revision: str | None,
     megatron_path: str,
     hf_path: str,
     tp: int,
@@ -349,11 +394,13 @@ def export_checkpoint(
     distributed_timeout_minutes: int | None,
     export_weight_dtype: str | None,
     overwrite: bool,
+    use_cpu: bool = False,
 ) -> None:
     """Export a distributed Megatron checkpoint to Hugging Face format.
 
     Args:
         hf_model: Hugging Face model ID or local config reference.
+        hf_revision: Immutable Hugging Face Hub revision to load.
         megatron_path: Source Megatron checkpoint path.
         hf_path: Destination Hugging Face checkpoint path.
         tp: Tensor parallelism size.
@@ -369,35 +416,51 @@ def export_checkpoint(
         distributed_timeout_minutes: Process-group timeout in minutes.
         export_weight_dtype: Optional dtype for exported weights.
         overwrite: Delete a non-empty destination before conversion.
+        use_cpu: Use Gloo and CPU model initialization instead of NCCL/CUDA.
     """
-    _ensure_distributed_initialized(distributed_timeout_minutes)
+    if use_cpu:
+        _ensure_distributed_initialized(distributed_timeout_minutes, use_cpu=True)
+    else:
+        _ensure_distributed_initialized(distributed_timeout_minutes)
     if not Path(megatron_path).exists():
         raise FileNotFoundError(f"Megatron checkpoint does not exist: {megatron_path}")
     _prepare_distributed_output(hf_path, overwrite=overwrite, source_paths=[megatron_path, hf_model])
     dtype = parse_dtype(torch_dtype)
 
-    print_rank_0(f"GPU export: {megatron_path} -> {hf_path}")
+    device_label = "CPU" if use_cpu else "GPU"
+    print_rank_0(f"Distributed {device_label} export: {megatron_path} -> {hf_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
+    revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=trusted,
         torch_dtype=dtype,
+        **revision_kwargs,
     )
+    reference_model = resolve_hf_model_revision(hf_model, hf_revision)
     checkpoint_config_bridge = AutoBridge.from_auto_config(
         megatron_path,
-        hf_model,
+        reference_model,
         trust_remote_code=trusted,
     )
     # Preserve the reference wrapper's streaming state source and shard map while
     # exporting the checkpoint-derived architecture and vocabulary configuration.
     bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-    _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
-    resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    if _uses_model_builder(bridge):
+        model_config = bridge.get_model_config()
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+        _maybe_restore_pipeline_layout(bridge, model_config, megatron_path, pp)
+        resolved_pipeline_layout = model_config.pipeline_model_parallel_layout
+        model_config.finalize()
+        bridge._get_or_initialize_pg_collection(model_config.transformer)
+    else:
+        model_provider = bridge.to_megatron_provider(load_weights=False)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+        _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
+        resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
+        model_provider.finalize()
+        model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
 
     model_parallel_overrides: dict[str, object] = {
         "tensor_model_parallel_size": tp,
@@ -424,7 +487,7 @@ def export_checkpoint(
         save_every_n_ranks=save_every_n_ranks,
         weight_dtype=parse_dtype(export_weight_dtype) if export_weight_dtype else None,
     )
-    print_rank_0(f"GPU export complete: {hf_path}")
+    print_rank_0(f"Distributed {device_label} export complete: {hf_path}")
 
 
 @torchrun_main
@@ -466,11 +529,21 @@ def roundtrip_checkpoint(
         torch_dtype=dtype,
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-    _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    if _uses_model_builder(bridge):
+        model_config = bridge.get_model_config()
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_config, pp)
+        megatron_model = bridge.get_model(
+            model_config,
+            wrap_with_ddp=False,
+            mixed_precision_wrapper=None,
+        )
+    else:
+        model_provider = bridge.to_megatron_provider(load_weights=True)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+        model_provider.finalize()
+        model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
+        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
     _verify_roundtrip_weights(bridge, megatron_model)
     print_rank_0("GPU round-trip validation complete")

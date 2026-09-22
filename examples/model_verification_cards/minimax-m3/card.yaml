@@ -15,19 +15,19 @@ summary: >
   degeneration. It reached the configured bound before EOS or the image-only
   OCR target; that limitation is recorded in the inference result. All 59
   exported safetensors shards
-  are byte-for-byte identical to the pinned source, and Transformers 5.12.1
-  natively reloads the export without loading errors. CPU import and export
-  remain unverified because the CPU-only attempt exited during CUDA-dependent
-  model initialization before producing a checkpoint. Full-VLM manual Hugging
+  are byte-for-byte identical to the pinned source, and Transformers 5.14.0
+  natively reloads the export without loading errors. A separate CPU export
+  reproduced the complete pinned source tensor graph exactly. CPU import remains
+  unverified because the CPU-only attempt exited during CUDA-dependent model
+  initialization before producing a checkpoint. Full-VLM manual Hugging
   Face/Megatron forward correlation also remains unverified. Training entries
   cover only the language-model backbone and do not claim vision or projector
   training; post-SFT full-VLM export therefore remains unsupported.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
+    verified: [hf_to_megatron_gpu, megatron_to_hf_cpu, megatron_to_hf_gpu, inference]
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - manual_forward_pass
   training:
     H100:
@@ -40,7 +40,7 @@ model:
   hf_id: MiniMaxAI/MiniMax-M3
   hf_revision: 50942730318c7943fe83db7ec8e9f9177ecb1cf8  # pragma: allowlist secret
   architecture: MiniMaxM3SparseForConditionalGeneration
-  min_transformers_version: "5.8.1"
+  min_transformers_version: "5.14.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
   bridge_commit: 6ae8e11630b212ef54f23f574f355a38f0b89d12  # pragma: allowlist secret
@@ -84,18 +84,27 @@ items:
       replicated tensors comprising 13,917,973,376 elements matched exactly.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron-path
+      work/model-verification/minimax-m3/imported-megatron/iter_0000000
+      --hf-path work/model-verification/minimax-m3/cpu-hf-export
+      --torch-dtype bfloat16 --no-progress --trust-remote-code
+    last_verified: 2026-08-26
     expected_result: >
-      No CPU Megatron-to-Hugging-Face result is claimed. The prerequisite
-      CPU-only import exited during CUDA-dependent model initialization before
-      producing a checkpoint, so the dependent CPU export did not run and no
-      CPU round trip completed. Future verification requires reloading a
-      successfully imported CPU checkpoint, writing a complete indexed Hugging
-      Face VLM, and matching its keys, shapes, dtypes, and values exactly
-      against the pinned source.
+      The single-node CPU export exited successfully and wrote the complete
+      indexed MiniMax-M3 VLM checkpoint. An exhaustive audit matched all 23,416
+      source and export tensors, 427,040,140,160 values, and 854,172,958,720
+      tensor-payload bytes with zero missing, unexpected, shape, dtype, or value
+      mismatches and no dtype conversions (atol=0, rtol=0). A meta-device
+      Transformers 5.14.0 reload instantiated
+      MiniMaxM3SparseForConditionalGeneration with 1,582 state entries and zero
+      missing, unexpected, mismatched, or error keys.
 
   megatron_to_hf_gpu:
     status: verified
@@ -119,7 +128,7 @@ items:
       bytes. The exported configuration preserves 60 text layers, 128 top-4
       experts, 32 vision layers, both projector stages, and 57
       lightning-indexer layers. Three tokenizer probes and multimodal processor
-      inputs match the source. Transformers 5.12.1 natively reloads both source
+      inputs match the source. Transformers 5.14.0 natively reloads both source
       and export as MiniMaxM3SparseForConditionalGeneration through its
       checkpoint conversion mapping with zero missing, unexpected, mismatched,
       or error keys. The export consolidates the tokenizer in tokenizer.json

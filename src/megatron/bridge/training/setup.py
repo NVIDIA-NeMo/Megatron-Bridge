@@ -27,6 +27,10 @@ import torch
 from megatron.core import tensor_parallel
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
+from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+    FullyShardedDataParallelV1,
+    FullyShardedDataParallelV2,
+)
 from megatron.core.jit import disable_jit_fuser
 from megatron.core.optimizer import MegatronOptimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
@@ -34,6 +38,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.multi_token_prediction import get_mtp_ranks
+from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
@@ -43,6 +48,10 @@ from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.peft.utils import (
+    enable_expert_parallel_grad_sync_in_finalize,
+    finalize_model_grads_with_expert_adapter_sync,
+)
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import (
@@ -54,7 +63,11 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+from megatron.bridge.training.gtp import (
+    classify_gtp_remat_chains,
+    configure_gtp_remat,
+    get_data_distribution_group,
+)
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import (
     memory_efficient_fp32_optimizer_state_loading,
@@ -464,11 +477,13 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, HybridModelConfig)) else cfg.model,
+        # Providers may copy their configuration while constructing the model.
+        get_model_config(model[0]),
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
         pg_collection=pg_collection,
+        peft_enabled=cfg.peft is not None,
     )
 
     # Fire on_data_init_start before any dataset files are opened.
@@ -500,7 +515,7 @@ def setup(
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-        dp_group=pg_collection.dp,
+        dp_group=get_data_distribution_group(pg_collection, cfg.model),
         eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
     )
     timers("train/valid/test-data-iterators-setup").stop()
@@ -584,10 +599,13 @@ def _register_setup_pre_wrap_hook(
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
+    if not isinstance(model_config, ModelConfig):
+        model_config.finalize()
+    configure_gtp_remat(model_config)
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
-        return builder.build_distributed_models(
+        model = builder.build_distributed_models(
             pg_collection=pg_collection,
             ddp_config=cfg.ddp,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
@@ -596,8 +614,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
         )
     else:
-        model_config.finalize()
-        return model_config.provide_distributed_model(
+        model = model_config.provide_distributed_model(
             ddp_config=cfg.ddp,
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
@@ -605,6 +622,8 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
         )
+    classify_gtp_remat_chains(model, model_config)
+    return model
 
 
 def _update_model_config_funcs(
@@ -615,12 +634,22 @@ def _update_model_config_funcs(
     *,
     align_grad_reduce: bool = True,
     pg_collection: Optional[ProcessGroupCollection] = None,
+    peft_enabled: bool = False,
 ) -> None:
     """Update model config sync funcs based on initialized model."""
-    if isinstance(model[0], (DistributedDataParallel, *MEGATRON_FSDP_TYPES)) and ddp_config.overlap_grad_reduce:
+    # DDP and MFSDP v1 only reduce during backward when overlap_grad_reduce is on, so
+    # without it there is nothing to suppress. MFSDP v2 always reduces in backward, so
+    # no_sync is how the schedule marks a non-final microbatch -- a correctness
+    # requirement, not an overlap optimization (mirrors Megatron-LM #7186). Without it,
+    # every backward finalizes the DP-outer axis and only the last microbatch's gradient
+    # reaches the optimizer.
+    if isinstance(model[0], FullyShardedDataParallelV2) or (
+        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1))
+        and ddp_config.overlap_grad_reduce
+    ):
         assert model_config.no_sync_func is None, (
-            "When overlap_grad_reduce is True, config.no_sync_func must be None; "
-            "a custom no_sync_func is not supported when overlapping grad-reduce"
+            "config.no_sync_func must be None when the wrapper supplies its own no_sync "
+            "(overlap_grad_reduce, or Megatron-FSDP v2); a custom no_sync_func is not supported"
         )
         model_config.no_sync_func = [model_chunk.no_sync for model_chunk in model]
         if len(model) == 1:
@@ -634,7 +663,13 @@ def _update_model_config_funcs(
         if len(model) == 1:
             model_config.param_sync_func = model_config.param_sync_func[0]
     if optimizer is not None:
-        model_config.finalize_model_grads_func = partial(finalize_model_grads, pg_collection=pg_collection)
+        finalize_func = finalize_model_grads
+        if peft_enabled:
+            # Shared expert adapters are replicated across EP: sum their gradients once per step after the DP
+            # sync instead of once per layer and microbatch.
+            enable_expert_parallel_grad_sync_in_finalize(model)
+            finalize_func = finalize_model_grads_with_expert_adapter_sync
+        model_config.finalize_model_grads_func = partial(finalize_func, pg_collection=pg_collection)
         model_config.grad_scale_func = optimizer.scale_loss
 
 
@@ -721,14 +756,15 @@ def _apply_peft_transformation(peft, base_model: list[MegatronModule]) -> list[M
     peft.set_params_to_save(transformed_model)
 
     # Log PEFT statistics
-    model_to_analyze = transformed_model[0] if isinstance(transformed_model, list) else transformed_model
+    model_chunks = transformed_model if isinstance(transformed_model, list) else [transformed_model]
     total_params = 0
     trainable_params = 0
-    for param in model_to_analyze.parameters():
-        param_count = param.numel()
-        total_params += param_count
-        if param.requires_grad:
-            trainable_params += param_count
+    for model_chunk in model_chunks:
+        for param in model_chunk.parameters():
+            param_count = param.numel()
+            total_params += param_count
+            if param.requires_grad:
+                trainable_params += param_count
 
     print_rank_0("PEFT Statistics:")
     print_rank_0(f"  Total parameters: {total_params:,}")

@@ -14,8 +14,6 @@
 
 import argparse
 import logging
-import os
-import socket
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Literal, Optional, Union
@@ -30,7 +28,7 @@ from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
-from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.checkpointing import _CpuTorchDistSaveShardedStrategy, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
@@ -122,22 +120,20 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     Useful for operations that require Megatron's parallel state but should run
     standalone (e.g., loading distributed checkpoints).
 
+    Uses an in-process store for rendezvous: this context is intentionally
+    single-process (world_size=1, rank=0), so it does not need a TCPStore
+    endpoint. A TCPStore rendezvous would either race on a dynamically picked
+    port (the socket is closed before init binds it) or silently inherit the
+    caller's MASTER_ADDR/MASTER_PORT settings.
+
     Args:
         backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
 
     Yields:
         None.
     """
-    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
-        init_method = None
-    else:
-        # Find an available port dynamically
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
-            addr, port = s.getsockname()
-        init_method = f"tcp://{addr}:{port}"
-
-    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
+    store = dist.HashStore()
+    dist.init_process_group(backend=backend, store=store, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
     # Initialize RNG tracker for model initialization
@@ -159,6 +155,27 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     finally:
         parallel_state.destroy_model_parallel()
         dist.destroy_process_group()
+
+
+def _get_or_initialize_pg_collection(
+    model_cfg: TransformerConfig | ModelConfig,
+) -> ProcessGroupCollection:
+    """Return MPU process groups, initializing model-parallel state when needed."""
+    if not parallel_state.is_initialized():
+        parallel_state.initialize_model_parallel(
+            tensor_model_parallel_size=model_cfg.tensor_model_parallel_size,
+            pipeline_model_parallel_size=model_cfg.pipeline_model_parallel_size,
+            virtual_pipeline_model_parallel_size=model_cfg.virtual_pipeline_model_parallel_size,
+            context_parallel_size=model_cfg.context_parallel_size or 1,
+            expert_model_parallel_size=model_cfg.expert_model_parallel_size or 1,
+            expert_tensor_parallel_size=model_cfg.expert_tensor_parallel_size,
+        )
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+            model_parallel_cuda_manual_seed(0)
+
+    return ProcessGroupCollection.use_mpu_process_groups()
 
 
 def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
@@ -266,7 +283,7 @@ def load_model_config(
         read_run_config,
     )
     from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
-    from megatron.bridge.utils.instantiate_utils import instantiate
+    from megatron.bridge.utils.instantiate_utils import _resolve_target, instantiate
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
 
@@ -291,7 +308,15 @@ def load_model_config(
 
     if mbridge_ckpt:
         if "_builder_" in run_config["model"]:
-            model_cfg = ModelConfig.from_dict(run_config["model"])
+            model_dict = run_config["model"]
+            target = model_dict.get("_target_")
+            if isinstance(target, str):
+                model_config_cls = _resolve_target(target, full_key="model._target_")
+                if not isinstance(model_config_cls, type) or not issubclass(model_config_cls, ModelConfig):
+                    raise TypeError(f"Builder model target must resolve to a ModelConfig class, got {target!r}.")
+                model_cfg = model_config_cls.from_dict(model_dict)
+            else:
+                model_cfg = ModelConfig.from_dict(model_dict)
         else:
             model_cfg = instantiate(run_config["model"])
     else:
@@ -347,13 +372,18 @@ def build_and_load_model(
 
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
-        if isinstance(model_cfg, ModelProviderMixin):
+        if isinstance(model_cfg, (ModelProviderMixin, ModelConfig)):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
-            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
-        elif isinstance(model_cfg, ModelConfig):
-            if hasattr(model_cfg, "finalize"):
-                model_cfg.finalize()
+            pg_collection = _get_or_initialize_pg_collection(model_cfg)
+
+            if isinstance(model_cfg, ModelProviderMixin):
+                return model_cfg.provide_distributed_model(
+                    wrap_with_ddp=False,
+                    use_cpu_initialization=use_cpu_init,
+                    pg_collection=pg_collection,
+                )
+
             builder_cls = model_cfg.get_builder_cls()
             builder = builder_cls(model_cfg)
             # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
@@ -363,9 +393,7 @@ def build_and_load_model(
             # the flag on the config object. This is intentional — we do not want
             # to duplicate TransformerConfig fields like `use_cpu_initialization`
             # as kwargs on `build_distributed_models`.
-            return builder.build_distributed_models(
-                ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
-            )
+            return builder.build_distributed_models(pg_collection, wrap_with_ddp=False)
         else:
             assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
@@ -458,6 +486,7 @@ def load_megatron_model(
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
     model_cfg, mlm_args = load_model_config(checkpoint_path)
+    saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
@@ -482,8 +511,15 @@ def load_megatron_model(
     # Apply model-parallel overrides if provided
     if mp_overrides:
         for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and value is not None:
+            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
                 setattr(model_cfg, key, value)
+
+        if (
+            "pipeline_model_parallel_size" in mp_overrides
+            and model_cfg.pipeline_model_parallel_size != saved_pipeline_model_parallel_size
+            and "pipeline_model_parallel_layout" not in mp_overrides
+        ):
+            model_cfg.pipeline_model_parallel_layout = None
 
     # A saved flexible layout describes PP/VPP stage ownership. It must not be
     # reinterpreted as virtual pipeline chunks after collapsing to one rank.
@@ -571,16 +607,18 @@ def save_megatron_model(
             hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
-    # Get model config from the first model instance
-    model_config = get_model_config(model[0])
+    # Builder-backed models retain their complete outer ModelConfig for
+    # checkpoint reconstruction. Legacy provider models expose their provider
+    # through ``config`` as before.
+    model_config = getattr(model[0], "model_config", None)
+    if not isinstance(model_config, ModelConfig):
+        model_config = get_model_config(model[0])
 
-    # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            "Expected model config to be an instance of ModelConfig or ModelProviderMixin, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
-            f"model instantiation and configuration handling."
+            "Model configs must support builder- or provider-backed reconstruction."
         )
 
     # Create global state for checkpointing
@@ -604,6 +642,42 @@ def save_megatron_model(
         ),
         dist=None,
     )
+
+    # Complete tokenizer construction and persistence before save_checkpoint publishes
+    # the root selectors for this checkpoint.
+    if tokenizer_config is not None:
+        from megatron.training.checkpointing import save_tokenizer_assets
+
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
+
+        tokenizer_error: Exception | None = None
+        try:
+            tokenizer = build_tokenizer(tokenizer_config)
+            checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
+            save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name, raise_on_error=True)
+        except Exception as error:
+            tokenizer_error = error
+
+        if torch.distributed.is_initialized():
+            tokenizer_errors: list[str | None] = [None] * torch.distributed.get_world_size()
+            local_error = None if tokenizer_error is None else f"{type(tokenizer_error).__name__}: {tokenizer_error}"
+            torch.distributed.all_gather_object(tokenizer_errors, local_error)
+            failures = [error for error in tokenizer_errors if error is not None]
+            if failures:
+                raise RuntimeError(f"Failed to save tokenizer assets on one or more ranks: {failures}")
+        elif tokenizer_error is not None:
+            raise tokenizer_error
+
+    runtime_config = getattr(model[0], "config", None)
+    use_cpu_save_strategy = getattr(runtime_config, "use_cpu_initialization", False) is True
+    if isinstance(model_config, ModelConfig):
+        transformer_config = getattr(model_config, "transformer", None)
+        use_cpu_save_strategy = (
+            use_cpu_save_strategy or getattr(transformer_config, "use_cpu_initialization", False) is True
+        )
+    checkpointing_context = None
+    if ckpt_format == "torch_dist" and use_cpu_save_strategy:
+        checkpointing_context = {"save_strategy": _CpuTorchDistSaveShardedStrategy("torch_dist", 1)}
 
     if low_memory_save:
         # Low-memory save flow: process factories incrementally, freeing memory as we go
@@ -763,6 +837,7 @@ def save_megatron_model(
             num_floating_point_operations_so_far=0,
             prebuilt_state_dict=state_dict,
             pg_collection=pg_collection,
+            checkpointing_context=checkpointing_context,
             callback_manager=None,
         )
     else:
@@ -773,24 +848,9 @@ def save_megatron_model(
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,
+            checkpointing_context=checkpointing_context,
             callback_manager=None,
         )
-
-    # Save tokenizer files separately if tokenizer config is provided
-    if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import (
-            get_checkpoint_name,
-            save_tokenizer_assets,
-        )
-
-        # Build the tokenizer
-        tokenizer = build_tokenizer(tokenizer_config)
-
-        # Get the checkpoint name for step 0
-        checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
-
-        # Save tokenizer files
-        save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name)
 
 
 def dtype_from_str(dtype: str) -> torch.dtype:

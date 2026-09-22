@@ -18,7 +18,6 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     _benchmark_common,
     _deepseek_v3_common,
     _enable_deepseek_full_iteration_mxfp8,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -39,8 +38,8 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
@@ -58,7 +57,6 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -91,8 +89,8 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
@@ -110,7 +108,6 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -143,8 +140,8 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
@@ -197,8 +194,8 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
@@ -246,6 +243,8 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
+    cfg.model.cuda_graph_scope = ["attn"]
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

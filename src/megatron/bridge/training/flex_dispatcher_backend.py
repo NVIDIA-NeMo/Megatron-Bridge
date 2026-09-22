@@ -24,73 +24,70 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 logger: logging.Logger = logging.getLogger(__name__)
 
 
-def _fallback_to_alltoall(model_config: TransformerConfig) -> None:
-    """Clear flex dispatcher state when the requested backend cannot be used."""
-    model_config.moe_token_dispatcher_type = "alltoall"
-    model_config.moe_flex_dispatcher_backend = None
-
-
 def apply_flex_dispatcher_backend(
     model_config: TransformerConfig,
     moe_flex_dispatcher_backend: str | None = None,
 ) -> None:
-    """Apply DeepEP or HybridEP optimizations to the model config.
+    """Configure the requested dispatcher without inspecting the local GPU.
 
-    DeepEP is applicable only for MoE models on Ampere, Hopper, B200 and B300 GPUs.
-    HybridEP is applicable only for MoE models on GB200, GB300 with NVL72 and on Ampere, Hopper, B200 and B300 GPUs.
+    Recipe construction may run on a different host from training, and child
+    recipes may replace a parent's backend. Validate hardware support with
+    ``validate_flex_dispatcher_backend`` after all recipe and user overrides.
+    An unsupported backend is never replaced with another dispatcher.
+
+    Args:
+        model_config: Model configuration to update in place.
+        moe_flex_dispatcher_backend: ``deepep``, ``hybridep``, or ``ncclep`` to
+            select flex dispatch; ``None`` explicitly selects alltoall.
+
+    Raises:
+        ValueError: If the backend name is not recognized.
     """
+    if moe_flex_dispatcher_backend is None:
+        model_config.moe_token_dispatcher_type = "alltoall"
+        model_config.moe_flex_dispatcher_backend = None
+        return
+    if moe_flex_dispatcher_backend not in ("deepep", "hybridep", "ncclep"):
+        raise ValueError(
+            f"Unknown flex dispatcher backend: {moe_flex_dispatcher_backend!r}. "
+            "Expected deepep, hybridep, ncclep, or None to explicitly select alltoall."
+        )
+
     num_moe_experts = getattr(model_config, "num_moe_experts", None)
     if num_moe_experts is None or num_moe_experts == 0:
         if get_rank_safe() == 0:
             logger.warning(
-                "DeepEP and HybridEP are only applicable to MoE models. "
+                "Flex dispatcher backends are only applicable to MoE models. "
                 "Model config does not use MoE (num_moe_experts is not set or is 0). "
-                "Skipping DeepEP configuration."
+                "Skipping flex dispatcher configuration."
             )
         return
 
-    if not torch.cuda.is_available() and moe_flex_dispatcher_backend in ("deepep", "hybridep"):
-        model_config.moe_token_dispatcher_type = "flex"
-        model_config.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
-        model_config.moe_shared_expert_overlap = False
-        return
-
-    device_properties = torch.cuda.get_device_properties(0)
-    if moe_flex_dispatcher_backend == "deepep":
-        if not (
-            device_properties.major in [8, 9] or device_properties.name.startswith(("NVIDIA B200", "NVIDIA B300"))
-        ):
-            if get_rank_safe() == 0:
-                logger.warning(
-                    f"DeepEP is only applicable to Ampere, Hopper, and Blackwell (B200/B300) GPUs. "
-                    f"Current GPU: {device_properties.name}. Falling back to alltoall."
-                )
-            _fallback_to_alltoall(model_config)
-            return
-    elif moe_flex_dispatcher_backend == "hybridep":
-        if not device_properties.major in [8, 9, 10]:
-            if get_rank_safe() == 0:
-                logger.warning(
-                    f"HybridEP is only applicable for GB200, GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs. "
-                    f"Current GPU: {device_properties.name}. Falling back to alltoall."
-                )
-            _fallback_to_alltoall(model_config)
-            return
-    else:
-        if get_rank_safe() == 0:
-            logger.warning("Not a valid flex dispatcher backend. Skipping flex dispatcher backend configuration.")
-        return
     model_config.moe_token_dispatcher_type = "flex"
     model_config.moe_flex_dispatcher_backend = moe_flex_dispatcher_backend
     model_config.moe_shared_expert_overlap = False
 
 
 def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
-    """Validate DeepEP or HybridEP is supported for the current GPU architecture."""
+    """Validate the final backend on the training GPU without changing the config.
+
+    Raises:
+        ValueError: If flex has no recognized backend or the GPU is unsupported.
+    """
     if model_config.moe_token_dispatcher_type == "flex":
-        if model_config.moe_flex_dispatcher_backend is None:
-            _fallback_to_alltoall(model_config)
-            return
+        if model_config.moe_flex_dispatcher_backend not in ("deepep", "hybridep", "ncclep"):
+            raise ValueError(
+                "moe_token_dispatcher_type='flex' requires moe_flex_dispatcher_backend "
+                f"to be deepep, hybridep, or ncclep; got {model_config.moe_flex_dispatcher_backend!r}. "
+                "To use alltoall, explicitly set moe_token_dispatcher_type='alltoall' "
+                "and moe_flex_dispatcher_backend=None."
+            )
+
+        migration_message = (
+            " Choose a supported flex backend, or explicitly set "
+            "moe_token_dispatcher_type='alltoall' and moe_flex_dispatcher_backend=None. "
+            "The requested backend will not be changed automatically."
+        )
 
         device_properties = torch.cuda.get_device_properties(0)
         if model_config.moe_flex_dispatcher_backend == "deepep":
@@ -99,11 +96,19 @@ def validate_flex_dispatcher_backend(model_config: TransformerConfig) -> None:
             ):
                 raise ValueError(
                     f"DeepEP is supported for Ampere, Hopper, and Blackwell (B200/B300) GPUs. "
-                    f"Current GPU: {device_properties.name}"
+                    f"Current GPU: {device_properties.name}." + migration_message
                 )
 
         if model_config.moe_flex_dispatcher_backend == "hybridep":
             if not device_properties.major in [8, 9, 10]:
                 raise ValueError(
-                    "HybridEP is supported for GB200, GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs"
+                    "HybridEP is supported for GB200, GB300 with NVL72 and for Ampere, Hopper, B200 and B300 GPUs. "
+                    f"Current GPU: {device_properties.name}." + migration_message
+                )
+
+        if model_config.moe_flex_dispatcher_backend == "ncclep":
+            if device_properties.major not in [9, 10]:
+                raise ValueError(
+                    f"NCCL EP is supported for Hopper and Blackwell GPUs. Current GPU: {device_properties.name}."
+                    + migration_message
                 )

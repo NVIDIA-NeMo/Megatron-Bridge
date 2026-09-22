@@ -6,20 +6,20 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. GPT-OSS 20B H100 support verification has completed GPU
-  HF-to-Megatron conversion, GPU Megatron-to-HF export, manual forward-pass
+  HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass
   correlation, deterministic Megatron inference, bounded pretraining, full SFT,
   SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint
-  resume; CPU conversion remains pending.
+  resume; CPU import remains pending.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
   training:
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -68,21 +68,24 @@ items:
       train state, tokenizer artifacts, and latest-checkpoint markers.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model unsloth/gpt-oss-20b-BF16
-      --megatron-path work/model-verification/gpt-oss-20b/cpu-megatron/iter_0000000
+      --hf-revision cc89b3e7fd423253264883a80a4fa5abc619649f
+      --megatron-path work/model-verification/gpt-oss-20b/imported-megatron/iter_0000000
       --hf-path work/model-verification/gpt-oss-20b/cpu-hf-export
       --torch-dtype bfloat16 --trust-remote-code
-    last_verified: null
+    last_verified: 2026-08-25
     expected_result: >
-      Future verification must export the CPU-imported Megatron checkpoint to
-      the public unquantized BF16 Hugging Face layout and verify that
-      Transformers reloads the result as GptOssForCausalLM with no missing,
-      unexpected, shape, dtype, or value mismatches against the BF16 reference
-      semantics.
+      The synchronous CPU workflow exports the verified distributed Megatron
+      checkpoint to the pinned public unquantized BF16 Hugging Face layout. Its
+      411 tensors, shapes, dtypes, and all 20,914,757,184 values match the BF16
+      reference bitwise at zero tolerance. Native Transformers loading succeeds
+      as GptOssForCausalLM with no missing, unexpected, mismatched, or errored
+      weights, and the tokenizer reloads from the export.
 
   megatron_to_hf_gpu:
     status: verified

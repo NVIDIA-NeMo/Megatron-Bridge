@@ -8,18 +8,19 @@ summary: >
   recipes, with NVFP4 on GB300. Timing and throughput from
   functional H100 and GB200 training are support-verification sanity checks
   rather than optimized performance results. Hardware evidence is scoped
-  strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers
-  conversion, inference, bounded real-data training, checkpoint resume, and
-  canonical H100, GB200, and GB300 benchmarks.
+  strictly by accelerator. Nemotron 3 Super 120B-A12B verification covers GPU
+  import, CPU and GPU export, inference, bounded real-data training,
+  checkpoint resume, and canonical H100, GB200, and GB300 benchmarks. CPU
+  import remains unverified.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - inference
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - manual_forward_pass
   training:
     H100:
@@ -54,8 +55,10 @@ items:
     last_verified: null
     expected_result: >
       The pinned CPU import must exit successfully, create iter_0000000, and
-      preserve the complete source checkpoint so the paired CPU export can audit
-      every supported tensor for exact keys, shapes, dtypes, and values.
+      preserve the complete source checkpoint. A subsequent CPU export from
+      that CPU-imported checkpoint must audit every supported tensor for exact
+      keys, shapes, dtypes, and values; the currently verified CPU export uses
+      the independently verified GPU-imported checkpoint instead.
 
   hf_to_megatron_gpu:
     status: verified
@@ -76,19 +79,23 @@ items:
       elements, including the 41 FP32 router correction-bias tensors.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
       --hf-revision d51eab0d1f979ebc26b546e634a04f450d99158e
-      --megatron-path work/model-verification/nemotron-3-super-120b-a12b/cpu-megatron/iter_0000000
+      --megatron-path work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000
       --hf-path work/model-verification/nemotron-3-super-120b-a12b/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-08-25
     expected_result: >
-      Strict CPU export must exit successfully, reproduce every supported source
-      tensor with exact keys, shapes, dtypes, and values, and reload natively as
+      The single-process CPU export exits successfully and writes
+      247,222,108,160 bytes across 42,683 tensors and 123,611,033,088 values.
+      Every exported key, shape, dtype, and value is bitwise identical to the
+      pinned Hugging Face BF16 source, with no dtype conversions, and
+      Transformers strictly reloads all 763 state tensors natively as
       NemotronHForCausalLM.
 
   megatron_to_hf_gpu:

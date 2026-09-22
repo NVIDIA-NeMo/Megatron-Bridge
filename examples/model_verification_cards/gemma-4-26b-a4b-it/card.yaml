@@ -6,10 +6,10 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Gemma 4 26B-A4B-it BF16 CPU and GPU import and exact CPU and GPU
-  export are verified. Deterministic multimodal inference remains unverified
-  because the recorded run stopped after 29 of the requested 32 tokens. Manual
-  forward comparison remains unverified because the recorded run compared a
-  tensor-parallel padding position rather than the prompt's next token.
+  export are verified. Deterministic multimodal inference is verified on one
+  8-GPU H100 node with TP2/PP1/EP4/ETP1. Manual forward comparison remains
+  unverified because the recorded run compared a tensor-parallel padding
+  position rather than the prompt's next token.
   Decoder-focused SFT is verified on one 8-GPU H100 node with TP4/PP1/EP8/ETP1,
   a frozen vision encoder, and full-layer uniform activation recompute with one
   layer per recompute unit. The real CORD-v2 run completed 10 optimizer steps
@@ -24,9 +24,9 @@ verification_index:
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
+      - inference
     unverified:
       - manual_forward_pass
-      - inference
   training:
     H100:
       verified: [sft, peft]
@@ -38,13 +38,14 @@ model:
   architecture: Gemma4ForConditionalGeneration
   min_transformers_version: "5.8.0"
 verification_environment:
-  base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: a0e186550b3dc5f9b36f98c9bd050994f0b3fdc6  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: 125695a5f134203d2aef7a5dd1465cfa3608b4f2  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
     status: verified
     precision: bf16
+    bridge_commit: a0e186550b3dc5f9b36f98c9bd050994f0b3fdc6  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model google/gemma-4-26B-A4B-it
@@ -62,6 +63,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
+    bridge_commit: a0e186550b3dc5f9b36f98c9bd050994f0b3fdc6  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --hf-model google/gemma-4-26B-A4B-it
@@ -100,6 +102,7 @@ items:
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
+    bridge_commit: a0e186550b3dc5f9b36f98c9bd050994f0b3fdc6  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --hf-model google/gemma-4-26B-A4B-it
@@ -133,30 +136,26 @@ items:
       agreement and cosine similarity of at least 0.99.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      examples/conversion/hf_to_megatron_generate_vlm.py
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task vlm-generation
       --hf_model_path google/gemma-4-26B-A4B-it
       --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
       --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
       --image_path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
-      --prompt "What animal is on the candy?"
+      --prompt "Describe the candy image in detail, including the animal, colors, text, and packaging."
       --max_new_tokens 32
       --tp 2 --pp 1 --ep 4 --etp 1
-    last_verified: null
+    last_verified: 2026-08-24
     expected_result: >
-      The 2026-07-23 BF16 deterministic greedy run stopped on EOS after 29 of
-      the requested 32 tokens, so it does not satisfy the exact-length gate.
-      Its JSON-escaped diagnostic completion was
-      "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
-      animal on the candy is a
-      turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u002f\u002fthought\n\u003cchannel|\u003eThe
-      animal on the candy is a
-      turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u003ceos\u003e".
-      Verification requires a fresh run that emits exactly 32 tokens. The
-      input was p-blog/candy.JPG from huggingface/documentation-images at revision
+      On 2026-08-24 one synchronous 8-H100 BF16 greedy run loaded the verified
+      checkpoint at TP2/PP1/EP4/ETP1 and completed exactly 32 generation steps
+      under the 32-token maximum without EOS. The literal completion was "A
+      close-up, high-angle shot shows a person's left hand holding four small,
+      round, colorful candies. The hand is slightly open, with". The input was
+      p-blog/candy.JPG from huggingface/documentation-images at revision
       44c3249461c5a5336585d1e31e0a4ce7fce06a5a, with SHA-256
       fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
 

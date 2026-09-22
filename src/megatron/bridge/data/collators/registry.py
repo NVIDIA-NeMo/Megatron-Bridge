@@ -54,6 +54,9 @@ _MODEL_COLLATE_SPECS = {
     ),
     "Glm4vProcessor": _ModelCollateSpec("megatron.bridge.models.glm_vl.data.collate_fn", "glm4v_collate_fn"),
     "KimiK25Processor": _ModelCollateSpec("megatron.bridge.models.kimi_vl.data.collate_fn", "kimi_k25_vl_collate_fn"),
+    "MuseGlimmerProcessor": _ModelCollateSpec(
+        "megatron.bridge.models.muse_glimmer.data.collate_fn", "muse_glimmer_collate_fn"
+    ),
     "deepseek-v4": _ModelCollateSpec(
         "megatron.bridge.models.deepseek.data.collate_fn",
         "deepseek_v4_collate_fn",
