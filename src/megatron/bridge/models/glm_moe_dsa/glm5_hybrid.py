@@ -29,6 +29,7 @@ from megatron.core.transformer.experimental_attention_variant.dsa import DSAtten
 from megatron.core.transformer.experimental_attention_variant.dsa_layer_config import DSALayerConfig
 from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionLayer
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.utils import WrappedTensor
 
 
 # Per-forward DSA index-sharing state: (top-k holder, top-k length holder).
@@ -58,13 +59,28 @@ class GLMDSAttention(DSAttention):
 
 
 def _forward_glm_stack(stack: HybridStack, hidden_states: Any, attention_mask: Any, **kwargs: Any) -> torch.Tensor:
+    if not stack.pre_process:
+        # Non-first pipeline stages receive ``None`` here; the real input arrives
+        # through ``set_input_tensor``. Resolve it now so the checkpoint below sees
+        # the tensor that requires grad instead of ``None``.
+        hidden_states = stack.input_tensor
+    if isinstance(hidden_states, WrappedTensor):
+        hidden_states = hidden_states.unwrap()
+
     def run(value: torch.Tensor) -> torch.Tensor:
         # One fresh state per stage invocation, including each checkpoint replay,
         # so outstanding microbatches never reuse each other's top-k indices.
         token = _FORWARD_STATE.set(({}, {}))
+        saved_input = stack.input_tensor
         try:
+            if not stack.pre_process:
+                # HybridStack.forward ignores ``value`` on these stages and reads
+                # ``input_tensor``; point it at ``value`` so the checkpoint replay
+                # consumes the detached copy and gradients flow through the checkpoint.
+                stack.input_tensor = value
             return HybridStack.forward(stack, value, attention_mask, **kwargs)
         finally:
+            stack.input_tensor = saved_input
             _FORWARD_STATE.reset(token)
 
     if stack.config.recompute_granularity == "full" and stack.training:
