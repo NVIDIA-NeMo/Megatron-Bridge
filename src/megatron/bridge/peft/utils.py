@@ -2344,92 +2344,69 @@ class GroupedExpertLinearAdapter(nn.Module):
                 grad_weight_quantizers,
                 grad_output_quantizers,
             ) = ([quantizers[expert_idx] for expert_idx in active_expert_indices] for quantizers in quantizer_groups)
-            common_non_tensor_args = (
-                helper.apply_bias,
-                None,
-                helper.fp8,
-                helper.fp8_calibration,
-                helper.wgrad_store,
-                input_quantizers,
-                weight_quantizers,
-                output_quantizers,
-                grad_input_quantizers,
-                grad_weight_quantizers,
-                grad_output_quantizers,
-                helper.fuse_wgrad_accumulation,
-                TEPytorchIsCPUOffloadEnabled(),
-                helper.sequence_parallel,
-                helper.activation_dtype,
-                torch.is_grad_enabled(),
-            )
             empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
             weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
 
             # TODO: Replace this private FP8 dispatch once Transformer Engine exposes
             # a public functional grouped-linear API for externally owned weights
             # (NVIDIA/TransformerEngine#3191).
+            non_tensor_arg_names = _te_grouped_linear_non_tensor_arg_names(TEPytorchGroupedLinearAutograd)
+            if not non_tensor_arg_names:
+                raise RuntimeError("Unable to determine Transformer Engine grouped-linear argument layout")
+            te_non_tensor_values = {
+                "m_splits": m_splits,
+                "use_bias": helper.apply_bias,
+                "is_first_microbatch": None,
+                "fp8": helper.fp8,
+                "fp8_calibration": helper.fp8_calibration,
+                "wgrad_store": helper.wgrad_store,
+                "input_quantizers": input_quantizers,
+                "weight_quantizers": weight_quantizers,
+                "output_quantizers": output_quantizers,
+                "grad_input_quantizers": grad_input_quantizers,
+                "grad_weight_quantizers": grad_weight_quantizers,
+                "grad_output_quantizers": grad_output_quantizers,
+                "fuse_wgrad_accumulation": helper.fuse_wgrad_accumulation,
+                "cpu_offloading": TEPytorchIsCPUOffloadEnabled(),
+                "sequence_parallel": helper.sequence_parallel,
+                "activation_dtype": helper.activation_dtype,
+                "is_grad_enabled": torch.is_grad_enabled(),
+                "module": helper,
+                "weight_workspaces": [None] * weight.shape[0],
+                "cache_weight": False,
+                "skip_fp8_weight_update": None,
+                "save_original_input": helper.save_original_input,
+                "delayed_scaling_input_quantizer": getattr(helper, "_delayed_scaling_input_quantizer", None),
+                "unsafe_requantization_input_quantizer": getattr(
+                    helper, "_unsafe_requantization_input_quantizer", None
+                ),
+                "debug": False,
+                # Adapter weights and empty biases are passed separately per expert.
+                "single_grouped_weight": False,
+                "single_grouped_bias": False,
+                # Keep the existing discrete-tensor kernel path with CPU splits.
+                "use_grouped_tensor": False,
+                # ROCm Transformer Engine unpacks these extra optional fields from
+                # ``non_tensor_args``; CUDA builds never name them, so the entries
+                # stay inert there (the tuple is assembled from TE's own field names).
+                "m_splits_tensor": None,
+                "actual_m_splits": None,
+                "unpad_output": False,
+            }
+            unknown_arg_names = set(non_tensor_arg_names) - te_non_tensor_values.keys()
+            if unknown_arg_names:
+                raise RuntimeError(
+                    f"Unsupported Transformer Engine grouped-linear arguments: {sorted(unknown_arg_names)}"
+                )
+            te_non_tensor_args = tuple(te_non_tensor_values[name] for name in non_tensor_arg_names)
             explicit_m_splits = _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd)
             if explicit_m_splits:
                 te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
-                te_non_tensor_args = (
-                    *common_non_tensor_args,
-                    [None] * weight.shape[0],
-                    False,
-                    None,
-                    helper.save_original_input,
-                    False,
-                )
                 output_buffers = (
                     (None, None) if _te_grouped_linear_uses_output_buffers(TEPytorchGroupedLinearAutograd) else ()
                 )
-                autograd_args = (
-                    x,
-                    te_m_splits,
-                    te_non_tensor_args,
-                    *output_buffers,
-                    *weights_and_biases,
-                )
+                autograd_args = (x, te_m_splits, te_non_tensor_args, *output_buffers, *weights_and_biases)
             else:
-                non_tensor_arg_names = _te_grouped_linear_non_tensor_arg_names(TEPytorchGroupedLinearAutograd)
-                if not non_tensor_arg_names:
-                    raise RuntimeError("Unable to determine Transformer Engine grouped-linear argument layout")
-                te_non_tensor_values = {
-                    "m_splits": m_splits,
-                    "use_bias": helper.apply_bias,
-                    "is_first_microbatch": None,
-                    "fp8": helper.fp8,
-                    "fp8_calibration": helper.fp8_calibration,
-                    "wgrad_store": helper.wgrad_store,
-                    "input_quantizers": input_quantizers,
-                    "weight_quantizers": weight_quantizers,
-                    "output_quantizers": output_quantizers,
-                    "grad_input_quantizers": grad_input_quantizers,
-                    "grad_weight_quantizers": grad_weight_quantizers,
-                    "grad_output_quantizers": grad_output_quantizers,
-                    "fuse_wgrad_accumulation": helper.fuse_wgrad_accumulation,
-                    "cpu_offloading": TEPytorchIsCPUOffloadEnabled(),
-                    "sequence_parallel": helper.sequence_parallel,
-                    "activation_dtype": helper.activation_dtype,
-                    "is_grad_enabled": torch.is_grad_enabled(),
-                    "module": helper,
-                    "weight_workspaces": [None] * weight.shape[0],
-                    "cache_weight": False,
-                    "skip_fp8_weight_update": None,
-                    "save_original_input": helper.save_original_input,
-                    "debug": False,
-                    # ROCm Transformer Engine unpacks these extra optional fields from
-                    # ``non_tensor_args``; CUDA builds never name them, so the entries
-                    # stay inert there (the tuple is assembled from TE's own field names).
-                    "m_splits_tensor": None,
-                    "actual_m_splits": None,
-                    "unpad_output": False,
-                }
-                unknown_arg_names = set(non_tensor_arg_names) - te_non_tensor_values.keys()
-                if unknown_arg_names:
-                    raise RuntimeError(
-                        f"Unsupported Transformer Engine grouped-linear arguments: {sorted(unknown_arg_names)}"
-                    )
-                te_non_tensor_args = tuple(te_non_tensor_values[name] for name in non_tensor_arg_names)
                 autograd_args = (x, te_non_tensor_args, *weights_and_biases)
 
             if torch.is_grad_enabled():

@@ -571,6 +571,63 @@ def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):
     )
 
 
+def test_benchmark_ep_override_updates_hybridep_topology_environment(monkeypatch):
+    """The exact-recipe launcher must keep HybridEP environment aligned with EP."""
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "256")
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        },
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=32,
+            expert_tensor_parallel_size=1,
+            moe_flex_dispatcher_backend="hybridep",
+        ),
+        train=SimpleNamespace(global_batch_size=2048),
+        dataset=SimpleNamespace(),
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_overrides(recipe, overrides):
+        assert "model.expert_model_parallel_size=64" in overrides
+        recipe.model.expert_model_parallel_size = 64
+        return recipe
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
+    environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
+    environment_module.HYBRID_EP_ENV_NAMES = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    monkeypatch.setitem(sys.modules, "megatron", _package("megatron"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge", _package("megatron.bridge"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes", _package("megatron.bridge.perf_recipes"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes.environment", environment_module)
+
+    module.main(
+        [
+            "--recipe",
+            "qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config",
+            "--mode",
+            "pretrain",
+            "--dry-run",
+            "--expert_model_parallel_size",
+            "64",
+        ]
+    )
+
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+
+
 def test_benchmark_recipe_weak_scales_noncanonical_world_size(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "8")
