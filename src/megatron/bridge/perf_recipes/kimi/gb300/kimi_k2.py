@@ -14,7 +14,7 @@
 """GB300 performance recipes for Kimi K2."""
 
 from megatron.bridge.perf_recipes._common import _enable_ncclep
-from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS, NCCL_EP_PERF_ENV_VARS
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
     _benchmark_common,
@@ -193,7 +193,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

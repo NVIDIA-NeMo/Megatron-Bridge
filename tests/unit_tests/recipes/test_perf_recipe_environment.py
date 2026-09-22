@@ -212,8 +212,18 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
             assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
             assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
-            assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
-            assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+            if path.parent.name == "gb300" and path.stem == "deepseek_v3":
+                # The DeepSeek V3 GB300 recipes run the TE op-fuser grouped MLP, whose quantized scale
+                # gradient is accumulated with atomics; TE raises when bit-exact execution is requested,
+                # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
+                assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
+            else:
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+            if "NCCL_EP_HT_EM_PULL_PUSH" in environment:
+                # NCCL EP recipes drop the HybridEP tuning that nothing reads on that backend.
+                assert not hybrid_ep_names
+            else:
+                assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
 
 
 @pytest.mark.parametrize(

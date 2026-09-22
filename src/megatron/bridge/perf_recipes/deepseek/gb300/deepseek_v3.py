@@ -25,7 +25,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS, NCCL_EP_PERF_ENV_VARS
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
 def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
@@ -76,7 +76,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -178,7 +178,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -237,7 +237,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -303,7 +303,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
@@ -372,7 +372,7 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
@@ -404,7 +404,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContai
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank (inherited from the 256-GPU MXFP8 recipe).
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,

@@ -1297,7 +1297,13 @@ def report_memory(memory_keys: Optional[dict[str, str]], *, log_device_memory_us
                 memory_report[name] = memory_stats[torch_name]
 
     if log_device_memory_used:
-        memory_report["mem-device-used-gigabytes"] = _to_gigabytes(torch.cuda.device_memory_used())
+        device_memory_used = getattr(torch.cuda, "device_memory_used", None)
+        if device_memory_used is None:
+            raise RuntimeError(
+                "logger.log_device_memory_used requires torch.cuda.device_memory_used (PyTorch >= 2.7); "
+                "disable the option or upgrade PyTorch."
+            )
+        memory_report["mem-device-used-gigabytes"] = _to_gigabytes(device_memory_used())
 
     return memory_report
 

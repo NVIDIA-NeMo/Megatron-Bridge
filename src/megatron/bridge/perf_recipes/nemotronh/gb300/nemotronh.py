@@ -14,7 +14,7 @@
 """GB300 performance recipes for NemotronH and Nemotron 3."""
 
 from megatron.bridge.perf_recipes._common import _enable_ncclep
-from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS, NCCL_EP_PERF_ENV_VARS
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
     ConfigContainer,
@@ -122,7 +122,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -178,7 +178,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -235,7 +235,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -327,7 +327,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -473,7 +473,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -533,7 +533,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -695,7 +695,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank (inherited from the Nano BF16 recipe).
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -737,7 +737,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
-        **NCCL_EP_PERF_ENV_VARS,
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,

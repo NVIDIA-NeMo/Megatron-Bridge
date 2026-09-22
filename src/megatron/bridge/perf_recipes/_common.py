@@ -100,7 +100,7 @@ def _enable_ncclep(cfg: ConfigContainer) -> None:
 
     Call after ``_benchmark_common``. Only the dispatch stack changes; parallelism, precision,
     recompute and the CUDA graph mode stay as the recipe set them. The calling recipe still declares
-    its own ``cfg.env_vars`` inline and adds ``NCCL_EP_PERF_ENV_VARS`` there.
+    its own ``cfg.env_vars`` inline and adds ``"NCCL_EP_HT_EM_PULL_PUSH": 1`` there.
     """
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "ncclep"

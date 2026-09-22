@@ -15,11 +15,15 @@
 
 """Apply recipe process settings before executing performance training."""
 
+import logging
 import os
 import sys
 from pathlib import Path
 
 from argument_parser import parse_cli_args
+
+
+logger = logging.getLogger(__name__)
 
 
 ENTRYPOINT_PERFORMANCE = "run_script.py"
@@ -79,6 +83,13 @@ def _apply_one_gpu_per_rank(recipe) -> None:
         os.environ["CUDA_VISIBLE_DEVICES"] = local_rank
     elif int(local_rank) < len(devices):
         os.environ["CUDA_VISIBLE_DEVICES"] = devices[int(local_rank)]
+    else:
+        logger.warning(
+            "NCCL EP one-GPU-per-rank binding skipped: local rank %s is not in CUDA_VISIBLE_DEVICES=%s; "
+            "all listed devices stay visible to this rank.",
+            local_rank,
+            visible,
+        )
 
 
 def _exec_training(target_name: str) -> None:

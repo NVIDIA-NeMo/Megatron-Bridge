@@ -25,14 +25,6 @@ COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
     "TORCH_NCCL_HIGH_PRIORITY": 1,
 }
 
-# Process settings for the NCCL EP flex dispatcher backend on GB300 recipes; splat into the recipe's
-# inline ``env_vars`` next to ``_enable_ncclep``. (The one-GPU-per-rank launch fix for NCCL EP needs
-# no env var: scripts/performance/bootstrap.py keys it on the recipe's dispatcher backend.)
-NCCL_EP_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
-    # Hierarchical-topology pull mode of the NCCL EP plugin (faster than the default push mode on NVL72).
-    "NCCL_EP_HT_EM_PULL_PUSH": 1,
-}
-
 # HybridEP tuning, read by DeepEP's HybridEPBuffer. Megatron Core only builds that buffer when
 # moe_flex_dispatcher_backend is "hybridep", so these names are inert on any other backend. NCCL EP
 # recipes still drop them so the launched environment, which is dumped with the run, does not
