@@ -68,7 +68,6 @@ def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer
     # 35B-A3B real-data recipe. NOTE the shipped GB300 benchmark declares only
     # [moe_router, moe_preprocess] and then _qwen35_vl_post sets
     # cuda_graph_impl="none", so that scope is DEAD CODE -- do not copy it.
-    # Vision stays graph-free: DataComp image shapes vary.
     cfg.model.cuda_graph_impl = "transformer_engine"
     # The attn graph's value at 397B tracks the attention backend. With unfused
     # attention it measured -13.9% (n=50: 342.6 TF without vs 295.1 TF with, loss
@@ -76,9 +75,18 @@ def _apply_qwen35_vl_397b_a17b_64gpu_gb300_execution_config(cfg: ConfigContainer
     # disappears, fused attention being two kernels and cheap to capture. Kept
     # alongside the router/preprocess graphs to match the 35B-A3B real-data recipe.
     set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
-    cfg.model.vision_cuda_graph_impl = "none"
-    cfg.model.vision_cuda_graph_scope = []
-    cfg.model.max_vision_cuda_graph_seq_length = None
+    # Vision encoder CUDA graphs. Variable DataComp image shapes are handled by
+    # padding each vision sequence up to max_vision_cuda_graph_seq_length, so the
+    # cap must be MEASURED for this recipe's batch shape -- see the note in
+    # _apply_qwen35_vl_35b_a3b_16gpu_gb300_execution_config on why it is a patch
+    # count that must never be derived or carried across micro_batch_size.
+    # This recipe runs micro_batch_size=1: over 30,720 real DataComp samples the
+    # vision sequence measured min 720 | p50 828 | p99 884 | max 980, so
+    # 1029 = max + 5%. Earlier 397B launch configs reused the micro_batch_size=4
+    # cap of 3712 here, padding every vision attention call ~4.5x.
+    cfg.model.vision_cuda_graph_impl = "transformer_engine"
+    cfg.model.vision_cuda_graph_scope = ["attn", "mlp"]
+    cfg.model.max_vision_cuda_graph_seq_length = 1029
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
 
@@ -130,6 +138,8 @@ def qwen35_vl_397b_a17b_pretrain_config() -> ConfigContainer:
     cfg.model.freeze_vision_projection = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.train.global_batch_size = 1024
+    # micro_batch_size=1 is load-bearing for max_vision_cuda_graph_seq_length in
+    # the execution config -- changing it invalidates that cap.
     cfg.train.micro_batch_size = 1
 
     # Preserve the architecture vocabulary for checkpoint-backed functional
