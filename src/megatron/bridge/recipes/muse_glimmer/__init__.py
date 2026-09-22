@@ -12,18 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Megatron-FSDP wrapper compatibility helpers."""
+"""Muse Glimmer recipe aliases."""
 
-try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-        FullyShardedDataParallelV1,
-        FullyShardedDataParallelV2,
-    )
-
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
-    MCORE_HAS_MEGATRON_FSDP_V2 = True
-except ImportError:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
-
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)
-    MCORE_HAS_MEGATRON_FSDP_V2 = False
+from megatron.bridge.recipes.muse_glimmer.h100 import *  # noqa: F403
+from megatron.bridge.recipes.muse_glimmer.h100 import __all__

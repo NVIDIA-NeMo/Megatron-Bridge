@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import importlib
+import inspect
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Callable
@@ -23,22 +24,36 @@ import torch
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
     EnergonDatasetConfig,
+    GPTSFTDatasetConfig,
     NemotronOmniEnergonTaskEncoderConfig,
 )
 from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_expanded_collate_fn
+from megatron.bridge.peft.lora_layers import LoRALinear
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+from megatron.bridge.training.optim import _get_scheduler
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_omni")
 _h100_recipe_package = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100")
 _h100_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni")
+_super_vl_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_35_super_vl")
+_super_vl_h100_recipe_module = importlib.import_module(
+    "megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl"
+)
+_super_vl_gb200_recipe_module = importlib.import_module(
+    "megatron.bridge.recipes.nemotron_omni.gb200.nemotron_35_super_vl"
+)
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+_SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth"
+_SUPER_VL_HF_REVISION = "e86197a3bad449de618a5835f26835ce770c6f10"  # pragma: allowlist secret
 _PUBLIC_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: allowlist secret
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 _TEST_HF_ID = "unit-test/nemotron-omni"
+_TEST_SUPER_VL_HF_ID = "unit-test/nemotron-35-super-vl"
 
 _RECIPE_FUNCS = [
     _recipe_module.nemotron_omni_cord_v2_sft_config,
@@ -49,8 +64,14 @@ _RECIPE_FUNCS = [
 
 
 class _FakeModelCfg:
-    dynamic_resolution = True
-    has_sound = True
+    def __init__(self, *, has_sound: bool, mtp_num_layers: int) -> None:
+        self.dynamic_resolution = True
+        self.has_sound = has_sound
+        self.mtp_num_layers = mtp_num_layers
+        self.separate_video_embedder = bool(mtp_num_layers)
+        self.temporal_ckpt_compat = False
+        self.temporal_patch_dim = 2 if mtp_num_layers else 1
+        self.vision_final_layernorm = bool(mtp_num_layers)
 
     def finalize(self):
         return None
@@ -69,7 +90,8 @@ class _FakeAutoBridge:
 
     def to_megatron_provider(self, load_weights: bool = False):
         _FakeAutoBridge.load_weights = load_weights
-        return _FakeModelCfg()
+        is_super_vl = _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID
+        return _FakeModelCfg(has_sound=not is_super_vl, mtp_num_layers=2 if is_super_vl else 0)
 
 
 @pytest.fixture
@@ -82,7 +104,18 @@ def fake_processor(monkeypatch: pytest.MonkeyPatch):
     import transformers
 
     patch_recipe_module_global(monkeypatch, _recipe_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _super_vl_h100_recipe_module, "AutoBridge", _FakeAutoBridge)
     monkeypatch.setattr(_h100_recipe_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
+    monkeypatch.setattr(
+        _super_vl_h100_recipe_module,
+        "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
+        _TEST_SUPER_VL_HF_ID,
+    )
+    monkeypatch.setattr(
+        _super_vl_gb200_recipe_module,
+        "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
+        _TEST_SUPER_VL_HF_ID,
+    )
     monkeypatch.setattr(
         transformers.AutoProcessor,
         "from_pretrained",
@@ -147,6 +180,16 @@ def test_8gpu_recipes_are_exported_from_h100_package():
         _h100_recipe_package.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config
         is _h100_recipe_module.nemotron_omni_cord_v2_peft_8gpu_h100_bf16_config
     )
+
+
+def test_super_vl_default_hf_path_matches_model_id():
+    assert _super_vl_recipe_module.NEMOTRON_35_SUPER_VL_HF_MODEL_ID == _SUPER_VL_HF_ID
+
+
+def test_model_family_bases_own_their_checkpoint_selection():
+    assert inspect.signature(_h100_recipe_module._nemotron_omni_base).parameters == {}
+    assert inspect.signature(_super_vl_h100_recipe_module._nemotron_35_super_vl_base).parameters == {}
+    assert not hasattr(_super_vl_h100_recipe_module, "_nemotron_omni_base")
 
 
 @pytest.mark.parametrize("recipe_func", _RECIPE_FUNCS)
@@ -387,10 +430,12 @@ def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_process
     assert cfg.dataset.enable_in_batch_packing is False
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.hf_processor_path == _TEST_HF_ID
+    assert cfg.dataset.task_encoder.hf_processor_revision == _PUBLIC_HF_REVISION
     assert cfg.dataset.task_encoder.max_audio_duration == 10.0
     assert cfg.dataset.task_encoder.num_mel_bins == 128
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.dataset.task_encoder.patch_dim == 16
+    assert cfg.dataset.task_encoder.temporal_video_resize_mode == "processor"
     assert cfg.dataset.task_encoder.collapse_image_tokens is False
     assert cfg.model.temporal_patch_dim == 2
     assert cfg.model.separate_video_embedder is True
@@ -406,7 +451,9 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, EnergonDatasetConfig)
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.hf_processor_revision == _PUBLIC_HF_REVISION
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
+    assert cfg.dataset.task_encoder.temporal_video_resize_mode == "processor"
     assert cfg.peft is not None
     assert cfg.peft.target_modules == [
         "linear_qkv",
@@ -422,3 +469,532 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.model.freeze_vision_projection is True
     assert cfg.model.has_sound is True
     assert cfg.model.freeze_sound_projection is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("recipe_func", "expert_capacity"),
+    [
+        (_super_vl_h100_recipe_module.nemotron_35_super_vl_sft_64gpu_h100_bf16_config, 1.10),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_64gpu_gb200_bf16_config, 1.10),
+        (_super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config, None),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config, None),
+        (_super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config, None),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_peft_16gpu_gb200_bf16_config, None),
+        (_super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config, None),
+    ],
+    ids=["sft-h100", "sft-gb200", "pretrain-h100", "pretrain-gb200", "peft-h100", "peft-gb200", "long-context"],
+)
+def test_super_vl_optimizer_precision_and_effective_weight_decay(recipe_func, expert_capacity, fake_processor):
+    cfg = _build_config(recipe_func, fake_processor)
+    precision = get_mixed_precision_config(cfg.mixed_precision)
+    assert precision.bf16 is True
+    assert precision.grad_reduce_in_fp32 is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    precision.setup(cfg.model, cfg.optimizer, cfg.ddp)
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.optimizer.bf16 is True
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.scheduler.start_weight_decay == 0.1
+    assert cfg.scheduler.end_weight_decay == 0.1
+    assert cfg.scheduler.weight_decay_incr_style == "constant"
+
+    # Exercise the real scheduler, including parameter groups exempt from WD.
+    optimizer = SimpleNamespace(param_groups=[{"wd_mult": 1.0}, {"wd_mult": 0.0}])
+    scheduler_cfg = replace(cfg.scheduler)
+    scheduler_cfg.lr_warmup_steps = 10
+    scheduler_cfg.lr_decay_steps = 100
+    scheduler_cfg.wd_incr_steps = 100
+    scheduler = _get_scheduler(cfg.optimizer, scheduler_cfg, optimizer)
+    for increment in (0, 50, 50):
+        scheduler.step(increment)
+        assert optimizer.param_groups[0]["weight_decay"] == pytest.approx(0.1)
+        assert optimizer.param_groups[1]["weight_decay"] == 0.0
+
+    # Capacity policy and loss normalization are deliberately unchanged.
+    assert cfg.model.moe_expert_capacity_factor == expert_capacity
+    assert cfg.model.moe_pad_expert_input_to_capacity is (expert_capacity is not None)
+    assert cfg.model.calculate_per_token_loss is True
+
+
+def test_super_vl_sft_recipe_reuses_omni_data_and_super_training_stack(fake_processor):
+    cfg = _build_config(_super_vl_recipe_module.nemotron_35_super_vl_sft_config, fake_processor)
+
+    assert isinstance(cfg, ConfigContainer)
+    assert _FakeAutoBridge.hf_path == _TEST_SUPER_VL_HF_ID
+    assert _FakeAutoBridge.kwargs == {"revision": _SUPER_VL_HF_REVISION, "trust_remote_code": True}
+    assert _FakeAutoBridge.load_weights is False
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
+    assert cfg.dataset.path is None
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
+    assert cfg.dataset.task_encoder.temporal_patch_size == 2
+    assert cfg.dataset.task_encoder.collapse_image_tokens is False
+
+    assert cfg.model.has_sound is False
+    assert cfg.model.dynamic_resolution is True
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.separate_video_embedder is True
+    assert cfg.model.temporal_ckpt_compat is False
+    assert cfg.model.temporal_patch_dim == 2
+    assert cfg.model.vision_final_layernorm is True
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_sound_encoder is True
+    assert cfg.model.freeze_sound_projection is True
+    assert cfg.model.calculate_per_token_loss is True
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_expert_capacity_factor == 1.10
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_modules == ["layernorm", "moe_act", "moe", "core_attn"]
+
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.train.global_batch_size == 1280
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.optimizer_cpu_offload is False
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+
+
+def test_super_vl_peft_recipe_uses_native_lora_targets_and_frozen_vision(fake_processor):
+    cfg = _build_config(
+        _super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.dataset.task_encoder.temporal_video_resize_mode == "processor"
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.dataset.do_validation is False
+    assert cfg.peft.target_modules == [
+        "*language_model.*.linear_qkv",
+        "*language_model.*.linear_proj",
+        "*language_model.*.in_proj",
+        "*language_model.*.out_proj",
+        "*language_model.*.linear_fc1",
+        "*language_model.*.linear_fc2",
+    ]
+    assert cfg.peft.dim == 32
+    assert cfg.peft.alpha == 32
+    assert cfg.peft.dropout == 0.0
+
+    assert cfg.model.has_sound is False
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.separate_video_embedder is True
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 38
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 16
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.optimizer.lr == 1e-4
+    assert cfg.optimizer.min_lr == 0.0
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.async_save is False
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe_func",
+    [
+        _super_vl_h100_recipe_module.nemotron_35_super_vl_peft_16gpu_h100_bf16_config,
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_peft_16gpu_gb200_bf16_config,
+    ],
+    ids=["h100", "gb200"],
+)
+@pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "wrapped"])
+def test_super_vl_peft_adapters_only_modify_language_modules(recipe_func, wrapped, fake_processor):
+    cfg = _build_config(recipe_func, fake_processor)
+    target_names = ("linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2")
+
+    def linear_stack():
+        return torch.nn.ModuleDict({name: torch.nn.Linear(4, 4) for name in target_names})
+
+    # Identical leaf names expose accidental unqualified matches in both media
+    # components, while the language MTP path must still receive adapters.
+    model = torch.nn.Module()
+    model.language_model = torch.nn.ModuleDict({"decoder": linear_stack(), "mtp": linear_stack()})
+    model.vision_model = torch.nn.ModuleDict({"decoder": linear_stack()})
+    model.vision_projection = torch.nn.ModuleDict({"encoder": linear_stack()})
+    if wrapped:
+        wrapper = torch.nn.Module()
+        wrapper.module = model
+        model = wrapper
+    base_parameters = list(model.parameters())
+    model = cfg.peft(model)
+
+    prefix = "module." if wrapped else ""
+    expected = {f"{prefix}language_model.{stack}.{name}" for stack in ("decoder", "mtp") for name in target_names}
+    adapted = {name for name, module in model.named_modules() if isinstance(module, LoRALinear)}
+    assert adapted == expected
+    assert all(not parameter.requires_grad for parameter in base_parameters)
+    trainable = {name for name, parameter in model.named_parameters() if parameter.requires_grad}
+    assert trainable
+    assert all(name.startswith(f"{prefix}language_model.") and ".adapter." in name for name in trainable)
+
+
+def test_super_vl_pretrain_recipe_uses_tuned_h100_training_policy(fake_processor):
+    cfg = _build_config(
+        _super_vl_h100_recipe_module.nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.model.has_sound is False
+    assert cfg.model.separate_video_embedder is True
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 38
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules == ["layernorm", "moe"]
+    assert cfg.model.recompute_vision is True
+    assert cfg.model.radio_force_eval_mode is False
+    assert cfg.model.vision_recompute_granularity == "selective"
+    assert cfg.model.vision_recompute_modules == ["core_attn"]
+    assert cfg.model.vision_recompute_method is None
+    assert cfg.model.vision_recompute_num_layers is None
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.use_te_rng_tracker is False
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_permute_fusion is True
+    assert cfg.model.moe_permute_fusion_into_hybridep is True
+    assert cfg.model.use_fused_weighted_squared_relu is True
+    assert cfg.model.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.delay_wgrad_compute is False
+    assert cfg.model.overlap_p2p_comm is False
+    assert cfg.model.batch_p2p_comm is True
+    assert cfg.model.batch_p2p_sync is False
+
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.train.global_batch_size == 1280
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.train_iters == 100
+    assert cfg.train.eval_iters == 0
+    assert cfg.dataset.do_validation is False
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert cfg.checkpoint.save is not None
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.async_save is False
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.optimizer.lr == 6e-6
+    assert cfg.optimizer.min_lr == 6e-7
+    assert cfg.scheduler.lr_decay_style == "cosine"
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
+    assert cfg.env_vars == {
+        "TORCH_NCCL_HIGH_PRIORITY": 1,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+    }
+
+
+def test_super_vl_pretrain_recipe_uses_gb200_nvl72_policy(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is False
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.micro_batch_size == 1
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.checkpoint.async_save is True
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_super_vl_sft_recipe_uses_gb200_support_topology(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_64gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms_preprocessing is None
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.train.global_batch_size == 1280
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_super_vl_long_context_sft_uses_coderforge_packing_and_cp(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, GPTSFTDatasetConfig)
+    assert cfg.dataset.hf_dataset.dataset_name == "coderforge"
+    assert cfg.dataset.hf_dataset.load_kwargs == {"revision": _super_vl_gb200_recipe_module._CODERFORGE_REVISION}
+    assert cfg.dataset.seq_length == 131072
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
+    assert cfg.dataset.do_validation is False
+    assert cfg.dataset.do_test is False
+    assert cfg.dataset.seed == 1234
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model == _TEST_SUPER_VL_HF_ID
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": _SUPER_VL_HF_REVISION,
+        "trust_remote_code": True,
+    }
+    assert cfg.rng.seed == 5678
+
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.num_layers_in_first_pipeline_stage == 38
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.context_parallel_size == 32
+    assert cfg.model.cp_comm_type == "p2p"
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.seq_length == 131072
+    assert cfg.model.mamba_chunk_size == 128
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.optimizer.lr == 5e-6
+    assert cfg.optimizer.min_lr == 0.0
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_super_vl_peft_recipe_uses_gb200_support_topology(fake_processor):
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = _build_config(
+        _super_vl_gb200_recipe_module.nemotron_35_super_vl_peft_16gpu_gb200_bf16_config,
+        fake_processor,
+    )
+
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_SUPER_VL_HF_ID
+    assert cfg.peft.target_modules == [
+        "*language_model.*.linear_qkv",
+        "*language_model.*.linear_proj",
+        "*language_model.*.in_proj",
+        "*language_model.*.out_proj",
+        "*language_model.*.linear_fc1",
+        "*language_model.*.linear_fc2",
+    ]
+    assert cfg.peft.dim == 32
+    assert cfg.peft.alpha == 32
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_vision is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.train.global_batch_size == 16
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.checkpoint.async_save is False
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1

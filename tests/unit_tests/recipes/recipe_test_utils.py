@@ -133,8 +133,15 @@ class _OfflineModelProvider:
         self.dsa_indexer_skip_topk_offset = 0
         self.dsa_indexer_topk_freq = 1
         self.experimental_attention_variant = "dsa"
+        # Preconditions of the MXFP8 CuTe DSL fused grouped MLP, asserted by the
+        # perf recipe tests: SwiGLU, and FC1/FC2 dims divisible by 64. Absent here
+        # the assertions raise AttributeError rather than failing on the value.
+        # Values mirror Qwen3.5-VL 35B-A3B.
+        self.gated_linear_unit = True
+        self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
         self.moe_flex_dispatcher_backend = None
+        self.moe_ffn_hidden_size = 768
         self.mtp_num_layers = 1
         self.num_layers = 32
         self.num_moe_experts = 8

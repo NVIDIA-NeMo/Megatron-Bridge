@@ -58,6 +58,7 @@ from megatron.bridge.data.conversation_processing import (
     chat_template_kwargs_from_example,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.megatron_mimo.canonical_sampler import build_canonical_mimo_data_loader
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.sources.hf import hf_dataset_supports_split
@@ -416,6 +417,7 @@ def _build_dataset_config(args: argparse.Namespace) -> DirectHFSFTDatasetConfig:
         # MegatronMIMO packs in the step, after the module-DP slice (deferred packing).
         enable_in_batch_packing=args.pack_sequences_in_batch,
         defer_in_batch_packing_to_step=True,
+        megatron_mimo_scalable_dp=args.scalable_dp,
         do_validation=do_validation,
         do_test=False,
         trust_remote_code=args.trust_remote_code,
@@ -857,9 +859,11 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
         if cfg.model._grids is None:
             raise ValueError("MegatronMIMOProvider._grids is None. Model must be built before data iterators.")
 
+        scalable_dp = bool(getattr(cfg.dataset, "megatron_mimo_scalable_dp", False))
         sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(
             cfg.model.megatron_mimo_parallelism_config,
             cfg.model._grids,
+            scalable_dp=scalable_dp,
         )
         if not needs_data:
             return None, None
@@ -909,20 +913,42 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
                 batch_spec=batch_spec,
             )
 
-        train_loader = build_pretraining_data_loader(
-            dataset=train_ds,
-            consumed_samples=train_state.consumed_train_samples,
-            dataloader_type=cfg.dataset.dataloader_type,
-            micro_batch_size=cfg.train.micro_batch_size,
-            num_workers=cfg.dataset.num_workers,
-            data_sharding=cfg.dataset.data_sharding,
-            collate_fn=collate_fn,
-            pin_memory=cfg.dataset.pin_memory,
-            persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=sampler_dp_rank,
-            data_parallel_size=sampler_dp_size,
-            drop_last=cfg.dataset.drop_last,
-        )
+        if scalable_dp:
+            # Shard reads on the canonical grid (LCM of the module DP sizes) so every
+            # module materializes the same ordered global micro-batch under any sampler.
+            module_dps = [
+                p.data_parallel_size for p in cfg.model.megatron_mimo_parallelism_config.module_parallelisms.values()
+            ]
+            train_loader = build_canonical_mimo_data_loader(
+                train_ds,
+                consumed_samples=train_state.consumed_train_samples,
+                dataloader_type=cfg.dataset.dataloader_type,
+                micro_batch_size=cfg.train.micro_batch_size,
+                module_dp_sizes=module_dps,
+                dp_rank=sampler_dp_rank,
+                dp_size=sampler_dp_size,
+                data_sharding=cfg.dataset.data_sharding,
+                drop_last=cfg.dataset.drop_last,
+                num_workers=cfg.dataset.num_workers,
+                pin_memory=cfg.dataset.pin_memory,
+                collate_fn=collate_fn,
+                persistent_workers=cfg.dataset.persistent_workers,
+            )
+        else:
+            train_loader = build_pretraining_data_loader(
+                dataset=train_ds,
+                consumed_samples=train_state.consumed_train_samples,
+                dataloader_type=cfg.dataset.dataloader_type,
+                micro_batch_size=cfg.train.micro_batch_size,
+                num_workers=cfg.dataset.num_workers,
+                data_sharding=cfg.dataset.data_sharding,
+                collate_fn=collate_fn,
+                pin_memory=cfg.dataset.pin_memory,
+                persistent_workers=cfg.dataset.persistent_workers,
+                data_parallel_rank=sampler_dp_rank,
+                data_parallel_size=sampler_dp_size,
+                drop_last=cfg.dataset.drop_last,
+            )
 
         # `pretrain_megatron_mimo` calls `next(data_iterator)` per microbatch, so
         # return an iterator (DataLoader is iterable but not itself an iterator).
@@ -1229,6 +1255,14 @@ def _parse_args() -> argparse.Namespace:
         help="Enable MegatronMIMO in-batch sequence packing: pack each language DP shard's real "
         "tokens into one [1, T] THD sequence so the language model skips padding compute "
         "(block-diagonal attention comes from cu_seqlens).",
+    )
+    parser.add_argument(
+        "--scalable-dp",
+        action="store_true",
+        help="Scalable data parallelism: each rank reads only its disjoint 1/dp shard of the global "
+        "micro-batch instead of every rank reading the full batch and slicing locally (IO scales with "
+        "DP). Each rank processes its natural, unbalanced shard. Uses the same DP loss reduction as "
+        "non-scalable runs.",
     )
     parser.add_argument("--profile", choices=("none", "nsys", "pytorch"), default="none")
     parser.add_argument("--profile-step-start", type=int, default=1)

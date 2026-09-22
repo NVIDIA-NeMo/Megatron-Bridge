@@ -41,9 +41,11 @@ _mcore_is_gated_delta_net_variant = cast(
 
 def _is_gated_delta_net_variant(experimental_attention_variant: str | None) -> bool:
     """Recognize GDN variants across current main and older MCore dev branches."""
+    if experimental_attention_variant == "gdn2":
+        return True
     if _mcore_is_gated_delta_net_variant is not None:
         return _mcore_is_gated_delta_net_variant(experimental_attention_variant)
-    return experimental_attention_variant in {"gated_delta_net", "gdn", "gdn2"}
+    return experimental_attention_variant in {"gated_delta_net", "gdn"}
 
 
 @dataclass(frozen=True)
@@ -1594,6 +1596,14 @@ def num_floating_point_operations(
             return 0
         patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
         return vit_flops(cfg, batch_size, patches_per_image)
+
+    # A Hybrid attention symbol normally describes only the attention work for
+    # FLOPs accounting. Some native HybridModel stacks, such as Muse Glimmer,
+    # use that symbol for a complete Transformer layer containing both attention
+    # and its MLP. The standard Transformer path already accounts for that full
+    # layer plus GQA, output gates, sliding attention, logits, and vision work.
+    if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
+        return transformer_flops()
 
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.

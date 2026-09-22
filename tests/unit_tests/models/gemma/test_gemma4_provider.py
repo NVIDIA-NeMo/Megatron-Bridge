@@ -142,6 +142,11 @@ class TestGemma4DenseProviderDefaults:
         with pytest.raises(NotImplementedError, match="PP=1"):
             provider.provide()
 
+    def test_provide_rejects_context_parallel(self, provider):
+        provider.context_parallel_size = 2
+        with pytest.raises(NotImplementedError, match="CP=1"):
+            provider.provide()
+
     def test_provide_rejects_virtual_pipeline_stage(self, provider):
         with pytest.raises(NotImplementedError, match="PP=1"):
             provider.provide(vp_stage=0)
@@ -277,6 +282,7 @@ class TestGemma4DenseDistributedCheckpoint:
                     "megatron.bridge.models.gemma.gemma4_provider.Gemma4DenseRotaryEmbedding",
                     return_value=None,
                 ),
+                patch("torch.cuda.is_available", return_value=False),
                 patch("torch.cuda.current_device", return_value="cpu"),
                 patch("torch.cuda.synchronize"),
             ):
