@@ -42,6 +42,7 @@ def _make_gdn(cp_size: int) -> GatedDeltaNet:
     gdn.config = SimpleNamespace(
         context_parallel_size=cp_size,
         deterministic_mode=False,
+        gdn_kernel_backend="fla",
         gdn_pre_gated_delta_rule_fusion=False,
     )
     gdn.pg_collection = SimpleNamespace(cp=_FakeProcessGroup(cp_size))
@@ -60,7 +61,11 @@ def _make_gdn2(cp_size: int) -> torch.nn.Module:
         pytest.skip("GatedDeltaNet2 is not available in this MCore revision")
     gdn = GatedDeltaNet2.__new__(GatedDeltaNet2)
     torch.nn.Module.__init__(gdn)
-    gdn.config = SimpleNamespace(context_parallel_size=cp_size, deterministic_mode=True)
+    gdn.config = SimpleNamespace(
+        context_parallel_size=cp_size,
+        deterministic_mode=True,
+        gdn_kernel_backend="torch",
+    )
     gdn.pg_collection = SimpleNamespace(cp=_FakeProcessGroup(cp_size))
     gdn.cp_size = cp_size
     gdn.tp_size = 1

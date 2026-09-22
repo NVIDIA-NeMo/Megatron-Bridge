@@ -297,6 +297,41 @@ class NemotronOmniModel(MegatronModule):
         self.sound_model = sound_model
         self.sound_projection = sound_projection
 
+        self._expose_language_model_for_cuda_graph_helper()
+
+    def _expose_language_model_for_cuda_graph_helper(self) -> None:
+        """Expose language-model fields on the multimodal root when CUDA graphs are enabled.
+
+        MCore's CUDA graph helper discovers ``decoder`` on the top-level model,
+        while Nemotron Omni stores it below ``language_model``. Properties
+        expose the nested modules without registering duplicate root aliases or
+        changing checkpoint keys.
+        """
+
+        llm_cuda_graph_enabled = (
+            self.language_model is not None
+            and getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        )
+        if not llm_cuda_graph_enabled:
+            return
+        assert not self.language_model.config.variable_seq_lengths, (
+            "Nemotron Omni with CUDA graphs requires fixed sequence lengths "
+            "(variable_seq_lengths=False). Disable variable-length inputs or turn off CUDA graphs."
+        )
+        self.position_embedding_type = self.language_model.position_embedding_type
+
+    @property
+    def rotary_pos_emb(self):
+        """Expose the nested language model's rotary embeddings to MCore helpers."""
+
+        return getattr(self.language_model, "rotary_pos_emb", None)
+
+    @property
+    def decoder(self):
+        """Expose the nested language decoder without registering a module alias."""
+
+        return getattr(self.language_model, "decoder", None)
+
     def shared_embedding_or_output_weight(self):
         """Expose the language embedding for Megatron gradient finalization."""
 
@@ -805,15 +840,6 @@ class NemotronOmniModel(MegatronModule):
             else:
                 sound_embeddings = None
 
-            # Match LLaVAModel's execution order. Besides keeping the two
-            # implementations directly comparable, this ensures that RADIO's
-            # first distributed forward sees the same runtime/collective state.
-            input_ids_text = input_ids.masked_fill(input_ids == self.image_token_index, 0)
-            combined_embeddings = self.language_model.embedding(input_ids=input_ids_text, position_ids=position_ids)
-
-            if image_embeddings is None:
-                image_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
-
             # An explicit mask from the caller wins: padding and attention masks
             # answer "is this a real token", which is a different question from
             # "is this a media anchor".  They coincide only while every media
@@ -832,6 +858,24 @@ class NemotronOmniModel(MegatronModule):
                     media_token_validity_mask = ~padding_mask
                 elif attention_mask is not None and attention_mask.dim() == input_ids.dim():
                     media_token_validity_mask = attention_mask
+
+            if media_token_validity_mask is not None and media_token_validity_mask.shape != input_ids.shape:
+                raise ValueError(
+                    "The media token-validity mask must have the same shape as input_ids: "
+                    f"got mask={tuple(media_token_validity_mask.shape)}, input_ids={tuple(input_ids.shape)}."
+                )
+
+            # Match LLaVAModel's execution order. Besides keeping the two
+            # implementations directly comparable, this ensures that RADIO's
+            # first distributed forward sees the same runtime/collective state.
+            image_anchor_mask = input_ids == self.image_token_index
+            if media_token_validity_mask is not None:
+                image_anchor_mask &= media_token_validity_mask.bool()
+            input_ids_text = input_ids.masked_fill(image_anchor_mask, 0)
+            combined_embeddings = self.language_model.embedding(input_ids=input_ids_text, position_ids=position_ids)
+
+            if image_embeddings is None:
+                image_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
 
             combined_embeddings = self._merge_projected_media(
                 combined_embeddings,

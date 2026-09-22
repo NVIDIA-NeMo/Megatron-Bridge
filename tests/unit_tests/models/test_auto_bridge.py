@@ -1392,6 +1392,35 @@ class TestAutoBridge:
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_postprocesses_complete_weights(self, _mock_dist_avail, _mock_dist_init, tmp_path):
+        """Model bridges can close derived buffers after weight export."""
+
+        class _WeightPostprocessor:
+            SUPPORTS_HF_PRETRAINED_EXPORT = True
+            ADDITIONAL_FILE_PATTERNS = None
+
+            def postprocess_hf_export_weights(self, path):
+                assert (path / "weights-saved").is_file()
+                (path / "weights-postprocessed").touch()
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.save_artifacts.side_effect = lambda path, **_: Path(path).mkdir(parents=True, exist_ok=True)
+        model_bridge = _WeightPostprocessor()
+        bridge = AutoBridge(mock_hf_model)
+
+        def _save_weights(_model, path, *_args, **_kwargs):
+            (Path(path) / "weights-saved").touch()
+
+        with (
+            patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=model_bridge)),
+            patch.object(AutoBridge, "save_hf_weights", side_effect=_save_weights),
+        ):
+            bridge.save_hf_pretrained([Mock()], tmp_path)
+
+        assert (tmp_path / "weights-postprocessed").is_file()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
     def test_save_hf_pretrained_config_only(self, _mock_dist_avail, _mock_dist_init, tmp_path):
         """Config-only save without a reference writes config.json and calls save_hf_weights."""
         bridge = AutoBridge(PretrainedConfig())
@@ -1685,6 +1714,56 @@ class TestAutoBridge:
                         merge_adapter_weights=True,
                         weight_dtype=None,
                     )
+
+    def test_export_with_megatron_names_rejects_streamers_without_the_flag(self):
+        """A bridge whose streaming overrides lack ``with_megatron_names`` fails before streaming."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
+
+        class LegacyStreamer:
+            def stream_weights_megatron_to_hf(
+                self,
+                megatron_model,
+                hf_pretrained,
+                cpu=True,
+                show_progress=True,
+                conversion_tasks=None,
+                merge_adapter_weights=True,
+                weight_dtype=None,
+            ):
+                return iter([("weight1", torch.ones(1))])
+
+            def stream_adapter_weights_megatron_to_hf(
+                self,
+                megatron_model,
+                cpu=True,
+                show_progress=True,
+                exclude_adapter_base_prefixes=None,
+                expand_shared_outer=False,
+                stack_3d_moe=False,
+            ):
+                return iter([("lora_A.weight", torch.ones(1))])
+
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge_prop.return_value = LegacyStreamer()
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+                mock_transformers.LlamaForCausalLM = Mock()
+                bridge = AutoBridge(mock_hf_model)
+
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
+                    mock_prop.return_value = mock_transformers.LlamaForCausalLM
+                    # The default export keeps working through the legacy overrides.
+                    assert [name for name, _ in bridge.export_hf_weights([object()], cpu=True)] == ["weight1"]
+                    assert [name for name, _ in bridge.export_adapter_weights([object()])] == ["lora_A.weight"]
+                    # The up-front check names the method and the flag instead of surfacing
+                    # Python's generic unexpected-keyword error from inside the generator.
+                    with pytest.raises(TypeError, match="stream_weights_megatron_to_hf does not accept"):
+                        bridge.export_hf_weights([object()], cpu=True, with_megatron_names=True)
+                    with pytest.raises(TypeError, match="stream_adapter_weights_megatron_to_hf does not accept"):
+                        bridge.export_adapter_weights([object()], with_megatron_names=True)
 
     def test_export_adapter_weights(self):
         """Test exporting adapter weights from Megatron to HF format."""

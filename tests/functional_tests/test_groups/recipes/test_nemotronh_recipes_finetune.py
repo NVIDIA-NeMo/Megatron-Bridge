@@ -20,6 +20,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -224,13 +225,14 @@ class TestNemotron3NanoFinetuneRecipes:
         temp_dir = tmp_path_factory.mktemp("nemotron_3_nano_megatron_ckpt")
         megatron_checkpoint_dir = broadcast_path(str(temp_dir / "megatron_checkpoint"))
 
-        # Import the HF model to Megatron format
-        AutoBridge.import_ckpt(
-            hf_model_id=nemotron_3_nano_toy_model_path,
-            megatron_path=megatron_checkpoint_dir,
-            trust_remote_code=True,
-            torch_dtype=torch.bfloat16,
-        )
+        # Conversion and finetuning construct separate models with different attention backends.
+        with patch.dict(os.environ):
+            AutoBridge.import_ckpt(
+                hf_model_id=nemotron_3_nano_toy_model_path,
+                megatron_path=megatron_checkpoint_dir,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+            )
 
         # Clean up global state after import_ckpt
         if parallel_state.model_parallel_is_initialized():
@@ -518,12 +520,14 @@ class TestNemotron3SuperFinetuneRecipes:
         temp_dir = tmp_path_factory.mktemp("nemotron_3_super_megatron_ckpt")
         megatron_checkpoint_dir = broadcast_path(str(temp_dir / "megatron_checkpoint"))
 
-        AutoBridge.import_ckpt(
-            hf_model_id=nemotron_3_super_toy_model_path,
-            megatron_path=megatron_checkpoint_dir,
-            trust_remote_code=True,
-            torch_dtype=torch.bfloat16,
-        )
+        # Do not carry conversion's process-wide attention selection into finetuning.
+        with patch.dict(os.environ):
+            AutoBridge.import_ckpt(
+                hf_model_id=nemotron_3_super_toy_model_path,
+                megatron_path=megatron_checkpoint_dir,
+                trust_remote_code=True,
+                torch_dtype=torch.bfloat16,
+            )
 
         if parallel_state.model_parallel_is_initialized():
             parallel_state.destroy_model_parallel()
