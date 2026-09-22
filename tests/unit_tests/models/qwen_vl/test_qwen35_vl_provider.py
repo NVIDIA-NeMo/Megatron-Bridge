@@ -377,3 +377,47 @@ class TestQwen35VLMoEModelProvider:
             kwargs["mtp_block_spec"].layer_specs[0].submodules.mtp_model_layer.submodules.self_attention.module
             is Qwen3VLSelfAttention
         )
+
+
+@pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+@pytest.mark.parametrize("vision_full_recompute", [False, True])
+def test_vision_full_recompute_provider_spec(provider_cls, vision_full_recompute):
+    provider = provider_cls(
+        num_layers=4,
+        hidden_size=512,
+        num_attention_heads=4,
+        vision_full_recompute=vision_full_recompute,
+        recompute_granularity="selective",
+        recompute_modules=["gdn_norm_out", "moe"],
+    )
+
+    spec = provider.build_vision_encoder_spec()
+    config = spec.params["transformer_config"]
+
+    assert config.recompute_granularity == ("full" if vision_full_recompute else "selective")
+    assert config.recompute_method == ("uniform" if vision_full_recompute else None)
+    assert config.recompute_num_layers == (1 if vision_full_recompute else None)
+    assert provider.recompute_granularity == "selective"
+    assert provider.recompute_modules == ["gdn_norm_out", "moe"]
+
+
+@pytest.mark.parametrize("provider_cls", [Qwen35VLModelProvider, Qwen35VLMoEModelProvider])
+def test_vision_full_recompute_config_round_trip(provider_cls):
+    from megatron.training.config.instantiate_utils import instantiate
+
+    from megatron.bridge.training.config import ConfigContainer
+
+    provider = provider_cls(num_layers=4, hidden_size=512, num_attention_heads=4)
+    assert provider.vision_full_recompute is False
+    provider.vision_full_recompute = True
+
+    restored = instantiate(ConfigContainer._convert_value_to_dict(provider))
+
+    assert isinstance(restored, provider_cls)
+    assert restored.vision_full_recompute is True
+    config = restored.build_vision_encoder_spec().params["transformer_config"]
+    assert (config.recompute_granularity, config.recompute_method, config.recompute_num_layers) == (
+        "full",
+        "uniform",
+        1,
+    )

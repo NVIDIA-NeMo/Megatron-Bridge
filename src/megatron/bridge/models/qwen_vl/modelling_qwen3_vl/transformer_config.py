@@ -80,6 +80,12 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.recompute_granularity = megatron_config.recompute_granularity
     config.recompute_method = megatron_config.recompute_method
     config.recompute_num_layers = megatron_config.recompute_num_layers
+    if getattr(megatron_config, "vision_full_recompute", False):
+        # Vision checkpointing is independent of the decoder's selective modules.
+        config.recompute_granularity = "full"
+        config.recompute_method = "uniform"
+        config.recompute_num_layers = 1
+        config.recompute_modules = []
     config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
     config.enable_cuda_graph = megatron_config.enable_cuda_graph
     config.cuda_graph_use_single_mempool = megatron_config.cuda_graph_use_single_mempool
@@ -150,6 +156,14 @@ def get_vision_model_config(hf_config, megatron_config=None):
     else:
         config.cuda_graph_impl = "none"
         clear_cuda_graph_modules(config)
+    if getattr(megatron_config, "vision_full_recompute", False) and config.cuda_graph_impl not in (
+        "none",
+        "full_iteration",
+    ):
+        raise ValueError(
+            "vision_full_recompute=True is incompatible with per-layer vision CUDA graphs. "
+            "Set vision_cuda_graph_impl='none' to disable vision graph capture."
+        )
     # Propagate max vision CUDA graph sequence length from provider
     if megatron_config is not None and hasattr(megatron_config, "max_vision_cuda_graph_seq_length"):
         config.max_vision_cuda_graph_seq_length = megatron_config.max_vision_cuda_graph_seq_length

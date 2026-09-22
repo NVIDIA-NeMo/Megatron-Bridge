@@ -152,3 +152,69 @@ class TestGetVisionModelConfigVisionCudaGraph:
         )
         with pytest.raises(KeyError):
             get_vision_model_config(_hf_config(), megatron)
+
+
+@pytest.mark.parametrize(
+    "granularity,method,num_layers",
+    [(None, None, None), ("selective", None, None), ("full", "block", 2)],
+)
+@pytest.mark.parametrize("vision_full_recompute", [False, True])
+def test_vision_full_recompute_is_independent_of_decoder(granularity, method, num_layers, vision_full_recompute):
+    megatron = _megatron_base(
+        recompute_granularity=granularity,
+        recompute_method=method,
+        recompute_num_layers=num_layers,
+        recompute_modules=["gdn_norm_out", "moe"],
+        vision_full_recompute=vision_full_recompute,
+    )
+
+    config = get_vision_model_config(_hf_config(), megatron)
+
+    expected = ("full", "uniform", 1) if vision_full_recompute else (granularity, method, num_layers)
+    assert (config.recompute_granularity, config.recompute_method, config.recompute_num_layers) == expected
+    if vision_full_recompute:
+        assert config.recompute_modules == []
+    assert (megatron.recompute_granularity, megatron.recompute_method, megatron.recompute_num_layers) == (
+        granularity,
+        method,
+        num_layers,
+    )
+    assert megatron.recompute_modules == ["gdn_norm_out", "moe"]
+
+
+def test_vision_full_recompute_missing_flag_preserves_inheritance():
+    megatron = _megatron_base(recompute_granularity="full", recompute_method="block", recompute_num_layers=2)
+
+    config = get_vision_model_config(_hf_config(), megatron)
+
+    assert config.recompute_granularity == "full"
+    assert config.recompute_method == "block"
+    assert config.recompute_num_layers == 2
+
+
+@pytest.mark.parametrize("implementation", ["transformer_engine", "local", "local_transformer_engine"])
+def test_vision_full_recompute_rejects_per_layer_vision_graphs(implementation):
+    megatron = _megatron_base(
+        vision_full_recompute=True,
+        vision_cuda_graph_impl=implementation,
+        vision_cuda_graph_scope=["attn", "mlp"],
+    )
+
+    with pytest.raises(ValueError, match="incompatible with per-layer vision CUDA graphs"):
+        get_vision_model_config(_hf_config(), megatron)
+
+
+@pytest.mark.parametrize("vision_implementation", ["none", "full_iteration"])
+def test_vision_full_recompute_allows_decoder_graphs(vision_implementation):
+    megatron = _megatron_base(
+        vision_full_recompute=True,
+        vision_cuda_graph_impl=vision_implementation,
+        cuda_graph_impl="transformer_engine",
+        cuda_graph_scope=["attn", "mlp"],
+    )
+
+    config = get_vision_model_config(_hf_config(), megatron)
+
+    assert config.recompute_granularity == "full"
+    assert config.cuda_graph_impl == vision_implementation
+    assert megatron.cuda_graph_impl == "transformer_engine"

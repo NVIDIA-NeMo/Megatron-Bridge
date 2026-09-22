@@ -90,6 +90,24 @@ Before training, ensure the following environment variables are set:
 3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
 4. `WANDB_API_KEY`: (optional) to enable WandB logging
 
+### Vision activation recomputation
+
+Set `cfg.model.vision_full_recompute = True` on a Qwen3.5 dense or MoE provider
+to checkpoint every vision transformer layer during training. This selects
+full recomputation with the uniform method and one layer per checkpoint,
+independently of the decoder's recomputation settings. It can be combined with
+selective decoder recomputation without applying decoder-only module names to
+the vision tower.
+
+Per-layer vision CUDA graphs are incompatible with full recomputation. If a
+recipe enables them, also set `cfg.model.vision_cuda_graph_impl = "none"`.
+Decoder graph settings remain independent.
+
+The default, `False`, preserves the existing inheritance of decoder
+recomputation settings; it does not force vision recomputation off. The option
+applies to the Megatron vision encoder and does not alter checkpoint parameter
+names or shapes. Set it explicitly in the training configuration when resuming.
+
 ### Pretrain
 
 Canonical pretraining convergence remains unverified for Qwen3.5 and Qwen3.6.

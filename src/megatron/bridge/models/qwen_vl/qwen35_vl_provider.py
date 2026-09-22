@@ -202,6 +202,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # Checkpoint each vision layer; False preserves decoder recompute inheritance.
+    vision_full_recompute: bool = False
     hetereogenous_dist_checkpoint: bool = True
 
     mtp_num_layers: Optional[int] = None
@@ -455,6 +457,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # Checkpoint each vision layer; False preserves decoder recompute inheritance.
+    vision_full_recompute: bool = False
 
     # Vision encoder CUDA graph settings
     vision_cuda_graph_impl: str = "none"
