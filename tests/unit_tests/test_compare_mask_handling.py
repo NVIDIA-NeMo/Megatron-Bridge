@@ -65,6 +65,14 @@ _MODULES_TO_MOCK = [
 ]
 
 _mocked_modules = {_mod: sys.modules[_mod] if _mod in sys.modules else MagicMock() for _mod in _MODULES_TO_MOCK}
+# These tests cover the unchanged non-Omni paths; native Omni tensor contracts
+# are exercised independently in scripts/inference/test_nemotron_omni_inputs.py.
+_mocked_modules["megatron.bridge.models.nemotron_omni.inference_inputs"] = SimpleNamespace(
+    is_nemotron_omni=lambda config: False,
+    load_nemotron_omni_video=MagicMock(),
+    nemotron_omni_reference_metadata=MagicMock(),
+    prepare_nemotron_omni_inputs=MagicMock(),
+)
 _compare_dir = os.path.join(os.path.dirname(__file__), "..", "..", "examples", "conversion", "compare_hf_and_megatron")
 
 # Keep compare.py's heavy-dependency stubs local to this import. Leaving them in

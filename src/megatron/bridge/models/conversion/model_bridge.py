@@ -117,7 +117,8 @@ class HFWeightTuple(NamedTuple):
         cpu: bool,
         export_hook: Callable[[str, torch.Tensor], Iterable["HFWeightTuple"]] | None = None,
         clone_identity_output: bool = False,
-    ) -> Iterable["HFWeightTuple"]:
+        megatron_param_names: tuple[str, ...] | None = None,
+    ) -> Iterable["HFWeightTuple | HFSourcedWeightTuple"]:
         """Apply an optional export hook and yield finalized weights.
 
         Export hooks run on a detached tensor before final device placement and may
@@ -128,6 +129,8 @@ class HFWeightTuple(NamedTuple):
             cpu: Whether to move exported tensors to CPU.
             export_hook: Optional transformation applied before device placement.
             clone_identity_output: Clone an output when it is the detached input.
+            megatron_param_names: When given (possibly empty), yield :class:`HFSourcedWeightTuple`
+                carrying these source Megatron parameter names next to each exported weight.
 
         Yields:
             Finalized HuggingFace weights in export-hook order.
@@ -143,7 +146,39 @@ class HFWeightTuple(NamedTuple):
             exported_tensor = exported_tensor.detach()
             if clone_identity_output and is_identity_output:
                 exported_tensor = exported_tensor.clone().detach()
-            yield HFWeightTuple(exported_name, exported_tensor.cpu() if cpu else exported_tensor)
+            exported_tensor = exported_tensor.cpu() if cpu else exported_tensor
+            if megatron_param_names is not None:
+                yield HFSourcedWeightTuple(exported_name, exported_tensor, megatron_param_names)
+            else:
+                yield HFWeightTuple(exported_name, exported_tensor)
+
+
+class HFSourcedWeightTuple(NamedTuple):
+    """A :class:`HFWeightTuple` that also names the Megatron parameters it was exported from.
+
+    Only produced when a streaming export is called with ``with_megatron_names=True``;
+    the default export keeps yielding plain two-field :class:`HFWeightTuple` values so
+    ``for name, weight in ...`` unpacking keeps working for existing callers.
+
+    ``megatron_param_names`` holds the unwrapped local Megatron parameter names of the
+    conversion tasks behind the weight, in accumulation order:
+
+    * one name for a weight converted from a single Megatron parameter (for adapters,
+      the ``linear_in`` / ``linear_out`` weight name);
+    * one name per contributing per-expert task for a grouped-expert export that packs
+      several Megatron parameters into one HF tensor;
+    * no names for HF-only passthrough tensors that a bridge copies from the source
+      checkpoint without any Megatron counterpart.
+    """
+
+    param_name: str
+    weight: torch.Tensor
+    megatron_param_names: tuple[str, ...]
+
+    @property
+    def megatron_param_name(self) -> str | None:
+        """The single source Megatron parameter name, or ``None`` for zero or several sources."""
+        return self.megatron_param_names[0] if len(self.megatron_param_names) == 1 else None
 
 
 @dataclass(frozen=True)
@@ -496,6 +531,13 @@ class MegatronModelBridge(
 
         Args:
             path: Directory containing the exported Hugging Face artifacts.
+        """
+
+    def postprocess_hf_export_weights(self, path: Path) -> None:
+        """Apply model-specific fixes after Hugging Face weights are saved.
+
+        Args:
+            path: Directory containing the complete exported Hugging Face checkpoint.
         """
 
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
@@ -1269,12 +1311,17 @@ class MegatronModelBridge(
         model_config,
         grouped_buffers: Dict[str, Dict[int, torch.Tensor]],
         hf_state_dict: Mapping[str, torch.Tensor],
+        grouped_sources: Optional[Dict[str, List[str]]] = None,
     ) -> Optional[Dict[str, torch.Tensor]]:
         """Accumulate per-expert weights for grouped export, return merged result when complete.
 
         For fused-expert MoE models where one HF tensor contains all experts, this method
         collects individual expert weights produced by per-expert ``megatron_to_hf`` calls
         and returns the stacked result once all experts have been accumulated.
+
+        When ``grouped_sources`` is given, the ``param_name`` of every task folded into a
+        group key is appended to ``grouped_sources[group_key]`` so the caller can report all
+        contributing Megatron parameters for the packed tensor.
 
         Returns:
             Merged weights dict when the group is complete, ``None`` otherwise.
@@ -1308,6 +1355,8 @@ class MegatronModelBridge(
                         grouped_buffers[group_key][global_expert_number] = value[i]
                 else:
                     grouped_buffers[group_key][local_expert_number] = value
+            if grouped_sources is not None:
+                grouped_sources.setdefault(group_key, []).append(task.param_name)
 
             if len(grouped_buffers[group_key]) != num_experts:
                 continue
@@ -1620,7 +1669,8 @@ class MegatronModelBridge(
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
-    ) -> Iterable[HFWeightTuple]:
+        with_megatron_names: bool = False,
+    ) -> Iterable["HFWeightTuple | HFSourcedWeightTuple"]:
         """Export Megatron weights to HuggingFace format.
 
         This method orchestrates the conversion of weights from Megatron's distributed
@@ -1647,9 +1697,16 @@ class MegatronModelBridge(
                 weights back into their base tensors so the resulting HF checkpoint contains merged
                 weights. Set to False to skip adapter gathering/merge and emit only the base tensors.
                 Defaults to True.
+            with_megatron_names (bool, optional): When True, yield :class:`HFSourcedWeightTuple`
+                (``param_name``, ``weight``, ``megatron_param_names``) so callers can map each
+                exported HF weight back to the Megatron parameter(s) it came from: one name for a
+                directly converted weight, every contributing per-expert task for a grouped-expert
+                export, and no names for HF-only passthrough tensors. Defaults to False, which
+                keeps the two-field :class:`HFWeightTuple` output.
 
         Yields:
-            HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format.
+            HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format, or
+            HFSourcedWeightTuple when ``with_megatron_names`` is set.
 
         Example:
             .. code-block:: python
@@ -1707,6 +1764,8 @@ class MegatronModelBridge(
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
+        # Megatron params folded into each packed grouped tensor; only tracked when requested.
+        _grouped_sources: Optional[Dict[str, List[str]]] = {} if with_megatron_names else None
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
@@ -1743,14 +1802,25 @@ class MegatronModelBridge(
                         model_config.num_moe_experts,
                     )
                 merged_result = self._accumulate_grouped_export(
-                    task, converted_weights_dict, model_config, _grouped_buffers, hf_state_dict
+                    task,
+                    converted_weights_dict,
+                    model_config,
+                    _grouped_buffers,
+                    hf_state_dict,
+                    grouped_sources=_grouped_sources,
                 )
                 if merged_result is not None:
                     merged_result = self._cast_export_weight_dtype(merged_result, task.weight_dtype)
                     for hf_name, tensor in merged_result.items():
+                        # Report every per-expert task packed into this tensor, not just the one
+                        # that happened to complete the group.
+                        group_sources = (
+                            tuple(_grouped_sources.pop(hf_name, ())) if _grouped_sources is not None else None
+                        )
                         yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                             export_hook=task.export_hook,
                             cpu=cpu,
+                            megatron_param_names=group_sources,
                         )
                 continue
 
@@ -1805,12 +1875,14 @@ class MegatronModelBridge(
                     yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                         export_hook=task.export_hook,
                         cpu=cpu,
+                        megatron_param_names=(task.param_name,) if with_megatron_names else None,
                     )
                     if emit_output_weight:
                         yield from HFWeightTuple(tied_output_hf_name, tensor).iter_finalized(
                             export_hook=task.export_hook,
                             cpu=cpu,
                             clone_identity_output=True,
+                            megatron_param_names=(task.param_name,) if with_megatron_names else None,
                         )
                 elif embeddings_are_tied and (
                     task.global_param_name.endswith("output_layer.weight") or hf_name == tied_output_hf_name
@@ -1824,6 +1896,7 @@ class MegatronModelBridge(
                     yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                         export_hook=task.export_hook,
                         cpu=cpu,
+                        megatron_param_names=(task.param_name,) if with_megatron_names else None,
                     )
 
     def dtype_from_hf(self, config, default=None):

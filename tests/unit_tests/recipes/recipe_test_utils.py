@@ -133,8 +133,15 @@ class _OfflineModelProvider:
         self.dsa_indexer_skip_topk_offset = 0
         self.dsa_indexer_topk_freq = 1
         self.experimental_attention_variant = "dsa"
+        # Preconditions of the MXFP8 CuTe DSL fused grouped MLP, asserted by the
+        # perf recipe tests: SwiGLU, and FC1/FC2 dims divisible by 64. Absent here
+        # the assertions raise AttributeError rather than failing on the value.
+        # Values mirror Qwen3.5-VL 35B-A3B.
+        self.gated_linear_unit = True
+        self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
         self.moe_flex_dispatcher_backend = None
+        self.moe_ffn_hidden_size = 768
         self.mtp_num_layers = 1
         self.num_layers = 32
         self.num_moe_experts = 8
@@ -213,16 +220,11 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     recipe_prefixes = ("megatron.bridge.recipes.", "megatron.bridge.perf_recipes.")
 
-    def skip_flex_dispatcher_hardware_probe(*args: object, **kwargs: object) -> None:
-        del args, kwargs
-
     for module_name, module in tuple(sys.modules.items()):
         if module is None or not module_name.startswith(recipe_prefixes):
             continue
         if hasattr(module, "AutoBridge"):
             monkeypatch.setattr(module, "AutoBridge", _OfflineAutoBridge)
-        if hasattr(module, "apply_flex_dispatcher_backend"):
-            monkeypatch.setattr(module, "apply_flex_dispatcher_backend", skip_flex_dispatcher_hardware_probe)
 
     flux_recipe_module = importlib.import_module("megatron.bridge.recipes.flux.h100.flux")
     monkeypatch.setattr(flux_recipe_module, "PreTrainedFlux", _OfflinePreTrainedFlux)

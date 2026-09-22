@@ -106,7 +106,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
@@ -132,7 +132,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -160,7 +160,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 3
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
@@ -182,7 +182,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -203,6 +203,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
@@ -311,6 +312,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     # Full-iteration graphs remain benchmark-only because they alter natural-routing auxiliary loss.
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -344,6 +346,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = []
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
@@ -471,6 +474,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -542,7 +546,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -567,7 +571,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config() -> Config
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -584,8 +588,10 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB200, NVFP4, full-iteration CG and A2A overlap."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
     cfg.model.virtual_pipeline_model_parallel_size = 3
     _enable_hybridep_full_iteration_nvfp4(cfg)
+    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
