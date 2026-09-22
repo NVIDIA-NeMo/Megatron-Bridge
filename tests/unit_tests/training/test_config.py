@@ -2239,6 +2239,50 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "tp_size,pp_size,cp_size,error_field",
+        [
+            (1, 1, 1, None),
+            (1, 1, 2, None),
+            (1, 1, 4, None),
+            (2, 1, 2, "tensor_model_parallel_size"),
+            (1, 2, 2, "pipeline_model_parallel_size"),
+        ],
+    )
+    def test_megatron_fsdp_v2_context_parallelism(
+        self, tp_size: int, pp_size: int, cp_size: int, error_field: str | None
+    ) -> None:
+        """MFSDP V2 accepts CP while continuing to reject TP and PP."""
+        model_cfg = create_test_gpt_config(
+            num_layers=2,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            tensor_model_parallel_size=tp_size,
+            pipeline_model_parallel_size=pp_size,
+            context_parallel_size=cp_size,
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            optimizer_config=create_test_optimizer_config(bf16=True),
+            dist_config=create_test_distributed_init_config(use_megatron_fsdp=True),
+            ddp_config=create_test_ddp_config(megatron_fsdp_version=2),
+        )
+        try:
+            if error_field is not None:
+                with pytest.raises(ValueError, match=f"MFSDP V2 requires TP=PP=1;.*{error_field}=2"):
+                    container.validate()
+            else:
+                container.validate()
+                assert container.model.context_parallel_size == cp_size
+                assert container.ddp.use_megatron_fsdp
+                assert container.ddp.megatron_fsdp_version == 2
+                assert container.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+                assert not container.optimizer.use_distributed_optimizer
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_megatron_fsdp_forces_reuse_grad_buf_false(self, monkeypatch):
         """Test that Megatron FSDP forces reuse_grad_buf_for_mxfp8_param_ag=False on ddp and optimizer."""
         gpt_model_cfg = create_test_gpt_config()
