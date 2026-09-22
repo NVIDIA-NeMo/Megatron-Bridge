@@ -76,13 +76,19 @@ def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
     )
     provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
     assert provider.layernorm_epsilon == 1e-5
+    assert provider.mla_proj_disable_quantization
     assert provider.dsa_indexer_k_norm_epsilon == 1e-6
-    assert provider.dsa_indexer_kpool_fp8
-    assert create_layer_config(provider, "D").dsa_indexer_kpool_fp8
+    assert provider.dsa_indexer_qk_proj_disable_quantization
+    assert provider.dsa_indexer_kpool_use_quantization
+    assert not provider.dsa_indexer_weights_proj_use_quantization
+    assert provider.dsa_indexer_weights_proj_output_dtype == "bf16"
+    assert create_layer_config(provider, "D").dsa_indexer_kpool_use_quantization
+    assert provider.dsa_indexer_kpool_always_select_tail
     assert provider.mhc_norm_eps_inside_sqrt
     assert provider.mhc_keep_mappings_in_fp32
     assert not provider.mhc_learned_output_contract
     assert provider.kda_two_stage_gates
+    assert provider.kda_disable_fp8
     assert provider.kda_lower_bound == gate_lower_bound
     provider.apply_overrides_and_finalize(overrides={"kda_disable_fp8": kda_disable_fp8})
     kda_config = create_layer_config(provider, "K")
