@@ -112,7 +112,7 @@ _QWEN35_VL_GB200_FUNCS = [
 ]
 
 _QWEN35_VL_GB300_FUNCS = [
-    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_config,
+    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config,
     _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config,
 ]
 
@@ -474,7 +474,7 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.Mon
     """The 16-GB300 library pretrain recipe should own the measured execution policy."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_config()
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config()
 
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1

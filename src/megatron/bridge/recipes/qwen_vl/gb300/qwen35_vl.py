@@ -275,7 +275,7 @@ def _apply_qwen35_vl_35b_a3b_16gpu_gb300_execution_config(cfg: ConfigContainer) 
     }
 
 
-def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
+def qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config() -> ConfigContainer:
     """Return the full-pretraining config for Qwen3.5/Qwen3.6-VL 35B-A3B on 16 GB300 GPUs.
 
     GB300 counterpart of the shared
@@ -331,6 +331,6 @@ def qwen35_vl_35b_a3b_pretrain_config() -> ConfigContainer:
 
 
 __all__ = [
-    "qwen35_vl_35b_a3b_pretrain_config",
+    "qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config",
     "qwen35_vl_397b_a17b_pretrain_config",
 ]
