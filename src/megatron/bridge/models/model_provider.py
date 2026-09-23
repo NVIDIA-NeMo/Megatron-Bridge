@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -548,7 +548,7 @@ class GetModelKwargs(TypedDict, total=False):
 
 
 class ModelParallelKwargs(TypedDict, total=False):
-    """Model-parallel override kwargs.
+    """Model-parallel and checkpoint inference override kwargs.
 
     Attributes map to `TransformerConfig`/provider fields that control parallelism.
     Only provided values are applied as overrides.
@@ -566,6 +566,11 @@ class ModelParallelKwargs(TypedDict, total=False):
     hierarchical_context_parallel_sizes: list[int] | None
     pipeline_model_parallel_layout: list[list[str]] | None
     pipeline_dtype: torch.dtype
+    moe_expert_capacity_factor: float | None
+    moe_expert_rank_capacity_factor: float | None
+    moe_pad_expert_input_to_capacity: bool
+    moe_router_force_load_balancing: bool
+    moe_hybridep_pad_uneven_dispatch_inputs: bool
 
 
 def get_model(

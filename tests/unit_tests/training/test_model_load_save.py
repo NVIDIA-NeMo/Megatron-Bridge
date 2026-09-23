@@ -354,6 +354,42 @@ class TestGetOrInitializePgCollection:
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
+    @pytest.mark.parametrize("dropless", [False, True])
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_explicit_dropless_load_preserves_hybridep(
+        self, mock_load_model_config, mock_build_and_load_model, dropless
+    ):
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        cfg.moe_token_dispatcher_type = "flex"
+        cfg.moe_flex_dispatcher_backend = "hybridep"
+        cfg.moe_expert_capacity_factor = 1.1
+        cfg.moe_expert_rank_capacity_factor = 1.5
+        cfg.moe_hybridep_pad_uneven_dispatch_inputs = False
+        cfg.moe_pad_expert_input_to_capacity = True
+        cfg.moe_router_force_load_balancing = True
+        mock_load_model_config.return_value = (cfg, None)
+        overrides = {"expert_model_parallel_size": 8}
+        if dropless:
+            overrides.update(
+                moe_expert_capacity_factor=None,
+                moe_expert_rank_capacity_factor=None,
+                moe_hybridep_pad_uneven_dispatch_inputs=True,
+                moe_pad_expert_input_to_capacity=False,
+                moe_router_force_load_balancing=False,
+            )
+
+        load_megatron_model("/ckpt", mp_overrides=overrides)
+
+        built_config = mock_build_and_load_model.call_args.args[1]
+        assert built_config.moe_token_dispatcher_type == "flex"
+        assert built_config.moe_flex_dispatcher_backend == "hybridep"
+        assert built_config.moe_expert_capacity_factor == (None if dropless else 1.1)
+        assert built_config.moe_expert_rank_capacity_factor == (None if dropless else 1.5)
+        assert built_config.moe_hybridep_pad_uneven_dispatch_inputs is dropless
+        assert built_config.moe_pad_expert_input_to_capacity is (not dropless)
+        assert built_config.moe_router_force_load_balancing is (not dropless)
+
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
         provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)

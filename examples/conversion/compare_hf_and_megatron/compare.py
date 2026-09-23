@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -782,6 +782,14 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                # Preserve the saved dispatcher/backend, but never drop tokens or
+                # use synthetic routing when comparing against HF inference.
+                "moe_expert_capacity_factor": None,
+                "moe_expert_rank_capacity_factor": None,
+                "moe_pad_expert_input_to_capacity": False,
+                "moe_router_force_load_balancing": False,
+                # Eager prompts can have unequal or unaligned token counts.
+                "moe_hybridep_pad_uneven_dispatch_inputs": True,
             },
             wrap_with_ddp=False,
         )

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -510,8 +510,14 @@ def load_megatron_model(
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
+        # None explicitly disables capacity-based token dropping for inference.
+        nullable_overrides = {
+            "pipeline_model_parallel_layout",
+            "moe_expert_capacity_factor",
+            "moe_expert_rank_capacity_factor",
+        }
         for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
+            if hasattr(model_cfg, key) and (value is not None or key in nullable_overrides):
                 setattr(model_cfg, key, value)
 
         if (
