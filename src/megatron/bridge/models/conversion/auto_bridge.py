@@ -75,6 +75,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Nano_VL_V2",
     "NemotronH_Nano_Omni_Reasoning_V3",
     "NemotronH_Super_Omni_Reasoning_V3",
+    "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
@@ -386,6 +387,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
+        self.text_only = getattr(hf_pretrained, "_text_only", False) is True
         self.hf_model_id: Optional[str] = None
         init_kwargs = getattr(hf_pretrained, "init_kwargs", {})
         revision = init_kwargs.get("revision") if isinstance(init_kwargs, dict) else None
@@ -490,7 +492,23 @@ class AutoBridge(Generic[MegatronModelT]):
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
                 "from the model repository. Only use this with models you trust."
             )
-        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
+        text_reference = None
+        if getattr(megatron_cfg, "hf_model_text_only", False) is True:
+            # A replacement reference repository need not contain the source revision.
+            revision = (
+                getattr(megatron_cfg, "hf_model_revision", None)
+                if str(hf_model_id) == str(getattr(megatron_cfg, "hf_model_id", None))
+                else None
+            )
+            text_reference = cls.from_hf_pretrained(
+                hf_model_id,
+                text_only=True,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+            )
+            hf_cfg = text_reference.hf_pretrained.config
+        else:
+            hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
@@ -500,6 +518,9 @@ class AutoBridge(Generic[MegatronModelT]):
         synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
         synthesized_config.name_or_path = hf_model_id
         bridge = cls.from_hf_config(synthesized_config)
+        if text_reference is not None:
+            bridge.text_only = text_reference.text_only
+            bridge.hf_model_revision = text_reference.hf_model_revision
         bridge.hf_model_id = hf_model_id
         bridge.trust_remote_code = trust_remote_code
 
@@ -552,7 +573,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return cls(config)
 
     @classmethod
-    def from_hf_pretrained(cls, path: Union[str, Path], **kwargs) -> "AutoBridge":
+    def from_hf_pretrained(cls, path: Union[str, Path], *, text_only: bool = False, **kwargs) -> "AutoBridge":
         """
         Load an AutoBridge from a pretrained model, automatically detecting the model type.
 
@@ -563,6 +584,9 @@ class AutoBridge(Generic[MegatronModelT]):
         Args:
             path: HuggingFace model ID or path to model directory
                 Examples: "meta-llama/Meta-Llama-3-8B", "./my_model"
+            text_only: Select only the language checkpoint of an explicitly
+                supported multimodal family. Defaults to the full model.
+                Unsupported families raise ValueError.
             **kwargs: Additional arguments passed to HuggingFace from_hf_pretrained
                 Common options include:
                 - torch_dtype: Model precision (torch.float16, torch.bfloat16)
@@ -629,7 +653,12 @@ class AutoBridge(Generic[MegatronModelT]):
             # Besides avoiding a second Hub request, this guarantees that the
             # warning and model wrapper observe the same immutable revision.
             hf_pretrained.config = config
-            return cls(hf_pretrained)
+            bridge = cls(hf_pretrained)
+            if text_only:
+                hf_pretrained = bridge._model_bridge.text_only_pretrained(hf_pretrained)
+                cls._validate_config(hf_pretrained.config, str(path))
+                bridge = cls(hf_pretrained)
+            return bridge
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 
@@ -719,8 +748,11 @@ class AutoBridge(Generic[MegatronModelT]):
         else:
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
-            wrapper_cls = self._pretrained_wrapper_cls
-            pre_trained = wrapper_cls.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
+            if self.text_only:
+                pre_trained = self._text_only_pretrained_from_path(hf_path)
+            else:
+                wrapper_cls = self._pretrained_wrapper_cls
+                pre_trained = wrapper_cls.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
         bridge = self._model_bridge
         bridge.load_weights_hf_to_megatron(pre_trained, model, allowed_mismatched_params=allowed_mismatched_params)
         # Get unquantized_state_dict from the bridge instance that was used for optimizer reload
@@ -1035,7 +1067,17 @@ class AutoBridge(Generic[MegatronModelT]):
             This method is collective -- all ranks must call it.  Only rank 0
             writes files to disk; the other ranks participate in the generator
             to gather distributed (TP/PP/EP) tensors.
+
+            For language-only adapters extracted from a VL model, construct the
+            bridge from the standalone HF text base before exporting. During
+            training, set ``checkpoint.hf_source_path`` to that text base.
         """
+        if getattr(self, "text_only", False) is True:
+            raise ValueError(
+                "Adapter export from a projected VL source requires a standalone HF text base. "
+                "Set checkpoint.hf_source_path to that base, or construct AutoBridge from it before exporting."
+            )
+
         import json
 
         from safetensors.torch import save_file
@@ -1195,7 +1237,19 @@ class AutoBridge(Generic[MegatronModelT]):
                     artifact_kwargs["trust_remote_code"] = self.trust_remote_code
 
                     # This wrapper loads artifacts lazily; model weights are never materialized here.
-                    artifact_source = PreTrainedCausalLM.from_pretrained(artifact_source_path, **artifact_kwargs)
+                    if self.text_only:
+                        artifact_source = (
+                            type(self)
+                            .from_hf_pretrained(
+                                artifact_source_path,
+                                text_only=True,
+                                revision=self.hf_model_revision,
+                                **artifact_kwargs,
+                            )
+                            .hf_pretrained
+                        )
+                    else:
+                        artifact_source = PreTrainedCausalLM.from_pretrained(artifact_source_path, **artifact_kwargs)
                     artifact_source.config = self.hf_pretrained
                     additional_files = getattr(model_bridge_instance, "ADDITIONAL_FILE_PATTERNS", None) or None
                     artifact_source.save_artifacts(
@@ -1242,6 +1296,10 @@ class AutoBridge(Generic[MegatronModelT]):
             save_every_n_ranks=save_every_n_ranks,
             weight_dtype=weight_dtype,
         )
+        if model_bridge is not None and (not dist.is_initialized() or dist.get_rank() == 0):
+            weight_postprocessor = getattr(type(model_bridge), "postprocess_hf_export_weights", None)
+            if weight_postprocessor is not None:
+                weight_postprocessor(model_bridge, Path(path))
 
     def save_hf_weights(
         self,
@@ -2088,6 +2146,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         provider_input = self._provider_bridge_input
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(provider_input)
+        if self.text_only:
+            provider.hf_model_text_only = True
 
         if load_weights:
             if hf_path is None and not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
@@ -2104,8 +2164,11 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 # Load from specified path
                 trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
-                wrapper_cls = self._pretrained_wrapper_cls
-                pre_trained = wrapper_cls.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
+                if self.text_only:
+                    pre_trained = self._text_only_pretrained_from_path(hf_path)
+                else:
+                    wrapper_cls = self._pretrained_wrapper_cls
+                    pre_trained = wrapper_cls.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
                 provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
         hf_identifier: str | None = None
@@ -2122,6 +2185,8 @@ class AutoBridge(Generic[MegatronModelT]):
             setattr(provider, "hf_model_id", hf_identifier)
         if hf_path is None and self.hf_model_revision:
             setattr(provider, "hf_model_revision", self.hf_model_revision)
+        elif self.text_only and load_weights and hf_path is not None:
+            provider.hf_model_revision = pre_trained.init_kwargs.get("revision")
 
         return provider
 
@@ -2209,7 +2274,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 )
             pre_trained = self.hf_pretrained
         else:
-            pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
+            if self.text_only:
+                pre_trained = self._text_only_pretrained_from_path(hf_path)
+            else:
+                pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
 
         return self._model_bridge.build_conversion_tasks(pre_trained, megatron_model)
 
@@ -2264,6 +2332,25 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
         bridge.export_weight_dtype = self.export_weight_dtype
         return bridge
+
+    def _text_only_pretrained_from_path(self, path: str | Path) -> PreTrainedCausalLM:
+        """Reuse a pinned source when checkpoint initialization names it again."""
+        current = self.hf_pretrained
+        if isinstance(current, PreTrainedCausalLM) and self.text_only and str(path) == str(current.model_name_or_path):
+            return current
+        source_kwargs = getattr(current, "init_kwargs", {})
+        kwargs = {
+            key: source_kwargs[key] for key in ("token", "cache_dir", "local_files_only") if key in source_kwargs
+        }
+        # A different repository may not contain the original revision.
+        # Config-only reconstruction, however, still references the same source.
+        if str(path) == self.hf_model_id and self.hf_model_revision:
+            kwargs["revision"] = self.hf_model_revision
+        return (
+            type(self)
+            .from_hf_pretrained(path, text_only=True, trust_remote_code=self.trust_remote_code, **kwargs)
+            .hf_pretrained
+        )
 
     @property
     def _pretrained_wrapper_cls(
