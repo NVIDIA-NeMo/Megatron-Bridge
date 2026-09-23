@@ -2239,6 +2239,65 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("dense_inner", ["no_shard", "optim", "optim_grads", "optim_grads_params"])
+    @pytest.mark.parametrize("expert_outer", ["no_shard", "optim"])
+    def test_megatron_fsdp_v2_preserves_sharding_strategies(self, dense_inner, expert_outer):
+        """Validation preserves independent dense/expert policies and resolves inheritance."""
+        dense_outer = "optim" if dense_inner in ("optim_grads", "optim_grads_params") else "no_shard"
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=256,
+            model_config=create_test_gpt_config(
+                bf16=True,
+                params_dtype=torch.bfloat16,
+                num_moe_experts=256,
+                expert_model_parallel_size=64,
+            ),
+            train_config=create_test_training_config(global_batch_size=1024),
+            optimizer_config=create_test_optimizer_config(bf16=True),
+            dist_config=create_test_distributed_init_config(use_megatron_fsdp=True),
+            ddp_config=create_test_ddp_config(
+                megatron_fsdp_version=2,
+                data_parallel_sharding_strategy=dense_inner,
+                expert_data_parallel_sharding_strategy="optim_grads_params",
+                outer_dp_sharding_strategy=dense_outer,
+                expert_outer_dp_sharding_strategy=expert_outer,
+                num_distributed_optimizer_instances=4,
+            ),
+        )
+        try:
+            container.validate()
+            assert container.ddp.data_parallel_sharding_strategy == dense_inner
+            assert container.ddp.expert_data_parallel_sharding_strategy == "optim_grads_params"
+            assert container.ddp.outer_dp_sharding_strategy == dense_outer
+            assert container.ddp.expert_outer_dp_sharding_strategy == expert_outer
+            assert container.ddp.num_distributed_optimizer_instances == 4
+            assert not container.optimizer.use_distributed_optimizer
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_megatron_fsdp_v2_inherits_expert_sharding(self):
+        """Unset expert policies inherit the requested dense policies during finalization."""
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=create_test_gpt_config(bf16=True, params_dtype=torch.bfloat16),
+            optimizer_config=create_test_optimizer_config(bf16=True),
+            dist_config=create_test_distributed_init_config(use_megatron_fsdp=True),
+            ddp_config=create_test_ddp_config(
+                megatron_fsdp_version=2,
+                data_parallel_sharding_strategy="optim_grads",
+                outer_dp_sharding_strategy="optim",
+                num_distributed_optimizer_instances=2,
+            ),
+        )
+        try:
+            container.validate()
+            assert container.ddp.data_parallel_sharding_strategy == "optim_grads"
+            assert container.ddp.expert_data_parallel_sharding_strategy == "optim_grads"
+            assert container.ddp.outer_dp_sharding_strategy == "optim"
+            assert container.ddp.expert_outer_dp_sharding_strategy == "optim"
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_megatron_fsdp_forces_reuse_grad_buf_false(self, monkeypatch):
         """Test that Megatron FSDP forces reuse_grad_buf_for_mxfp8_param_ag=False on ddp and optimizer."""
         gpt_model_cfg = create_test_gpt_config()
