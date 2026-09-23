@@ -73,7 +73,6 @@ class InklingSharedExpertMapping(MegatronParamMapping[torch.Tensor]):
     """Map a TP-sharded shared MLP to one slice of a replicated expert stack."""
 
     is_grouped_export = True
-    allow_hf_name_mismatch = True
 
     def __init__(self, megatron_param: str, hf_param: str):
         super().__init__(megatron_param, hf_param)

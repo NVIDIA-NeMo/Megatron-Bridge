@@ -85,16 +85,6 @@ def test_quantized_checkpoint_is_rejected(raw_config):
         InklingBridge().provider_bridge(source(raw_config))
 
 
-def test_flops_include_each_shared_expert_and_its_gate_row(raw_config):
-    provider = InklingBridge().provider_bridge(source(raw_config))
-    kwargs = dict(batch_size=2, seqlen_sum=128, seqlen_squared_sum=8192)
-    before = provider._get_num_floating_point_operations_with_runtime_stats(**kwargs)
-    provider.inkling_n_shared_experts += 1
-    after = provider._get_num_floating_point_operations_with_runtime_stats(**kwargs)
-    expected = 6 * 128 * sum(provider.moe_layer_freq) * provider.hidden_size * (3 * provider.moe_ffn_hidden_size + 1)
-    assert after - before == expected
-
-
 @pytest.mark.parametrize(
     "field,value", [("q_bias", True), ("shared_expert_sink", False), ("gate_activation", "softmax")]
 )

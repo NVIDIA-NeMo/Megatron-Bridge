@@ -68,48 +68,6 @@ class InklingModelProvider(GPTModelProvider):
     inkling_unpadded_vocab_size: int = 0
     inkling_hf_config: dict = field(default_factory=dict)
 
-    def _get_num_floating_point_operations_with_runtime_stats(
-        self,
-        *,
-        batch_size: int,
-        seqlen_sum: int | None,
-        seqlen_squared_sum: int | None,
-        cross_seqlen_sum: int | None = None,
-        cross_seqlen_product_sum: int | None = None,
-    ) -> float:
-        """Estimate full-training text FLOPs, including relative bias and shared experts.
-
-        Follow Bridge's three-pass GEMM convention. Sliding attention uses the
-        smaller of dense attention and the local window's upper bound.
-        """
-        del cross_seqlen_sum, cross_seqlen_product_sum
-        tokens = batch_size * self.seq_length if seqlen_sum is None else seqlen_sum
-        squared = tokens * (tokens / batch_size) if seqlen_squared_sum is None else seqlen_squared_sum
-        flops = 6.0 * tokens * self.hidden_size * self.vocab_size
-        for i, layer_type in enumerate(self.inkling_layer_types):
-            sliding = layer_type == "hybrid_sliding"
-            heads = self.inkling_swa_num_attention_heads if sliding else self.num_attention_heads
-            groups = self.inkling_swa_num_query_groups if sliding else self.num_query_groups
-            dim = self.inkling_swa_kv_channels if sliding else self.kv_channels
-            extent = self.inkling_sliding_window if sliding else self.inkling_rel_extent
-            projections = self.hidden_size * ((2 * heads + 2 * groups) * dim + heads * self.inkling_d_rel)
-            relative = heads * self.inkling_d_rel * extent
-            convolutions = 2 * self.inkling_conv_kernel_size * (self.hidden_size + groups * dim)
-            if self.moe_layer_freq[i]:
-                mlp = (
-                    3
-                    * self.hidden_size
-                    * self.moe_ffn_hidden_size
-                    * (self.moe_router_topk + self.inkling_n_shared_experts)
-                )
-                mlp += self.hidden_size * (self.num_moe_experts + self.inkling_n_shared_experts)
-            else:
-                mlp = 3 * self.hidden_size * self.ffn_hidden_size
-            flops += 6.0 * tokens * (projections + relative + convolutions + mlp)
-            attention_pairs = min(squared, tokens * extent) if sliding else squared
-            flops += 12.0 * heads * dim * attention_pairs
-        return flops
-
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> GPTModel:
         """Construct the native GPT subclass without changing shared provider code."""
         from megatron.bridge.models.inkling.modeling_inkling import InklingGPTModel, inkling_layer_spec
