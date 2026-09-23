@@ -578,6 +578,7 @@ def _forward_step_common(
         "position_ids": position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
+        "loss_mask": loss_mask,
     }
 
     # Add packed sequence support

@@ -4196,6 +4196,13 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert bias is None
 
 
+def test_linear_for_last_layer_reports_gathered_output() -> None:
+    """GPTModel._postprocess reads output_layer.gather_output for the observation hooks."""
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+
+    assert head.gather_output is True
+
+
 def test_value_head_apis_preserve_positional_call_compatibility() -> None:
     """The relocated value-head APIs must retain their established positional signatures."""
     head = LinearForLastLayer(2, 1, False)

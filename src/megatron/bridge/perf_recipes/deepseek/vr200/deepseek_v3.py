@@ -17,7 +17,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
-    _enable_deepseek_full_iteration_mxfp8,
+    _enable_deepseek_full_iteration,
     _perf_precision,
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -156,7 +156,9 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration_mxfp8(cfg)
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fp8_output_proj = False
+    cfg.mixed_precision.fp8_dot_product_attention = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -326,14 +328,56 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
+
+    Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
+    virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
+    Retain full-iteration graphs and the non-pipelined combined-1F1B MoE
+    overlap path. This reduced-depth model does not reproduce at-scale
+    pipeline traffic, convergence or memory use; GPU validation is required.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vr200_fp8mx_config()
+    cfg.model.num_layers = 13
+    # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern.
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Keep this explicit environment identical to the 256-GPU parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
     }
     return cfg
 
 
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, NVFP4 (alias of GB300)."""
+    """DeepSeek V3 pretrain: 256× VR200, NVFP4 with full-iteration CUDA graph."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -341,7 +385,7 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -357,5 +401,48 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
+        "NVTE_DPA_FP8_FORMAT": "E4M3",
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 NVFP4 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
+
+    Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
+    virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
+    Retain full-iteration graphs and the non-pipelined combined-1F1B MoE
+    overlap path. Use this reduced-depth model for feature and kernel
+    performance experiments, not convergence or at-scale acceptance.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+    cfg.model.num_layers = 13
+    cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited interleaved layout; embedding, decoder and MTP are colocated.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Keep this explicit environment identical to the 256-GPU parent.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_USE_FAST_MATH": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
+        "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
     return cfg

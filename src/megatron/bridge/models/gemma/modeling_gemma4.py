@@ -1314,12 +1314,17 @@ class Gemma4TransformerLayer(TransformerLayer):
         # TODO: remove this guard when MCore dev includes commit e86c262ccd0c and both pins expose
         # TransformerLayer._maybe_unflatten_for_moe.
         if packed_seq_params is not None and hasattr(TransformerLayer, "_maybe_unflatten_for_moe"):
-            moe_input, padding_mask, moe_unflatten_mbs = TransformerLayer._maybe_unflatten_for_moe(
-                self,
-                residual,
-                padding_mask,
-                packed_seq_params,
-            )
+            unflatten_for_moe = TransformerLayer._maybe_unflatten_for_moe
+            # Hash-routing support added input_ids and a fourth return value in MCore.
+            # Gemma's separate-input MoE path does not use token IDs.
+            if "input_ids" in inspect.signature(unflatten_for_moe).parameters:
+                moe_input, padding_mask, _, moe_unflatten_mbs = unflatten_for_moe(
+                    self, residual, padding_mask, input_ids=None, packed_seq_params=packed_seq_params
+                )
+            else:
+                moe_input, padding_mask, moe_unflatten_mbs = unflatten_for_moe(
+                    self, residual, padding_mask, packed_seq_params
+                )
 
         expert_input = _gemma4_rms_norm(
             moe_input,
