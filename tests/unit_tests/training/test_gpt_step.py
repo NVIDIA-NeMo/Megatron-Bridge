@@ -94,12 +94,14 @@ def _make_cfg(
     pipeline_model_parallel_size=1,
     virtual_pipeline_model_parallel_size=None,
     mtp_num_layers=0,
+    dataset_kwargs=None,
 ):
     cfg = type("Cfg", (), {})()
     cfg.dataset = type(
         "D",
         (),
         {
+            "dataset_kwargs": dataset_kwargs,
             "enable_offline_packing": enable_offline_packing,
             "offline_packing_specs": offline_packing_specs,
             "skip_getting_attention_mask_from_dataset": skip_getting_attention_mask_from_dataset,
@@ -689,7 +691,10 @@ class TestGetBatch:
         ("return_schedule_plan", "expert_bias"),
         [(False, False), (True, False), (False, True), (True, True)],
     )
-    def test_forward_common_passes_packed_padding_mask_to_model(self, monkeypatch, return_schedule_plan, expert_bias):
+    @pytest.mark.parametrize("packed", [False, True])
+    def test_forward_common_passes_packed_padding_mask_to_model(
+        self, monkeypatch, return_schedule_plan, expert_bias, packed
+    ):
         """Packed alignment gaps must not contribute to MoE router statistics."""
         tokens = _as_nocuda(torch.arange(8).unsqueeze(0))
         labels = _as_nocuda(torch.arange(1, 9).unsqueeze(0))
@@ -712,7 +717,13 @@ class TestGetBatch:
         }
         model = _RecordingModel()
         state = Mock()
-        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
+        if not packed:
+            batch = {key: value for key, value in batch.items() if not key.startswith(("cu_seqlens", "max_seqlen"))}
+        state.cfg = _make_cfg(
+            enable_offline_packing=packed,
+            offline_packing_specs=object() if packed else None,
+            dataset_kwargs={"return_padding_mask": True},
+        )
         state.timers = _NoopTimer()
         state.straggler_timer = _NoopTimer()
         config = type(
@@ -738,6 +749,7 @@ class TestGetBatch:
 
         assert model.forward_kwargs is not None
         assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask)
+        assert (model.forward_kwargs.get("packed_seq_params") is not None) == packed
 
     def test_mcore_expert_bias_padding_mask_compat(self, monkeypatch):
         """The pinned MCore expert-bias path must receive a broadcastable mask."""
@@ -1355,3 +1367,38 @@ class TestCreateLossFunctionModelopt:
             assert torch.equal(loss_func.args[0], loss_mask)
             assert loss_func.keywords["check_for_nan_in_loss"] == False
             assert loss_func.keywords["check_for_spiky_loss"] == False
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("pp_rank", [0, 1, 2])
+@pytest.mark.parametrize("all_padding", [False, True])
+def test_unpacked_padding_mask_reaches_every_pipeline_stage_after_cp(monkeypatch, pp_rank, all_padding):
+    import megatron.bridge.training.gpt_step as step
+
+    monkeypatch.setattr(step, "is_pp_first_stage", lambda pg: pg.rank() == 0)
+    monkeypatch.setattr(step, "is_pp_last_stage", lambda pg: pg.rank() == 2)
+    mask = _as_nocuda(torch.tensor([[False, False, False, True, True, True, True, True]]))
+    if all_padding:
+        mask.fill_(True)
+    batch = {
+        key: _as_nocuda(torch.arange(8).unsqueeze(0)) for key in ("tokens", "labels", "loss_mask", "position_ids")
+    }
+    batch.update(attention_mask=None, padding_mask=mask)
+    seen = []
+
+    def cp_partition(batch, **kwargs):
+        # Rank zero's causal CP partition takes the first and last quarter.
+        assert kwargs["cp_group"].size() == 2
+        seen.append(batch["padding_mask"])
+        return {key: value[:, [0, 1, 6, 7]] if value is not None else None for key, value in batch.items()}
+
+    monkeypatch.setattr(step, "get_batch_on_this_cp_rank", cp_partition)
+    result = get_batch(
+        _Iterator(batch),
+        _make_cfg(dataset_kwargs={"return_padding_mask": True}),
+        pg_collection=_MockPGCollection(cp_size=2, pp_rank=pp_rank, pp_size=3),
+    )
+    assert len(seen) == 1
+    assert torch.equal(seen[0], mask)
+    assert set(result[-1]) == {"padding_mask"}
+    assert torch.equal(result[-1]["padding_mask"], mask[:, [0, 1, 6, 7]])
