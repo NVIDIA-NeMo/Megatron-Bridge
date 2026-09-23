@@ -126,7 +126,7 @@ def deepseek_v4_pro_smoketest_1gpu_config() -> ConfigContainer:
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 2
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.model.seq_length = 512
