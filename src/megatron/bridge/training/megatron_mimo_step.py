@@ -21,6 +21,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
 from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
 from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
+from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.megatron_mimo_parallel_utils import unwrap_megatron_mimo_model
 from megatron.bridge.training.state import GlobalState
 
@@ -79,7 +80,12 @@ def _get_module_dp_info(
     return 0, 1
 
 
-def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor) -> Tuple:
+def loss_func(
+    loss_mask: torch.Tensor,
+    output_tensor: torch.Tensor,
+    check_for_nan_in_loss: bool = True,
+    check_for_spiky_loss: bool = False,
+) -> Tuple:
     """Loss function for MegatronMIMO model training.
 
     Called at the terminal stage (LLM's last PP stage).
@@ -87,23 +93,23 @@ def loss_func(loss_mask: torch.Tensor, output_tensor: torch.Tensor) -> Tuple:
     Args:
         loss_mask: Mask indicating which tokens contribute to the loss.
         output_tensor: Model output tensor (losses per token).
+        check_for_nan_in_loss: Whether to reject non-finite loss values.
+        check_for_spiky_loss: Whether to check for unexpectedly large losses.
 
     Returns:
-        Tuple of (total_loss, num_tokens, {'lm loss': reporting_loss}).
+        A tuple containing the total loss, valid-token count, and reporting
+        metrics under the ``lm loss`` key.
 
     Note:
         Only the LLM module produces a loss. Encoders produce activations
         that are consumed by the LLM, but don't have their own loss.
     """
-    losses = output_tensor.float()
-
-    loss_mask = loss_mask.contiguous().view(-1).float()
-
-    total_tokens = loss_mask.sum().clone().detach().to(torch.int)
-    total_loss = torch.sum(losses.view(-1) * loss_mask)
-    reporting_loss = torch.cat([total_loss.clone().detach().view(1), total_tokens.view(1)])
-
-    return (total_loss, total_tokens, {"lm loss": reporting_loss})
+    return masked_next_token_loss(
+        loss_mask.contiguous(),
+        output_tensor,
+        check_for_nan_in_loss=check_for_nan_in_loss,
+        check_for_spiky_loss=check_for_spiky_loss,
+    )
 
 
 def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:
@@ -196,8 +202,9 @@ def forward_step(
             modality_modules = megatron_mimo_model.role.modality_module_names
             needs_data = any(megatron_mimo_model.role.is_first_stage(mod) for mod in modality_modules)
 
-    # MegatronMIMO in-batch sequence packing, read from the dataset config (absent -> off).
+    # MegatronMIMO data-efficiency settings, read from the dataset config (absent -> off).
     pack_sequences_enabled = resolve_step_packing(state.cfg.dataset)
+    scalable_dp = bool(getattr(state.cfg.dataset, "megatron_mimo_scalable_dp", False))
 
     if needs_data:
         data_batch = get_batch(data_iterator)
@@ -207,7 +214,6 @@ def forward_step(
                 "This indicates a data-loading or parallelism misconfiguration."
             )
         # Slice the global micro-batch for this module's DP shard.
-        # All data-loading ranks receive identical batches (sampler dp_size=1).
         # slice_batch_for_megatron_mimo contiguously sub-shards to match the
         # BridgeCommunicator's fan-in/fan-out batch-dimension routing.
         if (
@@ -221,7 +227,9 @@ def forward_step(
             # sample batch.
             data_batch["modality_inputs"] = None
         dp_rank, dp_size = _get_module_dp_info(megatron_mimo_model)
-        data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
+        if not scalable_dp:
+            # With megatron_mimo_scalable_dp the sampler already delivered this rank's shard.
+            data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
         pack_lengths = None
         if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:
             # Lengths come from the batch's attention_mask; it must cover modality placeholder tokens.
@@ -318,12 +326,22 @@ def forward_step(
 
         # Return output and loss function
         if loss_mask is not None:
-            return output_tensor, partial(loss_func, loss_mask)
+            return output_tensor, partial(
+                loss_func,
+                loss_mask,
+                check_for_nan_in_loss=state.cfg.rerun_state_machine.check_for_nan_in_loss,
+                check_for_spiky_loss=state.cfg.rerun_state_machine.check_for_spiky_loss,
+            )
         else:
             # Create default loss mask if not provided
             logger.warning("No loss_mask provided, using all-ones mask")
             default_mask = torch.ones_like(output_tensor)
-            return output_tensor, partial(loss_func, default_mask)
+            return output_tensor, partial(
+                loss_func,
+                default_mask,
+                check_for_nan_in_loss=state.cfg.rerun_state_machine.check_for_nan_in_loss,
+                check_for_spiky_loss=state.cfg.rerun_state_machine.check_for_spiky_loss,
+            )
 
     # Intermediate stage - return output for activation passing
     return output_tensor, None

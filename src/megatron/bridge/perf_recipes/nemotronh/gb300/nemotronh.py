@@ -23,7 +23,9 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _enable_ncclep_mxfp8,
+    _enable_nemotron_3_super_full_iteration,
     _nemotron_3_super_nvfp4_precision,
+    _nemotron_3_ultra_nvfp4_precision,
     _perf_precision,
     _with_global_batch_size,
     load_quantization_recipe,
@@ -131,7 +133,7 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -140,18 +142,14 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_nemotron_3_super_full_iteration(cfg)
     return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+    """Nemotron 3 Super pretrain: 64× GB300, MXFP8 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.mixed_precision.fp8_dot_product_attention = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -160,12 +158,12 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -179,7 +177,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, NVFP4."""
+    """Nemotron 3 Super pretrain: 64× GB300, NVFP4 with full-iteration CUDA graph."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
@@ -189,7 +187,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -199,10 +197,9 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_quantization = True
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_nemotron_3_super_full_iteration(cfg)
+    cfg.mixed_precision.fp8_dot_product_attention = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -210,17 +207,19 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
@@ -320,6 +319,90 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # op fuser + fused weighted squared-ReLU with moe_act activation recompute
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, NVFP4, Megatron-FSDP (HSDP).
+
+    TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + NVFP4 mixed
+    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
+    recompute + fine-grained activation offload of the expert MLP, MTP=2.
+    """
+
+    num_gpus = 256
+    expert_model_parallel_size = 64
+    global_batch_size = 256
+
+    cfg = nemotron_3_ultra_pretrain_config()
+    cfg.mixed_precision = _nemotron_3_ultra_nvfp4_precision()
+
+    # Parallelism
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.seq_length = 8192
+
+    # Only tensors larger than 500MB are offloaded, which
+    # approximates offloading the moe_act input for seq 8192 / MBS 1.
+    cfg.model.min_offloaded_tensor_size = 500_000_000
+
+    # NVFP4 requires router padding for quantization.
+    cfg.model.moe_router_padding_for_quantization = True
+
+    # GPU-count specific overrides of the canonical (256-GPU / EP64) defaults.
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
+    cfg.train.global_batch_size = global_batch_size
+
+    # Fine-grained activation offloading. Requires NVTE_CPU_OFFLOAD_V1=1 in the
+    # launch environment (set in this recipe's env_vars).
+    # NOTE: also requires setting the min_offloaded_tensor_size to avoid CPU OOM issues
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["fused_group_mlp"]
+
+    # Selective recompute of the MoE activation
+    # recomputes the activation output of the MoE expert MLP, while FC1 output (activation input) is saved and offloaded to cpu
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act"]
+
+    _apply_nemotron_3_ultra_perf_defaults(cfg)
+
+    # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
+    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
+
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
+        # offloading weights;
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by the
+        # op fuser + fused weighted squared-ReLU with moe_act activation recompute
+        # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
 
@@ -614,6 +697,7 @@ def _build_nemotron_3_5_lightning_gb300_mxfp8() -> ConfigContainer:
 def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× GB300, MXFP8."""
     cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
+    cfg.model.recompute_modules = []
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.env_vars = {

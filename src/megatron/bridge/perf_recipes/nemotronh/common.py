@@ -27,7 +27,11 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pr
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
+from megatron.bridge.training.mixed_precision import (
+    MixedPrecisionConfig,
+    nemotron_3_super_bf16_with_nvfp4_mixed,
+    nemotron_3_ultra_bf16_with_nvfp4_mixed,
+)
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -95,7 +99,19 @@ def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
     cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
-    # Disabled until MCore PR 4358 lands.
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
+    cfg.fp4_param_gather = False
+    return cfg
+
+
+def _nemotron_3_ultra_nvfp4_precision() -> MixedPrecisionConfig:
+    """Return the NVFP4 precision config used by Nemotron 3 Ultra perf recipes."""
+    cfg = nemotron_3_ultra_bf16_with_nvfp4_mixed()
+    # Although MCore PR 4358 is merged,
+    # Megatron-FSDP's ParamAndGradBuffer has no NVFP4 packed-storage support, unlike the
+    # legacy DDP buffer, so FP4 primary weights fault during buffer init.
     cfg.fp4_param_gather = False
     return cfg
 
@@ -119,6 +135,41 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.checkpoint.async_save = False
 
     _benchmark_common(cfg)
+
+
+def _enable_nemotron_3_super_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable the HybridEP full-iteration stack for Nemotron 3 Super."""
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = False
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+
+    # Nemotron 3 Super uses two MTP layers. MCore only supports expert-parallel
+    # A2A overlap and delayed wgrad with at most one MTP layer.
+    cfg.comm_overlap = None
+    cfg.model.overlap_moe_expert_parallel_comm = False
+    cfg.model.delay_wgrad_compute = False
 
 
 def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:

@@ -13,6 +13,13 @@ Run `./scripts/conversion/convert.sh import --help`,
 `./scripts/conversion/convert.sh export --help`, or
 `./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
+Synchronous Slurm runs check job status every 60 seconds by default. Increase
+this with `--poll-interval SECONDS` (minimum 60), or use `--detach` to submit
+without monitoring. Logs remain in the NeMo Run experiment directory; the
+waiter does not start a separate scheduler-querying log tailer. A monitoring
+error or interruption does not cancel the submitted job. Local conversion is
+unchanged.
+
 ### Megatron-LM checkpoint compatibility
 
 Megatron-LM checkpoints with saved arguments in `common.pt` can be exported
@@ -113,6 +120,12 @@ cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
+For allocation-level settings, pass
+`--additional-slurm-params 'segment=1;reservation=testing'` with `--executor slurm`.
+This uses the same semicolon-separated `KEY=VALUE` format as the training launcher.
+Values become sbatch parameters, not srun flags or conversion-worker arguments.
+The launcher retains control of `export` to preserve name-only environment forwarding.
+
 ## Distributed round-trip validation
 
 Like `import` and `export`, the `roundtrip` command runs the shared
@@ -192,3 +205,8 @@ secrets are inherited by Slurm without being materialized in generated job
 scripts. Use `--submission-dry-run` to inspect a rendered job and `--detach`
 when a Slurm command should return immediately after submission. Local execution
 always waits so worker failures propagate to the launcher.
+
+## Optional container backend
+
+Slurm conversion also supports an [all-Lustre direct-Enroot backend](../common/README.md).
+Pyxis remains the default; local conversion is unchanged.

@@ -44,12 +44,15 @@ class GLM5Bridge(MegatronModelBridge):
 
     This bridge handles conversion between HuggingFace GlmMoeDsaForCausalLM
     and Megatron-Core GPTModel formats. ``zai-org/GLM-5``,
-    ``zai-org/GLM-5.1``, and ``zai-org/GLM-5.2`` are auto-detected through
+    ``zai-org/GLM-5.1``, ``zai-org/GLM-5.2``, and ``zai-org/GLM-5.3`` are auto-detected through
     this bridge, with version-specific DSA settings read from the HF config.
 
     The architecture uses Multi-Latent Attention (MLA), Dynamic Sparse Attention
     (DSA) indexer layers, and Mixture-of-Experts (MoE).
-    Requires transformers>=5.2.0.
+    GLM-5.2/5.3 share the same architecture; GLM-5.3's block-scaled FP8
+    checkpoint weights are dequantized to BF16 on import. This does not cover
+    GLM-5.3-Flash, which uses a different architecture. See the model guides
+    for checkpoint-specific verification and export requirements.
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -104,6 +107,7 @@ class GLM5Bridge(MegatronModelBridge):
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
+        provider.moe_router_bias_update_rate = 0
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
 

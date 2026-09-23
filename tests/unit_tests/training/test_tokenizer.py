@@ -189,6 +189,7 @@ class TestTokenizers:
             tokenizer_path="tokenizer.model",
             metadata_path={"library": "sft"},
             prompt_format="nemotron-h-aligned",
+            use_gigatoken=False,
         )
 
     @pytest.mark.timeout(30)

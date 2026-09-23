@@ -28,6 +28,15 @@ from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config,
 )
+from megatron.bridge.perf_recipes.qwen_vl.gb300.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+)
 from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config,
     qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config,
@@ -217,3 +226,117 @@ def test_qwen35_vl_35b_gb200_measured_performance_defaults(
     assert cuda_graph_module_names(config.model) == expected_graph_modules
     assert config.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert config.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+
+
+def test_qwen35_vl_perf_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Qwen3.5-VL perf recipes should fuse the GatedDeltaNet pre-gated-delta-rule path.
+
+    The flag lives in ``_qwen35_vl_common`` so it applies to every Qwen3.5-VL perf
+    recipe regardless of platform -- it selects Triton kernels, not a
+    hardware-specific path.
+
+    Skipped when the installed Megatron-Core predates
+    ``gdn_pre_gated_delta_rule_fusion``; the recipe guards on the same condition,
+    so on an older core the flag is intentionally not set. The assertion below
+    starts running as soon as the core is bumped.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
+
+    if not hasattr(type(config.model), "gdn_pre_gated_delta_rule_fusion") and not hasattr(
+        config.model, "gdn_pre_gated_delta_rule_fusion"
+    ):
+        pytest.skip("Megatron-Core does not expose gdn_pre_gated_delta_rule_fusion")
+
+    assert config.model.gdn_pre_gated_delta_rule_fusion is True
+
+
+def test_qwen35_vl_35b_gb300_fp8mx_enables_cutedsl_grouped_mlp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GB300 MXFP8 recipe should route the MoE experts through the CuTe DSL grouped MLP.
+
+    Transformer Engine only matches the fused grouped MLP when the op fuser, the
+    32-wide GLU interleaving and the NVTE_CUTEDSL_FUSED_GROUPED_MLP gate are all
+    set. If any one is missing TE does not raise -- it silently falls back to the
+    cuBLASLt grouped GEMM -- so assert all three together.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+
+    assert config.model.use_transformer_engine_op_fuser is True
+    assert config.model.moe_mlp_glu_interleave_size == 32
+    assert config.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+    # The fused kernel is MXFP8-only; the recipe must still select that recipe.
+    assert config.mixed_precision.fp8 == "e4m3"
+    assert config.mixed_precision.fp8_recipe == "mxfp8"
+
+    # SwiGLU is a precondition of ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8, and the
+    # fused kernel additionally requires FC1/FC2 dims divisible by 64 with
+    # fc1_out == 2 * fc2_in.
+    assert config.model.gated_linear_unit is True
+    assert config.model.hidden_size % 64 == 0
+    assert config.model.moe_ffn_hidden_size % 64 == 0
+
+
+def test_qwen35_vl_35b_gb300_bf16_does_not_enable_cutedsl_grouped_mlp(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CuTe DSL grouped MLP is MXFP8-only, so the BF16 recipe must not enable it."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config()
+
+    assert config.model.use_transformer_engine_op_fuser is False
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in config.env_vars
+
+
+@pytest.mark.parametrize(
+    "recipe_fn",
+    [
+        qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
+        qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
+        qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+    ],
+)
+def test_qwen35_vl_gb300_enables_attn_partial_cuda_graph(recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GB300 35B/397B benchmarks must capture ``attn`` alongside the MoE graphs.
+
+    This has to be asserted on the FINAL config, not on the assignment in the
+    recipe body: ``_qwen35_vl_post`` runs afterwards and sets
+    ``cuda_graph_impl="none"`` plus ``clear_cuda_graph_modules``, so a module list
+    declared before it is dead code. ``_enable_partial_cuda_graphs`` re-enables the
+    graphs after that hook.
+
+    ``attn`` is the module that carries the win: at 397B under forced load
+    balancing it moved the step from 390.5 to 580.2 TFLOP/s/GPU with GPU kernel
+    time unchanged, the gain being per-launch CPU overhead removed by replay.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert config.model.cuda_graph_impl == "transformer_engine"
+    # set_cuda_graph_modules writes cuda_graph_modules and nulls cuda_graph_scope;
+    # MCore asserts if both are set at once.
+    assert config.model.cuda_graph_scope is None
+    assert set(cuda_graph_module_names(config.model)) == {"attn", "moe_router", "moe_preprocess"}
+    # Graphs require the TE RNG tracker. `_benchmark_common` derives these flags from
+    # the cuda_graph_impl value at its own call time, so re-enabling graphs later must
+    # set them explicitly or model build asserts. Assert on the FINAL config.
+    assert config.model.use_te_rng_tracker is True
+    assert config.rng.te_rng_tracker is True
+
+
+def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The 122B GB300 benchmark is deliberately NOT part of the attn-graph change."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config()
+
+    assert config.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(config.model) == []

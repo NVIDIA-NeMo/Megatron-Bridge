@@ -165,42 +165,48 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
 
 
 @pytest.mark.parametrize(
-    ("module_name", "factory_name", "has_comm_overlap"),
+    ("module_name", "factory_name", "has_comm_overlap", "expected_preprocessing_sms"),
     [
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config",
             True,
+            108,
             id="nano-gb200",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config",
             True,
+            108,
             id="nano-gb300",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
             "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
             True,
+            108,
             id="nano-vr200",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config",
             False,
+            32,
             id="super-gb200",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
             "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config",
             False,
+            32,
             id="super-gb300",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
             "nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config",
             False,
+            32,
             id="super-vr200",
         ),
     ],
@@ -209,6 +215,7 @@ def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
     module_name: str,
     factory_name: str,
     has_comm_overlap: bool,
+    expected_preprocessing_sms: int,
 ) -> None:
     """Selected MXFP8 recipes match the measured CutDSL and MoE overlap settings."""
     module = importlib.import_module(module_name)
@@ -219,7 +226,7 @@ def test_nemotron_3_mxfp8_perf_recipes_enable_cutedsl_fusion(
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.moe_mlp_glu_interleave_size == 32
     assert cfg.model.high_priority_a2a_comm_stream is False
-    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == expected_preprocessing_sms
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     if has_comm_overlap:
         assert cfg.comm_overlap is not None
@@ -363,6 +370,45 @@ def test_nemotron_3_super_64gpu_h100_matches_benchmark_execution_configuration()
     assert benchmark_cfg.ddp.check_for_nan_in_grad is False
     assert training_cfg.checkpoint.save is not None
     assert benchmark_cfg.checkpoint.save is None
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "nemotron_3_super_pretrain_64gpu_b200_bf16_config",
+        "nemotron_3_super_pretrain_64gpu_b200_fp8mx_config",
+        "nemotron_3_super_pretrain_64gpu_b200_nvfp4_config",
+    ],
+)
+def test_nemotron_3_super_64gpu_b200_uses_single_nvlink_domain_ep(recipe_name):
+    """B200 BF16, MXFP8, and NVFP4 recipes keep HybridEP within one NVLink domain."""
+    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
+    cfg = getattr(module, recipe_name)()
+
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+
+
+def test_nemotron_3_super_64gpu_b200_fp8mx_uses_selective_recompute():
+    """B200 MXFP8 recomputes activations to fit EP8."""
+    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
+    cfg = module.nemotron_3_super_pretrain_64gpu_b200_fp8mx_config()
+
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act", "moe", "layernorm", "core_attn"]
+    assert cfg.model.cuda_graph_impl == "none"
+
+
+def test_nemotron_3_super_64gpu_b200_nvfp4_keeps_cuda_graphs_with_light_recompute():
+    """B200 NVFP4 retains CUDA graphs with graph-compatible recompute."""
+    module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh")
+    cfg = module.nemotron_3_super_pretrain_64gpu_b200_nvfp4_config()
+
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe_act", "layernorm"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["mamba", "attn", "moe_router", "moe_preprocess"]
 
 
 def test_nemotron_3_5_lightning_h100_convergence_recipe_uses_perf_execution_policy():

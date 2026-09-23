@@ -17,7 +17,8 @@
 # import even though the package is installed correctly. Every entry MUST carry
 # a justification; the check fails on any import error that is not listed here.
 
-# Require an NVIDIA driver / libcuda.so.1, present only at runtime on a GPU host:
+# Require NVIDIA driver libraries, present only at runtime on a GPU host:
+PyNvVideoCodec  # dlopens libnvidia-encode.so.1 (NVENC)
 deep_ep
 deep_ep_cpp
 hybrid_ep_cpp

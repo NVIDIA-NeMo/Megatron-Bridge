@@ -34,6 +34,7 @@ def import_checkpoint(
     torch_dtype: str,
     trust_remote_code: bool,
     overwrite: bool,
+    text_only: bool = False,
 ) -> None:
     """Import a Hugging Face model into a CPU-initialized Megatron checkpoint.
 
@@ -44,11 +45,14 @@ def import_checkpoint(
         torch_dtype: Weight dtype name.
         trust_remote_code: Allow custom Hugging Face repository code.
         overwrite: Delete a non-empty destination before conversion.
+        text_only: Convert only the supported model's language component.
     """
     prepare_output_directory(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU import: %s -> %s", hf_model, megatron_path)
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     AutoBridge.import_ckpt(
         hf_model_id=hf_model,
         megatron_path=megatron_path,
@@ -70,6 +74,7 @@ def export_checkpoint(
     strict: bool,
     trust_remote_code: bool,
     overwrite: bool,
+    text_only: bool = False,
 ) -> None:
     """Export a Megatron checkpoint to Hugging Face format on CPU.
 
@@ -91,18 +96,29 @@ def export_checkpoint(
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU export: %s -> %s", megatron_path, hf_path)
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
-    reference_model = resolve_hf_model_revision(hf_model, hf_revision)
-    checkpoint_config_bridge = AutoBridge.from_auto_config(megatron_path, reference_model, trust_remote_code=trusted)
+    if text_only:
+        revision_kwargs["text_only"] = True
+    reference_model = (
+        resolve_hf_model_revision(hf_model, hf_revision, config_only=True)
+        if text_only
+        else resolve_hf_model_revision(hf_model, hf_revision)
+    )
+    checkpoint_config_bridge = AutoBridge.from_auto_config(
+        megatron_path,
+        reference_model,
+        trust_remote_code=trusted,
+    )
     reference_path = Path(reference_model)
     if (
-        reference_path.is_dir()
+        not text_only
+        and reference_path.is_dir()
         and not any(reference_path.glob("*.safetensors"))
         and not (reference_path / "model.safetensors.index.json").is_file()
     ):
         bridge = checkpoint_config_bridge
     else:
         bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=trusted, **revision_kwargs)
-        # Preserve the reference wrapper's shard map; replace only its config.
+        # Keep the reference state source and shard map, including packed layouts.
         bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     try:
         bridge.export_ckpt(
