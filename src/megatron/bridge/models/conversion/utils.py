@@ -46,15 +46,18 @@ def unwrap_model(model, module_instances=None):
     if module_instances is None:
         from megatron.core.distributed import DistributedDataParallel as DDP
         from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
+        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+            FullyShardedDataParallelV1,
+            FullyShardedDataParallelV2,
+        )
         from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
         from megatron.core.transformer.module import Float16Module
-
-        from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
 
         module_instances = (
             DDP,
             torch_FSDP,
-            *MEGATRON_FSDP_TYPES,
+            FullyShardedDataParallelV1,
+            FullyShardedDataParallelV2,
             Float16Module,
             MegatronFSDP,
         )

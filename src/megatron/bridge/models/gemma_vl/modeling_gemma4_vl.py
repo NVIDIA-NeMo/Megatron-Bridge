@@ -365,8 +365,7 @@ class Gemma4VLModel(MegatronModule):
 
     def _compute_attention_mask(self, input_ids: torch.Tensor) -> Optional[torch.Tensor]:
         """Compute HF-style attention masks for full and sliding Gemma4 layers."""
-        if not self.pre_process:
-            return None
+        # Every pipeline stage receives token IDs and must preserve image attention.
         batch_size, seq_len = input_ids.shape
         causal_mask = torch.tril(
             torch.ones((batch_size, 1, seq_len, seq_len), dtype=torch.bool, device=input_ids.device)

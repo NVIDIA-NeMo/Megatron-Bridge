@@ -25,7 +25,7 @@ import importlib
 from typing import Callable
 
 import pytest
-from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.enums import AttnBackend, LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -144,6 +144,9 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     cfg = recipe_func()
 
     _assert_basic_config(cfg)
+
+    if recipe_func.__name__.startswith("deepseek_v3_"):
+        assert cfg.model.attention_backend is AttnBackend.auto
 
     # Ensure tokenizer is properly configured
     # DeepSeek pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
