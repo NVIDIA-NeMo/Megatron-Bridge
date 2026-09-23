@@ -9,6 +9,9 @@ Nemotron 3.5 Super VL combines the Nemotron 3 Super language model, including
 its MTP layer, with the Nemotron Omni RADIO vision tower and separate temporal
 video embedder. The model does not include an audio encoder.
 
+For language-only conversion and reuse of the existing Nemotron 3 Super
+recipes, see [the text-only bridge guide](text-only.md).
+
 The functional recipes are defined under
 [`src/megatron/bridge/recipes/nemotron_omni/`](../../../../../src/megatron/bridge/recipes/nemotron_omni/):
 

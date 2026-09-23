@@ -289,6 +289,35 @@ dispatcher backend controls how this communication is implemented:
 | `flex` + DeepEP | DeepEP library | Low-latency SM-based dispatch with GPU-side routing |
 | `flex` + HybridEP | HybridEP library | Fused intra-node NVLink + inter-node IB dispatch |
 
+### Explicit backend selection
+
+Recipes and `apply_flex_dispatcher_backend` preserve the requested backend,
+independently of the GPU on the machine constructing the configuration.
+Hardware validation runs on the training GPU after recipe inheritance and
+user overrides. An unsupported backend raises an error; it is not automatically
+replaced with `alltoall`. Unknown backend names and a final `flex` configuration
+without a backend also raise errors.
+
+For example, a DeepEP recipe used on GB200 must explicitly select a supported
+backend such as HybridEP, or select standard dispatch:
+
+```python
+cfg.model.moe_token_dispatcher_type = "alltoall"
+cfg.model.moe_flex_dispatcher_backend = None
+```
+
+`apply_flex_dispatcher_backend(cfg.model, None)` explicitly sets this pair too.
+The performance launcher's `--moe_flex_dispatcher_backend None` option continues
+to disable flex dispatch. Its backend-only Hydra override
+`model.moe_flex_dispatcher_backend=null` is also normalized to `alltoall` during
+launcher finalization. Direct API users must configure both fields or use the
+helper; validation itself does not repair inconsistent configurations.
+
+Older user configs and copied recipes that relied on automatic hardware
+fallback need the same explicit selection. For a generic H100 recipe used on
+GB200/GB300, select a recipe for the target hardware or set the desired backend
+before training. Backend package and topology requirements still apply.
+
 ### Hardware-informed candidate order
 
 | Hardware | Bring-up | Tuned candidates |

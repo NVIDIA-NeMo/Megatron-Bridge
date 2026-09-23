@@ -6461,7 +6461,7 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code --low-memory-save"
+            "./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code --low-memory-save"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -6507,7 +6507,7 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code --distributed-save --save-every-n-ranks 1"
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron/iter_0000000 --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code --distributed-save --save-every-n-ranks 1"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -6718,7 +6718,7 @@
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft/iter_0000100 --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code --distributed-save --save-every-n-ranks 1",
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 8 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft/iter_0000100 --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code --distributed-save --save-every-n-ranks 1",
             "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task hf-inference --hf-model work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-hf-export --prompt \"Describe the image.\" --image docs/images/tp1.png --max-new-tokens 32 --chat-template --trust-remote-code --device cuda --dtype bfloat16"
           ],
           "dimensions": {},
@@ -6749,7 +6749,7 @@
             {}
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft/iter_0000100 --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code --distributed-save --save-every-n-ranks 1",
+            "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B --hf-revision e86197a3bad449de618a5835f26835ce770c6f10 --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft/iter_0000100 --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-hf-export --torch-dtype bfloat16 --export-weight-dtype bfloat16 --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code --distributed-save --save-every-n-ranks 1",
             "uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py --hf-model work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-hf-export --prompt \"Describe the image.\" --image docs/images/tp1.png --max-new-tokens 32 --chat-template --separate-image-processing --trust-remote-code --device cuda --device-map balanced_low_0 --dtype bfloat16"
           ],
           "dimensions": {},
@@ -6940,12 +6940,12 @@
           "workflow": "checkpoint_resume"
         }
       ],
-      "hf_id": "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B-SourceOfTruth",
+      "hf_id": "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
       "hf_revision": "e86197a3bad449de618a5835f26835ce770c6f10",
       "min_transformers_version": "5.12.1",
       "slug": "nemotron-3.5-super-vl-120b-a12b",
       "source_card": "examples/model_verification_cards/nemotron-3.5-super-vl-120b-a12b/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. Historical training commands, metrics, checkpoint and reload observations are retained below, but pretrain, SFT, PEFT and checkpoint-resume correctness are unverified on both H100 and GB200. The historical shared-provider config copy could omit training finalization callbacks, so finite losses and matching resume losses do not establish synchronized, token-normalized updates. Recipe-specific reverification after the callback fix is pending. Those runs also used one MTP prediction depth and predate the current two-depth shared-block objective, FP32 optimizer-state and weight-decay defaults, and language-only PEFT adapter targets. Their metrics are not corrected-training convergence or throughput baselines. The H100 and GB200 workloads also used different sequence and global batch sizes. The pinned eight-GPU BF16 import and distributed export remain verified: all 43,078 tensors matched the immutable HF source bitwise, and the exported package reloaded natively through Transformers on eight H100s. This conversion evidence is independent of training finalization. Model-level deterministic generation remains pending. Historical post-SFT export and dynamic-image inference demonstrate artifact execution only; their dependent verification awaits a corrected SFT checkpoint. The recipes reuse the Nemotron Omni image/video stack without audio and retain the checkpoint's separate temporal embedder.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. The model ID is the release-facing name. Recorded revisions and results refer to historical development checkpoints, not verification of the release repository; the displayed commands require an available matching checkpoint. Historical training commands, metrics, checkpoint and reload observations are retained below, but pretrain, SFT, PEFT and checkpoint-resume correctness are unverified on both H100 and GB200. The historical shared-provider config copy could omit training finalization callbacks, so finite losses and matching resume losses do not establish synchronized, token-normalized updates. Recipe-specific reverification after the callback fix is pending. Those runs also used one MTP prediction depth and predate the current two-depth shared-block objective, FP32 optimizer-state and weight-decay defaults, and language-only PEFT adapter targets. Their metrics are not corrected-training convergence or throughput baselines. The H100 and GB200 workloads also used different sequence and global batch sizes. The pinned eight-GPU BF16 import and distributed export remain verified: all 43,078 tensors matched the immutable HF source bitwise, and the exported package reloaded natively through Transformers on eight H100s. This conversion evidence is independent of training finalization. Model-level deterministic generation remains pending. Historical post-SFT export and dynamic-image inference demonstrate artifact execution only; their dependent verification awaits a corrected SFT checkpoint. The recipes reuse the Nemotron Omni image/video stack without audio and retain the checkpoint's separate temporal embedder.\n",
       "title": "nemotron_3_5_super_vl_120b_a12b"
     },
     {
