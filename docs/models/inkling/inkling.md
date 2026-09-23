@@ -32,10 +32,10 @@ Supported execution is unpacked text training and full-sequence scoring with
 zero dropout and context parallel size 1. Packed sequences, cached generation,
 CUDA graphs, quantized checkpoint import, and multimodal/MTP training are not
 implemented. FlexAttention backward through the relative bias is tested on
-PyTorch 2.13; older releases are not qualified. Use a serving engine for cached
+PyTorch 2.13; older releases have not been verified. Use a serving engine for cached
 generation.
 
-The two-layer FP32 functional suite passes at TP1/EP1, TP2/EP1, and TP1/EP2
+The recorded two-layer FP32 functional suite passed at TP1/EP1, TP2/EP1, and TP1/EP2
 on H200 with full-layer recomputation. It checks all 42 checkpoint tensors,
 forward/backward parity against Transformers, nonzero LoRA export (20 tensors),
 merged export, and native base/adapter checkpoint restore. Operator tests also
@@ -45,9 +45,19 @@ against FP32 activation followed by one output cast.
 FP32 internal router/convolution weights retain the imported BF16 values but
 export in FP32 unless an export dtype is requested.
 
-Full Inkling-Small promotion remains pending. Qualified runtime revisions and
-gate results are tracked in the [downstream enablement PR](https://github.com/Trajectorylabs/trajectory/pull/6212);
-the tiny-model checks alone do not qualify the 276B checkpoint.
+Full Inkling-Small integration with SkyRL completed ten LoRA updates over 5,120
+trajectories on 16 H200s (eight learner, eight sampler), with checkpoints saved
+at steps 0, 5, and 10. On the same 100 heldout tasks, mean reward was
+0.31 / 0.38 / 0.43 and full successes were 23 / 32 / 38 at those steps.
+These are descriptive results from one run. Separate full-model checks covered
+433-position trainer/sampler update and restore agreement and one sequence
+with 32,768 supervised positions.
+
+The full-model runs used Bridge `7cd9a887` and SkyRL `99bf425d`; later review
+revisions have not been rerun on GPUs. The tiny-model tests exercise conversion
+and numerical behavior separately from these full-model integration tests.
+See the [validation results and reproducible plots](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6170)
+for source revisions, test scope, and remaining CI coverage.
 
 Related implementations include Miles' [Inkling model](https://github.com/radixark/miles/pull/1683)
 and [native LoRA](https://github.com/radixark/miles/pull/2122) support. Those use
