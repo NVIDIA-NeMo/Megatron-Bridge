@@ -31,7 +31,7 @@ def _load_vr200_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     common.ConfigContainer = SimpleNamespace
     common._benchmark_common = lambda _cfg: None
     common._deepseek_v3_common = lambda _cfg: None
-    common._enable_deepseek_full_iteration_mxfp8 = lambda _cfg: None
+    common._enable_deepseek_full_iteration = lambda _cfg: None
     common._perf_precision = lambda _precision: SimpleNamespace()
     common.deepseek_v3_pretrain_config = lambda: SimpleNamespace(
         model=SimpleNamespace(expert_tensor_parallel_size=1),
