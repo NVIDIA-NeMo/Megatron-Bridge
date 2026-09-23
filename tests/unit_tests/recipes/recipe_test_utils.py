@@ -126,6 +126,7 @@ class _OfflineModelProvider:
     def __init__(self) -> None:
         self.apply_rope_fusion = False
         self.batch_p2p_comm = False
+        self.bf16 = False
         self.context_parallel_size = 1
         self.cross_entropy_fusion_impl = "native"
         self.csa_compress_ratios = [0] * 33
@@ -135,6 +136,7 @@ class _OfflineModelProvider:
         self.dsa_indexer_topk_freq = 1
         self.delay_wgrad_compute = False
         self.experimental_attention_variant = "dsa"
+        self.fp16 = False
         # Preconditions of the MXFP8 CuTe DSL fused grouped MLP, asserted by the
         # perf recipe tests: SwiGLU, and FC1/FC2 dims divisible by 64. Absent here
         # the assertions raise AttributeError rather than failing on the value.

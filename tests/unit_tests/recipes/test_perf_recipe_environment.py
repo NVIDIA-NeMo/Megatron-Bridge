@@ -59,6 +59,8 @@ _VR200_CUDNN_LAYERNORM_RECIPES = {
     "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
     "nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config",
+    "nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config",
     "nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config",
 }
 
