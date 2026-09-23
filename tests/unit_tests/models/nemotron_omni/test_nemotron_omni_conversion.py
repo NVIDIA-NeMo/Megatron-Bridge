@@ -623,6 +623,30 @@ def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sour
     assert all(item.megatron_param_names == () and item.megatron_param_name is None for item in exported[1:])
 
 
+@pytest.mark.parametrize("bridge_cls", [NemotronOmniBridge, Nemotron35SuperVLBridge])
+@pytest.mark.parametrize("has_parser", [False, True])
+def test_export_preserves_optional_reasoning_parser(tmp_path, bridge_cls, has_parser):
+    source = tmp_path / "source"
+    source.mkdir()
+    target = tmp_path / "export"
+    target.mkdir()
+    parser_name = "ultra_v3_reasoning_parser.py"
+    parser_source = b"# Optional vLLM reasoning parser\n"
+    if has_parser:
+        (source / parser_name).write_bytes(parser_source)
+    (source / "modeling.py").write_text("# Model entrypoint\n")
+    (source / "unrelated.py").write_text("# Not an export artifact\n")
+    pretrained = PreTrainedCausalLM(model_name_or_path=str(source))
+
+    pretrained._copy_custom_modeling_files(source, target, file_patterns=bridge_cls.ADDITIONAL_FILE_PATTERNS)
+
+    assert (target / "modeling.py").read_bytes() == (source / "modeling.py").read_bytes()
+    assert not (target / "unrelated.py").exists()
+    assert (target / parser_name).exists() is has_parser
+    if has_parser:
+        assert (target / parser_name).read_bytes() == parser_source
+
+
 def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
     modeling_path = tmp_path / "modeling.py"
     modeling_path.write_text("from .configuration import NemotronOmniConfig\n")

@@ -124,7 +124,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         ("moe_shared_expert_overlap", "moe_shared_expert_overlap"),
     ]
 
-    # Custom modeling/processing/audio files to copy during HF export.
+    # Custom modeling/processing/audio files and reasoning parsers for HF export.
     ADDITIONAL_FILE_PATTERNS = [
         "modeling*.py",
         "configuration*.py",
@@ -135,6 +135,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         "video_io.py",
         "audio_model.py",
         "evs.py",
+        "*reasoning_parser.py",
     ]
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
