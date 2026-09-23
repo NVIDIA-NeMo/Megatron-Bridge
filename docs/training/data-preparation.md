@@ -39,6 +39,13 @@ Router-scoped Transformer Engine CUDA graphs cannot consume these changing
 masks with the pinned Megatron-Core version; use an attention-only graph scope
 or disable scoped graphs.
 
+This option provides the decoder's token-validity mask. In NeMo 26.10.rc0,
+Megatron-Core's MTP mask shift inserts `False` at the terminal position, making
+one artificial token per sequence router-valid (including a synthetic padding
+row). The MTP supervision mask does not suppress that token's router auxiliary
+loss. Full padding exclusion with MTP therefore also requires an upstream MTP
+mask-shift fix; the decoder mask alone does not provide it.
+
 ## LLM Pretraining Data
 
 LLM pretraining uses Megatron binary indexed datasets. Each dataset is represented by a prefix with matching `.bin` and `.idx` files:
