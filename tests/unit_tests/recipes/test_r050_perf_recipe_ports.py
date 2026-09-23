@@ -20,7 +20,9 @@ import torch
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_b300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config,
+    deepseek_v3_pretrain_256gpu_vr200_fp8mx_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.qwen import (
@@ -41,7 +43,9 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: bool = True) -> None:
+def _assert_full_iteration_hybridep_mxfp8(
+    cfg, *, fp8_dot_product_attention: bool = True, expert_rank_capacity_factor: float = 1.5
+) -> None:
     """Check the normalized r0.5.0 full-iteration HybridEP settings."""
     assert cfg.model.cuda_graph_impl == "full_iteration"
     assert cfg.model.cuda_graph_scope == []
@@ -50,7 +54,7 @@ def _assert_full_iteration_hybridep_mxfp8(cfg, *, fp8_dot_product_attention: boo
     assert cfg.model.offload_modules == []
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
     assert cfg.model.moe_paged_stash is True
-    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_expert_rank_capacity_factor == expert_rank_capacity_factor
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
     assert cfg.model.moe_shared_expert_overlap is False
@@ -139,6 +143,41 @@ def test_deepseek_v3_gb200_large_scale_matches_r050_fp8mx_base() -> None:
     assert cfg.model.fp8_output_proj is True
     assert cfg.mixed_precision.fp8_dot_product_attention is False
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+
+def test_deepseek_v3_gb300_mxfp8_eager_real_routing() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.moe_pad_experts_for_cuda_graph_inference is False
+    assert cfg.model.moe_expert_capacity_factor is None
+    assert cfg.model.moe_pad_expert_input_to_capacity is False
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.fp8_output_proj is True
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.virtual_pipeline_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(t*4|)*14tmL"
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.recompute_modules == []
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 4096
+    assert cfg.train.train_iters == 50
+
+
+def test_deepseek_v3_vr200_mxfp8_preserves_dispatch_budget() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_vr200_fp8mx_config()
+
+    _assert_full_iteration_hybridep_mxfp8(cfg)
 
 
 def test_deepseek_v3_gb300_large_scale_matches_final_r050_config() -> None:

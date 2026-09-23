@@ -56,6 +56,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
     _enable_partial_cuda_graphs(cfg)
+    cfg.model.moe_router_force_load_balancing = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -284,6 +285,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
     _enable_partial_cuda_graphs(cfg)
+    cfg.model.moe_router_force_load_balancing = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

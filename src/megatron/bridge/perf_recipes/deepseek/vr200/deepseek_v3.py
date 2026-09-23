@@ -301,6 +301,8 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB300)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+    # Preserve VR200 graph settings while the GB300 real-routing configuration is tuned.
+    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=True)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
