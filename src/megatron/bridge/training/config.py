@@ -1187,7 +1187,8 @@ class ConfigContainer(Container):
         if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP8 or FP4.")
 
-        self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+        # MCore maps each dense/expert, inner/outer strategy to its own placements.
+        # Preserve the requested strategies (e.g. dense ZeRO-2 with expert ZeRO-3).
         self.ddp.use_distributed_optimizer = False
         self.optimizer.use_distributed_optimizer = False
         self.ddp.overlap_grad_reduce = False

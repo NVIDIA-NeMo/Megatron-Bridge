@@ -97,6 +97,32 @@ Two practical caveats matter most:
    activation-bound workloads, other techniques such as context parallelism,
    activation recomputation, or CPU offloading may still be needed.
 
+## Independent Sharding with MFSDP V2
+
+With `ddp.megatron_fsdp_version=2`, Bridge preserves the requested inner and
+outer sharding strategies for both expert and non-expert parameters. For
+example, the DeepSeek V3 MLPerf sharding layout uses:
+
+```python
+cfg.ddp.data_parallel_sharding_strategy = "optim_grads"
+cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads_params"
+cfg.ddp.outer_dp_sharding_strategy = "optim"
+cfg.ddp.expert_outer_dp_sharding_strategy = "optim"
+cfg.ddp.num_distributed_optimizer_instances = 4
+```
+
+For 256 GPUs with TP=PP=CP=ETP=1 and EP=64, the non-expert mesh is
+`(outer=4, inner=64)`, while the expert mesh is `(outer=4, inner=1)`.
+Non-expert compute weights remain replicated, with gradients and optimizer
+state sharded. Expert weights are partitioned by EP; the singleton expert
+inner axis performs no additional partitioning. Expert optimizer state is
+sharded across the four outer ranks.
+
+Unset expert strategies inherit their corresponding non-expert strategies.
+Expert strategies also apply to MoE models with EP=1. V2's other restrictions
+still apply, including BF16 training and no checkpoint save/load or FP8 in
+this Bridge path.
+
 ## Torch FSDP2 Status
 
 Megatron Bridge also exposes a PyTorch FSDP2 path via `use_torch_fsdp2`, but
