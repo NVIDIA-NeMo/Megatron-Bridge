@@ -33,6 +33,7 @@ docker build \
 | `MCORE_TRIGGERED_TESTING` | When `true`, skips the uv lockfile check to allow testing against a different Megatron-LM version than the one pinned in the lockfile |
 | `INSTALL_DIFFUSION_DEPS` | When `true`, runs `scripts/install_diffusion_deps.sh` to add WAN codecs to a CI image; defaults to `false` so CVE-carrying codecs stay out of shipped Framework images |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments forwarded to `uv cache prune` after install |
+| `PRESERVE_BASE_RUNTIME` | Preserve a validated base runtime through dependency installation; defaults to `False`. See [base runtime preservation](#preserving-a-validated-base-runtime). |
 
 Use the diffusion dependency opt-in only for CI images that run the diffusion test suite:
 
@@ -49,6 +50,33 @@ The packages installed by `scripts/install_diffusion_deps.sh` are intentionally 
 normal dependency solve in `pyproject.toml`. The installer consumes `scripts/diffusion-deps.lock`,
 which pins package versions and accepted artifact hashes; its header records the regeneration
 command. Do not enable this argument for the NeMo Framework image stack or other release images.
+
+### Preserving a validated base runtime
+
+For a base image with a validated, source-built Transformer Engine/PyTorch pairing
+(such as a Rubin development image), pass `--build-arg PRESERVE_BASE_RUNTIME=True`
+to `Dockerfile.ci`. The default is `False`, preserving the normal installation path.
+
+When enabled, Bridge and FW-final dependency syncs skip installing Transformer
+Engine and cuDNN frontend, and Bridge skips its public CUTLASS DSL replacement.
+FW-final inherits the setting from the Bridge image; it does not need a second
+build argument. The build records the selected Torch, TE, cuDNN frontend, and
+CUTLASS distribution versions and installation locations in
+`/opt/base-runtime-packages.json`, then fails if later checks detect replacement
+or shadowing. Optional TE/CUTLASS companion distributions are checked when present.
+
+Use an immutable base image and retain the manifest with the build provenance.
+This option does not repair an incompatible base, update native libraries, or
+prove binary compatibility or GPU correctness. It intentionally uses base-supplied
+versions instead of the lockfile's versions for these packages. Other build
+layers and downstream images must not reinstall them; in particular, disable
+any later internal cuDNN frontend/CUTLASS reinstallation. A later manual `uv sync`
+does not automatically inherit the Docker commands' skip flags.
+
+Validate the resulting image with import checks and training smoke tests. Both
+normal and immutable-baseline MCore dependency-sync paths honor this option.
+Older Bridge images without the opt-in environment variable remain supported
+by `Dockerfile.fw_final`; the metadata guard is then a no-op.
 
 ### Mamba build workaround
 
@@ -176,6 +204,7 @@ docker build \
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
 | `INSTALL_DIFFUSION_DEPS` | Install the test-only WAN diffusion dependencies; defaults to `false` for Framework/release images |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments for `uv cache prune` |
+| `PRESERVE_BASE_RUNTIME` | Keep validated base TE/cuDNN frontend/CUTLASS packages and verify package metadata; defaults to `False` |
 
 ### `Dockerfile.fw_final`
 
@@ -199,6 +228,7 @@ docker build \
 | `common/install_cudnn.sh` | Reinstall cuDNN from the public NVIDIA CUDA apt repo |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |
 | `common/install_mamba.sh` | Build the locked Mamba sdist with the local C++ standard patch |
+| `common/preserve_base_runtime.py` | Record and check selected base package metadata for opt-in runtime preservation |
 | `patches/deepep.patch` | Patch applied to DeepEP during CI image build |
 | `patches/mamba.patch` | Let Mamba's CUDA extension inherit PyTorch's C++ standard |
 | `patches/vllm.patch` | Patch applied to vLLM after install in fw-base |

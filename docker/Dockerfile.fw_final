@@ -61,9 +61,15 @@ RUN    pushd /opt/Export-Deploy && \
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
 COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
+COPY docker/common/preserve_base_runtime.py /opt/preserve_base_runtime.py
 RUN \
     cd /opt/NeMo-FW && \
-    uv sync --no-cache-dir --all-groups --inexact && \
+    BASE_RUNTIME_UV_ARGS="" && \
+    if [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" = "True" ]; then \
+        BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine --no-install-package transformer-engine-torch"; \
+    fi && \
+    uv sync ${BASE_RUNTIME_UV_ARGS} --no-cache-dir --all-groups --inexact && \
+    python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     uv pip list && \
     chmod +x print_sha.sh && \
     ./print_sha.sh
@@ -148,6 +154,8 @@ RUN GO_GIT_VERSION=5.19.2 && \
 ##############################################################################
 
 WORKDIR /workspace
+
+RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
 
 ARG NVIDIA_BUILD_ID
 ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-<unknown>}
