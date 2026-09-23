@@ -741,6 +741,98 @@ def test_hf_source_can_split_validation_from_training(monkeypatch, tmp_path):
     assert len((tmp_path / "validation.jsonl").read_text().splitlines()) == 2
 
 
+@pytest.mark.parametrize(
+    "payloads",
+    [
+        [{"arguments": {"value": 1}}, {"arguments": {"value": [1, 2]}}],
+        [{"content": "hello 世界"}, {"content": [{"type": "text", "text": "hello 世界"}]}],
+        [{"optional": None}, {"other": {"items": [None, "value"]}}],
+    ],
+)
+def test_hf_validation_split_preserves_nested_payloads(monkeypatch, tmp_path, payloads):
+    examples = [
+        {
+            "conversation": [{"role": "assistant", "content": "answer"}],
+            "row_id": index,
+            "payload": payloads[index % len(payloads)],
+        }
+        for index in range(10)
+    ]
+    monkeypatch.setattr(builder_mod, "_load_hf_examples", lambda *_: examples)
+    config = _hf_config(tmp_path)
+    config.hf_validation_proportion = 0.2
+
+    materialize_hf_dataset(config, tmp_path)
+
+    train = [json.loads(line) for line in (tmp_path / "training.jsonl").read_text().splitlines()]
+    valid = [json.loads(line) for line in (tmp_path / "validation.jsonl").read_text().splitlines()]
+    assert len(train) == 8
+    assert len(valid) == 2
+    assert {row["row_id"] for row in train}.isdisjoint(row["row_id"] for row in valid)
+    assert sorted(train + valid, key=lambda row: row["row_id"]) == examples
+
+
+@pytest.mark.parametrize("seed", [0, 5678])
+@pytest.mark.parametrize("validation_proportion", [0.1, 0.5])
+def test_hf_validation_split_preserves_seeded_row_order(monkeypatch, tmp_path, seed, validation_proportion):
+    from datasets import Dataset
+
+    examples = [
+        {"conversation": [{"role": "assistant", "content": f"answer-{index}"}], "row_id": index} for index in range(10)
+    ]
+    expected = Dataset.from_list(examples).train_test_split(test_size=validation_proportion, seed=seed)
+    monkeypatch.setattr(builder_mod, "_load_hf_examples", lambda *_: examples)
+    config = _hf_config(tmp_path)
+    config.seed = seed
+    config.hf_validation_proportion = validation_proportion
+
+    materialize_hf_dataset(config, tmp_path)
+
+    for filename, split in (("training", "train"), ("validation", "test")):
+        rows = [json.loads(line) for line in (tmp_path / f"{filename}.jsonl").read_text().splitlines()]
+        assert rows == list(expected[split])
+
+
+@pytest.mark.parametrize("cached_split", ["training", "validation"])
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_hf_validation_split_rebuilds_missing_split_consistently(monkeypatch, tmp_path, cached_split, rewrite):
+    examples = [{"conversation": [{"role": "assistant", "content": f"answer-{index}"}]} for index in range(10)]
+    monkeypatch.setattr(builder_mod, "_load_hf_examples", lambda *_: examples)
+    config = _hf_config(tmp_path)
+    config.hf_validation_proportion = 0.2
+    materialize_hf_dataset(config, tmp_path)
+    paths = {split: tmp_path / f"{split}.jsonl" for split in ("training", "validation")}
+    expected = {split: path.read_bytes() for split, path in paths.items()}
+    for split, path in paths.items():
+        if split != cached_split:
+            path.unlink()
+    config.hf_rewrite = rewrite
+
+    materialize_hf_dataset(config, tmp_path)
+
+    assert {split: path.read_bytes() for split, path in paths.items()} == expected
+
+
+@pytest.mark.parametrize("sample_count", [1, 2])
+def test_hf_validation_split_minimum_sample_count(monkeypatch, tmp_path, sample_count):
+    examples = [
+        {"conversation": [{"role": "assistant", "content": f"answer-{index}"}]} for index in range(sample_count)
+    ]
+    monkeypatch.setattr(builder_mod, "_load_hf_examples", lambda *_: examples)
+    config = _hf_config(tmp_path)
+    config.hf_validation_proportion = 0.5
+
+    if sample_count == 1:
+        with pytest.raises(ValueError, match="train set will be empty"):
+            materialize_hf_dataset(config, tmp_path)
+        assert not (tmp_path / "training.jsonl").exists()
+        assert not (tmp_path / "validation.jsonl").exists()
+    else:
+        materialize_hf_dataset(config, tmp_path)
+        rows = [json.loads((tmp_path / f"{split}.jsonl").read_text()) for split in ("training", "validation")]
+        assert sorted(rows, key=lambda row: row["conversation"][0]["content"]) == examples
+
+
 def test_hf_source_reads_local_json(tmp_path):
     source_path = tmp_path / "source.jsonl"
     source_path.write_text(
