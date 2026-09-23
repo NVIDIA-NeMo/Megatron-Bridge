@@ -15,7 +15,7 @@ performs conversion; there is no separate text-only model or pretrained subclass
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
-    "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
+    "nvidia/Nemotron-3.5-Super-120B-A12B",
     text_only=True,
     trust_remote_code=True,
     revision="<checkpoint-commit>",
@@ -36,7 +36,7 @@ The shared CLI accepts `--text-only` for import and export. For example, in a
 GPU-enabled environment with sufficient aggregate memory:
 
 ```bash
-HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
+HF_MODEL=nvidia/Nemotron-3.5-Super-120B-A12B
 HF_REVISION='<checkpoint-commit>'
 
 bash scripts/conversion/convert.sh import \
@@ -75,7 +75,7 @@ H100/GB200 variants and legacy aliases) accept the same source options:
 from megatron.bridge.recipes.nemotronh import nemotron_3_super_sft_config
 
 cfg = nemotron_3_super_sft_config(
-    hf_path="nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
+    hf_path="nvidia/Nemotron-3.5-Super-120B-A12B",
     text_only=True,
     revision="<checkpoint-commit>",
     trust_remote_code=True,
