@@ -134,6 +134,18 @@ class TestAdapterWrapper:
         assert wrapper.adapter is simple_adapter
         assert isinstance(wrapper, nn.Module)
 
+    @pytest.mark.parametrize("gather_output", [True, False, None])
+    def test_gather_output_mirrors_wrapped_layer(self, mock_linear_simple, simple_adapter, gather_output):
+        """GPTModel reads output_layer.gather_output; a wrapper relays the base value.
+
+        A wrapped layer without the attribute is not tensor-parallel, so it reports True.
+        """
+        if gather_output is not None:
+            mock_linear_simple.gather_output = gather_output
+        wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)
+
+        assert wrapper.gather_output is (True if gather_output is None else gather_output)
+
     def test_base_linear_forward_simple(self, mock_linear_simple, simple_adapter):
         """Test base_linear_forward with simple return pattern."""
         wrapper = ConcreteAdapterWrapper(mock_linear_simple, simple_adapter)

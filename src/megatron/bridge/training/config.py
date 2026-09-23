@@ -1144,7 +1144,7 @@ class ConfigContainer(Container):
 
         MFSDP V2 owns its sharded parameter and gradient storage, so it must use
         its dedicated optimizer rather than Bridge's distributed-optimizer path.
-        Checkpointing and model-parallel topologies remain intentionally unsupported
+        Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
         upstream and are rejected here before model construction.
         """
         if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
@@ -1155,7 +1155,6 @@ class ConfigContainer(Container):
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
-            "context_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1163,9 +1162,7 @@ class ConfigContainer(Container):
             if getattr(self.model, name) != 1
         ]
         if configured_parallelisms:
-            raise ValueError(
-                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
-            )
+            raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.expert_model_parallel_size > 1:
             if self.model.num_moe_experts is None:
                 raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
