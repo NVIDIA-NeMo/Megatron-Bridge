@@ -45,8 +45,9 @@ against FP32 activation followed by one output cast.
 FP32 internal router/convolution weights retain the imported BF16 values but
 export in FP32 unless an export dtype is requested.
 
-Full Inkling-Small training, serving parity, and capacity qualification remain
-pending; the tiny-model checks do not qualify the 276B checkpoint.
+Full Inkling-Small promotion remains pending. Qualified runtime revisions and
+gate results are tracked in the [downstream enablement PR](https://github.com/Trajectorylabs/trajectory/pull/6212);
+the tiny-model checks alone do not qualify the 276B checkpoint.
 
 Related implementations include Miles' [Inkling model](https://github.com/radixark/miles/pull/1683)
 and [native LoRA](https://github.com/radixark/miles/pull/2122) support. Those use
