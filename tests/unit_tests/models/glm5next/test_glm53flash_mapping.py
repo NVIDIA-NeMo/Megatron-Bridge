@@ -58,6 +58,30 @@ def test_vlm_mapping_prefixes_text_weights_and_nested_tp_mappings():
             assert mapping._tp_mapping.megatron_param == mapping.megatron_param
 
 
+def test_mtp_final_layernorm_round_trips_through_the_mtp_shared_head_norm():
+    config_module = pytest.importorskip("transformers.models.glm5_next.configuration_glm5_next")
+    config = config_module.Glm5NextConfig(
+        text_config={
+            "scoring_func": "sigmoid",
+            "num_nextn_predict_layers": 1,
+        }
+    )
+    bridge = GLM53FlashBridge()
+    bridge.hf_config = config
+    registry = bridge.mapping_registry()
+
+    megatron_name = "language_model.mtp.layers.0.final_layernorm.weight"
+    hf_name = f"model.language_model.layers.{config.text_config.num_hidden_layers}.shared_head.norm.weight"
+
+    imported = registry.megatron_to_hf_lookup(megatron_name)
+    assert imported is not None
+    assert imported.hf_param == hf_name
+
+    exported = registry.hf_to_megatron_lookup(hf_name)
+    assert exported is not None
+    assert exported.megatron_param == megatron_name
+
+
 @pytest.mark.parametrize("gate_lower_bound", [-5.0, -1.0])
 @pytest.mark.parametrize("kda_disable_fp8", [False, True])
 def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
