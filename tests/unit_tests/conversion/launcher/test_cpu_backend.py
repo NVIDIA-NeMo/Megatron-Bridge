@@ -16,11 +16,12 @@ def _load_cpu_backend():
     calls = []
 
     class Bridge:
-        def __init__(self, config):
-            self.hf_pretrained = types.SimpleNamespace(config=config)
+        def __init__(self, config, *, config_only=False):
+            self.hf_pretrained = config if config_only else types.SimpleNamespace(config=config)
 
         def export_ckpt(self, **kwargs):
-            calls.append(("export_ckpt", self.hf_pretrained.config, kwargs))
+            config = self.hf_pretrained if isinstance(self.hf_pretrained, str) else self.hf_pretrained.config
+            calls.append(("export_ckpt", config, kwargs))
 
     class AutoBridge:
         @staticmethod
@@ -35,7 +36,7 @@ def _load_cpu_backend():
         @staticmethod
         def from_auto_config(*args, **kwargs):
             calls.append(("from_auto_config", args, kwargs))
-            return types.SimpleNamespace(hf_pretrained="checkpoint-config")
+            return Bridge("checkpoint-config", config_only=True)
 
     modules = {
         "megatron": types.ModuleType("megatron"),
@@ -148,14 +149,14 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
             {"overwrite": False, "source_paths": [str(checkpoint), "hf/model"]},
         ),
         (
-            "from_hf_pretrained",
-            ("hf/model",),
-            {"trust_remote_code": False, "revision": "0123456789abcdef"},  # pragma: allowlist secret
-        ),
-        (
             "from_auto_config",
             (str(checkpoint), "hf/model@0123456789abcdef"),  # pragma: allowlist secret
             {"trust_remote_code": False},
+        ),
+        (
+            "from_hf_pretrained",
+            ("hf/model",),
+            {"trust_remote_code": False, "revision": "0123456789abcdef"},  # pragma: allowlist secret
         ),
         (
             "export_ckpt",
@@ -168,3 +169,66 @@ def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path
             },
         ),
     ]
+
+
+def test_text_only_export_keeps_reference_wrapper_without_weights(tmp_path, monkeypatch):
+    module, calls = _load_cpu_backend()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    reference = tmp_path / "reference"
+    reference.mkdir()
+    resolved = []
+    monkeypatch.setattr(
+        module,
+        "resolve_hf_model_revision",
+        lambda *args, **kwargs: resolved.append((args, kwargs)) or str(reference),
+    )
+
+    module.export_checkpoint(
+        hf_model=str(reference),
+        hf_revision="pinned",
+        megatron_path=str(checkpoint),
+        hf_path=str(tmp_path / "hf-export"),
+        show_progress=False,
+        strict=True,
+        trust_remote_code=False,
+        overwrite=False,
+        text_only=True,
+    )
+
+    assert resolved == [((str(reference), "pinned"), {"config_only": True})]
+    assert [call[0] for call in calls] == [
+        "prepare_output_directory",
+        "from_auto_config",
+        "from_hf_pretrained",
+        "export_ckpt",
+    ]
+    assert calls[2][2] == {"trust_remote_code": False, "revision": "pinned", "text_only": True}
+    assert calls[3][1] == "checkpoint-config"
+
+
+def test_export_uses_config_only_bridge_when_reference_has_no_weights(tmp_path):
+    module, calls = _load_cpu_backend()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    reference = tmp_path / "reference"
+    reference.mkdir()
+
+    module.export_checkpoint(
+        hf_model=str(reference),
+        hf_revision=None,
+        megatron_path=str(checkpoint),
+        hf_path=str(tmp_path / "hf-export"),
+        show_progress=True,
+        strict=False,
+        trust_remote_code=False,
+        overwrite=True,
+    )
+
+    assert [call[0] for call in calls] == [
+        "prepare_output_directory",
+        "from_auto_config",
+        "export_ckpt",
+    ]
+    assert calls[1] == ("from_auto_config", (str(checkpoint), str(reference)), {"trust_remote_code": False})
+    assert calls[2][1] == "checkpoint-config"

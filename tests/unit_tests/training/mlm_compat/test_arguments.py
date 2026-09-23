@@ -316,6 +316,17 @@ class TestTransformerConfigFromArgs:
         assert cfg.quant_recipe == mock_recipe
         mock_kitchen_config.assert_called_once_with(42)
 
+    def test_rejects_custom_config_without_mla_fields(self, basic_args):
+        """A custom provider must not be silently replaced by the generic MLA config."""
+
+        @dataclass
+        class CustomTransformerConfig(TransformerConfig):
+            custom_field: int = 42
+
+        basic_args.multi_latent_attention = True
+        with pytest.raises(ValueError, match="cannot represent multi_latent_attention"):
+            _transformer_config_from_args(basic_args, CustomTransformerConfig)
+
     def test_custom_config_class(self, basic_args):
         """Test using a custom config class."""
 
