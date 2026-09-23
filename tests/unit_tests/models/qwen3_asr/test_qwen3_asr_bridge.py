@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 from copy import deepcopy
 from types import MappingProxyType, SimpleNamespace
 
