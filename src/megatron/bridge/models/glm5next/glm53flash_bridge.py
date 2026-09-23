@@ -726,7 +726,7 @@ class GLM53FlashBridge(MegatronModelBridge):
                     _EhProjSplitMapping(f"{mtp_mg}.h_proj.weight", eh_proj, 1),
                     AutoMapping(
                         f"{mtp_mg}.final_layernorm.weight",
-                        "model.language_model.norm.weight",
+                        f"{mtp_hf}.shared_head.norm.weight",
                     ),
                 ]
             )
