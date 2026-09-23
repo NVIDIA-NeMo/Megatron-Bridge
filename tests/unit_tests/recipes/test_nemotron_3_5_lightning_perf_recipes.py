@@ -36,6 +36,8 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config,
     nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config,
     nemotron_3_5_lightning_pretrain_16gpu_h100_fp8cs_config,
     nemotron_3_nano_pretrain_8gpu_b200_bf16_config,
@@ -98,6 +100,10 @@ _GB300_RECIPES = (
 _GB_FSDP_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
+)
+_VR200_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config,
 )
 _NEMOTRON_3_RECIPES = (
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
@@ -255,6 +261,14 @@ _NEMOTRON_NANO_PERF_FACTORIES = (
         "megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh",
         "nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config",
     ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
+        "nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
+        "nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config",
+    ),
 )
 
 
@@ -280,7 +294,15 @@ def test_standard_perf_recipes_do_not_expose_mtp_flag(recipe_factory: Callable[[
 
 @pytest.mark.parametrize(
     "recipe_factory",
-    (*_H100_RECIPES, *_B200_RECIPES, *_B300_RECIPES, *_GB200_RECIPES, *_GB300_RECIPES, *_GB_FSDP_RECIPES),
+    (
+        *_H100_RECIPES,
+        *_B200_RECIPES,
+        *_B300_RECIPES,
+        *_GB200_RECIPES,
+        *_GB300_RECIPES,
+        *_GB_FSDP_RECIPES,
+        *_VR200_RECIPES,
+    ),
     ids=lambda recipe: recipe.__name__,
 )
 def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) -> None:
@@ -528,6 +550,28 @@ def test_gb300_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.model.moe_hybridep_num_sms == 16
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+@pytest.mark.parametrize(
+    ("vr200_factory", "gb300_factory"),
+    (
+        (
+            nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config,
+            nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
+        ),
+        (
+            nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config,
+            nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+        ),
+    ),
+    ids=lambda value: value.__name__,
+)
+def test_vr200_perf_recipes_match_gb300_configs(
+    vr200_factory: Callable[[], ConfigContainer],
+    gb300_factory: Callable[[], ConfigContainer],
+) -> None:
+    """VR200 Nemotron 3.5 recipes match their GB300 configuration baselines."""
+    assert vr200_factory() == gb300_factory()
 
 
 @pytest.mark.parametrize("recipe_factory", _GB_FSDP_RECIPES, ids=lambda recipe: recipe.__name__)
