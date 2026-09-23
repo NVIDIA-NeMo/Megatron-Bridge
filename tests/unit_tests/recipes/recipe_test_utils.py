@@ -142,6 +142,8 @@ class _OfflineModelProvider:
         # the assertions raise AttributeError rather than failing on the value.
         # Values mirror Qwen3.5-VL 35B-A3B.
         self.gated_linear_unit = True
+        # DeepSeek's bridge enables this before communication-overlap setup.
+        self.gradient_accumulation_fusion = True
         self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
         self.moe_flex_dispatcher_backend = None
@@ -155,6 +157,7 @@ class _OfflineModelProvider:
         self.rotary_scaling_factor = 1
         self.seq_length = 4096
         self.tensor_model_parallel_size = 1
+        self.tp_comm_overlap = False
         self.use_te_rng_tracker = False
         self.use_transformer_engine_op_fuser = False
         self.vocab_size = 256000

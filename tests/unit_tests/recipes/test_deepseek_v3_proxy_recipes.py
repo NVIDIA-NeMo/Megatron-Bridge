@@ -121,6 +121,8 @@ def test_proxy_overlap_setup_without_pipeline_parallelism(monkeypatch: pytest.Mo
     cfg.comm_overlap.finalize()
     cfg.comm_overlap.setup(cfg.model, cfg.optimizer, cfg.ddp)
 
+    assert cfg.model.gradient_accumulation_fusion is True
+    assert cfg.model.tp_comm_overlap is False
     assert cfg.model.overlap_p2p_comm is False
     assert cfg.model.batch_p2p_comm is False
     assert cfg.model.overlap_moe_expert_parallel_comm is True
