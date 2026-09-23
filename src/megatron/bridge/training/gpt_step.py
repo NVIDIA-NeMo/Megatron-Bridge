@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,6 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.transformer.enums import LayerType
-from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
     get_batch_on_this_cp_rank,
@@ -57,7 +56,6 @@ _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _PackedMetadataValue = torch.Tensor | int | None
-_MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED = "_mbridge_expert_bias_padding_mask_compatible"
 _MCORE_SCHEDULE_PADDING_MASK_PATCHED = "_mbridge_schedule_padding_mask_compatible"
 
 
@@ -96,33 +94,6 @@ def _packed_metadata_for_forward(batch: dict[str, torch.Tensor]) -> dict[str, _P
     if batch.get("cu_seqlens") is not None:
         return {key: batch[key] for key in _LEGACY_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
     return None
-
-
-def _patch_mcore_expert_bias_padding_mask() -> None:
-    """Adapt MCore expert-bias routing to accept a flat padding mask.
-
-    TODO(https://github.com/NVIDIA/Megatron-LM/issues/6111): Remove this
-    compatibility patch after the MCore dev fix reaches the pinned main commit.
-    """
-    current_apply_expert_bias = TopKRouter._apply_expert_bias
-    if getattr(current_apply_expert_bias, _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED, False):
-        return
-
-    def _apply_expert_bias(
-        self: TopKRouter,
-        routing_map: torch.Tensor,
-        padding_mask: torch.Tensor | None = None,
-    ) -> None:
-        if padding_mask is not None:
-            flat_mask = padding_mask.reshape(-1)
-            assert flat_mask.shape[0] == routing_map.shape[0], (
-                f"padding_mask flat {flat_mask.shape} vs routing_map {routing_map.shape}"
-            )
-            padding_mask = flat_mask.unsqueeze(-1)
-        current_apply_expert_bias(self, routing_map, padding_mask=padding_mask)
-
-    setattr(_apply_expert_bias, _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED, True)
-    TopKRouter._apply_expert_bias = _apply_expert_bias
 
 
 def _patch_mcore_schedule_plan_padding_mask() -> None:
@@ -208,9 +179,6 @@ def _prepare_packed_padding_mask(
     """Prepare an alignment-padding mask for the current model stage."""
     if padding_mask is None:
         return None
-    if getattr(config, "moe_router_enable_expert_bias", False):
-        _patch_mcore_expert_bias_padding_mask()
-
     # A pre-process GPT stage scatters this mask alongside its embeddings. HybridModel
     # scatters only its embeddings in the pinned MCore, while later PP stages already
     # receive SP-local activations, so both paths need the matching local mask here.
