@@ -100,6 +100,35 @@ HF_ARCHITECTURE_ALIASES: dict[str, str] = {
 MTP_CONFIG_FIELDS: tuple[str, ...] = ("num_nextn_predict_layers", "mtp_num_hidden_layers", "mtp_num_layers")
 _MISSING = object()
 
+
+def _resolve_checkpoint_path(checkpoint_path: str | Path) -> Path:
+    """Resolve a checkpoint path using Megatron's tracker and release semantics."""
+    path = Path(checkpoint_path).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(f"Megatron checkpoint not found: {path}")
+
+    # Native legacy checkpoints may contain only common.pt and therefore predate
+    # the iteration markers understood by the current checkpoint resolver.
+    if (path / "common.pt").is_file():
+        return path
+
+    from megatron.bridge.training.checkpointing import (
+        _DIRECT_ITERATION_DIR_SENTINEL,
+        _resolve_checkpoint_iteration,
+    )
+    from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
+
+    iteration, release = _resolve_checkpoint_iteration(str(path), None)
+    if iteration == _DIRECT_ITERATION_DIR_SENTINEL:
+        return path
+    if iteration >= 0 or release:
+        return Path(get_checkpoint_name(str(path), iteration, release))
+    raise FileNotFoundError(
+        f"Could not resolve a checkpoint iteration from {path}. "
+        "Expected Megatron tracker metadata or a direct checkpoint directory."
+    )
+
+
 _MINIMUM_TRANSFORMERS_BY_ARCHITECTURE: dict[str, str] = {
     "Qwen3_5ForTokenClassification": "5.9",
 }
@@ -415,7 +444,7 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         Create a config-only AutoBridge by synthesizing an HF config from a Megatron checkpoint.
 
-        This method creates a bridge instace from a Megatron checkpoint and reference hf_model_id,
+        This method creates a bridge instance from a Megatron checkpoint and reference hf_model_id,
         without loading any weights. This enables exporting of:
         - Custom small models of popular architectures
         - Models pruned from a larger teacher model
@@ -432,7 +461,8 @@ class AutoBridge(Generic[MegatronModelT]):
             AutoBridge: Bridge instance configured for the architecture
 
         Raises:
-            FileNotFoundError: If run_config.yaml is not found in the Megatron path
+            FileNotFoundError: If the checkpoint path or iteration is missing.
+            ValueError: If a native checkpoint has no saved legacy model arguments.
         """
         warn_if_legacy_nemotron_path(hf_model_id)
 
@@ -441,43 +471,51 @@ class AutoBridge(Generic[MegatronModelT]):
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.model_load_save import load_model_config
 
-        checkpoint_path = Path(megatron_path)
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Megatron checkpoint not found: {checkpoint_path}")
+        checkpoint_path = _resolve_checkpoint_path(megatron_path)
+        megatron_cfg, legacy_args = load_model_config(str(checkpoint_path))
+        if legacy_args is None and not (checkpoint_path / "run_config.yaml").is_file():
+            raise ValueError(f"Native checkpoint at {checkpoint_path} has no legacy model arguments in common.pt")
 
-        # Look for configuration files to determine the model type
-        run_config = checkpoint_path / "run_config.yaml"
-        if not run_config.exists():
-            iter_dirs = [d for d in checkpoint_path.iterdir() if d.is_dir() and d.name.startswith("iter_")]
-            if iter_dirs:
-                latest_iter = max(iter_dirs, key=lambda d: int(d.name.replace("iter_", "")))
-                run_config = latest_iter / "run_config.yaml"
-
-        if not run_config.exists():
-            raise FileNotFoundError(
-                f"Could not find run_config.yaml in {checkpoint_path}. Ensure this is a valid Megatron checkpoint."
-            )
-
-        # 1. Load config from both sides
-        megatron_cfg, _ = load_model_config(str(run_config.parent))
         if trust_remote_code:
             logger.warning(
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
                 "from the model repository. Only use this with models you trust."
             )
         hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
-        # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
-        megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
-        megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
-        megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
-        # 3. Build final bridge from the synthesized config
-        synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
-        synthesized_config.name_or_path = hf_model_id
-        bridge = cls.from_hf_config(synthesized_config)
+
+        if legacy_args is not None:
+            bridge = bridge._legacy_bridge_for_checkpoint(legacy_args)
+        else:
+            megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
+            megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+            megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
+            synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
+            synthesized_config.name_or_path = hf_model_id
+            bridge = cls.from_hf_config(synthesized_config)
+
         bridge.hf_model_id = hf_model_id
         bridge.trust_remote_code = trust_remote_code
+        return bridge
 
+    def _legacy_bridge_for_checkpoint(self, legacy_args: Any) -> "AutoBridge":
+        """Build a bridge config from native Megatron argparse metadata."""
+        from megatron.bridge.models.conversion.utils import conform_config_to_reference
+        from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
+
+        reference_config = (
+            self.hf_pretrained if isinstance(self.hf_pretrained, PretrainedConfig) else self.hf_pretrained.config
+        )
+        provider_class = self._model_bridge.PROVIDER_CLASS or GPTModelProvider
+        legacy_config = _transformer_config_from_args(legacy_args, config_class=provider_class)
+        config_dict = self._model_bridge.megatron_to_hf_config(legacy_config)
+        config_dict = conform_config_to_reference(config_dict, reference_config.to_dict())
+        config_dict = _drop_readonly_config_properties(config_dict, type(reference_config))
+        synthesized_config = type(reference_config)(**config_dict)
+        bridge = type(self).from_hf_config(synthesized_config)
+        bridge.hf_model_id = self.hf_model_id
+        bridge.hf_model_revision = self.hf_model_revision
+        bridge.trust_remote_code = self.trust_remote_code
         return bridge
 
     @classmethod
@@ -1375,11 +1413,10 @@ class AutoBridge(Generic[MegatronModelT]):
         self, path: str | Path, *, mp_overrides: ModelParallelKwargs | None = None, **kwargs: Unpack[GetModelKwargs]
     ) -> list[MegatronModelT]:
         """
-        Load a Megatron model from a native Megatron checkpoint.
+        Load a Megatron model from a native or Bridge checkpoint.
 
-        This method loads a model from a Megatron checkpoint that was saved using
-        the save_megatron_model method. It reads the checkpoint configuration,
-        creates the appropriate model provider, and loads the weights.
+        A checkpoint without run_config.yaml builds its registered model provider
+        from saved Megatron arguments and then loads the checkpoint weights.
 
         Args:
             path: Directory path where the Megatron checkpoint is stored
@@ -1402,13 +1439,16 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Note:
             - This method is collective and must be called by all ranks
-            - The checkpoint must have been saved with save_megatron_model
+            - Native checkpoints must contain saved legacy model arguments
             - The model architecture must match the bridge configuration
         """
         try:
-            from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
-            from megatron.bridge.training.model_load_save import load_megatron_model
-            from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
+            from megatron.bridge.training.model_load_save import (
+                _prepare_model_config_for_load,
+                build_and_load_model,
+                load_megatron_model,
+                load_model_config,
+            )
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
@@ -1417,38 +1457,40 @@ class AutoBridge(Generic[MegatronModelT]):
 
             register_allowed_target_prefix("transformers_modules.")
 
-        checkpoint_path = Path(path)
-
-        iteration, release = _resolve_checkpoint_iteration(str(checkpoint_path), None)
-        if iteration >= 0 or release:
-            checkpoint_path = Path(get_checkpoint_name(str(checkpoint_path), iteration, release))
-
-        # Check for iter_* folders
-        iter_folders = [f for f in checkpoint_path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
-
-        if iter_folders:
-            # Find the folder with the largest iteration number
-            def get_iter_number(folder_name):
-                try:
-                    return int(folder_name.replace("iter_", ""))
-                except ValueError:
-                    return -1  # Invalid format, put at the end
-
-            latest_iter = max(iter_folders, key=lambda f: get_iter_number(f.name))
-            checkpoint_path = checkpoint_path / latest_iter.name
-        # else: checkpoint_path remains as the input path (no iter folders found)
-
+        checkpoint_path = _resolve_checkpoint_path(path)
         skip_temp_dist_context = dist.is_initialized()
         use_cpu_init = kwargs.get("use_cpu_initialization")
         if use_cpu_init is None:
             use_cpu_init = skip_temp_dist_context and dist.get_backend() == "gloo"
-        # Load the state dict
-        model = load_megatron_model(
-            str(checkpoint_path),
-            use_cpu_init=use_cpu_init,
-            skip_temp_dist_context=skip_temp_dist_context,
-            mp_overrides=mp_overrides,
-        )
+
+        if (checkpoint_path / "run_config.yaml").is_file():
+            model = load_megatron_model(
+                str(checkpoint_path),
+                use_cpu_init=use_cpu_init,
+                skip_temp_dist_context=skip_temp_dist_context,
+                mp_overrides=mp_overrides,
+            )
+        else:
+            _, legacy_args = load_model_config(str(checkpoint_path))
+            if legacy_args is None:
+                raise ValueError(f"Native checkpoint at {checkpoint_path} has no legacy model arguments in common.pt")
+            legacy_bridge = self._legacy_bridge_for_checkpoint(legacy_args)
+            if isinstance(self.hf_pretrained, PretrainedConfig):
+                self.hf_pretrained = legacy_bridge.hf_pretrained
+                self.__dict__.pop("_config_only_pretrained", None)
+            else:
+                # Keep the loaded wrapper and its lazy source; replace only its config.
+                self.hf_pretrained.config = legacy_bridge.hf_pretrained
+
+            provider = legacy_bridge.to_megatron_provider(load_weights=False)
+            _prepare_model_config_for_load(provider, use_cpu_init=use_cpu_init, mp_overrides=mp_overrides)
+            model = build_and_load_model(
+                str(checkpoint_path),
+                provider,
+                use_cpu_init=use_cpu_init,
+                skip_temp_dist_context=skip_temp_dist_context,
+            )
+
         return model if isinstance(model, list) else [model]
 
     @classmethod

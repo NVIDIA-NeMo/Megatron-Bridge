@@ -435,6 +435,60 @@ def build_and_load_model(
             return _load_checkpoint()
 
 
+def _prepare_model_config_for_load(
+    model_cfg: TransformerConfig | ModelConfig,
+    *,
+    use_cpu_init: bool = False,
+    mp_overrides: Optional[ModelParallelKwargs] = None,
+) -> TransformerConfig | ModelConfig:
+    """Apply single-rank loading settings to a model config."""
+    saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
+    # If in single GPU environment, reset additional parallel settings.
+    model_cfg.tensor_model_parallel_size = 1
+    model_cfg.pipeline_model_parallel_size = 1
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
+    model_cfg.context_parallel_size = 1
+    model_cfg.expert_model_parallel_size = 1
+    model_cfg.expert_tensor_parallel_size = 1
+    if getattr(model_cfg, "hybrid_layer_pattern", None):
+        model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
+    model_cfg.sequence_parallel = False
+    model_cfg.perform_initialization = False
+    model_cfg.virtual_pipeline_model_parallel_size = None
+    model_cfg.hierarchical_context_parallel_sizes = None
+    model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1.
+    model_cfg.delay_wgrad_compute = False  # Required with overlap=False.
+    _disable_cuda_graphs_for_hybrid_load(model_cfg)
+    if use_cpu_init:
+        model_cfg.fp8 = None
+        model_cfg.fp8_param = False
+
+    if mp_overrides:
+        for key, value in mp_overrides.items():
+            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
+                setattr(model_cfg, key, value)
+
+        if (
+            "pipeline_model_parallel_size" in mp_overrides
+            and model_cfg.pipeline_model_parallel_size != saved_pipeline_model_parallel_size
+            and "pipeline_model_parallel_layout" not in mp_overrides
+        ):
+            model_cfg.pipeline_model_parallel_layout = None
+
+    # A saved flexible layout must not become virtual pipeline chunks after collapsing to one rank.
+    if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
+        model_cfg.pipeline_model_parallel_layout = None
+
+    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export.
+    if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
+        tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
+        ep = getattr(model_cfg, "expert_model_parallel_size", 1)
+        if tp * ep == 1:
+            model_cfg.moe_token_dispatcher_type = "allgather"
+    return model_cfg
+
+
 def load_megatron_model(
     checkpoint_path: str,
     model_type: Optional[Literal["gpt", "hybrid", "mamba"]] = None,
@@ -466,52 +520,7 @@ def load_megatron_model(
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
     model_cfg, mlm_args = load_model_config(checkpoint_path)
-    saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
-    # If in single GPU environment, reset additional parallel settings
-    model_cfg.tensor_model_parallel_size = 1
-    model_cfg.pipeline_model_parallel_size = 1
-    model_cfg.num_layers_in_first_pipeline_stage = None
-    model_cfg.num_layers_in_last_pipeline_stage = None
-    model_cfg.context_parallel_size = 1
-    model_cfg.expert_model_parallel_size = 1
-    model_cfg.expert_tensor_parallel_size = 1
-    if getattr(model_cfg, "hybrid_layer_pattern", None):
-        model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
-    model_cfg.sequence_parallel = False
-    model_cfg.perform_initialization = False
-    model_cfg.virtual_pipeline_model_parallel_size = None
-    model_cfg.hierarchical_context_parallel_sizes = None
-    model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1
-    model_cfg.delay_wgrad_compute = False  # Required with overlap=False
-    _disable_cuda_graphs_for_hybrid_load(model_cfg)
-    if use_cpu_init:
-        model_cfg.fp8 = None
-        model_cfg.fp8_param = False
-
-    # Apply model-parallel overrides if provided
-    if mp_overrides:
-        for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
-                setattr(model_cfg, key, value)
-
-        if (
-            "pipeline_model_parallel_size" in mp_overrides
-            and model_cfg.pipeline_model_parallel_size != saved_pipeline_model_parallel_size
-            and "pipeline_model_parallel_layout" not in mp_overrides
-        ):
-            model_cfg.pipeline_model_parallel_layout = None
-
-    # A saved flexible layout describes PP/VPP stage ownership. It must not be
-    # reinterpreted as virtual pipeline chunks after collapsing to one rank.
-    if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
-        model_cfg.pipeline_model_parallel_layout = None
-
-    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
-    if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
-        tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
-        ep = getattr(model_cfg, "expert_model_parallel_size", 1)
-        if tp * ep == 1:
-            model_cfg.moe_token_dispatcher_type = "allgather"
+    _prepare_model_config_for_load(model_cfg, use_cpu_init=use_cpu_init, mp_overrides=mp_overrides)
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context

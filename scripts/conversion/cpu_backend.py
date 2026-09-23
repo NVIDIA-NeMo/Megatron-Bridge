@@ -26,23 +26,6 @@ from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 logger = logging.getLogger(__name__)
 
 
-def _find_run_config(checkpoint_path: Path) -> Path:
-    """Find the run config used to synthesize an exported HF config."""
-    config_files = list(checkpoint_path.glob("**/run_config.yaml"))
-    if config_files:
-        return config_files[0]
-
-    iteration_dirs = [path for path in checkpoint_path.iterdir() if path.is_dir() and path.name.startswith("iter_")]
-    if iteration_dirs:
-        latest_iteration = max(iteration_dirs, key=lambda path: int(path.name.removeprefix("iter_")))
-        config_path = latest_iteration / "run_config.yaml"
-        if config_path.exists():
-            return config_path
-    raise FileNotFoundError(
-        f"Could not find run_config.yaml in {checkpoint_path}. Ensure this is a valid Megatron checkpoint."
-    )
-
-
 def import_checkpoint(
     *,
     hf_model: str,
@@ -103,23 +86,24 @@ def export_checkpoint(
     checkpoint_path = Path(megatron_path).expanduser()
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Megatron checkpoint does not exist: {checkpoint_path}")
-    config_path = _find_run_config(checkpoint_path)
     prepare_output_directory(hf_path, overwrite=overwrite, source_paths=[megatron_path, hf_model])
 
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU export: %s -> %s", megatron_path, hf_path)
-    logger.info("Using Megatron run config: %s", config_path)
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=trusted, **revision_kwargs)
     reference_model = resolve_hf_model_revision(hf_model, hf_revision)
-    checkpoint_config_bridge = AutoBridge.from_auto_config(
-        megatron_path,
-        reference_model,
-        trust_remote_code=trusted,
-    )
-    # Preserve the reference wrapper's state source and shard map so model
-    # families with packed HF weights export in their canonical representation.
-    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
+    checkpoint_config_bridge = AutoBridge.from_auto_config(megatron_path, reference_model, trust_remote_code=trusted)
+    reference_path = Path(reference_model)
+    if (
+        reference_path.is_dir()
+        and not any(reference_path.glob("*.safetensors"))
+        and not (reference_path / "model.safetensors.index.json").is_file()
+    ):
+        bridge = checkpoint_config_bridge
+    else:
+        bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=trusted, **revision_kwargs)
+        # Preserve the reference wrapper's shard map; replace only its config.
+        bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     try:
         bridge.export_ckpt(
             megatron_path=megatron_path,
