@@ -87,6 +87,14 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.cuda_graph_warmup_steps = megatron_config.cuda_graph_warmup_steps
     config.external_cuda_graph = megatron_config.external_cuda_graph
 
+    # Transformer Engine's attention backend env vars are process-wide, and MCore's
+    # set_attention_backend asserts that every model built in the process agrees on them,
+    # so the vision encoder must use the language model's attention backend.
+    config.attention_backend = getattr(megatron_config, "attention_backend", config.attention_backend)
+    config.flash_attention_version = getattr(
+        megatron_config, "flash_attention_version", config.flash_attention_version
+    )
+
     config.num_moe_experts = None
     config.expert_model_parallel_size = 1
     config.moe_ffn_hidden_size = None
