@@ -25,11 +25,15 @@ Tests cover:
 
 import os
 import tempfile
+from types import SimpleNamespace
 
 import pytest
 import torch
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super import (
+    nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+)
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_16gpu_h100_bf16_config,
     nemotron_3_super_pretrain_16gpu_h100_bf16_config,
@@ -42,6 +46,58 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        nemotron_3_super_pretrain_config,
+        nemotron_3_super_pretrain_16gpu_h100_bf16_config,
+        nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+        nemotron_3_super_sft_config,
+        nemotron_3_super_sft_16gpu_h100_bf16_config,
+        nemotron_3_super_sft_16gpu_h100_bf16_32k_config,
+        nemotron_3_super_peft_config,
+        nemotron_3_super_peft_16gpu_h100_bf16_config,
+    ],
+)
+def test_text_only_source_preserves_super_recipe_policy(monkeypatch, recipe):
+    calls = []
+
+    def from_hf(path, **kwargs):
+        calls.append((path, kwargs))
+        provider = HybridModelProvider(
+            hidden_size=256,
+            num_attention_heads=8,
+            hybrid_layer_pattern="ME*E",
+            vocab_size=131072,
+            hf_model_id=path,
+            hf_model_revision=kwargs.get("revision"),
+            hf_model_text_only=kwargs.get("text_only", False),
+        )
+        return SimpleNamespace(
+            to_megatron_provider=lambda *, load_weights: provider,
+            hf_model_revision=kwargs.get("revision"),
+        )
+
+    monkeypatch.setattr("megatron.bridge.AutoBridge.from_hf_pretrained", from_hf)
+    original = recipe()
+    selected = recipe(hf_path="org/vl", text_only=True, revision="pinned", trust_remote_code=True)
+    assert calls[-1] == ("org/vl", {"text_only": True, "revision": "pinned", "trust_remote_code": True})
+    assert selected.tokenizer.tokenizer_model == "org/vl"
+    assert selected.tokenizer.hf_tokenizer_kwargs["revision"] == "pinned"
+    assert selected.checkpoint.hf_trust_remote_code
+    expected = original.to_dict()
+    actual = selected.to_dict()
+    expected.pop("tokenizer")
+    actual.pop("tokenizer")
+    expected["checkpoint"].pop("hf_trust_remote_code")
+    actual["checkpoint"].pop("hf_trust_remote_code")
+    for field in ("hf_model_id", "hf_model_revision", "hf_model_text_only"):
+        expected["model"].pop(field)
+        actual["model"].pop(field)
+    assert actual == expected
 
 
 @pytest.mark.unit

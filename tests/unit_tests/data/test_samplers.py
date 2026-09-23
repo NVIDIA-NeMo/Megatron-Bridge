@@ -1,10 +1,14 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 
+import multiprocessing
+
 import pytest
 import torch
 from torch.utils.data import Dataset
 
+import megatron.bridge.data.samplers as samplers
 from megatron.bridge.data.samplers import (
+    MegatronPretrainingRandomSampler,
     MegatronPretrainingSampler,
     RandomSeedDataset,
     build_pretraining_data_loader,
@@ -108,3 +112,60 @@ def test_cyclic_sampler_resume_seeds_worker_dataset_for_current_epoch(
     expected_value = torch.randint(0, 1_000_000, (1,), generator=generator).item()
 
     assert actual_value.item() == expected_value
+
+
+def test_dataloader_worker_releases_gpu_fds_before_caller_initialization(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Worker setup must release inherited GPU descriptors on every loader path."""
+    cleanup_calls = multiprocessing.Value("i", 0)
+    caller_calls = multiprocessing.Value("i", 0)
+
+    def record_cleanup() -> None:
+        cleanup_calls.value += 1
+
+    def record_caller_init(_worker_id: int) -> None:
+        assert cleanup_calls.value == 1
+        caller_calls.value += 1
+
+    monkeypatch.setattr(samplers, "_close_nvidia_device_fds", record_cleanup)
+    dataloader = build_pretraining_data_loader(
+        dataset=_RandomValueDataset(),
+        consumed_samples=0,
+        dataloader_type="single",
+        micro_batch_size=1,
+        num_workers=1,
+        data_sharding=False,
+        persistent_workers=False,
+        worker_init_fn=record_caller_init,
+    )
+
+    next(iter(dataloader))
+
+    assert cleanup_calls.value == 1
+    assert caller_calls.value == 1
+
+
+def test_cyclic_sampler_non_sharded_tail_keeps_data_parallel_epochs_aligned() -> None:
+    """Every DP rank must cross a truncated cyclic epoch on the same step."""
+
+    def make_sampler(rank: int, consumed_samples: int = 0) -> MegatronPretrainingRandomSampler:
+        return MegatronPretrainingRandomSampler(
+            list(range(10)),
+            total_samples=10,
+            consumed_samples=consumed_samples,
+            micro_batch_size=2,
+            data_parallel_rank=rank,
+            data_parallel_size=3,
+            data_sharding=False,
+        )
+
+    def cyclic_batches(sampler: MegatronPretrainingRandomSampler):
+        while True:
+            yield from sampler
+
+    uninterrupted = [cyclic_batches(make_sampler(rank)) for rank in range(3)]
+    _ = [next(rank_batches) for rank_batches in uninterrupted]
+    second_step = [next(rank_batches) for rank_batches in uninterrupted]
+    resumed_step = [next(iter(make_sampler(rank, consumed_samples=6))) for rank in range(3)]
+
+    assert len({index for batch in second_step for index in batch}) == 6
+    assert second_step == resumed_step

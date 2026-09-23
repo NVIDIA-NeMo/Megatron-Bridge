@@ -71,6 +71,7 @@ OWNER_LABELS = {
     "deepseek-ai": "DeepSeek",
     "google": "Google",
     "lgai-exaone": "LG AI EXAONE",
+    "meta-models": "Meta",
     "minimaxai": "MiniMax",
     "moonshotai": "Moonshot AI",
     "nvidia": "NVIDIA",
@@ -86,6 +87,7 @@ DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
     }
 )
 MODEL_PAGE_PATHS = {
+    "bagel": "models/bagel/bagel.md",
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
     "gemma-3-4b-it": "models/gemma/gemma3-vl.md",
@@ -98,12 +100,14 @@ MODEL_PAGE_PATHS = {
     "kimi-k3": "models/kimi/kimi-k3.md",
     "minimax-m3": "models/minimax/minimax-m3.md",
     "moonlight-16b-a3b": "models/moonlight/moonlight.md",
+    "muse-glimmer-30b": "models/muse_glimmer/muse-glimmer.md",
     "nemotron-3-nano-30b-a3b": "models/nemotron/nemotron3-nano.md",
     "nemotron-3-nano-4b": "models/nemotron/nemotron3-nano-4b.md",
     "nemotron-3-nano-omni-30b-a3b-reasoning": "models/nemotron/nemotron-3-omni.md",
     "nemotron-3-super-120b-a12b": "models/nemotron/nemotron3-super.md",
     "nemotron-3-ultra-550b-a55b": "models/nemotron/nemotron3-ultra.md",
     "nemotron-3.5-lightning": "models/nemotron/nemotron3.5-lightning.md",
+    "nemotron-3.5-super-vl-120b-a12b": "models/nemotron/nemotron3.5-super-vl.md",
     "qwen3-235b-a22b": "models/qwen/qwen3-235b-a22b.md",
     "qwen3-30b-a3b": "models/qwen/qwen3-30b-a3b.md",
     "qwen3-8b": "models/qwen/qwen3-8b.md",

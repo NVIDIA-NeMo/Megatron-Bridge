@@ -62,6 +62,7 @@ def test_catalog_discovers_every_card_without_a_model_list(catalog: dict[str, ob
 @pytest.mark.parametrize(
     ("slug", "command_fragment"),
     [
+        ("bagel", "bagel_7b_pretrain_32gpu_h100_bf16_config"),
         (
             "glm5-2",
             "glm52_pretrain_416gpu_h100_bf16_config",
@@ -268,8 +269,10 @@ def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str
     assert len(set(paths.values())) == len(models)
     assert paths["gpt-oss-20b"] == "models/gpt_oss/gpt-oss-20b.md"
     assert paths["gpt-oss-120b"] == "models/gpt_oss/gpt-oss-120b.md"
+    assert paths["muse-glimmer-30b"] == "models/muse_glimmer/muse-glimmer.md"
     assert paths["nemotron-3-nano-4b"] == "models/nemotron/nemotron3-nano-4b.md"
     assert paths["nemotron-3-super-120b-a12b"] == "models/nemotron/nemotron3-super.md"
+    assert paths["nemotron-3.5-super-vl-120b-a12b"] == "models/nemotron/nemotron3.5-super-vl.md"
     assert paths["nemotron-3-ultra-550b-a55b"] == "models/nemotron/nemotron3-ultra.md"
     assert paths["qwen3.8-27b"] == "models/qwen/qwen3.8-27b.md"
 
