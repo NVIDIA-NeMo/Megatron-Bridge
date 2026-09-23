@@ -622,6 +622,73 @@ class TestGetBatch:
         assert model.forward_kwargs["position_ids"] is None
         assert model.forward_kwargs["labels"] is None
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    @pytest.mark.parametrize("metadata_format", ["current", "legacy"])
+    @pytest.mark.parametrize("vp_stage", [None, 0, 1])
+    @pytest.mark.parametrize("return_schedule_plan", [False, True])
+    @pytest.mark.parametrize("has_input_ids", [False, True])
+    def test_forward_common_counts_packed_flops_under_cp(
+        self, monkeypatch, cp_size, metadata_format, vp_stage, return_schedule_plan, has_input_ids
+    ):
+        """CP-local tokens retain full attention boundaries without VPP overcounting."""
+        tokens = torch.arange(32 // cp_size).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.zeros_like(tokens, dtype=torch.float32)
+        position_ids = tokens.clone()
+        forward_tokens = tokens if has_input_ids else None
+        forward_position_ids = position_ids if has_input_ids else None
+        if metadata_format == "current":
+            metadata = {
+                "cu_seqlens_q": torch.tensor([0, 5, 16], dtype=torch.int32),
+                "cu_seqlens_q_padded": torch.tensor([0, 16, 32], dtype=torch.int32),
+            }
+        else:
+            metadata = {
+                "cu_seqlens": torch.tensor([[0, 16, 32, -1, -1]], dtype=torch.int32),
+                "cu_seqlens_unpadded": torch.tensor([[0, 5, 16, -1, -1]], dtype=torch.int32),
+                "cu_seqlens_argmin": torch.tensor(3),
+                "cu_seqlens_unpadded_argmin": torch.tensor(3),
+            }
+        model = _RecordingModel(vp_stage=vp_stage)
+        state = Mock()
+        state.cfg = _make_cfg()
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        state._flops_seqlen_sum = 0
+        state._flops_seqlen_sq_sum = 0
+        state._flops_requires_global_reduce = False
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 0,
+                "seq_length": 128,
+                "overlap_moe_expert_parallel_comm": return_schedule_plan,
+            },
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
+        )
+        packed_params = object()
+        packed_params_mock = Mock(return_value=packed_params)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_packed_seq_params", packed_params_mock)
+        get_batch_mock = Mock(return_value=(forward_tokens, labels, loss_mask, None, forward_position_ids, metadata))
+
+        _forward_step_common(
+            state, _Iterator({}), model, return_schedule_plan=return_schedule_plan, _get_batch_fn=get_batch_mock
+        )
+
+        is_primary_chunk = vp_stage in (None, 0)
+        assert state._flops_seqlen_sum == (32 if is_primary_chunk else 0)
+        assert state._flops_seqlen_sq_sum == (5**2 + 11**2 if is_primary_chunk else 0)
+        assert state._flops_requires_global_reduce == is_primary_chunk
+        assert model.forward_kwargs["input_ids"] is forward_tokens
+        assert model.forward_kwargs["packed_seq_params"] is packed_params
+        packed_params_mock.assert_called_once_with(metadata)
+
     def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
         """Packed batches without physical gaps do not need the router graph guard."""
         sentinel_packed_seq_params = object()

@@ -338,6 +338,7 @@ def accumulate_flops_metadata(
     *,
     vp_stage: int | None = None,
     config_seq_len: int | None = None,
+    context_parallel_size: int = 1,
     cu_seqlens: torch.Tensor | None = None,
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
@@ -356,9 +357,10 @@ def accumulate_flops_metadata(
 
     Writes accumulators consumed by ``train.py`` at end of step:
 
-    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
-      this microbatch contributes), or ``mbs * config_seq_len`` for dense
-      non-packed batches whose tensors were already context-parallel sliced.
+    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1] * context_parallel_size``
+      (padded total tokens this packed microbatch contributes), or
+      ``mbs * config_seq_len`` for dense non-packed batches whose tensors were
+      already context-parallel sliced.
       Drives the linear MLP/proj/logit terms.
     - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ², computed inline from
       ``cu_seqlens`` (preferring ``cu_seqlens_unpadded``). The per-pack sub-sequence
@@ -390,6 +392,12 @@ def accumulate_flops_metadata(
     treating the whole pack as one length-``seq_len`` sequence over-counts
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
+
+    Set ``context_parallel_size`` only when packed ``tokens`` have already been
+    CP-sharded but ``cu_seqlens`` still describes the full sequences, as in
+    ``gpt_step``. Callers accumulating before CP slicing, such as VLM steps,
+    must leave it at 1. Only the token-linear count is rescaled; attention
+    statistics are already global within CP and are reduced over pure DP later.
     """
     if vp_stage not in (None, 0) or tokens is None:
         return
@@ -406,7 +414,7 @@ def accumulate_flops_metadata(
     # (which would force a data-dependent-size sync) is needed.
     sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
     if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * tensor_seq_len)
+        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * tensor_seq_len * context_parallel_size)
         setattr(state, "_flops_requires_global_reduce", True)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2))
     else:
