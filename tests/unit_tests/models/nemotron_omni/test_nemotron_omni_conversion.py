@@ -287,14 +287,22 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
     assert restored.hf_model_revision == reference.hf_model_revision
     assert isinstance(restored._model_bridge, NemotronHBridge)
     assert restored.hf_pretrained.architectures == ["NemotronHForCausalLM"]
-    # Native Nemotron-H exports the physical shared block count, not the
-    # number of runtime prediction depths (see NemotronHBridge).
-    assert restored.hf_pretrained.num_nextn_predict_layers == 1
+    # Exporting the selected native text checkpoint must retain prediction
+    # depths, not replace them with the number of physical shared blocks.
+    assert restored.hf_pretrained.num_nextn_predict_layers == 2
     assert restored.hf_pretrained.mtp_use_repeated_layer
     assert selected.hf_pretrained.config.num_nextn_predict_layers == 2
     assert full_config.llm_config.num_nextn_predict_layers == 1
     assert not hasattr(restored.hf_pretrained, "vision_config")
     assert not hasattr(restored.hf_pretrained, "auto_map")
+    reimported = restored.to_megatron_provider(load_weights=False)
+    assert reimported.mtp_num_layers == provider.mtp_num_layers == 2
+    assert reimported.mtp_use_repeated_layer
+    assert reimported.mtp_hybrid_override_pattern == "*E"
+    assert reimported.hf_mtp_num_layers_is_prediction_depth
+    # A native standalone reference no longer has projection provenance. Its
+    # second export must still preserve the native config's prediction depth.
+    assert NemotronHBridge.megatron_to_hf_config(reimported)["num_nextn_predict_layers"] == 2
 
 
 def test_public_nemotron_omni_architecture_is_registered():
@@ -392,6 +400,20 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
     assert serialized["has_sound"] is True
     assert "add_sound_encoder" not in serialized
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("overlap", [False, True, None])
+@pytest.mark.parametrize("super_vl", [False, True])
+def test_nemotron_omni_shared_expert_overlap_config_roundtrip(overlap, super_vl):
+    config = _mock_nemotron_35_super_vl_hf_config() if super_vl else _mock_omni_hf_config()
+    if overlap is not None:
+        config.llm_config.moe_shared_expert_overlap = overlap
+    bridge = Nemotron35SuperVLBridge() if super_vl else NemotronOmniBridge()
+    provider = bridge.provider_bridge(SimpleNamespace(config=config))
+    expected = True if overlap is None else overlap
+    assert provider.moe_shared_expert_overlap is expected
+    assert bridge.megatron_to_hf_config(provider)["moe_shared_expert_overlap"] is expected
 
 
 def test_nemotron_omni_provider_bridge_omits_sound_when_config_is_absent():

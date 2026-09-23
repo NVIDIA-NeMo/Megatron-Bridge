@@ -162,6 +162,9 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     hf_model_text_only: bool = False
     """Whether the source HF checkpoint was projected to its language model."""
 
+    hf_mtp_num_layers_is_prediction_depth: bool = False
+    """Whether the HF MTP count uses native prediction-depth rather than legacy block-count semantics."""
+
     _pg_collection: ProcessGroupCollection | None = None
 
     # MTP

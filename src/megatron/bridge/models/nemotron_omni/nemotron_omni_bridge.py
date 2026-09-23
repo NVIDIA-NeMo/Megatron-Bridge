@@ -121,6 +121,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         # MoE-specific (only present in Omni configs)
         ("moe_latent_size", "moe_latent_size"),
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
+        ("moe_shared_expert_overlap", "moe_shared_expert_overlap"),
     ]
 
     # Custom modeling/processing/audio files to copy during HF export.
