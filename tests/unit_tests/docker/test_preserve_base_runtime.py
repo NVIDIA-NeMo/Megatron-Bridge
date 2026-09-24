@@ -154,6 +154,15 @@ def test_docker_stages_preserve_runtime_only_when_enabled():
     assert final.rindex("preserve_base_runtime.py check") > final.index("pip install ")
 
 
+def test_preserve_runtime_keeps_baseline_dependency_layer_detectable():
+    ci = (ROOT / "docker/Dockerfile.ci").read_text()
+    # Keep the literal prefix used by test_docker_dependency_layers.sh intact.
+    baseline_sync = "uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion"
+    dispatched_copy = "COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM"
+    assert baseline_sync in ci
+    assert ci.index(baseline_sync) < ci.index(dispatched_copy)
+
+
 @pytest.mark.parametrize("filename", ["Dockerfile.ci", "Dockerfile.fw_final"])
 def test_modified_docker_run_shell_syntax(filename):
     commands = []

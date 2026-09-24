@@ -68,7 +68,7 @@ RUN \
     if [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" = "True" ]; then \
         BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine --no-install-package transformer-engine-torch"; \
     fi && \
-    uv sync ${BASE_RUNTIME_UV_ARGS} --no-cache-dir --all-groups --inexact && \
+    uv sync --no-cache-dir --all-groups --inexact ${BASE_RUNTIME_UV_ARGS} && \
     python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     uv pip list && \
     chmod +x print_sha.sh && \

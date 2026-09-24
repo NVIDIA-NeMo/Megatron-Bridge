@@ -147,8 +147,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
             CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
             CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
-        uv sync ${BASE_RUNTIME_UV_ARGS} --locked --only-group build --no-install-package mamba-ssm && \
-        uv sync ${BASE_RUNTIME_UV_ARGS} --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
+        uv sync --locked --only-group build --no-install-package mamba-ssm ${BASE_RUNTIME_UV_ARGS} && \
+        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm ${BASE_RUNTIME_UV_ARGS}; \
     fi
 
 RUN rm -rf 3rdparty/Megatron-LM
@@ -182,11 +182,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     fi && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
-        uv sync ${BASE_RUNTIME_UV_ARGS} --only-group build --no-install-package mamba-ssm && \
-        uv sync ${BASE_RUNTIME_UV_ARGS} --link-mode copy --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
+        uv sync --only-group build --no-install-package mamba-ssm ${BASE_RUNTIME_UV_ARGS} && \
+        uv sync --link-mode copy --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm ${BASE_RUNTIME_UV_ARGS}; \
     elif [ -z "$BASELINE_MCORE_REF" ]; then \
-        uv sync ${BASE_RUNTIME_UV_ARGS} --locked --only-group build --no-install-package mamba-ssm && \
-        uv sync ${BASE_RUNTIME_UV_ARGS} --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
+        uv sync --locked --only-group build --no-install-package mamba-ssm ${BASE_RUNTIME_UV_ARGS} && \
+        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm ${BASE_RUNTIME_UV_ARGS}; \
     fi && \
     bash /opt/install_mamba.sh /opt/Megatron-Bridge/uv.lock /opt/mamba.patch && \
     python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
