@@ -314,14 +314,14 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.fp8_output_proj = True
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
 
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 64
     cfg.train.micro_batch_size = 1
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
@@ -330,6 +330,7 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
+    cfg.model.average_in_collective = True
 
     # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
     cfg.model.cuda_graph_impl = "full_iteration"
@@ -364,7 +365,7 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,

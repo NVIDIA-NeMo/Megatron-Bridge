@@ -92,7 +92,8 @@ def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
     cfg.train.micro_batch_size = 2
 
     cfg.ddp.use_megatron_fsdp = True
-    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads"
+    cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False
     cfg.ddp.average_in_collective = False
     cfg.model.init_model_with_meta_device = True
