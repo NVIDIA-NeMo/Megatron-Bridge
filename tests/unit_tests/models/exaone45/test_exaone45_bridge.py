@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from megatron.core.transformer import TransformerLayer
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from transformers.models.exaone4_5.configuration_exaone4_5 import Exaone4_5_VisionConfig
 
@@ -117,6 +118,23 @@ class TestExaone45Bridge:
         assert config.kv_channels == 8
         assert isinstance(config.kv_channels, int)
         assert config.num_query_groups == 4
+
+    def test_vision_config_inherits_language_attention_backend(self):
+        vision_config = Exaone4_5_VisionConfig(hidden_size=64, num_heads=8, num_key_value_heads=4)
+        provider = Exaone45ModelProvider(
+            num_layers=2,
+            hidden_size=64,
+            ffn_hidden_size=128,
+            num_attention_heads=4,
+            num_query_groups=2,
+            attention_backend=AttnBackend.flash,
+            flash_attention_version=3,
+        )
+
+        config = get_vision_model_config(vision_config, provider)
+
+        assert config.attention_backend == AttnBackend.flash
+        assert config.flash_attention_version == 3
 
     def test_autobridge_registration(self):
         config = _make_pretrained(

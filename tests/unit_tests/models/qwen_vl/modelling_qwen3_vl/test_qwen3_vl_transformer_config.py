@@ -18,6 +18,7 @@ from enum import Enum
 from types import SimpleNamespace
 
 import pytest
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
@@ -152,3 +153,22 @@ class TestGetVisionModelConfigVisionCudaGraph:
         )
         with pytest.raises(KeyError):
             get_vision_model_config(_hf_config(), megatron)
+
+
+class TestGetVisionModelConfigAttentionBackend:
+    """The ViT must share the language model's process-wide TE attention backend."""
+
+    @pytest.mark.parametrize("backend", [AttnBackend.flash, AttnBackend.fused, AttnBackend.unfused, "fused"])
+    def test_attention_backend_propagated(self, backend):
+        cfg = get_vision_model_config(_hf_config(), _megatron_base(attention_backend=backend))
+        assert cfg.attention_backend == backend
+
+    def test_flash_attention_version_propagated(self):
+        megatron = _megatron_base(attention_backend=AttnBackend.flash, flash_attention_version=3)
+        cfg = get_vision_model_config(_hf_config(), megatron)
+        assert cfg.flash_attention_version == 3
+
+    def test_defaults_kept_when_attrs_missing(self):
+        cfg = get_vision_model_config(_hf_config(), _megatron_base())
+        assert cfg.attention_backend == AttnBackend.auto
+        assert cfg.flash_attention_version is None
