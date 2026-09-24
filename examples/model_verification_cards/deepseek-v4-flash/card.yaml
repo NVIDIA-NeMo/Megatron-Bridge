@@ -37,6 +37,12 @@ summary: >
   A separate 100-step CP2 run verifies offline packing with contiguous context
   parallelism.
 
+  The B200 long-context SFT recipe uses offline-packed 128K THD sequences,
+  contiguous CP16, natural HybridEP routing, selective mHC and MLA-up-projection
+  recompute, fused-group-MLP activation offload, and attention-scoped Transformer
+  Engine CUDA graphs. Its 160-GPU validation completed 50 finite steps with zero
+  skipped or NaN iterations.
+
   The GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections
   and to separate routed/shared expert FC1/FC2 projections. Its execution path uses
   scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed
@@ -54,6 +60,9 @@ verification_index:
       - manual_forward_pass
       - megatron_to_hf_cpu
   training:
+    B200:
+      verified: [sft_long_context]
+      unverified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
     GB200:
       verified: [pretrain, sft, sft_long_context, sft_export_inference, peft, checkpoint_resume]
   performance:
@@ -315,6 +324,44 @@ items:
         cultural center, and a symbol of French history, art, and architecture."
 
   sft_long_context:
+    B200:
+      status: verified
+      precision: bf16
+      bridge_commit: 4acf05343becaec3bc48ffcbecad82f7e7f85840  # pragma: allowlist secret
+      enabled_features:
+        sequence_packing: offline
+        cuda_graph:
+          implementation: transformer_engine
+          scopes: [attn]
+        context_parallel_size: 16
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --nodes 20 --gpus-per-node 8
+        --recipe deepseek_v4_flash_sft_160gpu_b200_bf16_128k_config
+        --mode sft --dataset coderforge --step-func dsv4_step
+        --pretrained_checkpoint work/model-verification/dsv4-flash/import-gpu/iter_0000000
+        --max_steps 50
+        logger.save_config_filepath=work/model-verification/dsv4-flash/sft-long-context-b200/resolved-config.yaml
+      last_verified: 2026-09-04
+      metrics:
+        initial_loss: 0.3149361
+        final_loss: 0.1525988
+        last_10_steps_step_time_ms_avg: 45726.000
+        last_10_steps_model_tflops_per_gpu_avg: 283.110
+        last_10_steps_tokens_per_second_per_gpu_avg: 2293.172
+        peak_allocated_memory_gib: 140.99
+        peak_reserved_memory_gib: 172.23
+      expected_result: >
+        The 160-B200 run completed exactly 50 full-parameter SFT steps at
+        TP1/PP5/CP16/EP16/ETP1, MBS1/GBS128, and 64-way gradient accumulation.
+        It used offline-packed 131072-token THD sequences, contiguous context
+        parallelism, a pretrained BF16 checkpoint, natural HybridEP routing,
+        selective recompute for mHC and MLA up-projection, fused-group-MLP
+        activation offload, and attention-scoped Transformer Engine CUDA graphs.
+        Loss remained finite from 0.3149361 to 0.1525988 with zero skipped or NaN
+        iterations. Steps 41-50 averaged 45,726.000 ms, 283.110 model TFLOP/s/GPU,
+        and 2,293.172 token slots/s/GPU; the process exited successfully.
+
     GB200:
       status: verified
       precision: bf16
