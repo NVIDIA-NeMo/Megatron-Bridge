@@ -84,6 +84,7 @@ from .qwen3 import (
 
 # Qwen3 MoE models
 from .qwen3_moe import (
+    qwen3_30b_a3b_dpo_config,
     qwen3_30b_a3b_peft_config,
     qwen3_30b_a3b_pretrain_config,
     qwen3_30b_a3b_sft_config,
@@ -163,6 +164,7 @@ __all__ = [
     "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
     "qwen3_30b_a3b_sft_config",
     "qwen3_30b_a3b_peft_config",
+    "qwen3_30b_a3b_dpo_config",
     "qwen3_235b_a22b_pretrain_config",
     "qwen3_235b_a22b_sft_config",
     "qwen3_235b_a22b_peft_config",

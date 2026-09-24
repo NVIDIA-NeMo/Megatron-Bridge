@@ -27,8 +27,8 @@ monitoring error or interruption does not cancel the submitted job.
 
 Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. A complete
 recipe is discovered automatically from its exported function name, whether it is a library or benchmark recipe;
-there is no separate source flag. A model selector requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
-`--mode dora`; a conventional complete recipe name infers its mode when `--mode` is omitted.
+there is no separate source flag. A model selector requires one of `--mode pretrain`, `--mode sft`, `--mode lora`,
+`--mode dora`, or `--mode dpo`; a conventional complete recipe name infers its mode when `--mode` is omitted.
 
 ### Library recipe
 
@@ -47,7 +47,8 @@ A complete recipe already identifies the model and default training configuratio
 
 The model selector combines the model stem and mode to load the corresponding library recipe. For example,
 `--model gpt_oss_20b --mode sft` loads `gpt_oss_20b_sft_config`; LoRA and DoRA load the model's PEFT recipe and set the
-requested adapter scheme.
+requested adapter scheme. `--mode dpo` loads `<model>_dpo_config`; a DPO recipe owns its preference dataset and
+scored reference artifact, so `--dataset` presets do not apply and the forward step is always `dpo_step`.
 
 ```bash
 ./scripts/training/train.sh \
