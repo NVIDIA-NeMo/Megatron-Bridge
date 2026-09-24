@@ -2664,7 +2664,11 @@ class PackedPerExpertLinear(nn.Module):
         key = f"{prefix}weight"
         return {
             key: _make_grouped_expert_sharded_tensor(
-                self.weight.data, key, tp_axis=None, sharded_offsets=sharded_offsets
+                self.weight.data,
+                key,
+                tp_axis=None,
+                sharded_offsets=sharded_offsets,
+                pg_collection=_get_pg_collection(required_pgs=["ep", "expt_tp", "expt_dp"]),
             )
         }
 
