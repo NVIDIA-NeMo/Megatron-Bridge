@@ -1100,7 +1100,6 @@ class AutoBridge(Generic[MegatronModelT]):
             build_adapter_config_dict,
             convert_adapter_weights_to_peft_state,
             infer_rank_pattern_from_adapter_weights,
-            infer_target_modules_from_adapter_weights,
         )
 
         if dist.is_initialized():
@@ -1141,7 +1140,7 @@ class AutoBridge(Generic[MegatronModelT]):
                     or getattr(self.hf_pretrained, "name_or_path", "")
                 )
 
-            target_modules = infer_target_modules_from_adapter_weights(module_adapter_keys)
+            target_modules = self._model_bridge._adapter_target_modules(module_adapter_keys)
             adapter_config = build_adapter_config_dict(
                 peft_config,
                 target_modules=target_modules,

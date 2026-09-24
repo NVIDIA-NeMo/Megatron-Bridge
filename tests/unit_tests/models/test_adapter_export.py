@@ -359,7 +359,7 @@ class TestSaveHfAdapter:
 
         names = [f"backbone.layers.0.self_attn.q_proj.lora_{side}.weight" for side in ("A", "B")]
         tensors = [torch.randn(2, 4), torch.randn(4, 2)]
-        bridge = MagicMock(text_only=False)
+        bridge = MagicMock(text_only=False, _model_bridge=MegatronPeftBridge())
         bridge.hf_pretrained = SimpleNamespace(model_name_or_path="org/text-base")
         bridge.export_adapter_weights.return_value = iter(
             [_adapter_export(name, tensor) for name, tensor in zip(names, tensors)]
@@ -599,7 +599,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.v_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -643,7 +643,7 @@ class TestSaveHfAdapter:
             ),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -672,7 +672,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -701,7 +701,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -739,7 +739,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.experts.1.gate_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -777,7 +777,7 @@ class TestSaveHfAdapter:
                 ]
             )
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -821,7 +821,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
 
@@ -843,7 +843,7 @@ class TestSaveHfAdapter:
         assert "target_parameters" not in cfg
 
     def test_save_raises_on_empty_adapter(self, tmp_path):
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter([])
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -869,7 +869,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.gate_proj.lora_B.weight", torch.randn(32, 4)),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="inferred/model-id")
 
@@ -935,7 +935,7 @@ class TestSaveHfAdapter:
             ),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/normalized-expert-model",
@@ -1006,7 +1006,7 @@ class TestSaveHfAdapter:
             _adapter_export("model.layers.0.mlp.experts.gate_up_proj.lora_B.weight", gate_up_b),
         ]
 
-        mock_bridge = MagicMock()
+        mock_bridge = MagicMock(_model_bridge=MegatronPeftBridge())
         mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/packed-experts",

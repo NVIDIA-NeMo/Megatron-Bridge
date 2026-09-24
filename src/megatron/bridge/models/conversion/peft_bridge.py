@@ -151,6 +151,10 @@ def _select_hf_base_param_name(base_mapping, adapter_key: Optional[str], expecte
 class MegatronPeftBridge:
     """Mixin providing adapter-aware utilities for Megatron model bridges."""
 
+    def _adapter_target_modules(self, adapter_weight_names: Iterable[str]) -> list[str]:
+        """Resolve PEFT selectors; model bridges may disambiguate shared leaf names."""
+        return infer_target_modules_from_adapter_weights(adapter_weight_names)
+
     def _get_lora_unwrapped_name(self, megatron_param: str) -> str:
         """Remove `.to_wrap` from LoRA parameter names."""
         return megatron_param.replace(".to_wrap.", ".")

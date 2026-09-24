@@ -28,6 +28,14 @@ if (
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
+from megatron.bridge.models.beam import (
+    BeamBridge,
+    BeamModelBuilder,
+    BeamModelConfig,
+    BeamModelProvider,
+    BeamQKVGateMapping,
+    BeamTransformerConfig,
+)
 from megatron.bridge.models.bert import (
     BertModelProvider,
 )
@@ -297,6 +305,13 @@ __all__ = [
     "Qwen2AudioBridge",
     "Qwen2AudioModel",
     "Qwen2AudioModelProvider",
+    # Beam (Reflection AI) models
+    "BeamBridge",
+    "BeamModelBuilder",
+    "BeamModelConfig",
+    "BeamModelProvider",
+    "BeamQKVGateMapping",
+    "BeamTransformerConfig",
     # VL Models
     "Qwen25VLModel",
     "Qwen25VLBridge",
