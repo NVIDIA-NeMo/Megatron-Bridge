@@ -35,6 +35,21 @@ See `/opt/NeMo-FW/pyproject.toml` for additonal uv configurations.
 
 ## Development
 
+### Images preserving the base runtime
+
+Images built with `PRESERVE_BASE_RUNTIME=True` inherit
+`MBRIDGE_PRESERVE_BASE_RUNTIME=True` and retain their validated base TE,
+cuDNN frontend, and CUTLASS packages. Their selected package versions and
+locations are recorded in `/opt/base-runtime-packages.json`.
+
+The generic sync commands below are **not** preservation-aware. On these images,
+add `--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine
+--no-install-package transformer-engine-torch` to `uv sync`, and run
+`python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json`
+afterwards. A mismatch fails the check but does not undo a package installation.
+Rebuild from the validated base if the protected runtime has been replaced.
+The manifest is a metadata check, not a binary-compatibility or GPU-correctness test.
+
 ### Mounting and syncing local repository into the container
 
 Local working directories can be mounted via docker run:
