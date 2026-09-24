@@ -19,7 +19,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
     _benchmark_common,
     _deepseek_v3_common,
-    _enable_deepseek_full_iteration_mxfp8,
+    _enable_deepseek_full_iteration,
     _enable_deepseek_precision_aware_optimizer,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -155,7 +155,9 @@ def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=True)
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fp8_output_proj = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
     return cfg
 
 
@@ -204,17 +206,22 @@ def _build_deepseek_v3_gb300_nvfp4() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
-    cfg.train.micro_batch_size = 2
-
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.train.micro_batch_size = 1
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*5|(t*4|)*14mL")
 
     _benchmark_common(cfg)
+    _enable_deepseek_full_iteration(cfg)
+    cfg.model.fp8_output_proj = False
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.mla_down_proj_fusion = True
+
+    cfg.model.recompute_modules = []
+
     return cfg
 
 
@@ -232,7 +239,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
@@ -243,6 +250,9 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_DPA_FP8_RECIPE": "MXFP8BlockScaling",
+        "NVTE_DPA_FP8_FORMAT": "E4M3",
     }
     return cfg
 

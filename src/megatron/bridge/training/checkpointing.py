@@ -56,6 +56,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
+from megatron.training.checkpointing import save_tokenizer_assets
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -70,8 +71,6 @@ from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
-from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils import comet_utils, mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
     checkpoint_exists,
@@ -989,7 +988,7 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
     return None
 
 
-_AUTO_BRIDGE_CACHE: dict[tuple[str, bool], Any] = {}
+_AUTO_BRIDGE_CACHE: dict[tuple, Any] = {}
 
 
 def _clear_auto_bridge_cache() -> None:
@@ -1014,10 +1013,22 @@ def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] =
             "an HF model id."
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
+    text_only = getattr(cfg.model, "hf_model_text_only", False) is True
+    # Initialization and artifact templates may override the original HF source.
+    revision = (
+        getattr(cfg.model, "hf_model_revision", None)
+        if str(source) == str(getattr(cfg.model, "hf_model_id", None))
+        else None
+    )
     cache_key = (str(source), bool(trust_remote_code))
+    if text_only:
+        cache_key += (text_only, revision)
     bridge = _AUTO_BRIDGE_CACHE.get(cache_key)
     if bridge is None:
-        bridge = AutoBridge.from_hf_pretrained(source, trust_remote_code=trust_remote_code)
+        kwargs = {"trust_remote_code": trust_remote_code}
+        if text_only:
+            kwargs.update(text_only=True, revision=revision)
+        bridge = AutoBridge.from_hf_pretrained(source, **kwargs)
         _AUTO_BRIDGE_CACHE[cache_key] = bridge
     return bridge
 
@@ -2065,146 +2076,6 @@ def maybe_load_dataloader_state(
     else:
         loaded = energon_torch_load(data_state_load_path)
     iterable.restore_state(loaded["dataloader_state_dict"])
-
-
-def save_tokenizer_assets(
-    tokenizer: MegatronTokenizer,
-    tokenizer_config: TokenizerConfig,
-    checkpoint_path: str,
-    *,
-    raise_on_error: bool = False,
-) -> None:
-    """Save tokenizer files to the checkpoint directory.
-
-    Always saves tokenizer files to ensure checkpoints are self-contained
-    and portable. Handles both HuggingFace tokenizers and file-based tokenizers.
-    Compatible with MultiStorageClient for cloud storage support.
-
-    Args:
-        tokenizer: The tokenizer instance to save.
-        tokenizer_config: The tokenizer configuration (used for file-based tokenizers).
-        checkpoint_path: The checkpoint directory path.
-        raise_on_error: Propagate tokenizer persistence errors to the caller.
-    """
-    if tokenizer is None:
-        return
-
-    # Only rank 0 saves tokenizer files
-    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    if rank != 0:
-        return
-
-    def resolve_path(path_str: str) -> str:
-        """Resolve relative paths to absolute paths."""
-        if not path_str:
-            return path_str
-        path_obj = Path(path_str)
-        if path_obj.is_absolute():
-            return path_str
-        # Resolve relative to current working directory
-        return str(path_obj.resolve())
-
-    try:
-        # Check if MultiStorageClient is enabled
-        if MultiStorageClientFeature.is_enabled():
-            msc = MultiStorageClientFeature.import_package()
-            checkpoint_path_obj = msc.Path(checkpoint_path)
-            tokenizer_dir = checkpoint_path_obj / "tokenizer"
-            tokenizer_dir.mkdir(parents=True, exist_ok=True)
-            use_msc = True
-        else:
-            tokenizer_dir = os.path.join(checkpoint_path, "tokenizer")
-            os.makedirs(tokenizer_dir, exist_ok=True)
-            use_msc = False
-
-        tokenizer_type = tokenizer_config.tokenizer_type
-
-        # Handle HuggingFace and Multimodal tokenizers
-        if tokenizer_type in ("HuggingFaceTokenizer", "MultimodalTokenizer"):
-            if use_msc:
-                import tempfile
-
-                with tempfile.TemporaryDirectory() as tmp_dir:
-                    if hasattr(tokenizer, "save_pretrained"):
-                        tokenizer.save_pretrained(tmp_dir)
-                    elif hasattr(tokenizer, "_tokenizer") and hasattr(tokenizer._tokenizer, "save_pretrained"):
-                        tokenizer._tokenizer.save_pretrained(tmp_dir)
-                    else:
-                        logger.debug(f"{tokenizer_type} does not support save_pretrained(), skipping tokenizer save")
-                        return
-
-                    logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
-                    for filename in os.listdir(tmp_dir):
-                        src_path = os.path.join(tmp_dir, filename)
-                        if os.path.isfile(src_path):
-                            dest_path = tokenizer_dir / filename
-                            with open(src_path, "rb") as src_f:
-                                with msc.open(str(dest_path), "wb") as dest_f:
-                                    dest_f.write(src_f.read())
-            else:
-                logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
-                if hasattr(tokenizer, "save_pretrained"):
-                    tokenizer.save_pretrained(tokenizer_dir)
-                elif hasattr(tokenizer, "_tokenizer") and hasattr(tokenizer._tokenizer, "save_pretrained"):
-                    tokenizer._tokenizer.save_pretrained(tokenizer_dir)
-            return
-
-        # Handle file-based tokenizers - resolve all paths
-        files_to_copy = []
-
-        if tokenizer_type in ("BertWordPieceLowerCase", "BertWordPieceCase"):
-            if tokenizer_config.vocab_file:
-                resolved_path = resolve_path(tokenizer_config.vocab_file)
-                files_to_copy.append(("vocab_file", resolved_path, "vocab.txt"))
-
-        elif tokenizer_type == "GPT2BPETokenizer":
-            if tokenizer_config.vocab_file:
-                resolved_path = resolve_path(tokenizer_config.vocab_file)
-                files_to_copy.append(("vocab_file", resolved_path, "vocab.json"))
-            if tokenizer_config.merge_file:
-                resolved_path = resolve_path(tokenizer_config.merge_file)
-                files_to_copy.append(("merge_file", resolved_path, "merges.txt"))
-
-        elif tokenizer_type in ("SentencePieceTokenizer", "GPTSentencePieceTokenizer", "Llama2Tokenizer"):
-            if tokenizer_config.tokenizer_model:
-                resolved_path = resolve_path(tokenizer_config.tokenizer_model)
-                files_to_copy.append(("tokenizer_model", resolved_path, "tokenizer.model"))
-
-        elif tokenizer_type == "TikTokenizer":
-            if tokenizer_config.tokenizer_model:
-                resolved_path = resolve_path(tokenizer_config.tokenizer_model)
-                files_to_copy.append(("tokenizer_model", resolved_path, "tokenizer.json"))
-
-        elif tokenizer_type == "NullTokenizer":
-            logger.debug(f"{tokenizer_type} requires no file artifacts")
-            return
-
-        # Copy the files
-        if files_to_copy:
-            logger.debug(f"Saving {tokenizer_type} files to {tokenizer_dir}")
-            for config_attr, source_path, dest_filename in files_to_copy:
-                if source_path and os.path.exists(source_path):
-                    if use_msc:
-                        dest_path = tokenizer_dir / dest_filename
-                        with open(source_path, "rb") as src_f:
-                            with msc.open(str(dest_path), "wb") as dest_f:
-                                dest_f.write(src_f.read())
-                        logger.debug(f"Copied {config_attr}: {source_path} -> {dest_path}")
-                    else:
-                        dest_path = os.path.join(tokenizer_dir, dest_filename)
-                        shutil.copy2(source_path, dest_path)
-                        logger.debug(f"Copied {config_attr}: {source_path} -> {dest_path}")
-                else:
-                    logger.debug(f"{config_attr} not found at resolved path: {source_path}")
-
-    except Exception as e:
-        if get_rank_safe() == 0:
-            logger.error(f"Failed to save tokenizer files: {e}")
-            import traceback
-
-            logger.error(traceback.format_exc())
-        if raise_on_error:
-            raise
 
 
 def _generate_model_state_dict(

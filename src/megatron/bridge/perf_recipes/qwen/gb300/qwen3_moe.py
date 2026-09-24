@@ -624,18 +624,24 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config() -> Config
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """Qwen3 235B-A22B pretrain: 256× GB300, NVFP4, full-iteration CG and A2A overlap."""
+def _build_qwen3_235b_a22b_gb300_nvfp4() -> ConfigContainer:
+    """Shared HybridEP NVFP4 base (full-iteration CG, A2A overlap) for the GB300 recipe and its VR200 alias."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.model.virtual_pipeline_model_parallel_size = 12
     _enable_hybridep_full_iteration_nvfp4(cfg)
+    cfg.model.recompute_modules = []
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 256× GB300, NVFP4, full-iteration CG and A2A overlap, NCCL EP."""
+    cfg = _build_qwen3_235b_a22b_gb300_nvfp4()
     _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
-    cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
