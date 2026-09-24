@@ -26,6 +26,7 @@ from argument_parser import parse_cli_args
 from utils.overrides import set_user_overrides
 
 from megatron.bridge.recipes.gpt.h100.vanilla_gpt import vanilla_gpt_pretrain_1gpu_h100_bf16_config
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 
 
 def _parse_args(tmp_path: Path, *extra_args: str):
@@ -56,3 +57,38 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
 
     assert updated.model.seq_length == 128
     assert updated.dataset.seq_length == 128
+
+
+def test_moe_a2a_overlap_false_disables_overlap(tmp_path):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    if recipe.comm_overlap is None:
+        recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    # Model a recipe that enables A2A overlap, as the GB200 GPT-OSS recipes do.
+    recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--moe_a2a_overlap", "false"))
+
+    assert updated.comm_overlap.overlap_moe_expert_parallel_comm is False
+
+
+def test_moe_a2a_overlap_true_enables_overlap(tmp_path):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.comm_overlap = None
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path, "--moe_a2a_overlap", "true"))
+
+    assert updated.comm_overlap is not None
+    assert updated.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert updated.comm_overlap.delay_wgrad_compute is True
+    assert updated.model.moe_shared_expert_overlap is False
+
+
+def test_moe_a2a_overlap_omitted_preserves_recipe_value(tmp_path):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    if recipe.comm_overlap is None:
+        recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
+
+    updated = set_user_overrides(recipe, _parse_args(tmp_path))
+
+    assert updated.comm_overlap.overlap_moe_expert_parallel_comm is True
