@@ -360,6 +360,7 @@ def test_squad_row_has_matching_gpt_sft_and_direct_hf_collation():
     gpt_dataset.is_test = False
     gpt_dataset.output_original_text = False
     gpt_dataset.pad_to_max_length = False
+    gpt_dataset.return_padding_mask = False
     gpt_dataset.pad_seq_length_to_mult = 1
     gpt_dataset.ceil_to_power_2 = False
     gpt_dataset.get_attention_mask_from_fusion = True
