@@ -40,6 +40,9 @@ class DeepSeekV41ModelProvider(MLAModelProvider):
     engram_config: Any | None = None
     vision_config: Any | None = None
     dspark_config: Any | None = None
+    # V4.1's text/image correction biases are loaded from the checkpoint and
+    # must remain fixed during actor updates.
+    moe_router_bias_update_rate: float = 0.0
 
     @property
     def hybrid_pattern(self) -> str:

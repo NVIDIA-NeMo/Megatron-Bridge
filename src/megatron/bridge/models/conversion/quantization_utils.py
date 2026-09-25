@@ -240,13 +240,22 @@ def _quantize_fp8_1d_scale(
 
     q_weight = torch.empty_like(weight_f32, dtype=torch.float8_e4m3fn)
     scale_f32 = torch.empty(scale_len, dtype=torch.float32, device=weight.device)
-    for block_idx in range(scale_len):
-        row_start = block_idx * block_size
-        row_end = min(row_start + block_size, rows)
-        block = weight_f32[row_start:row_end]
-        block_scale = scale_from_amax(block.abs().amax().reshape(()), FP8_E4M3_MAX, source_scale.dtype)
-        q_weight[row_start:row_end] = (block / block_scale).to(torch.float8_e4m3fn)
-        scale_f32[block_idx] = block_scale
+    num_full_blocks = rows // block_size
+    if num_full_blocks > 0:
+        full_blocks = weight_f32[: num_full_blocks * block_size].view(num_full_blocks, block_size, -1)
+        full_amax = full_blocks.abs().amax(dim=(1, 2)).reshape(-1)
+        full_scale = scale_from_amax(full_amax, FP8_E4M3_MAX, source_scale.dtype)
+        q_weight[: num_full_blocks * block_size] = (
+            (full_blocks / full_scale[:, None, None]).to(torch.float8_e4m3fn).view(num_full_blocks * block_size, -1)
+        )
+        scale_f32[:num_full_blocks] = full_scale
+    if num_full_blocks < scale_len:
+        # Tail block (fewer than ``block_size`` rows): identical amax over the
+        # present rows only, matching the original ``min(row_start+block_size, rows)``.
+        tail = weight_f32[num_full_blocks * block_size :]
+        tail_scale = scale_from_amax(tail.abs().amax().reshape(()), FP8_E4M3_MAX, source_scale.dtype)
+        q_weight[num_full_blocks * block_size :] = (tail / tail_scale).to(torch.float8_e4m3fn)
+        scale_f32[num_full_blocks] = tail_scale
     return q_weight.contiguous(), scale_f32.to(dtype=source_scale.dtype)
 
 

@@ -8,12 +8,13 @@ import torch.nn as nn
 from safetensors.torch import save_file
 
 from megatron.bridge.models.conversion import quantization_utils
-from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.deepseek.deepseek_v41_bridge import (
     DeepSeekV41Bridge,
     _EngramEmbeddingMapping,
     _ReplicatedBufferMapping,
 )
+from megatron.bridge.models.deepseek.deepseek_v41_provider import DeepSeekV41ModelProvider
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 
 
@@ -28,6 +29,97 @@ def _bridge() -> DeepSeekV41Bridge:
         vision_config=SimpleNamespace(num_hidden_layers=1),
     )
     return bridge
+
+
+def test_provider_freezes_v41_checkpoint_router_biases():
+    assert DeepSeekV41ModelProvider().moe_router_bias_update_rate == 0.0
+
+
+def test_provider_bridge_disables_dspark_for_actor(monkeypatch):
+    seen = {}
+
+    class NativeConfig:
+        dspark_config = object()
+
+        @classmethod
+        def from_hf(cls, hf_dict):
+            seen.update(hf_dict)
+            return cls()
+
+    hf_pretrained = SimpleNamespace(
+        config=SimpleNamespace(
+            to_dict=lambda: {
+                "model_type": "deepseek_v41",
+                "text_config": {"vocab_size": 128, "max_position_embeddings": 64},
+                "vision_config": None,
+            }
+        ),
+        model_name_or_path="test",
+        init_kwargs={},
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.deepseek.deepseek_v41_bridge._load_deepseek_v41_config_class",
+        lambda: NativeConfig,
+    )
+
+    provider = DeepSeekV41Bridge().provider_bridge(hf_pretrained)
+
+    assert provider.dspark_config is None
+    assert seen["vision_config"] is None
+
+
+def test_provider_bridge_restores_flat_vllm_vision_config(monkeypatch):
+    seen = {}
+
+    class NativeConfig:
+        dspark_config = object()
+
+        @classmethod
+        def from_hf(cls, hf_dict):
+            seen.update(hf_dict)
+            return cls()
+
+    hf_pretrained = SimpleNamespace(
+        config=SimpleNamespace(
+            to_dict=lambda: {
+                "model_type": "deepseek_v41",
+                "vocab_size": 128,
+                "max_position_embeddings": 64,
+                "num_hidden_layers": 2,
+                "vision_n_layers": 1,
+                "vision_dim": 1024,
+                "vision_n_heads": 16,
+                "vision_inter_dim": 2816,
+                "vision_patch_size": 14,
+                "vision_rope_theta": 10000.0,
+                "vision_downsample_ratio": 3,
+                "vision_max_n_token": 1024,
+                "vision_min_pixels": 295936,
+                "vision_max_wh_ratio": 200,
+            }
+        ),
+        model_name_or_path="test",
+        init_kwargs={},
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.deepseek.deepseek_v41_bridge._load_deepseek_v41_config_class",
+        lambda: NativeConfig,
+    )
+
+    DeepSeekV41Bridge().provider_bridge(hf_pretrained)
+
+    assert seen["vision_config"] == {
+        "num_hidden_layers": 1,
+        "hidden_size": 1024,
+        "num_attention_heads": 16,
+        "intermediate_size": 2816,
+        "patch_size": 14,
+        "rope_theta": 10000.0,
+        "downsample_ratio": 3,
+        "max_image_tokens": 1024,
+        "min_pixels": 295936,
+        "max_wh_ratio": 200,
+    }
 
 
 def test_mapping_registry_covers_physical_backbone_and_extra_components():
@@ -205,6 +297,42 @@ def test_engram_import_streams_bounded_row_chunks_into_the_target(monkeypatch):
     assert torch.all(module.weight[0, 32:] == 4)
     assert torch.all(module.weight[-1, :32] == 32)
     assert torch.all(module.weight[-1, 32:] == 64)
+
+
+def test_engram_export_is_streamed_outside_the_base_bridge(monkeypatch):
+    regular_task = WeightConversionTask(
+        param_name="decoder.layers.0.weight",
+        global_param_name="decoder.layers.0.weight",
+        mapping=SimpleNamespace(hf_param="layers.0.weight"),
+    )
+    engram_module = SimpleNamespace(global_num_embeddings=4, row_start=0, row_end=4)
+    engram_task = WeightConversionTask(
+        param_name="decoder.layers.0.engram.embed.tables.0.weight",
+        global_param_name="decoder.layers.0.engram.embed.tables.0.weight",
+        mapping=_EngramEmbeddingMapping(
+            "decoder.layers.0.engram.embed.tables.0.weight", "layers.0.engram.embed.weight"
+        ),
+        megatron_module=engram_module,
+        param_weight=torch.zeros((4, 2), dtype=torch.bfloat16),
+    )
+    seen = {}
+
+    def fake_base_stream(self, *args, **kwargs):
+        seen["tasks"] = kwargs["conversion_tasks"]
+        yield ("layers.0.weight", torch.ones(1))
+
+    monkeypatch.setattr(MegatronModelBridge, "stream_weights_megatron_to_hf", fake_base_stream)
+
+    output = list(
+        _bridge().stream_weights_megatron_to_hf(
+            object(),
+            object(),
+            conversion_tasks=[regular_task, engram_task],
+        )
+    )
+
+    assert seen["tasks"] == [regular_task]
+    assert [name for name, _ in output] == ["layers.0.weight", "layers.0.engram.embed.weight.__rows_0"]
 
 
 def test_replicated_buffer_mapping_targets_parameter_free_module():
