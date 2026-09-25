@@ -221,7 +221,8 @@ te = [
     "megatron-core[te]",
 ]
 ssm = [
-    "mamba-ssm",
+    "mamba-ssm==2.3.1",  # move together with docker/patches/mamba.patch and docker/common/install_mamba.sh,
+                         # which patches this exact sdist and rejects any other locked version
     "causal-conv1d",
     "tilelang>=0.1.9",
 ]
