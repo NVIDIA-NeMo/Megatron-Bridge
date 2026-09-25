@@ -118,7 +118,7 @@ def _patch_mcore_expert_bias_padding_mask() -> None:
             assert flat_mask.shape[0] == routing_map.shape[0], (
                 f"padding_mask flat {flat_mask.shape} vs routing_map {routing_map.shape}"
             )
-            padding_mask = flat_mask.unsqueeze(-1)
+            padding_mask = flat_mask
         current_apply_expert_bias(self, routing_map, padding_mask=padding_mask)
 
     setattr(_apply_expert_bias, _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED, True)
