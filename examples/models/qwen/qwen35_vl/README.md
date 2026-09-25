@@ -92,21 +92,41 @@ Before training, ensure the following environment variables are set:
 
 ### Vision activation recomputation
 
-Set `cfg.model.vision_full_recompute = True` on a Qwen3.5 dense or MoE provider
-to checkpoint every vision transformer layer during training. This selects
-full recomputation with the uniform method and one layer per checkpoint,
-independently of the decoder's recomputation settings. It can be combined with
-selective decoder recomputation without applying decoder-only module names to
-the vision tower.
+Qwen3.5 dense and MoE providers expose vision recomputation independently of
+the decoder. `vision_recompute_granularity` selects the policy:
+
+- `"inherit"` (default): preserve the existing decoder granularity, method, and
+  layer-count inheritance. Selective vision modules retain the vision default
+  (`["core_attn"]`); decoder-only module names are not copied.
+- `None`: disable vision recomputation, even when the decoder uses it.
+- `"full"`: require `vision_recompute_method` (`"uniform"` or `"block"`) and
+  `vision_recompute_num_layers` (an integer from 1 through the vision depth).
+  Uniform checkpoints chunks of that size; block checkpoints that many initial
+  layers individually.
+- `"selective"`: require a non-empty `vision_recompute_modules` list drawn from
+  `"core_attn"` and `"mlp"`. The TE vision spec fuses layernorm into QKV/FC1;
+  separate `"layernorm"`, GDN, and MoE recomputation options are not supported.
+
+For example, a recipe can checkpoint every vision layer while retaining its
+selective decoder policy:
+
+```python
+cfg.model.vision_recompute_granularity = "full"
+cfg.model.vision_recompute_method = "uniform"
+cfg.model.vision_recompute_num_layers = 1
+```
+
+The method, layer count, and module-list fields default to `None`. Only set
+fields applicable to the selected policy; unused fields must remain `None`.
+Explicit vision policies do not inherit missing fields from the decoder.
 
 Per-layer vision CUDA graphs are incompatible with full recomputation. If a
 recipe enables them, also set `cfg.model.vision_cuda_graph_impl = "none"`.
 Decoder graph settings remain independent.
 
-The default, `False`, preserves the existing inheritance of decoder
-recomputation settings; it does not force vision recomputation off. The option
-applies to the Megatron vision encoder and does not alter checkpoint parameter
-names or shapes. Set it explicitly in the training configuration when resuming.
+These options apply to the Megatron vision encoder and do not alter checkpoint
+parameter names or shapes. Set the policy in the training configuration when
+resuming.
 
 ### Pretrain
 

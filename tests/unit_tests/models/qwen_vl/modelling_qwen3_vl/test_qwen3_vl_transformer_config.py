@@ -158,22 +158,50 @@ class TestGetVisionModelConfigVisionCudaGraph:
     "granularity,method,num_layers",
     [(None, None, None), ("selective", None, None), ("full", "block", 2)],
 )
-@pytest.mark.parametrize("vision_full_recompute", [False, True])
-def test_vision_full_recompute_is_independent_of_decoder(granularity, method, num_layers, vision_full_recompute):
+@pytest.mark.parametrize(
+    "vision_policy,expected",
+    [
+        ({"vision_recompute_granularity": "inherit"}, "inherit"),
+        ({"vision_recompute_granularity": None}, (None, None, None)),
+        (
+            {
+                "vision_recompute_granularity": "full",
+                "vision_recompute_method": "uniform",
+                "vision_recompute_num_layers": 1,
+            },
+            ("full", "uniform", 1),
+        ),
+        (
+            {
+                "vision_recompute_granularity": "full",
+                "vision_recompute_method": "block",
+                "vision_recompute_num_layers": 2,
+            },
+            ("full", "block", 2),
+        ),
+        (
+            {"vision_recompute_granularity": "selective", "vision_recompute_modules": ["core_attn", "mlp"]},
+            ("selective", None, None),
+        ),
+    ],
+)
+def test_vision_recompute_is_independent_of_decoder(granularity, method, num_layers, vision_policy, expected):
     megatron = _megatron_base(
         recompute_granularity=granularity,
         recompute_method=method,
         recompute_num_layers=num_layers,
         recompute_modules=["gdn_norm_out", "moe"],
-        vision_full_recompute=vision_full_recompute,
+        **vision_policy,
     )
 
     config = get_vision_model_config(_hf_config(), megatron)
 
-    expected = ("full", "uniform", 1) if vision_full_recompute else (granularity, method, num_layers)
+    if expected == "inherit":
+        expected = (granularity, method, num_layers)
+        assert config.recompute_modules == ["core_attn"]
+    else:
+        assert config.recompute_modules == vision_policy.get("vision_recompute_modules", [])
     assert (config.recompute_granularity, config.recompute_method, config.recompute_num_layers) == expected
-    if vision_full_recompute:
-        assert config.recompute_modules == []
     assert (megatron.recompute_granularity, megatron.recompute_method, megatron.recompute_num_layers) == (
         granularity,
         method,
@@ -182,7 +210,7 @@ def test_vision_full_recompute_is_independent_of_decoder(granularity, method, nu
     assert megatron.recompute_modules == ["gdn_norm_out", "moe"]
 
 
-def test_vision_full_recompute_missing_flag_preserves_inheritance():
+def test_vision_recompute_missing_fields_preserve_inheritance():
     megatron = _megatron_base(recompute_granularity="full", recompute_method="block", recompute_num_layers=2)
 
     config = get_vision_model_config(_hf_config(), megatron)
@@ -193,9 +221,15 @@ def test_vision_full_recompute_missing_flag_preserves_inheritance():
 
 
 @pytest.mark.parametrize("implementation", ["transformer_engine", "local", "local_transformer_engine"])
-def test_vision_full_recompute_rejects_per_layer_vision_graphs(implementation):
+@pytest.mark.parametrize("granularity", ["inherit", "full"])
+def test_full_vision_recompute_rejects_per_layer_vision_graphs(implementation, granularity):
     megatron = _megatron_base(
-        vision_full_recompute=True,
+        recompute_granularity="full",
+        recompute_method="uniform",
+        recompute_num_layers=1,
+        vision_recompute_granularity=granularity,
+        vision_recompute_method="uniform" if granularity == "full" else None,
+        vision_recompute_num_layers=1 if granularity == "full" else None,
         vision_cuda_graph_impl=implementation,
         vision_cuda_graph_scope=["attn", "mlp"],
     )
@@ -205,9 +239,11 @@ def test_vision_full_recompute_rejects_per_layer_vision_graphs(implementation):
 
 
 @pytest.mark.parametrize("vision_implementation", ["none", "full_iteration"])
-def test_vision_full_recompute_allows_decoder_graphs(vision_implementation):
+def test_full_vision_recompute_allows_decoder_graphs(vision_implementation):
     megatron = _megatron_base(
-        vision_full_recompute=True,
+        vision_recompute_granularity="full",
+        vision_recompute_method="uniform",
+        vision_recompute_num_layers=1,
         vision_cuda_graph_impl=vision_implementation,
         cuda_graph_impl="transformer_engine",
         cuda_graph_scope=["attn", "mlp"],
@@ -218,3 +254,85 @@ def test_vision_full_recompute_allows_decoder_graphs(vision_implementation):
     assert config.recompute_granularity == "full"
     assert config.cuda_graph_impl == vision_implementation
     assert megatron.cuda_graph_impl == "transformer_engine"
+
+
+@pytest.mark.parametrize("num_layers", [None, 0, -1, 3, 1.5, True])
+def test_full_vision_recompute_rejects_invalid_layer_counts(num_layers):
+    with pytest.raises(ValueError, match="vision_recompute_num_layers"):
+        get_vision_model_config(
+            _hf_config(),
+            _megatron_base(
+                vision_recompute_granularity="full",
+                vision_recompute_method="uniform",
+                vision_recompute_num_layers=num_layers,
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "policy,message",
+    [
+        ({"vision_recompute_granularity": "typo"}, "vision_recompute_granularity"),
+        ({"vision_recompute_method": "uniform"}, "explicitly"),
+        ({"vision_recompute_num_layers": 1}, "explicitly"),
+        ({"vision_recompute_modules": ["core_attn"]}, "explicitly"),
+        ({"vision_recompute_granularity": None, "vision_recompute_method": "uniform"}, "Disabled"),
+        ({"vision_recompute_granularity": None, "vision_recompute_num_layers": 1}, "Disabled"),
+        ({"vision_recompute_granularity": None, "vision_recompute_modules": []}, "Disabled"),
+        ({"vision_recompute_granularity": "full", "vision_recompute_num_layers": 1}, "vision_recompute_method"),
+        (
+            {
+                "vision_recompute_granularity": "full",
+                "vision_recompute_method": "typo",
+                "vision_recompute_num_layers": 1,
+            },
+            "vision_recompute_method",
+        ),
+        (
+            {
+                "vision_recompute_granularity": "full",
+                "vision_recompute_method": "uniform",
+                "vision_recompute_num_layers": 1,
+                "vision_recompute_modules": [],
+            },
+            "only supported for selective",
+        ),
+        ({"vision_recompute_granularity": "selective"}, "non-empty list"),
+        ({"vision_recompute_granularity": "selective", "vision_recompute_modules": []}, "non-empty list"),
+        ({"vision_recompute_granularity": "selective", "vision_recompute_modules": ["moe"]}, "non-empty list"),
+        (
+            {"vision_recompute_granularity": "selective", "vision_recompute_modules": ["gdn_norm_out"]},
+            "non-empty list",
+        ),
+        ({"vision_recompute_granularity": "selective", "vision_recompute_modules": ["layernorm"]}, "non-empty list"),
+        ({"vision_recompute_granularity": "selective", "vision_recompute_method": "block"}, "cannot specify"),
+        ({"vision_recompute_granularity": "selective", "vision_recompute_num_layers": 1}, "cannot specify"),
+    ],
+)
+def test_invalid_vision_recompute_policies_fail_early(policy, message):
+    with pytest.raises(ValueError, match=message):
+        get_vision_model_config(_hf_config(), _megatron_base(**policy))
+
+
+def test_selective_vision_modules_are_copied():
+    modules = ["core_attn", "mlp"]
+    megatron = _megatron_base(vision_recompute_granularity="selective", vision_recompute_modules=modules)
+    config = get_vision_model_config(_hf_config(), megatron)
+    config.recompute_modules.append("changed")
+    assert modules == ["core_attn", "mlp"]
+
+
+def test_disabled_vision_recompute_allows_graphs_with_full_decoder_recompute():
+    config = get_vision_model_config(
+        _hf_config(),
+        _megatron_base(
+            recompute_granularity="full",
+            recompute_method="uniform",
+            recompute_num_layers=1,
+            vision_recompute_granularity=None,
+            vision_cuda_graph_impl="local_transformer_engine",
+        ),
+    )
+    assert config.recompute_granularity is None
+    assert config.recompute_modules == []
+    assert config.cuda_graph_impl == "local_transformer_engine"
