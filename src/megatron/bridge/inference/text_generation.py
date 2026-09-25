@@ -149,6 +149,8 @@ def _apply_provider_parallelism(
     # Training capacity and forced routing must not change inference predictions.
     setattr(provider, "moe_expert_capacity_factor", None)
     setattr(provider, "moe_expert_rank_capacity_factor", None)
+    # Backward-only paged stashing also requires a fixed rank capacity.
+    setattr(provider, "moe_paged_stash", False)
     # NCCL-EP zero-copy requires fixed capacity and cannot serve dropless eager inference.
     setattr(provider, "moe_ncclep_zero_copy", False)
     setattr(provider, "moe_pad_expert_input_to_capacity", False)
@@ -195,6 +197,7 @@ def _megatron_checkpoint_overrides(
         "fp16": dtype == torch.float16,
         "moe_expert_capacity_factor": None,
         "moe_expert_rank_capacity_factor": None,
+        "moe_paged_stash": False,
         "moe_ncclep_zero_copy": False,
         "moe_pad_expert_input_to_capacity": False,
         "moe_router_force_load_balancing": False,

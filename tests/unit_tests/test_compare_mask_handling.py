@@ -122,6 +122,7 @@ class TestCompareMaskHandling:
         overrides = bridge.load_megatron_model.call_args.kwargs["mp_overrides"]
         assert overrides["moe_expert_capacity_factor"] is None
         assert overrides["moe_expert_rank_capacity_factor"] is None
+        assert overrides["moe_paged_stash"] is False
         assert overrides["moe_ncclep_zero_copy"] is False
         assert overrides["moe_pad_expert_input_to_capacity"] is False
         assert overrides["moe_router_force_load_balancing"] is False
@@ -346,6 +347,7 @@ class TestCompareMaskHandling:
                 "expert_tensor_parallel_size": 1,
                 "moe_expert_capacity_factor": None,
                 "moe_expert_rank_capacity_factor": None,
+                "moe_paged_stash": False,
                 "moe_ncclep_zero_copy": False,
                 "moe_pad_expert_input_to_capacity": False,
                 "moe_router_force_load_balancing": False,

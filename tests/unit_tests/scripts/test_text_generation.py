@@ -186,6 +186,7 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
     assert overrides["moe_expert_capacity_factor"] is None
     assert overrides["moe_expert_rank_capacity_factor"] is None
+    assert overrides["moe_paged_stash"] is False
     assert overrides["moe_ncclep_zero_copy"] is False
     assert overrides["moe_pad_expert_input_to_capacity"] is False
     assert overrides["moe_router_force_load_balancing"] is False
@@ -204,6 +205,7 @@ def test_provider_inference_disables_dropping_without_changing_dispatcher(
         moe_flex_dispatcher_backend=backend,
         moe_expert_capacity_factor=1.1 if backend == "hybridep" else None,
         moe_expert_rank_capacity_factor=1.5,
+        moe_paged_stash=True,
         moe_ncclep_zero_copy=zero_copy,
         moe_pad_expert_input_to_capacity=backend == "hybridep",
         moe_router_force_load_balancing=True,
@@ -223,6 +225,7 @@ def test_provider_inference_disables_dropping_without_changing_dispatcher(
     )
     assert provider.moe_expert_capacity_factor is None
     assert provider.moe_expert_rank_capacity_factor is None
+    assert provider.moe_paged_stash is False
     assert provider.moe_ncclep_zero_copy is False
     assert provider.moe_pad_expert_input_to_capacity is False
     assert provider.moe_router_force_load_balancing is False

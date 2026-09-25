@@ -145,6 +145,7 @@ def test_checkpoint_generation_disables_dropping_without_replacing_dispatcher(us
     overrides = bridge.load_megatron_model.call_args.kwargs["mp_overrides"]
     assert overrides["moe_expert_capacity_factor"] is None
     assert overrides["moe_expert_rank_capacity_factor"] is None
+    assert overrides["moe_paged_stash"] is False
     assert overrides["moe_ncclep_zero_copy"] is False
     assert overrides["moe_pad_expert_input_to_capacity"] is False
     assert overrides["moe_router_force_load_balancing"] is False

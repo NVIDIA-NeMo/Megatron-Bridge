@@ -296,6 +296,7 @@ def main(args) -> None:
             # Preserve the saved dispatcher, but never drop tokens or force routing in inference.
             "moe_expert_capacity_factor": None,
             "moe_expert_rank_capacity_factor": None,
+            "moe_paged_stash": False,
             "moe_ncclep_zero_copy": False,
             "moe_pad_expert_input_to_capacity": False,
             "moe_router_force_load_balancing": False,

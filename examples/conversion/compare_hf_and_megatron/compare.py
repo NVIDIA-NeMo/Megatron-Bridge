@@ -786,6 +786,7 @@ def _load_megatron_model(args):
                 # use synthetic routing when comparing against HF inference.
                 "moe_expert_capacity_factor": None,
                 "moe_expert_rank_capacity_factor": None,
+                "moe_paged_stash": False,
                 # Zero-copy NCCL-EP requires the fixed capacity disabled above.
                 "moe_ncclep_zero_copy": False,
                 "moe_pad_expert_input_to_capacity": False,
