@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import os
 
 from megatron.training.utils.log_utils import (
@@ -22,6 +23,29 @@ from megatron.training.utils.log_utils import (
     warning_filter,  # noqa: F401
 )
 from megatron.training.utils.log_utils import setup_logging as _mlm_setup_logging
+
+from megatron.bridge.utils.common_utils import get_rank_safe
+
+
+_REPEATED_EXTERNAL_LOGGERS = (
+    "GroupedGemmQuantSm100",
+    "GroupedGemmDsreluSm100",
+    "GroupedGemmSreluSm100",
+    "GroupedGemmWgradSm100",
+    "GroupedGemmWgradBlockScaledAPI",
+    "absl",
+)
+
+
+class _RankZeroInfoFilter(logging.Filter):
+    """Emit repeated external informational messages on rank zero only."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Resolve rank at emission time because setup can precede distributed init.
+        return record.levelno >= logging.WARNING or get_rank_safe() == 0
+
+
+_rank_zero_info_filter = _RankZeroInfoFilter()
 
 
 def setup_logging(
@@ -58,6 +82,9 @@ def setup_logging(
         modules_to_filter=modules_to_filter,
         set_level_for_all_loggers=set_level_for_all_loggers,
     )
+
+    for name in _REPEATED_EXTERNAL_LOGGERS:
+        logging.getLogger(name).addFilter(_rank_zero_info_filter)
 
 
 def safe_serialize(obj) -> str:

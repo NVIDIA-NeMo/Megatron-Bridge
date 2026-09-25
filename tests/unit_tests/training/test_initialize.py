@@ -532,3 +532,32 @@ class TestSetupFlightRecorderEnv:
         _setup_flight_recorder_env(cfg)
         captured = capsys.readouterr()
         assert "Flight recorder env vars:" not in captured.out
+
+
+@pytest.mark.parametrize("lazy", [False, True])
+def test_torch_dist_init_resets_default_logging_ranks(lazy):
+    from types import SimpleNamespace
+
+    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
+
+    from megatron.bridge.training.initialize import torch_dist_init
+
+    original = get_default_log_ranks()
+    try:
+        set_default_log_ranks({0, 4})
+        with (
+            patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
+            patch("megatron.bridge.training.initialize._set_random_seed"),
+            patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.initialize.parallel_state"),
+        ):
+            model = SimpleNamespace(
+                num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
+            )
+            result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
+            assert get_default_log_ranks() == (0,)
+            if lazy:
+                result()
+                assert get_default_log_ranks() == (0,)
+    finally:
+        set_default_log_ranks(original)
