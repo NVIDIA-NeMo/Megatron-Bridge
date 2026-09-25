@@ -32,6 +32,7 @@ from megatron.bridge.data.builders import (
     MockVLMSFTDatasetConfig,
     QwenVLEnergonTaskEncoderConfig,
 )
+from megatron.bridge.models.gpt.dca import DualChunkGPTModelProvider
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -103,6 +104,22 @@ def create_test_gpt_config(**kwargs: Any) -> GPTModelProvider:
     }
     defaults.update(kwargs)
     return GPTModelProvider(**defaults)
+
+
+def create_test_dca_gpt_config(**kwargs: Any) -> DualChunkGPTModelProvider:
+    """Create a minimal DCA GPT provider for cross-config validation tests."""
+    defaults = {
+        "num_layers": 1,
+        "hidden_size": 128,
+        "num_attention_heads": 4,
+        "seq_length": 512,
+        "position_embedding_type": "rope",
+        "apply_rope_fusion": False,
+        "dca_chunk_size": 256,
+        "dca_local_size": 64,
+    }
+    defaults.update(kwargs)
+    return DualChunkGPTModelProvider(**defaults)
 
 
 def create_test_qwen3_vl_config(**kwargs: Any) -> Qwen3VLModelProvider:
@@ -1001,6 +1018,41 @@ class TestConfigContainerValidation:
 
         try:
             with pytest.raises(ValueError, match="Micro batch size should be 1 when training with packed sequence"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_dca_rejects_offline_sequence_packing(self):
+        """Test that DCA rejects packed sequences before training starts."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_dca_gpt_config(),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="DCA does not support offline or in-batch sequence packing"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_dca_requires_backend_generated_causal_masks(self):
+        """Test that DCA rejects attention masks produced by the dataset."""
+        dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)
+        dataset_cfg.skip_getting_attention_mask_from_dataset = False
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_dca_gpt_config(),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="DCA requires backend-generated causal masks"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
