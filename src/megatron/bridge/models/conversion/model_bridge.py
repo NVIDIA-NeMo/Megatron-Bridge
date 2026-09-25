@@ -210,6 +210,8 @@ class WeightConversionTask(Generic[MappingT]):
             before final device placement.
         required_hf_param_names: Import-only source tensors consumed by the loading
             hook. Defaults to the parameter names declared by ``mapping.hf_param``.
+        param_weight_resolver: Export-only callback used when a task's source is a
+            live view that can be invalidated and recreated after task construction.
 
     """
 
@@ -225,6 +227,15 @@ class WeightConversionTask(Generic[MappingT]):
         default=None, compare=False, repr=False
     )
     required_hf_param_names: tuple[str, ...] | None = field(default=None, compare=False)
+    param_weight_resolver: Optional[Callable[[], Optional[torch.Tensor]]] = field(
+        default=None, compare=False, repr=False
+    )
+
+    def resolve_param_weight(self) -> Optional[torch.Tensor]:
+        """Return the current export source, refreshing invalidated live views."""
+        if self.param_weight_resolver is not None:
+            return self.param_weight_resolver()
+        return self.param_weight
 
     @property
     def hf_param_names(self) -> tuple[str, ...]:
@@ -1268,7 +1279,7 @@ class MegatronModelBridge(
         target_rows = vocab_size
         if is_scale_task:
             scale_block_size = getattr(task.mapping, "scale_block_size", None)
-            local_scale = task.param_weight
+            local_scale = task.resolve_param_weight()
             module_weight = getattr(task.megatron_module, "weight", None)
             if scale_block_size is None:
                 if (
@@ -1586,13 +1597,14 @@ class MegatronModelBridge(
         """
         params = []
         for task in tasks:
-            if task.param_weight is None:
+            param_weight = task.resolve_param_weight()
+            if param_weight is None:
                 continue
             if task.megatron_module is None:
                 raise ValueError(f"{task.global_param_name}: local parameter has no owning Megatron module")
             params.extend(
                 task.mapping.local_hf_params(
-                    task.param_weight,
+                    param_weight,
                     global_param_name=task.global_param_name,
                     megatron_module=task.megatron_module,
                 )
@@ -1777,14 +1789,15 @@ class MegatronModelBridge(
         _grouped_sources: Optional[Dict[str, List[str]]] = {} if with_megatron_names else None
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
-            if isinstance(task.param_weight, DTensor):
+            param_weight = task.resolve_param_weight()
+            if isinstance(param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
                     uneven_dtensor_to_full_tensor,
                 )
 
-                megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
+                megatron_weights = uneven_dtensor_to_full_tensor(param_weight)
             else:
-                megatron_weights = task.param_weight
+                megatron_weights = param_weight
             megatron_module = task.megatron_module
             if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
                 megatron_weights = None

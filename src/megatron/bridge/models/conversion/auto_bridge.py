@@ -765,11 +765,25 @@ class AutoBridge(Generic[MegatronModelT]):
             model = [model]
         return self._model_bridge.build_export_fp8_tasks(self.hf_pretrained, model)
 
-    def get_export_mxfp8_tasks(self, model: MegatronModelT | list[MegatronModelT]) -> list[WeightConversionTask]:
-        """Build native MXFP8 export tasks, including singular grouped-expert weights."""
+    def get_export_mxfp8_tasks(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        *,
+        expand_native_grouped: bool = False,
+    ) -> list[WeightConversionTask]:
+        """Build native MXFP8 export tasks, optionally expanding grouped experts."""
         if not isinstance(model, list):
             model = [model]
-        return self._model_bridge.build_export_mxfp8_tasks(self.hf_pretrained, model)
+        if not expand_native_grouped:
+            return self._model_bridge.build_export_mxfp8_tasks(
+                self.hf_pretrained,
+                model,
+            )
+        return self._model_bridge.build_export_mxfp8_tasks(
+            self.hf_pretrained,
+            model,
+            expand_native_grouped=True,
+        )
 
     def iter_local_mxfp8_params(self, tasks: Iterable[WeightConversionTask]) -> Iterable["LocalMXFP8Param"]:
         """Yield local native MXFP8 projections through the public bridge API."""
