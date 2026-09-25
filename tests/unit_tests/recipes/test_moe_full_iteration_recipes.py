@@ -48,7 +48,13 @@ def _assert_full_iteration_hybridep(cfg: ConfigContainer) -> None:
     assert cfg.ddp.check_for_nan_in_grad is False
     assert cfg.rerun_state_machine.check_for_nan_in_loss is False
 
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    # GB300 recipes default to the NCCL EP dispatch stack; every other GPU keeps HybridEP.
+    if cfg.model.moe_flex_dispatcher_backend == "ncclep":
+        assert cfg.model.moe_use_grouped_tensor is True
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN" not in cfg.env_vars
+    else:
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.model.moe_pad_experts_for_cuda_graph_inference is True
@@ -141,7 +147,8 @@ def test_nemotron_3_super_mxfp8_uses_full_iteration_stack(
     assert cfg.model.delay_wgrad_compute is False
     assert cfg.comm_overlap is None
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ep
+    if cfg.model.moe_flex_dispatcher_backend == "hybridep":
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ep
     assert (
         cfg.model.tensor_model_parallel_size,
         cfg.model.pipeline_model_parallel_size,
@@ -178,7 +185,8 @@ def test_nemotron_3_super_nvfp4_uses_full_iteration_stack(
     assert cfg.model.delay_wgrad_compute is False
     assert cfg.comm_overlap is None
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ep
+    if cfg.model.moe_flex_dispatcher_backend == "hybridep":
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ep
     assert cfg.env_vars["NVTE_USE_FAST_MATH"] == 1
     assert (
         cfg.model.tensor_model_parallel_size,

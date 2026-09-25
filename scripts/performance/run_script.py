@@ -58,7 +58,12 @@ def _dump_env_rank0() -> None:
 
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply Hydra and argparse overrides to a flat performance recipe."""
-    from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
+    from utils.overrides import (
+        _apply_flat_cli_environment_compatibility,
+        apply_one_gpu_per_rank_device_mapping,
+        set_cli_overrides,
+        set_user_overrides,
+    )
     from utils.utils import apply_target_topology_environment, explicit_environment_override_names
 
     if not hasattr(recipe, "env_vars"):
@@ -99,7 +104,7 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
             gpu=args.gpu,
             protected_env_names=protected_env_names,
         )
-    return recipe
+    return apply_one_gpu_per_rank_device_mapping(recipe)
 
 
 def _prepare_perf_recipe(args, cli_overrides: list[str]):

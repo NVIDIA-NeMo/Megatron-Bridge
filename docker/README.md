@@ -60,9 +60,11 @@ Mamba 2.3.1 sdist specified in the resolved `uv.lock`, verifies its SHA-256 hash
 The patch removes hardcoded C++17 flags from both CUDA-extension compiler argument lists,
 allowing PyTorch to select its required C++ standard. The installer forces a source build
 so Mamba cannot substitute an unpatched release wheel. It rejects a different locked version
-or source: revisit the workaround when upgrading Mamba, and remove it once the selected
-release supports the container's PyTorch headers without patching. A plain `uv sync` run
-later does not apply this Docker-only workaround.
+or source, so the `ssm` extra in `pyproject.toml` pins `mamba-ssm` to the same version to keep a
+fresh `uv lock` buildable. Move the pin, the installer, and the patch together when upgrading
+Mamba, and remove the workaround once the selected release supports the container's PyTorch
+headers without patching. A plain `uv sync` run later does not apply this Docker-only
+workaround.
 
 ---
 
