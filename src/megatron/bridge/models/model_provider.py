@@ -568,6 +568,7 @@ class ModelParallelKwargs(TypedDict, total=False):
     pipeline_dtype: torch.dtype
     moe_expert_capacity_factor: float | None
     moe_expert_rank_capacity_factor: float | None
+    moe_ncclep_zero_copy: bool
     moe_pad_expert_input_to_capacity: bool
     moe_router_force_load_balancing: bool
     moe_hybridep_pad_uneven_dispatch_inputs: bool

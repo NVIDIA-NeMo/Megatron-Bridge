@@ -149,6 +149,8 @@ def _apply_provider_parallelism(
     # Training capacity and forced routing must not change inference predictions.
     setattr(provider, "moe_expert_capacity_factor", None)
     setattr(provider, "moe_expert_rank_capacity_factor", None)
+    # NCCL-EP zero-copy requires fixed capacity and cannot serve dropless eager inference.
+    setattr(provider, "moe_ncclep_zero_copy", False)
     setattr(provider, "moe_pad_expert_input_to_capacity", False)
     setattr(provider, "moe_router_force_load_balancing", False)
     if attention_backend is not None:
@@ -192,6 +194,7 @@ def _megatron_checkpoint_overrides(
         "fp16": dtype == torch.float16,
         "moe_expert_capacity_factor": None,
         "moe_expert_rank_capacity_factor": None,
+        "moe_ncclep_zero_copy": False,
         "moe_pad_expert_input_to_capacity": False,
         "moe_router_force_load_balancing": False,
     }
