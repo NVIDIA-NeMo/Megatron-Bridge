@@ -1720,3 +1720,94 @@ class TestDummyTrainStep:
         # Call function - should not raise an error
         fake_pg = type("PG", (), {"pp": object()})()
         _dummy_train_step(global_state, train_data_iterator, fake_pg)
+
+
+@pytest.mark.parametrize(
+    "microbatches, remote, expected",
+    [
+        ([[0.0, 0.0], [0.0, 0.0]], [0.0, 0.0], 0.0),
+        ([[0.0, 0.0]], [12.0, 3.0], 4.0),
+        ([[6.0, 2.0], [15.0, 3.0]], [9.0, 1.0], 5.0),
+        ([[2.0], [6.0]], [0.0, 0.0], 4.0),
+    ],
+)
+@patch("megatron.bridge.training.train.get_data_distribution_group")
+@patch("megatron.bridge.training.train.torch.distributed.all_reduce")
+@patch("megatron.bridge.training.train.get_num_microbatches", return_value=1)
+@patch("megatron.bridge.training.train.get_model_config")
+@patch("megatron.bridge.training.train.get_rerun_state_machine")
+def test_train_step_token_weighted_loss(
+    mock_get_rerun_state_machine,
+    mock_get_model_config,
+    _mock_get_num_microbatches,
+    mock_reduce,
+    mock_get_group,
+    microbatches,
+    remote,
+    expected,
+):
+    import torch
+
+    model_config = SimpleNamespace(seq_length=8)
+    mock_get_model_config.return_value = model_config
+
+    rerun_state_machine = Mock()
+    rerun_state_machine.should_run_forward_backward.side_effect = [True, False]
+    rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+    mock_get_rerun_state_machine.return_value = rerun_state_machine
+
+    global_state = SimpleNamespace(
+        cfg=SimpleNamespace(
+            data_parallel_size=1,
+            model=SimpleNamespace(
+                seq_length=8,
+                qk_clip=False,
+                log_max_attention_logit=False,
+            ),
+            dataset=SimpleNamespace(dataloader_type="single"),
+            dist=SimpleNamespace(use_decentralized_pg=True),
+            ddp=SimpleNamespace(overlap_param_gather=False),
+            optimizer=SimpleNamespace(
+                barrier_with_L1_time=False,
+                log_num_zeros_in_grad=False,
+                reuse_grad_buf_for_mxfp8_param_ag=False,
+            ),
+            train=SimpleNamespace(
+                check_optimizer_step_success=False,
+                empty_unused_memory_level=0,
+                micro_batch_size=1,
+                skip_sync_grad_norm_across_mp=True,
+            ),
+        ),
+        timers=Mock(),
+    )
+    model = [Mock()]
+    optimizer = Mock()
+    optimizer.step.return_value = (True, 1.0, 0)
+    scheduler = Mock()
+    forward_backward_func = Mock(return_value=[{"lm loss": torch.tensor(v)} for v in microbatches])
+    p2p_communicator = SimpleNamespace(is_pp_last_stage=True)
+    pg_collection = SimpleNamespace(mp=Mock())
+
+    dp_cp = object()
+    mock_get_group.return_value = dp_cp
+    mock_reduce.side_effect = lambda value, **kwargs: value.add_(torch.tensor(remote))
+    result = train_step(
+        forward_step_func=Mock(),
+        data_iterator=None,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        global_state=global_state,
+        pg_collection=pg_collection,
+        forward_backward_func=forward_backward_func,
+        p2p_communicator=p2p_communicator,
+    )
+
+    assert result[0]["lm loss"].item() == pytest.approx(expected)
+    assert torch.isfinite(result[0]["lm loss"])
+    if len(microbatches[0]) == 2:
+        mock_reduce.assert_called_once()
+        assert mock_reduce.call_args.kwargs["group"] is dp_cp
+    else:
+        mock_reduce.assert_not_called()

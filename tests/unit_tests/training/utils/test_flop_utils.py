@@ -71,6 +71,8 @@ class MockModelConfig:
     hybrid_layer_pattern: str | None = None
     hybrid_attention_ratio: float = 0
     hybrid_mlp_ratio: float = 0
+    hybrid_stack_spec: object | None = None
+    gdp_num_householder: int = 1
     # Mamba settings
     mamba_state_dim: int = 128
     mamba_head_dim: int = 64
@@ -3511,3 +3513,53 @@ class TestLoraSquadPackedFlopBranch:
 
         mock_calc.assert_called_once()
         assert first == second
+
+
+@pytest.mark.parametrize("householders, expected_layer", [(1, 784), (2, 1152), (3, 1520)])
+@pytest.mark.parametrize("spec_kind", ["module", "factory", "provider_factory"])
+def test_hybrid_gdp_flops(householders, expected_layer, spec_kind):
+    from megatron.core.models.hybrid.hybrid_layer_specs import gated_delta_product_stack_spec
+
+    spec = gated_delta_product_stack_spec
+    if spec_kind == "factory":
+        spec = lambda: gated_delta_product_stack_spec
+    elif spec_kind == "provider_factory":
+        spec = lambda provider: gated_delta_product_stack_spec
+    model = MockModelConfig(
+        hybrid_layer_pattern="M",
+        num_layers=1,
+        hidden_size=8,
+        seq_length=3,
+        mamba_state_dim=2,
+        mamba_head_dim=2,
+        mamba_num_groups=1,
+        mamba_num_heads=4,
+        vocab_size=16,
+        make_vocab_size_divisible_by=1,
+        hybrid_stack_spec=spec,
+        gdp_num_householder=householders,
+    )
+    # Per-token GDP projection, convolution, recurrent core, and output costs,
+    # plus the vocabulary projection; multiply by 6 tokens and fwd/bwd factor 3.
+    expected = (expected_layer + 2 * 8 * 16) * 6 * 3
+    assert num_floating_point_operations(MockConfigContainer(model), batch_size=2) == expected
+
+
+@pytest.mark.parametrize("pattern", ["GG", "G*", "**"])
+def test_hybrid_gdn2_projection_flops(pattern):
+    model = MockModelConfig(
+        hybrid_layer_pattern=pattern,
+        num_layers=2,
+        hidden_size=16,
+        seq_length=8,
+        linear_key_head_dim=2,
+        linear_value_head_dim=4,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+    )
+    cfg = MockConfigContainer(model)
+    gdn = num_floating_point_operations(cfg, batch_size=2)
+    model.experimental_attention_variant = "gdn2"
+    gdn2 = num_floating_point_operations(cfg, batch_size=2)
+    # GDN input width is 48, GDN2 input width is 64 for this configuration.
+    assert gdn2 - gdn == pattern.count("G") * 2 * 2 * 8 * 16 * (64 - 48) * 3

@@ -154,7 +154,7 @@ def train_step_megatron_mimo(
                     val = torch.vstack(val).sum(dim=0)
                     if llm_pg is not None and llm_pg.dp_cp is not None:
                         torch.distributed.all_reduce(val, group=llm_pg.dp_cp)
-                    loss_dict[key] = val[0] / val[1]
+                    loss_dict[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
                 elif val[0].numel() == 1:
                     loss_dict[key] = torch.cat(val).mean()
                 else:

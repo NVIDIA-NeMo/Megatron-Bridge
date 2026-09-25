@@ -4406,3 +4406,19 @@ def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
     assert router.bias.requires_grad is False
     assert shared_experts.gate_weight.requires_grad is False
     assert shared_experts.gate_bias.requires_grad is False
+
+
+@pytest.mark.parametrize("repeated, expected", [(False, 4), (True, 3)])
+def test_hybrid_provider_moe_count_without_legacy_flag(repeated, expected):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    provider = HybridModelProvider(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=2,
+        hybrid_layer_pattern="MEME/*E/*E",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated,
+    )
+    assert not provider.is_hybrid_model
+    assert _get_num_moe_layers(provider) == expected
