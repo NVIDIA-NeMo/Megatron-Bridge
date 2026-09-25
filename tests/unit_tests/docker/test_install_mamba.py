@@ -18,12 +18,15 @@ import hashlib
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+
+import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -128,6 +131,15 @@ class TestInstallMamba(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Mamba source/version changed", result.stderr)
         self.assertFalse(self.record.exists())
+
+    def test_pyproject_pins_the_version_the_installer_accepts(self):
+        installer = INSTALLER.read_text()
+        accepted = re.search(r'package\["version"\] != "([^"]+)"', installer).group(1)
+        self.assertEqual(set(re.findall(r"mamba_ssm-([\w.]+)", installer)), {accepted})
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+        requirements = [*project["dependencies"], *sum(project["optional-dependencies"].values(), [])]
+        mamba = [requirement for requirement in requirements if re.match(r"mamba[-_]ssm\b", requirement)]
+        self.assertEqual(mamba, [f"mamba-ssm=={accepted}"])
 
     def test_rejects_new_source(self):
         self._write_lock(source='{ git = "https://example.invalid/mamba.git" }')

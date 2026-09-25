@@ -2019,6 +2019,19 @@ class TestTrainingLog:
         memory_report = report_memory(memory_keys=memory_keys)
         assert list(memory_report.keys()) == expected_keys
 
+    def test_report_memory_device_used(self):
+        """Total device memory (NVML) is appended only when requested, in rounded gigabytes."""
+        memory_keys = {"reserved_bytes.all.current": "mem-reserved-bytes"}
+        with mock.patch("torch.cuda.device_memory_used", return_value=123_456_789_012) as mocked:
+            memory_report = report_memory(memory_keys=memory_keys)
+            assert "mem-device-used-gigabytes" not in memory_report
+            mocked.assert_not_called()
+
+            memory_report = report_memory(memory_keys=memory_keys, log_device_memory_used=True)
+            assert list(memory_report.keys()) == ["mem-reserved-gigabytes", "mem-device-used-gigabytes"]
+            assert memory_report["mem-device-used-gigabytes"] == 123.46
+            mocked.assert_called_once()
+
     def test_report_runtime(self):
         """Test runtime metrics."""
         start_time = time.time()
@@ -4194,6 +4207,13 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert torch.equal(logits, torch.full((3, 1), 4.0))
     assert logits.dtype == torch.float32
     assert bias is None
+
+
+def test_linear_for_last_layer_reports_gathered_output() -> None:
+    """GPTModel._postprocess reads output_layer.gather_output for the observation hooks."""
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+
+    assert head.gather_output is True
 
 
 def test_value_head_apis_preserve_positional_call_compatibility() -> None:

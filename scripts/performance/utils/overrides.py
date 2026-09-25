@@ -215,6 +215,22 @@ def _remove_recipe_env(recipe: ConfigContainer, name: str, protected_env_names: 
         recipe.env_vars.pop(name, None)
 
 
+def apply_one_gpu_per_rank_device_mapping(recipe: ConfigContainer) -> ConfigContainer:
+    """Select device 0 when ``bootstrap.py`` exposed only this rank's GPU.
+
+    For NCCL EP recipes ``bootstrap.py`` narrows ``CUDA_VISIBLE_DEVICES`` to the rank's GPU before
+    the trainer imports torch, so the trainer must use device 0 instead of the local rank. The
+    visible-device count is read from the live process environment, so a launch that did not go
+    through ``bootstrap.py`` (several devices visible) keeps the default local-rank selection.
+    """
+    if getattr(recipe.model, "moe_flex_dispatcher_backend", None) != "ncclep":
+        return recipe
+    visible_devices = [device for device in os.environ.get("CUDA_VISIBLE_DEVICES", "").split(",") if device]
+    if len(visible_devices) == 1:
+        recipe.dist.external_gpu_device_mapping = True
+    return recipe
+
+
 def _apply_flat_cli_environment_compatibility(
     recipe: ConfigContainer,
     args: argparse.Namespace,
