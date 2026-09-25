@@ -349,6 +349,43 @@ class TEFusedLoRALinear(LoRALinear):
         return out, None
 
 
+class TEFusedLoRAMergeLinear(TEFusedLoRALinear):
+    """Fuse the LoRA output projection into an existing base-linear output."""
+
+    def __init__(self, to_wrap: nn.Module, adapter: nn.Module):
+        super().__init__(to_wrap, adapter)
+        self._fused_lora_branches: Optional[tuple[te.ops.Sequential]] = None
+
+    def _make_fused_lora_branch(self) -> te.ops.Sequential:
+        """Construct the LoRA branch without rebuilding the base linear."""
+        return self._make_lora_branch(
+            in_features=self.adapter.linear_in.weight.size(1),
+            out_features=self.adapter.linear_out.weight.size(0),
+            tensor_parallel_mode=None,
+            tensor_parallel_group=None,
+            sequence_parallel=False,
+            accumulate_into_main_grad=False,
+        )
+
+    def forward(
+        self, x: torch.Tensor, *args: Any, **kwargs: Any
+    ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor | None]:
+        """Run the base linear, then fuse the LoRA B GEMM into its output."""
+        if not self._adapter_enabled:
+            return LoRALinear.forward(self, x, *args, **kwargs)
+
+        linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
+        if self._fused_lora_branches is None:
+            # A tuple avoids registering the fused view of the adapter weights as another submodule.
+            self._fused_lora_branches = (self._make_fused_lora_branch(),)
+
+        with te.fp8_autocast(enabled=False):
+            combined = self._fused_lora_branches[0](layernorm_output.contiguous(), linear_output)
+        if not self._base_returns_tuple:
+            return combined
+        return combined, bias
+
+
 class LinearAdapter(nn.Module):
     """Delta-only LoRA adapter for a plain ``nn.Linear``, mirroring :class:`ParallelLinearAdapter`'s role.
 
