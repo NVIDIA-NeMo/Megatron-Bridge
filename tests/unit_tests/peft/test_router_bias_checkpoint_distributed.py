@@ -16,6 +16,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.transformer_config import TransformerConfig
 from torch import nn
+from torch.distributed.checkpoint.api import CheckpointException
 
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.peft.utils import load_peft_adapter_checkpoint
@@ -112,6 +113,20 @@ def test_native_router_bias_survives_peft_checkpoint_and_merge(tmp_path):
             torch.testing.assert_close(actual_probs, merged_probs, rtol=1e-5, atol=1e-6)
             assert torch.equal(actual_routes, merged_routes)
             assert torch.equal(merged.router.expert_bias, expected_bias)
+
+        # Older adapter checkpoints omitted this non-parameter training state.
+        # Loading must fail rather than claim recovery with the base-model bias.
+        legacy_checkpoint = tmp_path / "legacy-adapter"
+        legacy_checkpoint.mkdir()
+        legacy_state = {
+            **saved,
+            "model": {key: value for key, value in saved["model"].items() if key != "router.expert_bias"},
+        }
+        dist_checkpointing.save(legacy_state, str(legacy_checkpoint))
+        restored.router.expert_bias.copy_(base_state["router.expert_bias"])
+        with pytest.raises(CheckpointException, match="router.expert_bias"):
+            load_peft_adapter_checkpoint(restored, legacy_checkpoint, restored_peft, fully_parallel_load=False)
+        assert torch.equal(restored.router.expert_bias, base_state["router.expert_bias"])
     finally:
         if owns_parallel and parallel_state.model_parallel_is_initialized():
             parallel_state.destroy_model_parallel()
