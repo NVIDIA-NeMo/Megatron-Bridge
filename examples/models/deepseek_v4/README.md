@@ -222,6 +222,11 @@ required storage and validate checkpoint resume explicitly.
   [`inference.sh`](inference.sh) example uses legacy full-prefix generation and
   is not a verified KV-cache path. HF-native inference is the target after a
   verified Megatron-to-HF export.
+- [`inference.sh`](inference.sh) needs `PP * EP` GPUs (32 for the Pro
+  defaults `PP=4`, `EP=8`). On 4-GPU nodes such as GB200 NVL72 spread them over
+  several nodes with one task per node:
+  `srun --ntasks-per-node=1 bash -c 'NNODES=$SLURM_JOB_NUM_NODES NODE_RANK=$SLURM_NODEID MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1) ./inference.sh'`.
+  With the variables unset the script launches all ranks on the current node.
 - Fused mHC requires Blackwell (`sm_100`). Hopper uses the unfused path.
 - CPU import and export require enough RAM for the full BF16 model plus
   conversion workspace and remain unverified in the current card.
