@@ -148,6 +148,7 @@ def test_checkpoint_generation_disables_dropping_without_replacing_dispatcher(us
     assert overrides["moe_ncclep_zero_copy"] is False
     assert overrides["moe_pad_expert_input_to_capacity"] is False
     assert overrides["moe_router_force_load_balancing"] is False
+    assert overrides["moe_router_force_biased"] is None
     assert overrides["moe_hybridep_pad_uneven_dispatch_inputs"] is True
     assert "moe_token_dispatcher_type" not in overrides
     assert "moe_flex_dispatcher_backend" not in overrides

@@ -571,6 +571,7 @@ class ModelParallelKwargs(TypedDict, total=False):
     moe_ncclep_zero_copy: bool
     moe_pad_expert_input_to_capacity: bool
     moe_router_force_load_balancing: bool
+    moe_router_force_biased: float | None
     moe_hybridep_pad_uneven_dispatch_inputs: bool
 
 

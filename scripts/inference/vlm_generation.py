@@ -299,6 +299,7 @@ def main(args) -> None:
             "moe_ncclep_zero_copy": False,
             "moe_pad_expert_input_to_capacity": False,
             "moe_router_force_load_balancing": False,
+            "moe_router_force_biased": None,
             "moe_hybridep_pad_uneven_dispatch_inputs": True,
         }
         if args.pp_layout:

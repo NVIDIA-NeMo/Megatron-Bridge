@@ -355,10 +355,11 @@ class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
     @pytest.mark.parametrize("dropless", [False, True])
+    @pytest.mark.parametrize("forced_bias", [None, 0.0, 0.5, -0.5])
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_explicit_dropless_load_preserves_hybridep(
-        self, mock_load_model_config, mock_build_and_load_model, dropless
+        self, mock_load_model_config, mock_build_and_load_model, dropless, forced_bias
     ):
         cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
         cfg.moe_token_dispatcher_type = "flex"
@@ -368,6 +369,8 @@ class TestLoadMegatronModel:
         cfg.moe_hybridep_pad_uneven_dispatch_inputs = False
         cfg.moe_pad_expert_input_to_capacity = True
         cfg.moe_router_force_load_balancing = True
+        assert hasattr(cfg, "moe_router_force_biased")
+        cfg.moe_router_force_biased = forced_bias
         mock_load_model_config.return_value = (cfg, None)
         overrides = {"expert_model_parallel_size": 8}
         if dropless:
@@ -377,6 +380,7 @@ class TestLoadMegatronModel:
                 moe_hybridep_pad_uneven_dispatch_inputs=True,
                 moe_pad_expert_input_to_capacity=False,
                 moe_router_force_load_balancing=False,
+                moe_router_force_biased=None,
             )
 
         load_megatron_model("/ckpt", mp_overrides=overrides)
@@ -389,6 +393,7 @@ class TestLoadMegatronModel:
         assert built_config.moe_hybridep_pad_uneven_dispatch_inputs is dropless
         assert built_config.moe_pad_expert_input_to_capacity is (not dropless)
         assert built_config.moe_router_force_load_balancing is (not dropless)
+        assert built_config.moe_router_force_biased == (None if dropless else forced_bias)
 
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
