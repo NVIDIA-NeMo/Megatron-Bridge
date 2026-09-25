@@ -75,6 +75,35 @@ def test_select_sequence_handles_none_and_selects_dimension():
     assert selected.is_contiguous()
 
 
+@pytest.mark.parametrize("tp_size", [1, 8])
+@pytest.mark.parametrize("use_fp8_padding", [False, True])
+def test_packed_sequence_alignment_and_gradients(tp_size, use_fp8_padding):
+    pg_collection = SimpleNamespace(
+        tp=SimpleNamespace(size=lambda: tp_size),
+        cp=SimpleNamespace(size=lambda: 1, rank=lambda: 0),
+    )
+    embeddings = torch.arange(2 * 19 * 4, dtype=torch.float32).view(2, 19, 4).requires_grad_()
+    mask = torch.arange(19)[None, :] < torch.tensor([2, 13])[:, None]
+    output, packed = preprocess_packed_seqs(
+        embeddings, mask, pg_collection=pg_collection, use_fp8_padding=use_fp8_padding
+    )
+    alignment = 16 if use_fp8_padding else tp_size
+    lengths = [((length + alignment - 1) // alignment) * alignment for length in (2, 13)]
+    total = sum(lengths)
+    if use_fp8_padding:
+        total_alignment = tp_size * 128
+        total = ((total + total_alignment - 1) // total_alignment) * total_alignment
+    expected = torch.zeros(1, total, 4)
+    expected[0, :2] = embeddings.detach()[0, :2]
+    expected[0, lengths[0] : lengths[0] + 13] = embeddings.detach()[1, :13]
+    torch.testing.assert_close(output, expected)
+    assert packed.cu_seqlens_q.tolist() == [0, lengths[0], total]
+    assert packed.cu_seqlens_q_padded.tolist() == [0, lengths[0], total]
+    assert packed.max_seqlen_q == max(lengths[0], total - lengths[0])
+    output.sum().backward()
+    torch.testing.assert_close(embeddings.grad, mask[..., None].expand_as(embeddings).float())
+
+
 def test_split_if_full_sequence_only_splits_full_length_inputs():
     """Dense CP helpers should not double-slice tensors that are already local."""
     full = torch.arange(16).view(1, 16)
