@@ -147,6 +147,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.torch_dtype = torch_dtype
         self.trust_remote_code = trust_remote_code
+        self._text_only = False
         super().__init__(**kwargs)
         # Store the original source path for custom modeling file preservation
         if model_name_or_path and trust_remote_code:
@@ -154,6 +155,10 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
 
     def _load_model(self) -> CausalLMType:
         """Load the model."""
+        if self._text_only:
+            # A filtered checkpoint view is for conversion, not HF's automatic
+            # loading of the original multimodal repository and prefixed keys.
+            raise NotImplementedError("Use the Megatron text model or load its standalone HF export for inference.")
         if self.model_name_or_path is None:
             raise ValueError("model_name_or_path must be provided to load model")
 

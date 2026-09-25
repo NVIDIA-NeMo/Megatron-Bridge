@@ -28,7 +28,7 @@ import torch
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
-    _count_dsa_indexer_layers,
+    _get_indexer_logging_layer_counts,
     _get_num_moe_layers,
     _should_track_dsa_indexer_metrics,
     _track_moe_metrics_supports_num_moe_layers,
@@ -128,12 +128,28 @@ def test_track_moe_metrics_supports_num_moe_layers(parameters, expected):
         assert _track_moe_metrics_supports_num_moe_layers() is expected
 
 
-def test_count_dsa_indexer_layers_only_ratio_four():
-    model = mock.MagicMock()
-    model.csa_compress_ratios = [0, 0, 4, 128, 4, 128, 4, 128, 4, 128, 4, 0]
-    assert _count_dsa_indexer_layers(model) == 5
-    model.csa_compress_ratios = None
-    assert _count_dsa_indexer_layers(model) is None
+@pytest.mark.parametrize(
+    "pattern, repeated, dense, ratios, expected",
+    [
+        (None, False, False, None, (6, None)),
+        (None, False, False, [0, 4, 128, 4, 4, 128, 4], (6, 3)),
+        (None, False, True, [0, 4, 128, 4, 4, 128], (6, 0)),
+        ("M*M*/*M*/*M*", False, False, [0, 4, 0, 4, 4, 0, 4], (7, 6)),
+        ("M*M*/*M*/*M*", True, False, [0, 4, 0, 4, 4, 0, 4], (7, 4)),
+        ("M*M*/*M*/*M*", True, True, [0, 4, 0, 4, 4, 0, 4], (7, 0)),
+    ],
+)
+def test_indexer_logging_layer_counts(pattern, repeated, dense, ratios, expected):
+    model = SimpleNamespace(
+        num_layers=4,
+        mtp_num_layers=2,
+        is_hybrid_model=False,
+        hybrid_layer_pattern=pattern,
+        csa_compress_ratios=ratios,
+        mtp_use_repeated_layer=repeated,
+        csa_dense_mode=dense,
+    )
+    assert _get_indexer_logging_layer_counts(model) == expected
 
 
 def test_should_track_dsa_indexer_metrics_requires_positive_coeff():
@@ -1615,10 +1631,11 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
-    @mock.patch("megatron.bridge.training.utils.train_utils.DSAIndexerLossLoggingHelper")
+    @mock.patch("megatron.bridge.training.utils.train_utils.DSAIndexerLossLoggingHelper", autospec=True)
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @pytest.mark.parametrize("cuda_graph_impl", ["none", "local"])
     def test_dsa_indexer_loss_logging(
         self,
         mock_report_l2_norm_grad,
@@ -1632,6 +1649,7 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        cuda_graph_impl,
     ):
         """Test DSA indexer-loss logging when dsa_indexer_loss_coeff > 0."""
         total_loss_dict = self.get_fresh_total_loss_dict()
@@ -1648,8 +1666,12 @@ class TestTrainingLog:
         mock_config.model.dsa_indexer_loss_coeff = 0.01
         mock_config.model.csa_compress_ratios = [0, 0, 4, 128, 4, 128, 4, 128, 4, 128, 4, 0]
         mock_config.model.num_layers = 12
-        mock_config.model.cuda_graph_impl = "none"
+        mock_config.model.is_hybrid_model = False
+        mock_config.model.hybrid_layer_pattern = None
+        mock_config.model.csa_dense_mode = False
+        mock_config.model.cuda_graph_impl = cuda_graph_impl
 
+        pg_collection = SimpleNamespace(pp=object(), dp=object(), mp=object())
         training_log(
             loss_dict=loss_dict,
             total_loss_dict=total_loss_dict,
@@ -1665,6 +1687,7 @@ class TestTrainingLog:
             global_state=mock_global_state,
             history_wct=None,
             model=None,
+            pg_collection=pg_collection,
         )
 
         mock_indexer_helper.track_indexer_metrics.assert_called_once()
@@ -1672,6 +1695,9 @@ class TestTrainingLog:
         assert kwargs["loss_scale"] == 1 / 8
         assert kwargs["num_indexer_layers"] == 5
         assert kwargs["num_layers"] == 12
+
+        assert kwargs["pg_collection"] is pg_collection
+        assert kwargs["preserve_groups"] is (cuda_graph_impl != "none")
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -2100,6 +2126,19 @@ class TestTrainingLog:
         expected_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
         memory_report = report_memory(memory_keys=memory_keys)
         assert list(memory_report.keys()) == expected_keys
+
+    def test_report_memory_device_used(self):
+        """Total device memory (NVML) is appended only when requested, in rounded gigabytes."""
+        memory_keys = {"reserved_bytes.all.current": "mem-reserved-bytes"}
+        with mock.patch("torch.cuda.device_memory_used", return_value=123_456_789_012) as mocked:
+            memory_report = report_memory(memory_keys=memory_keys)
+            assert "mem-device-used-gigabytes" not in memory_report
+            mocked.assert_not_called()
+
+            memory_report = report_memory(memory_keys=memory_keys, log_device_memory_used=True)
+            assert list(memory_report.keys()) == ["mem-reserved-gigabytes", "mem-device-used-gigabytes"]
+            assert memory_report["mem-device-used-gigabytes"] == 123.46
+            mocked.assert_called_once()
 
     def test_report_runtime(self):
         """Test runtime metrics."""
@@ -4276,6 +4315,13 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert torch.equal(logits, torch.full((3, 1), 4.0))
     assert logits.dtype == torch.float32
     assert bias is None
+
+
+def test_linear_for_last_layer_reports_gathered_output() -> None:
+    """GPTModel._postprocess reads output_layer.gather_output for the observation hooks."""
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+
+    assert head.gather_output is True
 
 
 def test_value_head_apis_preserve_positional_call_compatibility() -> None:

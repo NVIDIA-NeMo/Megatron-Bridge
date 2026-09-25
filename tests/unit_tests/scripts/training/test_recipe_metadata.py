@@ -120,7 +120,10 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
 @pytest.mark.parametrize(
     ("recipe_name", "step_name"),
     [
+        ("bagel_7b_pretrain_32gpu_h100_bf16_config", "bagel_step"),
         ("gpt_oss_20b_pretrain_config", "llm_step"),
+        ("nemotron_35_super_vl_peft_config", "nemotron_omni_step"),
+        ("nemotron_35_super_vl_sft_config", "nemotron_omni_step"),
         ("nemotron_omni_cord_v2_sft_config", "nemotron_omni_step"),
         ("qwen2_audio_7b_sft_config", "audio_lm_step"),
         ("qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config", "qwen3_omni_step"),

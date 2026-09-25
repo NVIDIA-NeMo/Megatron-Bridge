@@ -623,12 +623,24 @@ def _track_moe_metrics_supports_num_moe_layers() -> bool:
     return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
 
 
-def _count_dsa_indexer_layers(model_config: Any) -> int | None:
-    """Count DSv4 CSA layers that own a learned indexer (compress_ratio == 4)."""
-    compress_ratios = getattr(model_config, "csa_compress_ratios", None)
-    if compress_ratios is None:
-        return None
-    return sum(int(ratio) == 4 for ratio in compress_ratios)
+def _get_indexer_logging_layer_counts(model_config: Any) -> tuple[int, int | None]:
+    """Return tracker slots and active CSA indexer contributors for loss logging."""
+    num_layers = model_config.num_layers
+    tracker_layers = num_layers + (getattr(model_config, "mtp_num_layers", None) or 0)
+    ratios = getattr(model_config, "csa_compress_ratios", None)
+    if ratios is None:
+        return tracker_layers, None
+
+    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
+        pattern = parse_hybrid_pattern(model_config.hybrid_layer_pattern)
+        tracker_layers = num_layers + len(pattern.mtp_pattern or "")
+        main_indexers = sum(ratio == 4 for ratio in ratios[:num_layers])
+        mtp_indexers = sum(ratio == 4 for ratio in ratios[num_layers:tracker_layers])
+        repeats = 1 if getattr(model_config, "mtp_use_repeated_layer", False) else pattern.mtp_num_depths
+        indexer_layers = main_indexers + mtp_indexers * repeats
+    else:
+        indexer_layers = sum(ratio == 4 for ratio in ratios[:tracker_layers])
+    return tracker_layers, 0 if getattr(model_config, "csa_dense_mode", False) else indexer_layers
 
 
 def _should_track_dsa_indexer_metrics(model_config: Any) -> bool:
@@ -843,7 +855,10 @@ def training_log(
     # emits the per-metric peak across the pipeline (issue #3167).
     memory_report: Optional[dict[str, Union[int, float]]] = None
     if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
-        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = report_memory(
+            memory_keys=logger_config.memory_keys,
+            log_device_memory_used=logger_config.log_device_memory_used,
+        )
         memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
         memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
 
@@ -1096,14 +1111,16 @@ def training_log(
         # Match MCore training.py: logged value is already KL * dsa_indexer_loss_coeff.
         indexer_loss_scale = 1 / get_num_microbatches()
         indexer_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
+        tracker_layers, indexer_layers = _get_indexer_logging_layer_counts(config.model)
         DSAIndexerLossLoggingHelper.track_indexer_metrics(
             loss_scale=indexer_loss_scale,
             iteration=iteration,
             writer=indexer_metric_writer,
             wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
-            num_layers=config.model.num_layers + (getattr(config.model, "mtp_num_layers", None) or 0),
-            num_indexer_layers=_count_dsa_indexer_layers(config.model),
+            pg_collection=pg_collection,
+            num_layers=tracker_layers,
+            num_indexer_layers=indexer_layers,
             preserve_groups=getattr(config.model, "cuda_graph_impl", "none") != "none",
         )
 
@@ -1236,7 +1253,9 @@ def training_log(
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
             memory_string = f"(after {iteration} iterations) memory (GB)"
-            for metric, value in report_memory(logger_config.memory_keys).items():
+            for metric, value in report_memory(
+                logger_config.memory_keys, log_device_memory_used=logger_config.log_device_memory_used
+            ).items():
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
@@ -1262,7 +1281,7 @@ def training_log(
     return report_memory_flag
 
 
-def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
+def report_memory(memory_keys: Optional[dict[str, str]], *, log_device_memory_used: bool = False) -> dict:
     """
     Logs the memory usage of the model.
     This metric calls the torch memory stats API for CUDA and reports different memory statistics.
@@ -1293,9 +1312,22 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
             are the names of memory statistics to log from `torch.cuda.memory_stats()`, and values
             are the names they will be logged under. If not provided, the above statistics are
             logged. Defaults to None.
+        log_device_memory_used (bool): If True, also report ``mem-device-used-gigabytes``, the total
+            memory currently in use on the device as reported by NVML (``torch.cuda.device_memory_used``,
+            the same figure ``nvidia-smi`` shows). Unlike the allocator statistics above this covers
+            memory outside the caching allocator (CUDA context, NCCL / dispatcher buffers, other
+            processes). It is a point-in-time value, not a peak. Defaults to False.
     Returns:
         Memory metrics dictionary.
     """
+
+    def _to_gigabytes(num_bytes: int | float) -> float:
+        gigabytes = num_bytes / 1.0e9
+        # Round to preserve 5 significant digits
+        if gigabytes != 0:
+            order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
+            gigabytes = round(gigabytes, -order_of_magnitude + 4)
+        return gigabytes
 
     memory_stats = torch.cuda.memory_stats()
     memory_keys = memory_keys if memory_keys else MEMORY_KEYS
@@ -1306,14 +1338,18 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
         if torch_name in memory_stats:
             # Convert to gigabytes
             if "bytes" in torch_name:
-                gigabytes = memory_stats[torch_name] / 1.0e9
-                # Round to preserve 5 significant digits
-                if gigabytes != 0:
-                    order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
-                    gigabytes = round(gigabytes, -order_of_magnitude + 4)
-                memory_report[name.replace("bytes", "gigabytes")] = gigabytes
+                memory_report[name.replace("bytes", "gigabytes")] = _to_gigabytes(memory_stats[torch_name])
             else:
                 memory_report[name] = memory_stats[torch_name]
+
+    if log_device_memory_used:
+        device_memory_used = getattr(torch.cuda, "device_memory_used", None)
+        if device_memory_used is None:
+            raise RuntimeError(
+                "logger.log_device_memory_used requires torch.cuda.device_memory_used (PyTorch >= 2.7); "
+                "disable the option or upgrade PyTorch."
+            )
+        memory_report["mem-device-used-gigabytes"] = _to_gigabytes(device_memory_used())
 
     return memory_report
 

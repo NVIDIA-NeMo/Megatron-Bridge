@@ -151,13 +151,16 @@ class TestComputeAttentionMask:
         # The key point: block1 CANNOT attend forward to block2 (causal blocks it)
         assert mask[0, 0, 0, 3].item() is True, "block1 pos 0 should be blocked from future block2 pos 3"
 
-    def test_not_pre_process_returns_none(self):
-        """Returns None when pre_process=False (PP pipeline stage)."""
+    @pytest.mark.parametrize("pre_process", [True, False])
+    def test_image_attention_on_every_pipeline_stage(self, pre_process):
+        """Later stages preserve image bidirectionality and text causality."""
         model = _make_model()
-        model.pre_process = False
-        input_ids = self._make_ids([self.TEXT_TOKEN] * 4)
+        model.pre_process = pre_process
+        input_ids = self._make_ids([self.TEXT_TOKEN, self.IMAGE_TOKEN, self.IMAGE_TOKEN, self.TEXT_TOKEN])
         result = model._compute_attention_mask(input_ids)
-        assert result is None
+        assert result[0, 0, 1, 2].item() is False
+        assert result[0, 0, 0, 1].item() is True
+        assert result[0, 0, 2, 3].item() is True
 
     def test_output_shape_batch_size_2(self):
         """Mask shape is [B, 1, S, S] for batch_size=2."""
