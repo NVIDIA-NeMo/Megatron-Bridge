@@ -2019,6 +2019,19 @@ class TestTrainingLog:
         memory_report = report_memory(memory_keys=memory_keys)
         assert list(memory_report.keys()) == expected_keys
 
+    def test_report_memory_device_used(self):
+        """Total device memory (NVML) is appended only when requested, in rounded gigabytes."""
+        memory_keys = {"reserved_bytes.all.current": "mem-reserved-bytes"}
+        with mock.patch("torch.cuda.device_memory_used", return_value=123_456_789_012) as mocked:
+            memory_report = report_memory(memory_keys=memory_keys)
+            assert "mem-device-used-gigabytes" not in memory_report
+            mocked.assert_not_called()
+
+            memory_report = report_memory(memory_keys=memory_keys, log_device_memory_used=True)
+            assert list(memory_report.keys()) == ["mem-reserved-gigabytes", "mem-device-used-gigabytes"]
+            assert memory_report["mem-device-used-gigabytes"] == 123.46
+            mocked.assert_called_once()
+
     def test_report_runtime(self):
         """Test runtime metrics."""
         start_time = time.time()
@@ -2718,7 +2731,9 @@ class TestCalcParamsL2Norm:
                 # Minimal set of groups used by calc_params_l2_norm
                 self.dp_cp = object()
                 self.expt_dp = object()
+                self.expt_gtp_remat = None
                 self.expt_tp = object()
+                self.gtp_remat = object()
                 self.mp = object()
                 self.tp = object()
                 self.tp_ep_pp = object()
@@ -2761,6 +2776,128 @@ class TestCalcParamsL2Norm:
         config = mock.MagicMock()
         config.bf16 = True
         return config
+
+    def test_gtp_param_norm_filters_replicas_and_keeps_shards(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+        _patch_pg_collection,
+    ):
+        """Non-sharded parameters are counted once while every GTP shard contributes."""
+
+        class _DenseGTPModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.norm = torch.nn.Parameter(torch.tensor([2.0], device="cuda"))
+                self.weight = torch.nn.Parameter(torch.tensor([3.0], device="cuda"))
+                self.weight.is_gtp_weight_remat = True
+
+        model = _DenseGTPModel()
+        duplicate_filter = mock.MagicMock(return_value=True)
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.mp:
+                # Rank zero contributes the replicated norm (2**2) and its GTP shard (4**2).
+                tensor.add_(20.0)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            duplicate_filter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: 1 if group is _patch_pg_collection.gtp_remat else 0,
+        )
+        monkeypatch.setattr("torch.distributed.get_process_group_ranks", lambda group: [0])
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(math.sqrt(29.0))
+        duplicate_filter.assert_called_once_with(
+            model.norm,
+            tp_group=_patch_pg_collection.tp,
+            expert_tp_group=_patch_pg_collection.expt_tp,
+        )
+
+    @pytest.mark.parametrize(
+        ("expert_gtp_rank", "remote_contribution", "expected_local_input"),
+        [
+            pytest.param(0, 9.0, 20.0, id="rank-zero-keeps-replica"),
+            pytest.param(1, 13.0, 16.0, id="nonzero-rank-drops-replica"),
+        ],
+    )
+    def test_expert_gtp_param_norm_reduces_over_expert_gtp(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+        _patch_pg_collection,
+        expert_gtp_rank,
+        remote_contribution,
+        expected_local_input,
+    ):
+        """Expert GTP shards are summed while replicated parameters contribute once."""
+
+        class _ExpertGTPModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.tensor([4.0], device="cuda"))
+                self.weight.allreduce = False
+                self.weight.is_gtp_weight_remat = True
+                self.bias = torch.nn.Parameter(torch.tensor([2.0], device="cuda"))
+                self.bias.allreduce = False
+
+        _patch_pg_collection.expt_gtp_remat = object()
+        model = _ExpertGTPModel()
+        duplicate_filter = mock.MagicMock(return_value=True)
+        expert_gtp_inputs = []
+
+        def fake_all_reduce(tensor, op, group):
+            del op
+            if group is _patch_pg_collection.expt_gtp_remat:
+                expert_gtp_inputs.append(tensor.item())
+                tensor.add_(remote_contribution)
+
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor",
+            lambda param, group: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate",
+            duplicate_filter,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.to_local_if_dtensor",
+            lambda param: param,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_rank",
+            lambda group: expert_gtp_rank if group is _patch_pg_collection.expt_gtp_remat else 0,
+        )
+        monkeypatch.setattr(
+            "torch.distributed.get_process_group_ranks",
+            lambda group: [0] if group is _patch_pg_collection.mp else [1],
+        )
+        monkeypatch.setattr("torch.distributed.all_reduce", fake_all_reduce)
+
+        actual_norm = calc_params_l2_norm(model, mock_model_config_fp32)
+
+        assert expert_gtp_inputs == pytest.approx([expected_local_input])
+        assert actual_norm == pytest.approx(math.sqrt(29.0))
+        duplicate_filter.assert_called_once_with(
+            model.bias,
+            tp_group=_patch_pg_collection.tp,
+            expert_tp_group=_patch_pg_collection.expt_tp,
+        )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -3000,6 +3137,8 @@ class TestCalcParamsL2Norm:
                 tensor.add_(12.0)
             elif group is _patch_pg_collection.expt_dp:
                 tensor.add_(16.0)
+            elif group is _patch_pg_collection.expt_gtp_remat:
+                pass
             elif group is not _patch_pg_collection.mp:
                 raise AssertionError("unexpected reduction group")
 
@@ -3212,6 +3351,8 @@ class TestCalcParamsL2Norm:
             expt_tp=expert_tp_group,
             dp_cp=reduce_group,
             expt_dp=reduce_group,
+            expt_gtp_remat=reduce_group,
+            gtp_remat=reduce_group,
             mp=reduce_group,
             tp_ep_pp=reduce_group,
         )
@@ -4066,6 +4207,13 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert torch.equal(logits, torch.full((3, 1), 4.0))
     assert logits.dtype == torch.float32
     assert bias is None
+
+
+def test_linear_for_last_layer_reports_gathered_output() -> None:
+    """GPTModel._postprocess reads output_layer.gather_output for the observation hooks."""
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+
+    assert head.gather_output is True
 
 
 def test_value_head_apis_preserve_positional_call_compatibility() -> None:

@@ -30,7 +30,7 @@ from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
-from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
+from megatron.core.utils import get_data_parallel_group_if_dtensor, get_pg_rank, to_local_if_dtensor
 
 from megatron.bridge.models.common.heads import (
     LinearForLastLayer as LinearForLastLayer,
@@ -237,20 +237,31 @@ def calc_params_l2_norm(
     sharded_moe_params_data = []
     data_parallel_group = None
     pg_collection = get_pg_collection(model)
+    gtp_rank = get_pg_rank(pg_collection.gtp_remat)
+    expert_gtp_group = pg_collection.expt_gtp_remat
+    expert_gtp_rank = get_pg_rank(expert_gtp_group)
 
     for model_chunk in model:
         for param in model_chunk.parameters():
             data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
+            is_gtp = getattr(param, "is_gtp_weight_remat", False)
             # MCore uses allreduce=False to mark parameters that use expert-parallel process groups.
             uses_expert_parallel_groups = not getattr(param, "allreduce", True)
-            is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(
+            # GTP parameters are unique across TP ranks. Other parameters still need TP filtering.
+            if not is_gtp and not param_is_not_tensor_parallel_duplicate(
                 param,
                 tp_group=pg_collection.tp,
                 expert_tp_group=pg_collection.expt_tp,
-            )
-            if not is_not_tp_duplicate:
+            ):
                 continue
-            assert is_not_tp_duplicate
+
+            # Parameters that are not GTP-sharded are replicated across the corresponding GTP axis.
+            if uses_expert_parallel_groups:
+                if not is_gtp and expert_gtp_rank != 0:
+                    continue
+            elif not is_gtp and gtp_rank != 0:
+                continue
+
             if uses_expert_parallel_groups:
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
@@ -359,6 +370,15 @@ def calc_params_l2_norm(
         group=pg_collection.expt_dp,
     )
     moe_norm_2 += sharded_moe_norm_2
+
+    # Expert model parallel excludes expert GTP. This reduction collects both unique GTP shards
+    # and ordinary expert parameters, which are counted only on expert GTP rank zero above.
+    if expert_gtp_group is not None:
+        torch.distributed.all_reduce(
+            moe_norm_2,
+            op=torch.distributed.ReduceOp.SUM,
+            group=expert_gtp_group,
+        )
 
     # Reduce norm across model parallel groups (dense and expert).
     # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
@@ -806,7 +826,10 @@ def training_log(
     # emits the per-metric peak across the pipeline (issue #3167).
     memory_report: Optional[dict[str, Union[int, float]]] = None
     if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
-        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = report_memory(
+            memory_keys=logger_config.memory_keys,
+            log_device_memory_used=logger_config.log_device_memory_used,
+        )
         memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
         memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
 
@@ -1184,7 +1207,9 @@ def training_log(
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
             memory_string = f"(after {iteration} iterations) memory (GB)"
-            for metric, value in report_memory(logger_config.memory_keys).items():
+            for metric, value in report_memory(
+                logger_config.memory_keys, log_device_memory_used=logger_config.log_device_memory_used
+            ).items():
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
@@ -1210,7 +1235,7 @@ def training_log(
     return report_memory_flag
 
 
-def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
+def report_memory(memory_keys: Optional[dict[str, str]], *, log_device_memory_used: bool = False) -> dict:
     """
     Logs the memory usage of the model.
     This metric calls the torch memory stats API for CUDA and reports different memory statistics.
@@ -1241,9 +1266,22 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
             are the names of memory statistics to log from `torch.cuda.memory_stats()`, and values
             are the names they will be logged under. If not provided, the above statistics are
             logged. Defaults to None.
+        log_device_memory_used (bool): If True, also report ``mem-device-used-gigabytes``, the total
+            memory currently in use on the device as reported by NVML (``torch.cuda.device_memory_used``,
+            the same figure ``nvidia-smi`` shows). Unlike the allocator statistics above this covers
+            memory outside the caching allocator (CUDA context, NCCL / dispatcher buffers, other
+            processes). It is a point-in-time value, not a peak. Defaults to False.
     Returns:
         Memory metrics dictionary.
     """
+
+    def _to_gigabytes(num_bytes: int | float) -> float:
+        gigabytes = num_bytes / 1.0e9
+        # Round to preserve 5 significant digits
+        if gigabytes != 0:
+            order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
+            gigabytes = round(gigabytes, -order_of_magnitude + 4)
+        return gigabytes
 
     memory_stats = torch.cuda.memory_stats()
     memory_keys = memory_keys if memory_keys else MEMORY_KEYS
@@ -1254,14 +1292,18 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
         if torch_name in memory_stats:
             # Convert to gigabytes
             if "bytes" in torch_name:
-                gigabytes = memory_stats[torch_name] / 1.0e9
-                # Round to preserve 5 significant digits
-                if gigabytes != 0:
-                    order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
-                    gigabytes = round(gigabytes, -order_of_magnitude + 4)
-                memory_report[name.replace("bytes", "gigabytes")] = gigabytes
+                memory_report[name.replace("bytes", "gigabytes")] = _to_gigabytes(memory_stats[torch_name])
             else:
                 memory_report[name] = memory_stats[torch_name]
+
+    if log_device_memory_used:
+        device_memory_used = getattr(torch.cuda, "device_memory_used", None)
+        if device_memory_used is None:
+            raise RuntimeError(
+                "logger.log_device_memory_used requires torch.cuda.device_memory_used (PyTorch >= 2.7); "
+                "disable the option or upgrade PyTorch."
+            )
+        memory_report["mem-device-used-gigabytes"] = _to_gigabytes(device_memory_used())
 
     return memory_report
 

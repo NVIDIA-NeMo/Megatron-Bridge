@@ -225,10 +225,17 @@ def _abort_async_checkpoint_worker(state: GlobalState) -> None:
     finally:
         state._async_calls_queue = None
 
-        from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
         from nvidia_resiliency_ext.checkpointing.async_ckpt import filesystem_async as nvrx_filesystem_async
 
-        for filesystem_async in (mcore_filesystem_async, nvrx_filesystem_async):
+        filesystems = [nvrx_filesystem_async]
+        try:
+            from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        except ImportError:
+            pass  # New MCore delegates async checkpointing entirely to NVRx.
+        else:
+            filesystems.append(mcore_filesystem_async)
+
+        for filesystem_async in filesystems:
             if filesystem_async._results_queue is not None:
                 try:
                     filesystem_async._results_queue._manager.shutdown()

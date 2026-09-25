@@ -159,9 +159,11 @@ def test_middle_unpacked_pipeline_stage_does_not_consume_iterator(monkeypatch):
     assert next(data_iterator)["input_ids"].tolist() == [[18, 1, 18, 2]]
 
 
-def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypatch):
+@pytest.mark.parametrize("token_key", ["input_ids", "tokens"])
+def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypatch, token_key):
     monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
     batch = _packed_pipeline_batch()
+    batch[token_key] = batch.pop("input_ids")
 
     moved = get_batch_from_iterator(
         iter([batch]),
@@ -169,7 +171,8 @@ def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypa
         is_last_pp_stage=True,
     )
 
-    assert moved["input_ids"] is batch["input_ids"]
+    assert moved[token_key] is batch[token_key]
+    assert moved["position_ids"] is batch["position_ids"]
     assert moved["labels"] is batch["labels"]
     assert moved["loss_mask"] is batch["loss_mask"]
     assert moved["num_image_tiles"] is batch["num_image_tiles"]
@@ -179,6 +182,27 @@ def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypa
     assert moved["cu_seqlens_q"] is batch["cu_seqlens_q"]
     assert moved["padding_mask"] is batch["padding_mask"]
     assert moved["media_token_validity_mask"] is None
+
+
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("token_key", ["input_ids", "tokens"])
+def test_last_pipeline_batch_preserves_mtp_positions(monkeypatch, packed, token_key):
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
+    monkeypatch.setattr(nemotron_omni_step, "is_pp_first_stage", lambda group: False)
+    monkeypatch.setattr(nemotron_omni_step, "is_pp_last_stage", lambda group: True)
+    batch = _packed_pipeline_batch()
+    batch[token_key] = batch.pop("input_ids")
+    if not packed:
+        for key in (*nemotron_omni_step._PACKED_SEQ_PARAM_KEYS, "padding_mask"):
+            batch.pop(key, None)
+
+    result = get_batch(iter([batch]), _pipeline_cfg(packed=packed), pg_collection=SimpleNamespace(pp=object()))
+
+    assert result[2] is batch[token_key]
+    assert result[6] is batch["position_ids"]
+    assert (result[7] is not None) == packed
+    assert result[0] is None
+    assert result[8] is None
 
 
 def test_packed_middle_pipeline_forward_uses_boundaries_without_input_tensors(monkeypatch):
