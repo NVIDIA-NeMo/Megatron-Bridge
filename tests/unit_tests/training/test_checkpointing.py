@@ -765,6 +765,7 @@ class TestSaveCheckpoint:
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
         assert legacy_tracker.read_text() == "500"
 
+    @pytest.mark.parametrize("verify_integrity", [False, True])
     @pytest.mark.parametrize("save_rng", [True, False])
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
@@ -814,6 +815,7 @@ class TestSaveCheckpoint:
         mock_wandb,
         save_checkpoint_fixtures,
         save_rng,
+        verify_integrity,
     ):
         """Test saving a global checkpoint."""
         # Setup mocks
@@ -846,6 +848,7 @@ class TestSaveCheckpoint:
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
+        save_checkpoint_fixtures["mock_state"].cfg.checkpoint.verify_integrity = verify_integrity
 
         # Call save_checkpoint
         save_checkpoint(
@@ -862,6 +865,7 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        assert mock_dist_ckpt.save.call_args.kwargs["verify_integrity"] is verify_integrity
         if save_rng:
             mock_get_rng.assert_called_once()
         else:
@@ -4790,9 +4794,10 @@ class TestCheckpointPathOverride:
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/direct/iter_0001000")
         mock_strategy_cls.assert_not_called()
 
+    @pytest.mark.parametrize("verify_integrity", [False, True])
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
-    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy_cls):
+    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy_cls, verify_integrity):
         """Non-rank0 path should use checkpoint_path_override instead of get_checkpoint_name."""
         from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
 
@@ -4804,7 +4809,7 @@ class TestCheckpointPathOverride:
         sharded_sd = {"weight": "placeholder"}
         state_dict, checkpoint_name, release, ckpt_type = _load_global_dist_base_checkpoint(
             load_dir="/should/not/be/used",
-            ckpt_cfg=CheckpointConfig(),
+            ckpt_cfg=CheckpointConfig(verify_integrity=verify_integrity),
             rank0=False,
             sharded_state_dict=sharded_sd,
             iteration=None,
@@ -4816,6 +4821,7 @@ class TestCheckpointPathOverride:
         assert checkpoint_name == "/direct/iter_0001000"
         mock_strategy_cls.assert_called_once_with()
         mock_dist_ckpt.load.assert_called_once()
+        assert mock_dist_ckpt.load.call_args.kwargs["verify_integrity"] is verify_integrity
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
 

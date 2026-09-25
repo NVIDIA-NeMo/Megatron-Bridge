@@ -1528,6 +1528,7 @@ def save_checkpoint(
                 validate_access_integrity=validate_sharding_integrity,
                 preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
                 content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
+                verify_integrity=ckpt_cfg.verify_integrity,
             )
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode).
             # We always anchor modelopt_state at the iteration directory (``checkpoint_name``) so
@@ -3656,6 +3657,7 @@ def _load_global_dist_base_checkpoint(
         load_strategy,
         strict=ckpt_cfg.dist_ckpt_strictness,
         validate_access_integrity=validate_sharding_integrity,
+        verify_integrity=ckpt_cfg.verify_integrity,
     )
     # MCore's return_* strictness modes append missing and unexpected key sets.
     if isinstance(state_dict, tuple):
