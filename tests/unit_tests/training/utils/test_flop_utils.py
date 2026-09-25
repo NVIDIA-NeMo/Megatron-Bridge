@@ -1041,7 +1041,8 @@ assert flop_utils._is_gated_delta_net_variant("gdn") is True
 class TestDeepSeekV4HybridFlops:
     """Tests for DeepSeek-V4 hybrid attention FLOPs in the transformer path."""
 
-    def test_dsv4_hybrid_exact_flops(self):
+    @pytest.mark.parametrize("projection_schema", ["main", "dev"])
+    def test_dsv4_hybrid_exact_flops(self, projection_schema):
         """DSv4 hybrid FLOPs include sparse attention, compressor, and indexer terms."""
         batch_size = 1
         seq_len = 512
@@ -1083,6 +1084,11 @@ class TestDeepSeekV4HybridFlops:
             dsa_indexer_topk=idx_topk,
             gated_linear_unit=False,
         )
+        if projection_schema == "main":
+            fields = vars(model_cfg).copy()
+            fields["output_projection_lora_rank"] = fields.pop("o_lora_rank")
+            fields["output_projection_groups"] = fields.pop("o_groups")
+            model_cfg = SimpleNamespace(**fields)
         cfg = MockConfigContainer(model=model_cfg)
 
         q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
