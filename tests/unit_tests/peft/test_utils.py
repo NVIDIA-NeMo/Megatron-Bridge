@@ -639,7 +639,7 @@ class TestParallelLinearAdapter:
     def test_parallel_linear_adapter_forward_basic(self, mock_row_linear, mock_col_linear, mock_config):
         """Test basic forward pass."""
         # Mock the linear layers
-        mock_linear_in = Mock()
+        mock_linear_in = Mock(weight=torch.nn.Parameter(torch.empty(16, 20)))
         mock_linear_out = Mock()
         mock_linear_in.return_value = (torch.randn(5, 16), None)
         mock_linear_out.return_value = (torch.randn(5, 10), None)
@@ -667,11 +667,82 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_uses_explicit_parameter_dtype(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        mock_config.bf16 = True
+        mock_config.params_dtype = torch.bfloat16
+        linear_in = Mock()
+        linear_in.weight = nn.Parameter(torch.randn(2, 4, dtype=torch.float32))
+        linear_in.side_effect = lambda x: (torch.nn.functional.linear(x, linear_in.weight), None)
+        linear_out = Mock()
+        linear_out.weight = nn.Parameter(torch.randn(3, 2, dtype=torch.float32))
+        linear_out.side_effect = lambda x: (torch.nn.functional.linear(x, linear_out.weight), None)
+        mock_col_linear.side_effect = [linear_in, linear_out]
+
+        adapter = ParallelLinearAdapter(
+            in_features=4,
+            out_features=3,
+            dim=2,
+            base_linear_name="test",
+            activation="identity",
+            model_parallel_config=mock_config,
+            params_dtype=torch.float32,
+        )
+        inputs = torch.randn(5, 4, dtype=torch.bfloat16, requires_grad=True)
+
+        output = adapter(inputs)
+        output.float().sum().backward()
+
+        assert output.dtype is torch.bfloat16
+        assert linear_in.weight.dtype is torch.float32
+        assert linear_out.weight.dtype is torch.float32
+        assert torch.isfinite(linear_in.weight.grad).all()
+        assert torch.isfinite(linear_out.weight.grad).all()
+        assert mock_config.bf16 is True
+        assert mock_config.params_dtype is torch.bfloat16
+        constructor_configs = [call.kwargs["config"] for call in mock_col_linear.call_args_list]
+        assert len(constructor_configs) == 2
+        assert all(config is not mock_config for config in constructor_configs)
+        assert all(config.params_dtype is torch.float32 for config in constructor_configs)
+        assert all(config.bf16 is False for config in constructor_configs)
+        assert all(config.fp16 is False for config in constructor_configs)
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_preserves_default_model_dtype(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        mock_config.bf16 = True
+        linear_in = Mock()
+        linear_in.weight = nn.Parameter(torch.randn(2, 4, dtype=torch.bfloat16))
+        linear_in.side_effect = lambda x: (torch.nn.functional.linear(x, linear_in.weight), None)
+        linear_out = Mock()
+        linear_out.weight = nn.Parameter(torch.randn(3, 2, dtype=torch.bfloat16))
+        linear_out.side_effect = lambda x: (torch.nn.functional.linear(x, linear_out.weight), None)
+        mock_col_linear.side_effect = [linear_in, linear_out]
+
+        adapter = ParallelLinearAdapter(
+            in_features=4,
+            out_features=3,
+            dim=2,
+            base_linear_name="test",
+            activation="identity",
+            model_parallel_config=mock_config,
+        )
+        output = adapter(torch.randn(5, 4, dtype=torch.bfloat16))
+
+        assert output.dtype is torch.bfloat16
+        assert linear_in.weight.dtype is torch.bfloat16
+        assert linear_out.weight.dtype is torch.bfloat16
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_scales_bottleneck_before_output_projection(
         self, mock_row_linear, mock_col_linear, mock_config
     ):
         """LoRA scaling should not allocate an expanded output-sized temporary."""
-        mock_linear_in = Mock()
+        mock_linear_in = Mock(weight=torch.nn.Parameter(torch.empty(2, 4)))
         mock_linear_in.side_effect = lambda x: (x[..., :2], None)
         mock_linear_out = Mock()
         mock_linear_out.side_effect = lambda x: (torch.cat((x, x, x, x), dim=-1), None)
@@ -870,7 +941,7 @@ class TestParallelLinearAdapter:
         mock_config.tensor_model_parallel_size = 4
         mock_config.expert_tensor_parallel_size = 4
 
-        mock_linear_in = Mock()
+        mock_linear_in = Mock(weight=torch.nn.Parameter(torch.empty(16, 20)))
         mock_linear_out = Mock()
         mock_linear_in.return_value = (torch.randn(8, 16), None)  # Will be padded
         mock_linear_out.return_value = (torch.randn(8, 10), None)

@@ -85,6 +85,7 @@ class LoRALinear(AdapterWrapper):
         del linear_output
         adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
         adapter_output = adapter_output.reshape(combined_output.shape)
+        adapter_output = adapter_output.to(dtype=combined_output.dtype)
         combined_output.add_(adapter_output)
         if not self._base_returns_tuple:
             return combined_output
@@ -464,7 +465,7 @@ class LinearAdapter(nn.Module):
         # pylint: disable=C0115,C0116
         if self.dropout_position == "pre":
             x = self.dropout(x)
-        lora_res = self.linear_out(self.linear_in(x))
+        lora_res = self.linear_out(self.linear_in(x.to(self.linear_in.weight.dtype)))
         lora_res = lora_res * self.scale
         if self.dropout_position == "post":
             lora_res = self.dropout(lora_res)
