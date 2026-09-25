@@ -1,7 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
-from types import SimpleNamespace
-
 import pytest
 import torch
 
@@ -152,6 +150,26 @@ def test_qwen3_omni_collator_right_pads_before_truncating_mixed_lengths():
     assert batch["loss_mask"][0].sum().item() == 3
 
 
-def test_qwen3_omni_collator_rejects_in_batch_packing():
-    with pytest.raises(ValueError, match="does not support in-batch packing"):
-        qwen3_omni_collate_fn([], SimpleNamespace(), enable_in_batch_packing=True)
+def test_qwen3_omni_collator_emits_packed_sequence_metadata():
+    row0 = [103, 20, 105, 100, 30, 31, 105]
+    row1 = [103, 21, 105, 100, 32, 105]
+    processor = Qwen3OmniMoeProcessor([row0, row1])
+    batch = qwen3_omni_collate_fn(
+        _examples(),
+        processor,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].tolist() == [[*row0, 0, *row1, 0, 0]]
+    assert batch["attention_mask"] is None
+    assert batch["position_ids"].tolist() == [[0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 7, 13]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 7, 13]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 8, 16]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 8, 16]
+    assert batch["padding_mask"].tolist() == [
+        [False, False, False, False, False, False, False, True, False, False, False, False, False, False, True, True]
+    ]
+    assert batch["max_seqlen_q"].item() == 8
+    assert batch["max_seqlen_kv"].item() == 8
