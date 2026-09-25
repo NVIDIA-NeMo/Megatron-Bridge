@@ -2803,13 +2803,14 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sq_sum == 2 * 512**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
 
-    def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self):
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self, cp_size):
         # Dense GPT batches are sliced along sequence dimension before the
         # forward step under context parallelism. FLOPS should still be based on
         # the full model sequence length, not the CP-local token length.
         state = _State()
-        tokens = torch.zeros(1, 2048)
-        accumulate_flops_metadata(state, tokens, config_seq_len=4096)
+        tokens = torch.zeros(1, 4096 // cp_size)
+        accumulate_flops_metadata(state, tokens, config_seq_len=4096, context_parallel_size=cp_size)
         assert state._flops_seqlen_sum == 4096
         assert state._flops_seqlen_sq_sum == 4096**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
@@ -2874,6 +2875,24 @@ class TestAccumulateFlopsMetadata:
         )
         assert state._flops_seqlen_sq_sum == 1000**2 + 2500**2 + 596**2
 
+    @pytest.mark.parametrize("cp_size", [1, 2, 4, 8])
+    @pytest.mark.parametrize("use_unpadded", [False, True])
+    def test_thd_cp_restores_physical_tokens_without_rescaling_attention(self, cp_size, use_unpadded):
+        state = _State()
+        tokens = torch.zeros(1, 32 // cp_size)
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            config_seq_len=128,
+            context_parallel_size=cp_size,
+            cu_seqlens=torch.tensor([0, 16, 32]),
+            cu_seqlens_unpadded=torch.tensor([0, 5, 16]) if use_unpadded else None,
+        )
+
+        assert state._flops_seqlen_sum == 32
+        assert state._flops_seqlen_sq_sum == (5**2 + 11**2 if use_unpadded else 2 * 16**2)
+        assert state._flops_requires_global_reduce
+
     def test_accumulates_additively_across_microbatches(self):
         # Each call adds to existing accumulators (microbatch loop semantics).
         state = _State()
@@ -2921,13 +2940,14 @@ class TestAccumulateFlopsMetadata:
             )
 
     @pytest.mark.parametrize("vp_size", [1, 2, 10])
-    def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size):
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size, cp_size):
         # MCore's interleaved schedule calls forward_step once for every
         # (logical microbatch, model chunk) pair. FLOPS metadata describes the
         # data, not a model chunk, so only VP stage 0 may contribute it.
         state = _State()
         num_microbatches = 4
-        tokens = torch.zeros(1, 128)
+        tokens = torch.zeros(1, 128 // cp_size)
         cu_seqlens = torch.tensor([0, 32, 128])
 
         for vp_stage in range(vp_size):
@@ -2936,6 +2956,7 @@ class TestAccumulateFlopsMetadata:
                     state,
                     tokens,
                     vp_stage=vp_stage,
+                    context_parallel_size=cp_size,
                     cu_seqlens=cu_seqlens,
                     num_vision_patches=8,
                 )
@@ -3188,6 +3209,37 @@ class TestResolveGlobalFlopsSeqlenStats:
         all_reduce.assert_called_once()
         assert all_reduce.call_args.args[0].numel() == 3
         assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
+
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_cp_packed_stats_sum_unequal_dp_batches_without_cp_duplication(self, monkeypatch, cp_size):
+        state = _State()
+        accumulate_flops_metadata(
+            state,
+            torch.zeros(1, 32 // cp_size),
+            context_parallel_size=cp_size,
+            cu_seqlens=torch.tensor([0, 16, 32]),
+            cu_seqlens_unpadded=torch.tensor([0, 5, 16]),
+        )
+        dp_group = object()
+
+        def fake_all_reduce(stats, op=None, group=None):
+            assert group is dp_group
+            assert op == torch.distributed.ReduceOp.SUM
+            assert stats.tolist() == [32, 5**2 + 11**2, 0]
+            # The other DP replica has two different lengths in a 64-token pack.
+            stats.add_(torch.tensor([64, 17**2 + 23**2, 0], dtype=stats.dtype))
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(state, data_parallel_size=2, dp_group=dp_group)
+
+        all_reduce.assert_called_once()
+        assert stats.seqlen_sum == 96
+        assert stats.seqlen_squared_sum == 5**2 + 11**2 + 17**2 + 23**2
 
     def test_exact_vision_stats_share_integer_all_reduce_across_dp(self, monkeypatch):
         state = _State()

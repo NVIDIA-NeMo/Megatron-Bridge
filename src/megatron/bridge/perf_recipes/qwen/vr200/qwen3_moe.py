@@ -16,18 +16,18 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import ConfigContainer
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
-    qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
-    qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    _build_qwen3_30b_a3b_gb300_bf16,
+    _build_qwen3_30b_a3b_gb300_fp8mx,
+    _build_qwen3_235b_a22b_gb300_bf16,
+    _build_qwen3_235b_a22b_gb300_fp8mx,
+    _build_qwen3_235b_a22b_gb300_nvfp4,
     qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
-    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
 )
 
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, BF16 (alias of GB300)."""
-    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config()
+    cfg = _build_qwen3_235b_a22b_gb300_bf16()
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -55,7 +55,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, FP8-MX (alias of GB300)."""
-    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config()
+    cfg = _build_qwen3_235b_a22b_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -83,7 +83,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, NVFP4, full-iteration CG and A2A overlap."""
-    cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config()
+    cfg = _build_qwen3_235b_a22b_gb300_nvfp4()
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -114,7 +114,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 def qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, BF16 (alias of GB300)."""
-    cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config()
+    cfg = _build_qwen3_30b_a3b_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -140,7 +140,7 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
 
 def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
-    cfg = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+    cfg = _build_qwen3_30b_a3b_gb300_fp8mx()
 
     cfg.train.micro_batch_size = 4
 

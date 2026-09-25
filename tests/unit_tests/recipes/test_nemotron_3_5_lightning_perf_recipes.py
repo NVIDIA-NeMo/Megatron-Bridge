@@ -21,6 +21,7 @@ from inspect import signature
 import pytest
 import torch
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
@@ -96,6 +97,11 @@ _GB300_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_nvfp4_config,
+)
+# GB300 perf recipes covered by nemo-ci dispatch through NCCL EP (no HybridEP topology in their environment).
+_NCCLEP_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
 )
 _GB_FSDP_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
@@ -315,7 +321,8 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.keep_mtp_spec_in_bf16 is True
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    expected_backend = "ncclep" if recipe_factory in _NCCLEP_RECIPES else "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == expected_backend
     assert cfg.model.hf_model_id == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     assert cfg.model.hf_model_revision == _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_LIGHTNING_MODEL_ID
@@ -548,8 +555,15 @@ def test_gb300_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.model.seq_length == 8192
     assert cfg.dataset.seq_length == 8192
     assert cfg.model.moe_hybridep_num_sms == 16
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    if recipe_factory in _NCCLEP_RECIPES:
+        assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+        assert cfg.model.moe_use_grouped_tensor is True
+        assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+        assert "NVLINK_DOMAIN_SIZE" not in cfg.env_vars
+    else:
+        assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+        assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+        assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 @pytest.mark.parametrize(
@@ -570,8 +584,21 @@ def test_vr200_perf_recipes_match_gb300_configs(
     vr200_factory: Callable[[], ConfigContainer],
     gb300_factory: Callable[[], ConfigContainer],
 ) -> None:
-    """VR200 Nemotron 3.5 recipes match their GB300 configuration baselines."""
-    assert vr200_factory() == gb300_factory()
+    """VR200 Nemotron 3.5 recipes match their GB300 baselines up to the GB300 NCCL EP overlay.
+
+    The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts and the
+    NCCL EP process setting); the VR200 aliases keep the shared HybridEP base. Everything else,
+    model, parallelism, precision and schedule, must be identical.
+    """
+    vr200_cfg = vr200_factory()
+    gb300_cfg = gb300_factory()
+    assert vr200_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert gb300_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+
+    _enable_ncclep(vr200_cfg)
+    vr200_cfg.model.moe_use_grouped_tensor = True
+    vr200_cfg.env_vars = gb300_cfg.env_vars
+    assert vr200_cfg == gb300_cfg
 
 
 @pytest.mark.parametrize("recipe_factory", _GB_FSDP_RECIPES, ids=lambda recipe: recipe.__name__)
