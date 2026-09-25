@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for Kimi K2."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
@@ -135,8 +136,8 @@ def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Kimi K2 pretrain: 256× GB300, MXFP8."""
+def _build_kimi_k2_gb300_fp8mx() -> ConfigContainer:
+    """Shared HybridEP MXFP8 base for the Kimi K2 GB300 recipe and its VR200 alias."""
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
@@ -170,6 +171,16 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
     cfg.rng.te_rng_tracker = True
+    return cfg
+
+
+def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× GB300, MXFP8, NCCL EP."""
+    cfg = _build_kimi_k2_gb300_fp8mx()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -181,11 +192,8 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

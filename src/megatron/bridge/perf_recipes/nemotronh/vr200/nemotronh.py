@@ -18,21 +18,21 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
 )
 from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
+    _build_nemotron_3_5_lightning_gb300_bf16,
+    _build_nemotron_3_5_lightning_gb300_mxfp8,
+    _build_nemotron_3_nano_gb300_bf16,
     _build_nemotron_3_nano_gb300_mxfp8,
+    _build_nemotron_3_super_gb300_bf16,
     _build_nemotron_3_super_gb300_mxfp8,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config,
-    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
-    nemotron_3_nano_pretrain_8gpu_gb300_bf16_config,
+    _build_nemotron_3_super_gb300_nvfp4,
+    _nemotron_3_ultra_gb300_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config,
-    nemotron_3_super_pretrain_64gpu_gb300_bf16_config,
-    nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
-    nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config,
 )
 
 
 def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, BF16 (alias of GB300)."""
-    cfg = nemotron_3_nano_pretrain_8gpu_gb300_bf16_config()
+    cfg = _build_nemotron_3_nano_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -126,7 +126,7 @@ def nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, BF16 (alias of GB300)."""
-    cfg = nemotron_3_super_pretrain_64gpu_gb300_bf16_config()
+    cfg = _build_nemotron_3_super_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -183,7 +183,7 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, NVFP4 with full-iteration CUDA graph."""
-    cfg = nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config()
+    cfg = _build_nemotron_3_super_gb300_nvfp4()
     cfg.model.expert_model_parallel_size = 16
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -215,7 +215,11 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300)."""
-    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config()
+    cfg = _nemotron_3_ultra_gb300_fp8mx_config(
+        num_gpus=256,
+        expert_model_parallel_size=64,
+        global_batch_size=256,
+    )
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -248,7 +252,7 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× VR200, BF16 (alias of GB300)."""
-    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config()
+    cfg = _build_nemotron_3_5_lightning_gb300_bf16()
 
     # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
@@ -272,7 +276,10 @@ def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
 
 def nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× VR200, MXFP8 (alias of GB300)."""
-    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config()
+    cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
+    cfg.model.recompute_modules = []
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
 
     # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
