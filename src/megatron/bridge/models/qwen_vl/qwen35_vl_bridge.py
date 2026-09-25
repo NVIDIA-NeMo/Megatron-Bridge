@@ -20,12 +20,14 @@ Qwen3.5 and Qwen3.6 share a multimodal architecture that combines:
 - A vision encoder (similar to Qwen3-VL)
 - Dense MLP or Mixture of Experts (MoE) with shared experts
 
-This module provides three bridges:
+This module provides four bridges:
 
 - ``Qwen35VLBridge``: Dense variant (e.g., Qwen3.5-27B)
   Reference: https://huggingface.co/Qwen/Qwen3.5-27B
 
 - ``Qwen35TokenClassificationBridge``: Dense token-classification variant
+
+- ``Qwen35SequenceClassificationBridge``: Dense sequence-classification variant
 
 - ``Qwen35VLMoEBridge``: Qwen3.5/Qwen3.6 MoE variants
   Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
@@ -45,6 +47,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.sequence_classification import PreTrainedSequenceClassification
 from megatron.bridge.models.hf_pretrained.token_classification import PreTrainedTokenClassification
 from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35Bridge,
@@ -53,8 +56,10 @@ from megatron.bridge.models.qwen.qwen35_bridge import (
     _apply_qwen35_moe_config,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.sequence_classification import Qwen3VLForSequenceClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+    Qwen35SequenceClassificationModelProvider,
     Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
@@ -66,6 +71,7 @@ logger = logging.getLogger(__name__)
 _QWEN3_5_DENSE_HF_CLASS_NAME = "Qwen3_5ForConditionalGeneration"
 _QWEN3_5_MOE_HF_CLASS_NAME = "Qwen3_5MoeForConditionalGeneration"
 _QWEN3_5_TOKEN_CLASSIFICATION_HF_CLASS_NAME = "Qwen3_5ForTokenClassification"
+_QWEN3_5_SEQUENCE_CLASSIFICATION_HF_CLASS_NAME = "Qwen3_5ForSequenceClassification"
 
 
 def _get_vision_mappings():
@@ -364,6 +370,55 @@ class Qwen35VLBridge(MegatronModelBridge):
         )
         mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
         mapping_list.extend(_get_vision_mappings())
+        return MegatronMappingRegistry(*mapping_list)
+
+
+@MegatronModelBridge.register_bridge(
+    source=_QWEN3_5_SEQUENCE_CLASSIFICATION_HF_CLASS_NAME,
+    target=Qwen3VLForSequenceClassification,
+    provider=Qwen35SequenceClassificationModelProvider,
+    model_type="qwen3_5",
+)
+class Qwen35SequenceClassificationBridge(Qwen35VLBridge):
+    """Bridge for Qwen3.5 VL models with a replicated sequence-classification head."""
+
+    PROVIDER_CLASS = Qwen35SequenceClassificationModelProvider
+
+    def provider_bridge(
+        self,
+        hf_pretrained: PreTrainedSequenceClassification,
+    ) -> Qwen35SequenceClassificationModelProvider:
+        """Create a serializable sequence-classification provider from an HF config.
+
+        Args:
+            hf_pretrained: Lazy Hugging Face sequence-classification wrapper.
+
+        Returns:
+            A provider carrying the base VLM and classification-head configuration.
+        """
+        provider = super().provider_bridge(hf_pretrained)
+        assert isinstance(provider, Qwen35SequenceClassificationModelProvider)
+        provider.num_labels = hf_pretrained.config.num_labels
+        provider.pad_token_id = hf_pretrained.config.text_config.pad_token_id
+        provider.mtp_num_layers = 0
+        provider.mtp_enabled = False
+        provider.share_embeddings_and_output_weights = False
+        return provider
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Return mappings for the Qwen3.5 base model and classification head."""
+        mapping_list = Qwen35Bridge._get_dense_lm_mappings(
+            hf_prefix="model.language_model.",
+            megatron_prefix="language_model.",
+            output_layer_hf_param=None,
+        )
+        mapping_list.extend(_get_vision_mappings())
+        mapping_list.append(
+            ReplicatedMapping(
+                megatron_param="language_model.output_layer.weight",
+                hf_param="score.weight",
+            )
+        )
         return MegatronMappingRegistry(*mapping_list)
 
 

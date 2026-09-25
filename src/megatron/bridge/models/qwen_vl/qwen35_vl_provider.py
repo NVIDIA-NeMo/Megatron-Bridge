@@ -20,12 +20,14 @@ Qwen3.5 and Qwen3.6 share a vision-language architecture that combines:
 - A vision encoder (similar to Qwen3-VL)
 - Dense MLP or Mixture of Experts (MoE) with shared experts
 
-This module provides three model providers:
+This module provides four model providers:
 
 - ``Qwen35VLModelProvider``: Dense variant (e.g., Qwen3.5-27B)
   Reference: https://huggingface.co/Qwen/Qwen3.5-27B
 
 - ``Qwen35TokenClassificationModelProvider``: Dense token-classification variant
+
+- ``Qwen35SequenceClassificationModelProvider``: Dense sequence-classification variant
 
 - ``Qwen35VLMoEModelProvider``: Qwen3.5/Qwen3.6 MoE variants
   Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
@@ -80,6 +82,7 @@ from megatron.bridge.models.common.heads import LinearForLastLayer
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.sequence_classification import Qwen3VLForSequenceClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
@@ -329,6 +332,61 @@ class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
                 sequence_parallel=self.sequence_parallel,
                 bias=True,
                 dropout=self.classifier_dropout,
+                output_in_fp32=False,
+                tp_group=getattr(getattr(model, "pg_collection", None), "tp", None),
+                init_method=self.init_method,
+                perform_initialization=self.perform_initialization,
+            )
+        return model
+
+
+@dataclass
+class Qwen35SequenceClassificationModelProvider(Qwen35VLModelProvider):
+    """Serializable provider for Qwen3.5 VL sequence-classification models."""
+
+    MODEL_CLASS: ClassVar[type[Qwen3VLModel]] = Qwen3VLForSequenceClassification
+
+    num_labels: int | None = None
+    pad_token_id: int | None = None
+    mtp_num_layers: int | None = 0
+    mtp_enabled: bool = False
+    share_embeddings_and_output_weights: bool = False
+
+    def provide(
+        self,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> Qwen3VLForSequenceClassification:
+        """Build a Qwen3.5 VL model with a persistent replicated sequence-classification head.
+
+        Args:
+            pre_process: Whether this pipeline stage owns input preprocessing.
+            post_process: Whether this pipeline stage owns output postprocessing.
+            vp_stage: Virtual-pipeline stage index, when virtual pipelining is enabled.
+
+        Returns:
+            The Megatron Qwen3.5 VL sequence-classification model for this stage.
+
+        Raises:
+            ValueError: If ``num_labels`` is not positive or context parallelism is enabled.
+        """
+        if self.num_labels is None or self.num_labels <= 0:
+            raise ValueError(f"num_labels must be a positive integer, got {self.num_labels!r}.")
+        if self.context_parallel_size != 1:
+            raise ValueError("Qwen3.5 VL sequence classification only supports context_parallel_size=1.")
+
+        model = cast(
+            Qwen3VLForSequenceClassification,
+            super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage),
+        )
+        if model.language_model is not None and model.language_model.post_process:
+            model.language_model.output_layer = LinearForLastLayer(
+                input_size=self.hidden_size,
+                output_size=self.num_labels,
+                sequence_parallel=self.sequence_parallel,
+                bias=False,
+                dropout=0.0,
                 output_in_fp32=False,
                 tp_group=getattr(getattr(model, "pg_collection", None), "tp", None),
                 init_method=self.init_method,
