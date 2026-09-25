@@ -365,8 +365,8 @@ class TestGemma2TEDotProductAttentionParity:
         te = self._make_te(config, layer_number)
 
         q, k, v = _qkv(seq, batch, device="cuda", seed=7)
-        oracle_out = oracle.forward(query=q, key=k, value=v, attention_mask=None)
-        te_out = te.forward(query=q, key=k, value=v, attention_mask=None)
+        oracle_out = oracle.forward(query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal)
+        te_out = te.forward(query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal)
 
         assert te_out.shape == oracle_out.shape
         torch.testing.assert_close(
@@ -400,7 +400,7 @@ class TestGemma2TEDotProductAttentionParity:
         v_pert[0] += 5.0
 
         def last_query(attn, key, value):
-            out = attn.forward(query=q, key=key, value=value, attention_mask=None)
+            out = attn.forward(query=q, key=key, value=value, attention_mask=None, attn_mask_type=AttnMaskType.causal)
             return out[-1].float()  # [batch, hidden]
 
         def reacts_to_out_of_window_token(attn):
@@ -445,9 +445,15 @@ class TestGemma2TEDotProductAttentionParity:
         uncapped_config.attn_logit_softcapping = None
         te_uncapped = self._make_te(uncapped_config, layer_number)
 
-        oracle_out = oracle.forward(query=q, key=k, value=v, attention_mask=None).float()
-        capped_out = te_capped.forward(query=q, key=k, value=v, attention_mask=None).float()
-        uncapped_out = te_uncapped.forward(query=q, key=k, value=v, attention_mask=None).float()
+        oracle_out = oracle.forward(
+            query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal
+        ).float()
+        capped_out = te_capped.forward(
+            query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal
+        ).float()
+        uncapped_out = te_uncapped.forward(
+            query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal
+        ).float()
 
         # Softcapped TE flash matches the softcapped oracle.
         torch.testing.assert_close(
