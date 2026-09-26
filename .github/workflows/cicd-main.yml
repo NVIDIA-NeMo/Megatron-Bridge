@@ -536,6 +536,9 @@ jobs:
           push: true
           context: .
           platforms: ${{ steps.platform.outputs.platforms }}
+          # NVTE_BUILD_THREADS_PER_JOB compiles each TransformerEngine source's GPU targets
+          # concurrently (the Dockerfile default keeps TE's serial nvcc --threads 1). CI-Events'
+          # megatron-bridge build profile passes the same value to keep hitting this cache.
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
@@ -543,6 +546,7 @@ jobs:
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
             # Test images run the diffusion unit job; install its hash-locked codecs while building as root.
             INSTALL_DIFFUSION_DEPS=true
+            NVTE_BUILD_THREADS_PER_JOB=4
           cache-from: type=registry,ref=${{ steps.cache_from.outputs.donor }},mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
