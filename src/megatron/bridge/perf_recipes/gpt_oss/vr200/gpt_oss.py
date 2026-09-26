@@ -24,9 +24,9 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
     gpt_oss_20b_pretrain_config,
 )
 from megatron.bridge.perf_recipes.gpt_oss.gb300.gpt_oss import (
+    _build_gpt_oss_120b_gb300_fp8mx,
     gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config,
     gpt_oss_120b_pretrain_64gpu_gb300_bf16_config,
-    gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config,
 )
 
 
@@ -181,7 +181,7 @@ def gpt_oss_120b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
 
 def gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× VR200, FP8-MX (alias of GB300)."""
-    cfg = gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config()
+    cfg = _build_gpt_oss_120b_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
