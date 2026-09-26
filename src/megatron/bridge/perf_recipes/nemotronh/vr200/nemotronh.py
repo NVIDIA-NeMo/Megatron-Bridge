@@ -255,7 +255,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     cfg = _build_nemotron_3_5_lightning_gb300_bf16()
     # Offload MoE expert activations to host memory: the current Rubin base image ships a Transformer
     # Engine without TE PR #3273, whose fused cross entropy holds an extra fp32 gradient per loss head.
-    # Revert this offload once the Rubin image picks up TE PR #3273.
+    # Revert this offload once the Rubin image picks up TE PR #3273:
+    # https://github.com/NVIDIA/TransformerEngine/pull/3273
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["expert_fc1", "moe_act"]
 
