@@ -28,8 +28,45 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from transformers import PreTrainedConfig
 
 from megatron.bridge.models.common import Serializable
-from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, create_ddp_config
+from megatron.bridge.training.utils.config_utils import (
+    _ConfigContainerBase,
+    _materialize_gtp_weight_shards,
+    apply_run_config_backward_compat,
+    create_ddp_config,
+)
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_gtp_weight_shards_survive_init_false_sanitization(nested):
+    model = {
+        "_target_": "megatron.bridge.models.gpt_provider.GPTModelProvider",
+        "tensor_model_parallel_size": 2,
+        "expert_tensor_parallel_size": 1,
+        "tensor_parallel_num_weight_shards": None,
+        "expert_tensor_parallel_num_weight_shards": None,
+        "gtp_weight_remat_size": 2,
+        "expert_gtp_weight_remat_size": 4,
+    }
+    config = {"model": {"transformer": model} if nested else model}
+    restored = apply_run_config_backward_compat(config)["model"]
+    if nested:
+        restored = restored["transformer"]
+    assert restored["tensor_parallel_num_weight_shards"] == 4
+    assert restored["expert_tensor_parallel_num_weight_shards"] == 4
+    assert "gtp_weight_remat_size" not in restored
+    assert "expert_gtp_weight_remat_size" not in restored
+    assert model["tensor_parallel_num_weight_shards"] is None
+
+
+def test_gtp_weight_shards_preserve_explicit_counts_and_handle_aliases():
+    model = {"tensor_model_parallel_size": 2, "tensor_parallel_num_weight_shards": 8, "gtp_weight_remat_size": 2}
+    config = {"models": [model, model]}
+    config["self"] = config
+    normalized = _materialize_gtp_weight_shards(config)
+    assert normalized["models"][0]["tensor_parallel_num_weight_shards"] == 8
+    assert normalized["models"][0] is normalized["models"][1]
+    assert normalized["self"] is normalized
 
 
 # Test functions for callable testing

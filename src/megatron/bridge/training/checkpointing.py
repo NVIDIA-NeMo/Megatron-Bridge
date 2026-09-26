@@ -55,7 +55,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
+from megatron.core.utils import get_model_config, get_pg_rank, get_pg_size, unwrap_model
 from megatron.training.checkpointing import save_tokenizer_assets
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
@@ -68,8 +68,17 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
-from megatron.bridge.training.gtp import get_data_distribution_group
-from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
+from megatron.bridge.training.gtp import (
+    _get_checkpoint_weight_topology,
+    _get_dataloader_process_group,
+    _validate_checkpoint_weight_topology,
+    get_data_distribution_group,
+)
+from megatron.bridge.training.optim import (
+    hybrid_optimizer_state_loading,
+    memory_efficient_precision_aware_optimizer_state_checkpointing,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+)
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.utils import comet_utils, mlflow_utils, wandb_utils
 from megatron.bridge.training.utils.checkpoint_utils import (
@@ -454,6 +463,17 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
         },
     }
 
+    for name in (
+        "expert_tensor_parallel_size",
+        "tensor_parallel_num_weight_shards",
+        "expert_tensor_parallel_num_weight_shards",
+        "gtp_weight_remat_size",
+        "expert_gtp_weight_remat_size",
+    ):
+        value = getattr(args, name, None)
+        if isinstance(value, int):
+            config["model"][name] = value
+
     return config
 
 
@@ -529,6 +549,21 @@ def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> NVRxAsyncReq
     return NVRxAsyncRequest(save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn)
 
 
+def _get_checkpoint_dp_cp_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
+    """Include GTP peers when distributing checkpoint work and electing replicas."""
+    group = getattr(pg_collection, "dp_cp_gtp_remat", None)
+    return pg_collection.dp_cp if group is None else group
+
+
+def _checkpoint_has_gtp_remat(pg_collection: ProcessGroupCollection) -> bool:
+    """Check both dense and expert weight-rematerialization axes."""
+    for name in ("gtp_remat", "expt_gtp_remat"):
+        group = getattr(pg_collection, name, None)
+        if group is not None and group.size() > 1:
+            return True
+    return False
+
+
 def get_rng_state(
     data_parallel_random_init: bool,
     ckpt_format: str = "torch_dist",
@@ -542,9 +577,9 @@ def get_rng_state(
     Optionally gathers states across data parallel ranks.
     Returns format depends on checkpoint format.
 
-    For torch_dist format with Expert Parallelism (EP > 1), RNG states are sharded
-    by (PP, TP, DP) dimensions since different EP ranks may have different RNG states.
-    Without EP, states are sharded by (PP, TP) with DP rank as replica_id.
+    For torch_dist with EP or GTP, RNG states are sharded by (PP, TP, DP/CP/GTP)
+    because those ranks have distinct tracker streams. Without EP or GTP, the
+    legacy (PP, TP) layout with DP/CP rank as replica_id is retained.
 
     Args:
         data_parallel_random_init: Historical parameter name. When True, serializes one RNG state
@@ -558,7 +593,7 @@ def get_rng_state(
 
     Returns:
         For torch_dist: A ShardedObject containing the RNG states, sharded by
-            (PP, TP, DP) when EP > 1, or (PP, TP) with DP as replica_id otherwise.
+            (PP, TP, DP/CP/GTP) with EP or GTP, or (PP, TP) with DP as replica_id otherwise.
         For fsdp_dtensor: A dict mapping (pp_rank, tp_rank) to RNG state lists.
     """
     rng_state = {
@@ -569,10 +604,11 @@ def get_rng_state(
         "rng_tracker_states": tensor_parallel.get_cuda_rng_tracker().get_states(),
     }
 
+    dp_cp_group = _get_checkpoint_dp_cp_group(pg_collection)
     rng_state_list = None
-    if torch.distributed.is_initialized() and pg_collection.dp_cp.size() > 1 and data_parallel_random_init:
-        rng_state_list = [None for i in range(pg_collection.dp_cp.size())]
-        torch.distributed.all_gather_object(rng_state_list, rng_state, group=pg_collection.dp_cp)
+    if torch.distributed.is_initialized() and dp_cp_group.size() > 1 and data_parallel_random_init:
+        rng_state_list = [None for i in range(dp_cp_group.size())]
+        torch.distributed.all_gather_object(rng_state_list, rng_state, group=dp_cp_group)
     else:
         rng_state_list = [rng_state]
 
@@ -588,13 +624,11 @@ def get_rng_state(
         # (pp_rank, tp_rank) from their module-local process groups.
         key = f"rng_state.{module_name}" if module_name else "rng_state"
 
-        if ep_size > 1:
-            # Shard RNG by PP, TP, DP when using expert parallelism.
-            # With EP, different EP ranks within the same DP group may have different
-            # RNG states for their respective experts, so DP rank must be part of
-            # the sharding dimensions rather than replica_id.
-            dp_rank = pg_collection.dp_cp.rank()
-            dp_size = pg_collection.dp_cp.size()
+        if ep_size > 1 or _checkpoint_has_gtp_remat(pg_collection):
+            # EP and GTP peers have distinct RNG streams. The full data-distribution
+            # coordinate must be a shard dimension, rather than a replica ID.
+            dp_rank = dp_cp_group.rank()
+            dp_size = dp_cp_group.size()
             rng_state_list = ShardedObject(
                 key,
                 rng_state_list,
@@ -608,7 +642,7 @@ def get_rng_state(
                 rng_state_list,
                 (pp_size, tp_size),
                 (pp_rank, tp_rank),
-                replica_id=pg_collection.dp_cp.rank(),
+                replica_id=dp_cp_group.rank(),
             )
     elif ckpt_format == "fsdp_dtensor":
         pp_rank = pg_collection.pp.rank()
@@ -629,7 +663,7 @@ def _select_rng_state(
     rng_state_list: list[dict[str, Any]], per_dp_rank: bool, pg_collection: ProcessGroupCollection
 ) -> dict[str, Any]:
     """Select the RNG state matching the saved checkpoint layout."""
-    return rng_state_list[pg_collection.dp_cp.rank() if per_dp_rank else 0]
+    return rng_state_list[_get_checkpoint_dp_cp_group(pg_collection).rank() if per_dp_rank else 0]
 
 
 def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject | None:
@@ -1366,7 +1400,7 @@ def save_checkpoint(
 
     # Collect cfg, model, RNG.
     sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
-    sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
+    sharded_sd_metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
     if cfg.optimizer.use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
@@ -1506,7 +1540,7 @@ def save_checkpoint(
                 if ckpt_cfg.fully_parallel_save:
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        pg_collection.dp_cp,
+                        _get_checkpoint_dp_cp_group(pg_collection),
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # MegatronMIMO + torch_dist can hit known access-pattern validation failures
@@ -1568,7 +1602,7 @@ def save_checkpoint(
                 state_dict,
                 algo=algo,
                 cached_metadata=cached_metadata,
-                parallelization_group=pg_collection.dp_cp,
+                parallelization_group=_get_checkpoint_dp_cp_group(pg_collection),
             )
             async_save_request = checkpointing_context["local_checkpoint_manager"].save(
                 state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
@@ -1933,9 +1967,9 @@ def maybe_save_dataloader_state(
     if not hasattr(train_iterator.iterable, "save_state"):
         raise RuntimeError(f"Could not find a save_state for the train_iterator of type {type(train_iterator)}")
 
-    # Resolve process groups and write the per-DP-rank state from a single writer. Tensor-,
-    # pipeline-, and context-parallel ranks of a DP replica all hold the identical per-DP-rank
-    # state, so only the tp/pp/cp leader writes avoiding racing to write the same
+    # Each DP/GTP rank consumes a distinct stream. Tensor-, pipeline-, and
+    # context-parallel peers repeat it, so only the tp/pp/cp leader writes
+    # each stream's state, avoiding racing to write the same
     # train_dataloader_dprank{dp}.pt file.
     pg_collection = pg_collection or get_pg_collection(model)
     is_first_rank = (
@@ -1946,7 +1980,8 @@ def maybe_save_dataloader_state(
     if not is_first_rank:
         return
 
-    dp_rank = get_pg_rank(pg_collection.dp)
+    data_group = _get_dataloader_process_group(pg_collection)
+    dp_rank = get_pg_rank(data_group)
     print_rank_0(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
     train_dataloader_state_dict = train_iterator.iterable.save_state()
     # Get the base directory for the current iteration
@@ -1954,9 +1989,9 @@ def maybe_save_dataloader_state(
     # Construct the specific filename within that iteration directory
     data_state_save_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
 
-    torch.distributed.barrier(group=pg_collection.dp)
+    torch.distributed.barrier(group=data_group)
 
-    if get_pg_rank(pg_collection.dp) == 0:
+    if dp_rank == 0:
         # A retained Energon generation may outlive its model checkpoint. Replace the generation
         # before reusing an iteration so rank files from a previous, larger DP world cannot survive.
         if MultiStorageClientFeature.is_enabled():
@@ -1967,7 +2002,7 @@ def maybe_save_dataloader_state(
             shutil.rmtree(iter_dir)
         ensure_directory_exists(data_state_save_path)
 
-    torch.distributed.barrier(group=pg_collection.dp)
+    torch.distributed.barrier(group=data_group)
 
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
@@ -1994,7 +2029,7 @@ def maybe_load_dataloader_state(
     (non-Energon dataloaders).
 
     Note on per-rank gating, which is **not** symmetric to the save side. Save writes one file per
-    data-parallel rank, gated to a single model-parallel writer because the per-DP-rank state is
+    DP/GTP data-stream rank, gated to a single model-parallel writer because that state is
     identical across the tensor/pipeline/context ranks of a DP replica. Load, by contrast, restores
     on *every* rank: each tensor/pipeline/context rank pulls from its own data iterator (e.g.
     ``qwen3_vl`` ``get_batch``), so all of them must be rewound to the saved position.
@@ -2014,7 +2049,7 @@ def maybe_load_dataloader_state(
         iteration: The iteration the run resumed from (used to locate the state file).
         dataloader_load_path: Base directory the dataloader state was saved under. ``None`` or empty
             disables restore.
-        pg_collection: Process groups, used to resolve the per-DP-rank state file.
+        pg_collection: Process groups, used to resolve the per-DP/GTP-rank state file.
     """
     if train_iterator is None or not dataloader_load_path:
         return
@@ -2051,7 +2086,8 @@ def maybe_load_dataloader_state(
         if msc is not None
         else len(list(Path(iter_dir).glob("train_dataloader_dprank*.pt")))
     )
-    current_dp_size = get_pg_size(pg_collection.dp)
+    data_group = _get_dataloader_process_group(pg_collection)
+    current_dp_size = get_pg_size(data_group)
     if saved_dp_size != current_dp_size:
         raise RuntimeError(
             f"Dataloader state at {iter_dir} was saved for data-parallel size {saved_dp_size}, but the current "
@@ -2059,7 +2095,7 @@ def maybe_load_dataloader_state(
             "refusing to continue."
         )
 
-    dp_rank = get_pg_rank(pg_collection.dp)
+    dp_rank = get_pg_rank(data_group)
     data_state_load_path = join_paths(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
     if not is_file(data_state_load_path):
         raise RuntimeError(
@@ -2098,6 +2134,11 @@ def _generate_model_state_dict(
         A dictionary containing the model state to be saved.
     """
     state_dict = {}
+    if ckpt_format == "torch_dist" and pg_collection is not None:
+        model_sd_kwargs = dict(model_sd_kwargs or {})
+        metadata = dict(model_sd_kwargs.get("metadata") or {})
+        metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
+        model_sd_kwargs["metadata"] = metadata
 
     if len(model) == 1:
         if ckpt_format == "torch_dist":
@@ -2343,6 +2384,25 @@ def _load_model_weights_from_checkpoint(
     state_dict = dist_checkpointing.load_common_state_dict(checkpoint_path)
     assert state_dict is not None
 
+    # Also protect callers that construct their own model configuration through
+    # build_and_load_model(), bypassing load_megatron_model's early validation.
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+    if file_exists(run_config_filename):
+        saved_model_config = read_run_config(run_config_filename)["model"]
+    elif "args" in state_dict:
+        saved_model_config = _extract_megatron_lm_args_from_state_dict(state_dict)["model"]
+    else:
+        saved_model_config = None
+    requested_topology = _get_checkpoint_weight_topology(get_model_config(model[0]))
+    if saved_model_config is not None:
+        _validate_checkpoint_weight_topology(
+            saved=_get_checkpoint_weight_topology(saved_model_config), requested=requested_topology
+        )
+    elif requested_topology[1] > 1 or requested_topology[3] > 1:
+        raise ValueError(
+            "Loading native weights into GTP requires saved model configuration to verify weight topology."
+        )
+
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
     model_sd_kwargs = dict(metadata=sharded_sd_metadata)
@@ -2357,7 +2417,7 @@ def _load_model_weights_from_checkpoint(
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _get_checkpoint_dp_cp_group(pg_collection))
     load_result = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
@@ -2906,6 +2966,11 @@ def _load_checkpoint_from_path(
             tp_pp_match = True
             mismatch_msg = ""
         else:
+            if ckpt_type != CheckpointType.LOCAL:
+                _validate_checkpoint_weight_topology(
+                    saved=_get_checkpoint_weight_topology(run_config["model"]),
+                    requested=_get_checkpoint_weight_topology(cfg.model),
+                )
             ckpt_tp_pp = _get_run_config_tp_pp(run_config["model"])
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,
@@ -2998,7 +3063,7 @@ def _load_checkpoint_from_path(
 
         if sharded_sd_metadata is None:
             sharded_sd_metadata = {}
-        sharded_sd_metadata["dp_cp_group"] = pg_collection.dp_cp
+        sharded_sd_metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
@@ -3249,12 +3314,16 @@ def _load_checkpoint_from_path(
                     # require grad without this context.
                     with (
                         torch.no_grad(),
+                        hybrid_optimizer_state_loading(optimizer),
                         memory_efficient_precision_aware_optimizer_state_checkpointing(
                             optimizer,
                             enabled=cfg.checkpoint.stage_precision_aware_optimizer_state_on_cpu,
                         ),
                     ):
                         optimizer.load_state_dict(state_dict["optimizer"])
+                    # Direct checkpoint callers also need HDO's loaded working
+                    # copies and advancing CPU/GPU step counters synchronized.
+                    sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:
@@ -3597,7 +3666,7 @@ def _load_non_persistent_base_checkpoint(
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
             algo=ckpt_cfg.non_persistent_local_ckpt_algo,
-            parallelization_group=pg_collection.dp_cp,
+            parallelization_group=_get_checkpoint_dp_cp_group(pg_collection),
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
@@ -3644,7 +3713,7 @@ def _load_global_dist_base_checkpoint(
     )
     load_strategy = TorchDistLoadShardedStrategy()
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, pg_collection.dp_cp)
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _get_checkpoint_dp_cp_group(pg_collection))
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     validate_sharding_integrity = True

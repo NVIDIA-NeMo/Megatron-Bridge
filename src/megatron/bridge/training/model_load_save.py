@@ -30,6 +30,7 @@ from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import _CpuTorchDistSaveShardedStrategy, save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
+from megatron.bridge.training.gtp import _get_checkpoint_weight_topology, _validate_checkpoint_weight_topology
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
 from megatron.bridge.training.utils.checkpoint_utils import file_exists
@@ -161,6 +162,9 @@ def _get_or_initialize_pg_collection(
     model_cfg: TransformerConfig | ModelConfig,
 ) -> ProcessGroupCollection:
     """Return MPU process groups, initializing model-parallel state when needed."""
+    from megatron.bridge.training.gtp import configure_gtp_remat
+
+    configure_gtp_remat(model_cfg)
     if not parallel_state.is_initialized():
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=model_cfg.tensor_model_parallel_size,
@@ -169,6 +173,8 @@ def _get_or_initialize_pg_collection(
             context_parallel_size=model_cfg.context_parallel_size or 1,
             expert_model_parallel_size=model_cfg.expert_model_parallel_size or 1,
             expert_tensor_parallel_size=model_cfg.expert_tensor_parallel_size,
+            gtp_remat_size=getattr(model_cfg, "gtp_weight_remat_size", 1),
+            expert_gtp_remat_size=getattr(model_cfg, "expert_gtp_weight_remat_size", 1),
         )
         if torch.cuda.is_available() and torch.cuda.device_count() > 0:
             from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
@@ -486,6 +492,9 @@ def load_megatron_model(
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
     model_cfg, mlm_args = load_model_config(checkpoint_path)
+    # Deserialized providers have not been finalized yet: derive GTP from the
+    # saved public shard counts before resetting the model-parallel defaults.
+    saved_weight_topology = _get_checkpoint_weight_topology(model_cfg)
     saved_pipeline_model_parallel_size = getattr(model_cfg, "pipeline_model_parallel_size", 1)
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
@@ -495,6 +504,10 @@ def load_megatron_model(
     model_cfg.context_parallel_size = 1
     model_cfg.expert_model_parallel_size = 1
     model_cfg.expert_tensor_parallel_size = 1
+    model_cfg.tensor_parallel_num_weight_shards = None
+    model_cfg.expert_tensor_parallel_num_weight_shards = None
+    model_cfg.gtp_weight_remat_size = 1
+    model_cfg.expert_gtp_weight_remat_size = 1
     if getattr(model_cfg, "hybrid_layer_pattern", None):
         model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
     model_cfg.sequence_parallel = False
@@ -525,6 +538,10 @@ def load_megatron_model(
     # reinterpreted as virtual pipeline chunks after collapsing to one rank.
     if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
         model_cfg.pipeline_model_parallel_layout = None
+
+    _validate_checkpoint_weight_topology(
+        saved=saved_weight_topology, requested=_get_checkpoint_weight_topology(model_cfg)
+    )
 
     # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
@@ -718,6 +735,7 @@ def save_megatron_model(
             optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),
             rerun_state=None,
+            pg_collection=pg_collection,
         )
 
         # Build a map from storage data_ptr to model parameter
