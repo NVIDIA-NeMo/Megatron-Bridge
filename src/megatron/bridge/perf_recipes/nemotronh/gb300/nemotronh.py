@@ -21,6 +21,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _apply_nemotron_3_ultra_fsdp_hsdp,
+    _apply_nemotron_3_ultra_gtp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _enable_ncclep_mxfp8,
@@ -246,9 +247,11 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
 def _nemotron_3_ultra_gb300_fp8mx_config(
     *, num_gpus: int, expert_model_parallel_size: int, global_batch_size: int
 ) -> ConfigContainer:
-    """Shared builder for Nemotron 3 Ultra GB300 MXFP8 Megatron-FSDP perf recipes."""
+    """Shared builder for Nemotron 3 Ultra GB300 MXFP8 GTP perf recipes."""
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    _apply_nemotron_3_ultra_perf_defaults(cfg)
 
     """
     Uses TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1,
@@ -289,20 +292,19 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act"]
 
-    _apply_nemotron_3_ultra_perf_defaults(cfg)
-
-    # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
-    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
+    # Shard dense weights with GTP within each 64-GPU rack. GTP currently
+    # requires a single distributed-optimizer instance.
+    _apply_nemotron_3_ultra_gtp(cfg)
 
     return cfg
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, MXFP8, Megatron-FSDP (HSDP).
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, MXFP8, GTP.
 
     TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
-    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
-    recompute + fine-grained activation offload of the expert MLP, MTP=2.
+    precision, dense GTP64, HybridEP flex dispatcher, CuteDSL fused grouped MLP,
+    selective recompute + fine-grained activation offload of the expert MLP, MTP=2.
     """
     cfg = _nemotron_3_ultra_gb300_fp8mx_config(
         num_gpus=256,
