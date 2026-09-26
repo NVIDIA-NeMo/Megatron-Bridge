@@ -66,6 +66,10 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
 ##
 ##############################################################################
 
+# DeepEP compiles its CUDA extensions without nvcc --threads. Unset keeps that; CI passes
+# --build-arg DEEPEP_NVCC_THREADS=<n>, which helps up to the 3 targets of TORCH_CUDA_ARCH_LIST.
+ARG DEEPEP_NVCC_THREADS
+
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     install -m 0755 /root/.local/bin/uv /usr/local/bin/uv && \
@@ -98,7 +102,12 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         fi && \
         apt-get update && \
         apt-get install -y --no-install-recommends libnvidia-ml-dev && \
-        TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
+        if [ -n "$DEEPEP_NVCC_THREADS" ]; then \
+            export NVCC_APPEND_FLAGS="${NVCC_APPEND_FLAGS:+$NVCC_APPEND_FLAGS }--threads $DEEPEP_NVCC_THREADS"; \
+        fi && \
+        # DeepEP builds its NCCL submodule only to link 13 DOCA GPUNetIO objects and discards the
+        # library, so generate only the SendRecv device kernels, not every collective.
+        ONLY_FUNCS="SendRecv" TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \
         apt-get purge -y libnvidia-ml-dev && \
         apt-get autoremove -y && \
         rm -rf /var/lib/apt/lists/* && \
@@ -144,6 +153,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 RUN rm -rf 3rdparty/Megatron-LM
 COPY 3rdparty/Megatron-LM /opt/Megatron-Bridge/3rdparty/Megatron-LM
+
+# Mamba hard-codes nvcc --threads 4 for 9 GPU targets per file. Unset keeps that; CI passes
+# --build-arg MAMBA_NVCC_THREADS=<n>, which install_mamba.sh applies to the Mamba build only.
+ARG MAMBA_NVCC_THREADS
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \

@@ -69,6 +69,7 @@ class TestInstallMamba(unittest.TestCase):
             "if args[:2] != ['pip', 'install']:\n"
             "    raise SystemExit(f'Unexpected uv invocation: {args}')\n"
             "record = {'args': args, 'force_build': os.environ.get('MAMBA_FORCE_BUILD'),\n"
+            "          'nvcc_append_flags': os.environ.get('NVCC_APPEND_FLAGS'),\n"
             "          'source': (Path(args[-1]) / 'setup.py').read_text()}\n"
             "Path(os.environ['MAMBA_TEST_RECORD']).write_text(json.dumps(record))\n"
         )
@@ -92,14 +93,18 @@ class TestInstallMamba(unittest.TestCase):
             f'sdist = {{ url = "{self.archive.as_uri()}", hash = "{digest}" }}\n'
         )
 
-    def _run(self):
+    def _run(self, **extra_env):
+        env = {
+            key: value for key, value in os.environ.items() if key not in {"MAMBA_NVCC_THREADS", "NVCC_APPEND_FLAGS"}
+        }
         return subprocess.run(
             ["bash", str(INSTALLER), str(self.lock), str(PATCH)],
             env={
-                **os.environ,
+                **env,
                 "PATH": f"{self.directory}{os.pathsep}{os.environ['PATH']}",
                 "MAMBA_TEST_RECORD": str(self.record),
                 "MAMBA_FORCE_BUILD": "FALSE",
+                **extra_env,
             },
             capture_output=True,
             text=True,
@@ -113,11 +118,25 @@ class TestInstallMamba(unittest.TestCase):
         self.assertNotIn("-std=c++17", record["source"])
         self.assertIn('"cxx": ["-O3"]', record["source"])
         self.assertEqual(record["force_build"], "TRUE")
+        self.assertIsNone(record["nvcc_append_flags"], "Default build must keep Mamba's own nvcc threads")
         self.assertEqual(
             record["args"][:-1],
             ["pip", "install", "--no-build-isolation", "--no-deps", "--reinstall"],
         )
         self.assertFalse(Path(record["args"][-1]).exists(), "Temporary source was not cleaned up")
+
+    def test_optional_nvcc_threads_override_mambas_hardcoded_value(self):
+        result = self._run(MAMBA_NVCC_THREADS="9", NVCC_APPEND_FLAGS="-lineinfo")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        record = json.loads(self.record.read_text())
+        self.assertEqual(record["nvcc_append_flags"], "-lineinfo --threads 9")
+        self.assertEqual(record["force_build"], "TRUE")
+
+    def test_rejects_invalid_nvcc_threads(self):
+        result = self._run(MAMBA_NVCC_THREADS="nine")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("MAMBA_NVCC_THREADS must be a positive integer", result.stderr)
+        self.assertFalse(self.record.exists())
 
     def test_rejects_checksum_mismatch(self):
         self._write_lock(digest="sha256:" + "0" * 64)
