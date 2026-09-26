@@ -20,6 +20,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _apply_nemotron_3_ultra_fsdp_hsdp,
+    _apply_nemotron_3_ultra_gtp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _enable_nemotron_3_super_full_iteration,
