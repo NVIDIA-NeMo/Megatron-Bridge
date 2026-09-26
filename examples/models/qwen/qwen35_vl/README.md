@@ -29,6 +29,30 @@ To import the HF VL model to your desired Megatron path:
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B
 ```
 
+### Prepare a text-only checkpoint with pretrained MTP
+
+For the Qwen3.5 MoE text training path, extract a local, unquantized HF VL
+snapshot before importing it into Megatron:
+
+```bash
+uv run python scripts/conversion/extract_qwen35_text_checkpoint.py \
+  --source /models/Qwen3.5-35B-A3B \
+  --output /models/Qwen3.5-35B-A3B-text
+```
+
+The extractor copies decoder, LM-head, and pretrained MTP tensors exactly on
+CPU, one shard at a time, and omits vision weights. It retains tokenizer and
+chat-template assets and creates a standalone `Qwen3_5MoeForCausalLM` config
+with MTP enabled. This path requires exactly one pretrained MTP layer and
+rejects quantized checkpoints, unexpected tensor names, and incomplete shard
+indexes. It does not construct a Transformers model or initialize new weights.
+
+Choose a new output directory outside the source snapshot. The output becomes
+visible only after extraction completes; failed extractions retain a temporary
+directory whose path is logged. Import the resulting text checkpoint with
+`scripts/conversion/convert.sh import --hf-model /models/Qwen3.5-35B-A3B-text
+--megatron-path /checkpoints/Qwen3.5-35B-A3B-text`.
+
 ### Export Megatron → HF
 ```bash
 ./scripts/conversion/convert.sh export \
