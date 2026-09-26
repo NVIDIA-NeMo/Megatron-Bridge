@@ -742,8 +742,13 @@ def wire_gemma4_kv_sharing(model: nn.Module) -> None:
 
 
 def get_gemma4_layer_spec(config: Optional[TransformerConfig] = None) -> ModuleSpec:
-    """Return a ModuleSpec for a Gemma-4 Dense transformer layer (local/non-TE)."""
+    """Return a ModuleSpec for a Gemma-4 Dense transformer layer."""
     backend = LocalSpecProvider()
+    core_attention = backend.core_attention()
+    if config is not None and getattr(config, "context_parallel_size", 1) > 1:
+        from megatron.bridge.models.gemma.gemma4_cp_attention import Gemma4DenseHybridCPAttention
+
+        core_attention = Gemma4DenseHybridCPAttention
 
     submodules = Gemma4DenseTransformerLayerSubmodules(
         input_layernorm=RMSNorm,
@@ -752,7 +757,7 @@ def get_gemma4_layer_spec(config: Optional[TransformerConfig] = None) -> ModuleS
             params={"attn_mask_type": AttnMaskType.causal},
             submodules=SelfAttentionSubmodules(
                 linear_qkv=backend.column_parallel_linear(),
-                core_attention=backend.core_attention(),
+                core_attention=core_attention,
                 linear_proj=backend.row_parallel_linear(),
                 q_layernorm=RMSNorm,
                 k_layernorm=RMSNorm,
