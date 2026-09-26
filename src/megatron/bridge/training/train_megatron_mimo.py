@@ -198,7 +198,7 @@ def train_megatron_mimo(
     checkpoint_manager: Optional[CheckpointManager] = None,
     multimodule_pg_collection: Optional["MultiModuleProcessGroupCollection"] = None,
     module_to_grid_tuple: Optional[List] = None,
-) -> None:
+) -> bool:
     """Main MegatronMIMO training loop.
 
     Key differences from standard train():
@@ -231,6 +231,9 @@ def train_megatron_mimo(
             If None, built from megatron_mimo_infra.
         module_to_grid_tuple: Pre-built (module, grid) pairs for gradient ops.
             If None, built from model and megatron_mimo_infra.
+
+    Returns:
+        Whether checkpointing requested an exit instead of natural completion.
     """
     timers = global_state.timers
     train_state = global_state.train_state
@@ -477,3 +480,4 @@ def train_megatron_mimo(
     timers("interval-time").stop()
 
     logger.info(f"Rank {dist.get_rank()}: MegatronMIMO training completed")
+    return should_exit
