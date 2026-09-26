@@ -125,6 +125,15 @@ RUN if [ -n "$BASELINE_MCORE_REF" ]; then \
 ARG MCORE_TRIGGERED_TESTING=false
 ARG UV_CACHE_PRUNE_ARGS
 
+# TransformerEngine builds from source during uv sync. Target the GPUs CI runs on: Hopper, plus
+# Blackwell, which TE expands to 100a and 103a (B200, GB200, B300). TE's own default adds
+# 75, 80, 89, and 120.
+ARG NVTE_CUDA_ARCHS="90;100"
+# TE compiles each source's GPU targets one after another by default (nvcc --threads 1), so
+# the few largest kernels leave a long near-serial tail. Compile up to this many targets of one
+# source concurrently; each uv sync below caps concurrent sources to keep the compiler budget.
+ARG NVTE_BUILD_THREADS_PER_JOB=4
+
 # Install the main-branch environment from an immutable baseline context before
 # dispatched MCore metadata can invalidate this expensive dependency layer.
 # Mamba is built from patched source after the final sync below.
@@ -138,6 +147,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
             CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
             CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
+        export NVTE_BUILD_MAX_JOBS="${NVTE_BUILD_MAX_JOBS:-$(( (${MAX_JOBS:-$(nproc)} + NVTE_BUILD_THREADS_PER_JOB - 1) / NVTE_BUILD_THREADS_PER_JOB ))}" && \
         uv sync --locked --only-group build --no-install-package mamba-ssm && \
         uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion --no-install-package mamba-ssm; \
     fi
@@ -159,6 +169,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
         CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
         CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
+    export NVTE_BUILD_MAX_JOBS="${NVTE_BUILD_MAX_JOBS:-$(( (${MAX_JOBS:-$(nproc)} + NVTE_BUILD_THREADS_PER_JOB - 1) / NVTE_BUILD_THREADS_PER_JOB ))}" && \
     # Reinstall nvidia-cutlass-dsl in system site packages
     # uv install can run into non-deterministic install issues
     # Keep this pin compatible with cuDNN Frontend; mismatched versions can break
