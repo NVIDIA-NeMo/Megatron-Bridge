@@ -21,6 +21,7 @@ from megatron.core.optimizer.optimizer_config import OptimizerConfig as MCoreOpt
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import CheckpointLoadContext, CheckpointManager, create_checkpoint_manager
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
     build_pg_collection_for_schedule,
@@ -176,6 +177,10 @@ def setup_megatron_mimo(
             cfg.data_parallel_size,
             getattr(cfg.train, "decrease_batch_size_if_needed", False),
         )
+
+    if cfg.ft and cfg.ft.enable_ft_package:
+        fault_tolerance.setup(cfg, global_state)
+        fault_tolerance.maybe_setup_simulated_fault(cfg.ft)
 
     # Build the distributed MIMO model + infra. This single call replaces
     # the previously-inlined finalize / build_infra / validate-no-stub /
