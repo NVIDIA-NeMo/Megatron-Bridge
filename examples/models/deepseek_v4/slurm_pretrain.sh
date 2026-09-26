@@ -46,6 +46,7 @@ export WKDIR="${WKDIR:-}"
 MODEL_NAME=deepseek_v4_flash
 HF_CONFIG=deepseek-ai/DeepSeek-V4-Flash
 RECIPE_NAME=deepseek_v4_flash_pretrain_mxfp8_config       # Adam MXFP8
+# RECIPE_NAME=deepseek_v4_flash_pretrain_config           # Adam BF16
 # RECIPE_NAME=deepseek_v4_flash_pretrain_muon_config      # Muon BF16
 
 DATASET_NAME=dclm  # set to "mock" for mock data
@@ -90,7 +91,7 @@ export NCCL_PXN_DISABLE=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-# Before submitting, follow README.md's MCore Checkout instructions. In a NeMo
+# Before submitting, follow README.md's Runtime Requirements. In a NeMo
 # Framework container, use its two-stage inexact sync; do not run plain `uv sync`.
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 # export HF_HOME="/path/to/shared/HF_HOME"

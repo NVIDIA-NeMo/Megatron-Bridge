@@ -92,7 +92,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
 
     cfg.model.moe_router_force_load_balancing = True
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
