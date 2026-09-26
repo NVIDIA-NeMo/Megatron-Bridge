@@ -253,6 +253,9 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× VR200, BF16 (alias of GB300)."""
     cfg = _build_nemotron_3_5_lightning_gb300_bf16()
+    # Selectively recompute cheap activations to fit the newer VR200 container's larger peak memory.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn", "moe_act", "layernorm"]
 
     # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
