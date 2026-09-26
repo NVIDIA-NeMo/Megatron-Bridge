@@ -555,6 +555,20 @@ class TestAutoBridge:
         assert provider.classifier_dropout == 0.2
         assert {"score.weight", "score.bias"} <= hf_params
 
+    def test_token_classification_config_with_multitask_auto_map_uses_task_bridge(self):
+        config = PretrainedConfig()
+        config.architectures = ["Qwen3_5ForTokenClassification"]
+        config.auto_map = {
+            "AutoModelForCausalLM": "custom.Qwen3_5ForCausalLM",
+            "AutoModelForTokenClassification": "custom.Qwen3_5ForTokenClassification",
+        }
+
+        bridge = AutoBridge.from_hf_config(config)
+        hf_params = {str(mapping.hf_param) for mapping in bridge._model_bridge.mapping_registry().mappings}
+
+        assert bridge._pretrained_wrapper_cls is PreTrainedTokenClassification
+        assert {"score.weight", "score.bias"} <= hf_params
+
     def test_qwen35_token_classification_runtime_preflight_does_not_block_config_only(self):
         config = PretrainedConfig()
         config.architectures = ["Qwen3_5ForTokenClassification"]
