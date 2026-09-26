@@ -253,6 +253,7 @@ def test_process_mtp_loss_with_native_packing_metadata():
         mtp_detach_heads=False,
         mtp_loss_scaling_factor=1.0,
         calculate_per_token_loss=True,
+        cross_entropy_loss_fusion=False,
         use_mup=False,
     )
     output = process_mtp_loss(
@@ -285,7 +286,11 @@ def test_process_mtp_loss_with_native_packing_metadata():
     assert mtp_labels[0, 11].item() == 0  # boundary of sequence B
 
     # Boundary positions are masked out of the MTP loss by the rolled loss mask.
-    rolled_loss_mask, num_tokens = roll_tensor(loss_mask, packed_seq_params=mtp_packed_seq_params)
+    if "tensors" in inspect.signature(roll_tensor).parameters:
+        (rolled_loss_mask,) = roll_tensor([loss_mask], packed_seq_params=mtp_packed_seq_params)
+        num_tokens = rolled_loss_mask.sum()
+    else:
+        rolled_loss_mask, num_tokens = roll_tensor(loss_mask, packed_seq_params=mtp_packed_seq_params)
     assert rolled_loss_mask.tolist() == [[1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0]]
     assert num_tokens.item() == 5
 

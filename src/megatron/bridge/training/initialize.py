@@ -50,7 +50,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig, _set_moe_expert_tensor_parallel_default
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
-from megatron.bridge.training.gtp import is_gtp_remat_active
+from megatron.bridge.training.gtp import get_gtp_api, is_gtp_remat_active
 from megatron.bridge.training.utils.pg_utils import DistTrainProcessGroupCollection
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
@@ -767,9 +767,8 @@ def _initialize_distributed(
         )
 
     if is_gtp_remat_active(model_config):
-        from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
-
-        if not HAVE_GTP:
+        gtp_api = get_gtp_api()
+        if gtp_api is None or not gtp_api.HAVE_GTP:
             raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     if dist_config.use_decentralized_pg:

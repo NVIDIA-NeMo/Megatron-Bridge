@@ -459,6 +459,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
+    cfg.model.use_transformer_engine_op_fuser = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
