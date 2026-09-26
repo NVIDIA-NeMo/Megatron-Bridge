@@ -115,6 +115,23 @@ def test_sparse_block_mask_covers_exact_packed_token_mask() -> None:
             assert key_block not in full or tile.all()
 
 
+def test_sparse_sliding_block_mask_preserves_window_edges() -> None:
+    query_positions = torch.tensor([0, 1, 14, 15, 4, 5, 10, 11])
+    key_positions = query_positions
+    mask_mod = Gemma4DenseHybridCPAttention._mask_mod(query_positions, key_positions, None, None, None, window_left=3)
+    exact = mask_mod(None, None, torch.arange(8)[:, None], torch.arange(8)[None, :])
+    block_mask = _sparse_block_mask(
+        query_positions, key_positions, None, None, None, mask_mod, block_size=2, window_left=3
+    )
+    for query_block in range(4):
+        partial = block_mask.kv_indices[0, 0, query_block, : block_mask.kv_num_blocks[0, 0, query_block]]
+        full = block_mask.full_kv_indices[0, 0, query_block, : block_mask.full_kv_num_blocks[0, 0, query_block]]
+        for key_block in range(4):
+            tile = exact[query_block * 2 : (query_block + 1) * 2, key_block * 2 : (key_block + 1) * 2]
+            assert not tile.any() or key_block in partial or key_block in full
+            assert key_block not in full or tile.all()
+
+
 def test_layer_spec_selects_hybrid_attention_only_for_cp() -> None:
     cp1_spec = get_gemma4_layer_spec(SimpleNamespace(context_parallel_size=1))
     cp2_spec = get_gemma4_layer_spec(SimpleNamespace(context_parallel_size=2))
@@ -157,7 +174,7 @@ def test_sliding_cp_falls_back_when_heads_do_not_divide_cp(
 
 
 def test_sliding_layer_passes_window_and_cp_communication_to_te(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The 31B TP4/CP2 sliding path must retain its window in TE."""
+    """A low local-KV-head layout keeps the window for non-packed TE CP."""
     from megatron.bridge.models.gemma import gemma4_cp_attention
 
     captured = {}
@@ -195,4 +212,5 @@ def test_sliding_layer_passes_window_and_cp_communication_to_te(monkeypatch: pyt
         captured["layer_number"],
     )
     assert config.window_attn_skip_freq == 6
+    assert attention._sliding_packed_flex
     assert attention(torch.ones(1, 1, 1, 256), None, None, None).shape == (1, 1, 1, 256)

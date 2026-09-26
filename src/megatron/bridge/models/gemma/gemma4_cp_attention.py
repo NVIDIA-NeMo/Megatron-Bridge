@@ -175,6 +175,7 @@ def _sparse_block_mask(
     valid_keys: Tensor | None,
     mask_mod: Callable,
     block_size: int = 128,
+    window_left: int | None = None,
 ):
     """Construct FlexAttention metadata at block granularity.
 
@@ -188,6 +189,9 @@ def _sparse_block_mask(
     key_min, key_max = _position_extrema(key_positions, block_size, valid_keys)
     active = query_max[:, None] >= key_min[None, :]
     full = query_min[:, None] >= key_max[None, :]
+    if window_left is not None:
+        active = active & (key_max[None, :] >= query_min[:, None] - window_left)
+        full = full & (key_min[None, :] >= query_max[:, None] - window_left)
 
     if query_document_ids is not None:
         assert key_document_ids is not None
@@ -229,13 +233,13 @@ def _sparse_block_mask(
 
 
 class Gemma4DenseHybridCPAttention(torch.nn.Module):
-    """Use TE for sliding layers and all-gather FlexAttention for global layers.
+    """Use TE for supported sliding layers and all-gather FlexAttention otherwise.
 
     Gemma 4 dense alternates head-dim-256 sliding attention with head-dim-512
-    global attention. TE supports the sliding layers with context parallelism,
-    but its fused global backends do not support head dim 512. Global queries
-    therefore remain CP-sharded while K/V are gathered differentiably and
-    consumed by FlexAttention without materializing a quadratic score tensor.
+    global attention. TE handles sliding CP except packed THD with all-gather;
+    its fused global backends do not support head dim 512. In both fallback
+    cases, Q stays CP-sharded while K/V are gathered differentiably and
+    consumed by FlexAttention without a quadratic score tensor.
     """
 
     def __init__(
@@ -268,9 +272,15 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
             else parallel_state.get_context_parallel_group(check_initialized=False)
         )
         self._sliding_attention: TEDotProductAttention | None = None
+        self._sliding_packed_flex = False
         if _is_gemma4_sliding_layer(config, layer_number):
             sliding_config = copy.copy(config)
             sliding_config.window_attn_skip_freq = None
+            sliding_cp_comm_type = self._sliding_cp_comm_type(config)
+            # TE's all_gather CP kernel explicitly rejects THD, while its P2P
+            # kernel does not support sliding windows. Use Flex for this packed
+            # combination; TE A2A and non-packed all_gather remain unchanged.
+            self._sliding_packed_flex = sliding_cp_comm_type == "all_gather"
             self._sliding_attention = TEDotProductAttention(
                 config=sliding_config,
                 layer_number=layer_number,
@@ -278,7 +288,7 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
                 attention_type=attention_type,
                 attention_dropout=attention_dropout,
                 softmax_scale=self.softmax_scale,
-                cp_comm_type=self._sliding_cp_comm_type(config),
+                cp_comm_type=sliding_cp_comm_type,
                 pg_collection=pg_collection,
             )
         self._block_mask_cache: dict[tuple[int, int, torch.device], object] = {}
@@ -316,11 +326,14 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
         query_document_ids: Tensor | None,
         key_document_ids: Tensor | None,
         valid_keys: Tensor | None,
+        window_left: int | None = None,
     ) -> Callable:
         """Build the causal, document-isolated mask predicate for FlexAttention."""
 
         def mask_mod(batch_idx, head_idx, query_idx, key_idx):
             allowed = key_positions[key_idx] <= query_positions[query_idx]
+            if window_left is not None:
+                allowed = allowed & (key_positions[key_idx] >= query_positions[query_idx] - window_left)
             if query_document_ids is not None:
                 allowed = allowed & (query_document_ids[query_idx] == key_document_ids[key_idx])
             if valid_keys is not None:
@@ -339,7 +352,7 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
         attention_bias: Tensor | None = None,
         packed_seq_params: PackedSeqParams | None = None,
     ) -> Tensor:
-        """Apply sliding TE attention or global context-parallel FlexAttention."""
+        """Apply sliding TE attention or context-parallel FlexAttention."""
         effective_mask_type = attn_mask_type or self.attn_mask_type
         if self.attention_type != "self":
             raise NotImplementedError("Gemma 4 context-parallel attention supports self-attention only.")
@@ -354,7 +367,7 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
                 raise NotImplementedError(
                     "Gemma 4 context-parallel attention does not yet support runtime dynamic or hybrid CP groups."
                 )
-        if self._sliding_attention is not None:
+        if self._sliding_attention is not None and (packed_seq_params is None or not self._sliding_packed_flex):
             return self._sliding_attention(
                 query,
                 key,
@@ -413,6 +426,8 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
                 key_positions,
             )
 
+        window_left = self.config.window_size[0] if self._sliding_attention is not None else None
+
         query_bhsd = query.permute(1, 2, 0, 3)
         key_bhsd = key.permute(1, 2, 0, 3)
         value_bhsd = value.permute(1, 2, 0, 3)
@@ -427,7 +442,10 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
                 query_document_ids,
                 key_document_ids,
                 valid_keys,
-                self._mask_mod(query_positions, key_positions, query_document_ids, key_document_ids, valid_keys),
+                self._mask_mod(
+                    query_positions, key_positions, query_document_ids, key_document_ids, valid_keys, window_left
+                ),
+                window_left=window_left,
             )
             if cache_key is not None:
                 self._block_mask_cache[cache_key] = block_mask

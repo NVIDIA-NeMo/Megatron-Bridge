@@ -20,6 +20,7 @@ uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest \
 """
 
 import os
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -27,6 +28,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import AttnMaskType
+from megatron.core.transformer.transformer_config import TransformerConfig
 from torch.utils.checkpoint import checkpoint
 
 from megatron.bridge.models.gemma.gemma4_cp_attention import (
@@ -60,16 +62,17 @@ def _assert_gradient_close(actual: torch.Tensor, expected: torch.Tensor) -> None
     assert cosine.item() > 0.9999
 
 
-def _build_attention() -> Gemma4DenseHybridCPAttention:
+def _build_attention(window_left: int | None = None) -> Gemma4DenseHybridCPAttention:
     attention = object.__new__(Gemma4DenseHybridCPAttention)
     torch.nn.Module.__init__(attention)
-    attention.config = object()
+    attention.config = SimpleNamespace(window_size=(window_left, 0)) if window_left is not None else object()
     attention.layer_number = 1
     attention.attn_mask_type = AttnMaskType.causal
     attention.attention_type = "self"
     attention.softmax_scale = 1.0
     attention.cp_group = dist.group.WORLD
-    attention._sliding_attention = None
+    attention._sliding_attention = torch.nn.Identity() if window_left is not None else None
+    attention._sliding_packed_flex = window_left is not None
     attention._block_mask_cache = {}
     return attention
 
@@ -100,6 +103,7 @@ def _assert_global_parity(
     allowed: torch.Tensor,
     valid_queries: torch.Tensor | None = None,
     recompute: bool = False,
+    window_left: int | None = None,
 ) -> None:
     rank = dist.get_rank()
     device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
@@ -108,9 +112,10 @@ def _assert_global_parity(
     local_seq_len = global_seq_len // _CP_SIZE
 
     generator = torch.Generator(device=device).manual_seed(1234)
-    full_query = torch.randn(global_seq_len, 1, 2, 512, generator=generator, device=device, dtype=dtype)
-    full_key = torch.randn(global_seq_len, 1, 1, 512, generator=generator, device=device, dtype=dtype)
-    full_value = torch.randn(global_seq_len, 1, 1, 512, generator=generator, device=device, dtype=dtype)
+    head_dim = 256 if window_left is not None else 512
+    full_query = torch.randn(global_seq_len, 1, 2, head_dim, generator=generator, device=device, dtype=dtype)
+    full_key = torch.randn(global_seq_len, 1, 1, head_dim, generator=generator, device=device, dtype=dtype)
+    full_value = torch.randn(global_seq_len, 1, 1, head_dim, generator=generator, device=device, dtype=dtype)
 
     if packed_seq_params is None:
         local_positions = _nonpacked_local_positions(local_seq_len, _CP_SIZE, rank, device)
@@ -134,7 +139,7 @@ def _assert_global_parity(
     else:
         query_input, key_input, value_input = query, key, value
 
-    attention = _build_attention()
+    attention = _build_attention(window_left)
 
     def _forward(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         return attention(q, k, v, None, packed_seq_params=packed_seq_params)
@@ -216,3 +221,97 @@ def test_gemma4_global_cp2_matches_reference_forward_backward(packed: bool, reco
         & valid_tokens[None, :]
     )
     _assert_global_parity(packed_seq_params, positions, allowed, valid_tokens, recompute=recompute)
+
+
+@pytest.mark.gpu
+def test_gemma4_packed_sliding_cp2_flex_fallback_matches_reference() -> None:
+    """Low local-KV-head layouts cannot use TE all_gather with THD."""
+    if int(os.environ.get("WORLD_SIZE", "1")) != _CP_SIZE:
+        pytest.skip("requires a two-rank torch.distributed launch")
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+    device = torch.device("cuda", local_rank)
+    params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=torch.tensor([0, 5, 12], device=device, dtype=torch.int32),
+        cu_seqlens_kv=torch.tensor([0, 5, 12], device=device, dtype=torch.int32),
+        cu_seqlens_q_padded=torch.tensor([0, 8, 16], device=device, dtype=torch.int32),
+        cu_seqlens_kv_padded=torch.tensor([0, 8, 16], device=device, dtype=torch.int32),
+        max_seqlen_q=8,
+        max_seqlen_kv=8,
+    )
+    positions = torch.arange(16, device=device)
+    document_ids = torch.where(positions < 8, 0, 1)
+    valid_tokens = torch.where(document_ids == 0, positions < 5, positions - 8 < 7)
+    allowed = (
+        (positions[None, :] <= positions[:, None])
+        & (positions[None, :] >= positions[:, None] - 3)
+        & (document_ids[None, :] == document_ids[:, None])
+        & valid_tokens[None, :]
+    )
+    _assert_global_parity(params, positions, allowed, valid_tokens, window_left=3)
+
+
+@pytest.mark.gpu
+def test_gemma4_sliding_cp2_real_te_matches_reference_forward_backward() -> None:
+    """Run the actual TE CP sliding kernel, including the window boundary."""
+    if int(os.environ.get("WORLD_SIZE", "1")) != _CP_SIZE:
+        pytest.skip("requires a two-rank torch.distributed launch")
+    if not torch.cuda.is_available():
+        pytest.skip("requires CUDA")
+
+    local_rank = int(os.environ["LOCAL_RANK"])
+    torch.cuda.set_device(local_rank)
+    if not dist.is_initialized():
+        dist.init_process_group(backend="nccl")
+    device = torch.device("cuda", local_rank)
+    config = TransformerConfig(
+        num_layers=2,
+        hidden_size=512,
+        num_attention_heads=2,
+        num_query_groups=1,
+        kv_channels=256,
+        context_parallel_size=2,
+        window_size=(7, 0),
+        window_attn_skip_freq=6,
+        attention_dropout=0.0,
+        bf16=True,
+        params_dtype=torch.bfloat16,
+    )
+    attention = Gemma4DenseHybridCPAttention(
+        config=config,
+        layer_number=1,
+        attn_mask_type=AttnMaskType.causal,
+        pg_collection=SimpleNamespace(tp=None, cp=dist.group.WORLD),
+    )
+
+    generator = torch.Generator(device=device).manual_seed(1234)
+    full_query = torch.randn(32, 1, 2, 256, generator=generator, device=device, dtype=torch.bfloat16)
+    full_key = torch.randn(32, 1, 1, 256, generator=generator, device=device, dtype=torch.bfloat16)
+    full_value = torch.randn(32, 1, 1, 256, generator=generator, device=device, dtype=torch.bfloat16)
+    local_positions = _nonpacked_local_positions(16, 2, dist.get_rank(), device)
+    query = full_query.index_select(0, local_positions).detach().requires_grad_(True)
+    key = full_key.index_select(0, local_positions).detach().requires_grad_(True)
+    value = full_value.index_select(0, local_positions).detach().requires_grad_(True)
+
+    actual = attention(query, key, value, None)
+    actual.float().square().sum().backward()
+
+    positions = torch.arange(32, device=device)
+    allowed = (positions[None, :] <= positions[:, None]) & (positions[None, :] >= positions[:, None] - 7)
+    reference_query = full_query.detach().requires_grad_(True)
+    reference_key = full_key.detach().requires_grad_(True)
+    reference_value = full_value.detach().requires_grad_(True)
+    reference = _reference_attention(reference_query, reference_key, reference_value, allowed)
+    reference.index_select(0, local_positions).float().square().sum().backward()
+    dist.all_reduce(reference_key.grad)
+    dist.all_reduce(reference_value.grad)
+
+    torch.testing.assert_close(actual, reference.index_select(0, local_positions).flatten(-2), rtol=_RTOL, atol=_ATOL)
+    _assert_gradient_close(query.grad, reference_query.grad.index_select(0, local_positions))
+    _assert_gradient_close(key.grad, reference_key.grad.index_select(0, local_positions))
+    _assert_gradient_close(value.grad, reference_value.grad.index_select(0, local_positions))
