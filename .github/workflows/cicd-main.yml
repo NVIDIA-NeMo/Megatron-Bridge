@@ -532,6 +532,9 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
+          # DEEPEP_NVCC_THREADS and MAMBA_NVCC_THREADS opt into parallel nvcc targets for DeepEP's
+          # extensions and Mamba (Dockerfile defaults keep each package's own). CI-Events'
+          # megatron-bridge build profile passes the same values to keep hitting this cache.
           file: ./docker/Dockerfile.ci
           push: true
           context: .
@@ -541,6 +544,8 @@ jobs:
           # megatron-bridge build profile passes the same value to keep hitting this cache.
           build-args: |
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
+            DEEPEP_NVCC_THREADS=3
+            MAMBA_NVCC_THREADS=9
             BASELINE_MCORE_REF=${{ env.BASELINE_MCORE_REF }}
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
