@@ -43,6 +43,7 @@ from megatron.core.utils import (
     get_te_version,
     is_te_min_version,
     is_torch_min_version,
+    set_default_log_ranks,
 )
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -189,6 +190,9 @@ def torch_dist_init(
         An optional callable to finish MPU initialization if skip_mpu_initialization
         or lazy_mpu_init is True, otherwise None.
     """
+
+    # Reset process-wide logging selection when initializing another training run.
+    set_default_log_ranks({0})
 
     def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
@@ -574,6 +578,7 @@ def _create_dist_train_pgs(
     language_model_config = copy(model_config)
     language_model_config.world_size = model_config.dist_train.language_world_size
     language_model_config.rank_offset = model_config.dist_train.vision_world_size
+    set_default_log_ranks({0, language_model_config.rank_offset})
     vision_pg_collection = _create_pg_collection(
         vision_model_config,
         num_distributed_optimizer_instances,
