@@ -88,6 +88,109 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     assert "tokenizer" not in serialized
 
 
+def test_packed_train_data_blend_round_trip(tmp_path):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+    specs = PackedSequenceSpecs(
+        packed_sequence_size=128,
+        packed_train_data_blend=(source_paths, [3, 1]),
+    )
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+        do_validation=False,
+        do_test=False,
+    )
+
+    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+
+    assert restored.offline_packing_specs.packed_train_data_blend == (
+        [str(path) for path in source_paths],
+        [3.0, 1.0],
+    )
+
+
+def test_standalone_packed_train_data_blend_rejects_additional_splits(tmp_path):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=128,
+            packed_train_data_blend=(source_paths, [0.5, 0.5]),
+        ),
+        do_validation=True,
+        do_test=False,
+    )
+
+    with pytest.raises(ValueError, match="standalone packed_train_data_blend"):
+        config.validate()
+
+
+def test_packed_train_data_blend_rejects_single_path_and_blend(tmp_path):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+
+    with pytest.raises(ValueError, match="either packed_train_data_path or packed_train_data_blend"):
+        PackedSequenceSpecs(
+            packed_sequence_size=128,
+            packed_train_data_path=source_paths[0],
+            packed_train_data_blend=(source_paths, [0.5, 0.5]),
+        )
+
+
+@pytest.mark.parametrize(
+    ("weights", "error_match"),
+    [
+        ([1.0], "same length"),
+        ([1.0, 0.0], "greater than 0"),
+        ([1.0, float("nan")], "finite"),
+        ([1e308, 1e308], "finite sum"),
+    ],
+)
+def test_packed_train_data_blend_validates_weights(tmp_path, weights, error_match):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+
+    with pytest.raises(ValueError, match=error_match):
+        PackedSequenceSpecs(
+            packed_sequence_size=128,
+            packed_train_data_blend=(source_paths, weights),
+        )
+
+
+def test_packed_train_data_blend_rejects_legacy_numpy_source(tmp_path):
+    parquet_path = tmp_path / "source.idx.parquet"
+    numpy_path = tmp_path / "source.npy"
+    parquet_path.touch()
+    numpy_path.touch()
+
+    with pytest.raises(ValueError, match="only supports packed Parquet"):
+        PackedSequenceSpecs(
+            packed_sequence_size=128,
+            packed_train_data_blend=([parquet_path, numpy_path], [0.5, 0.5]),
+        )
+
+
+def test_packed_train_data_blend_rejects_padded_cu_seqlens(tmp_path):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+
+    with pytest.raises(ValueError, match="each source requires its own packing metadata"):
+        PackedSequenceSpecs(
+            packed_sequence_size=128,
+            packed_train_data_blend=(source_paths, [0.5, 0.5]),
+            pad_cu_seqlens=True,
+        )
+
+
 def test_in_batch_config_round_trip_is_declarative_and_serializable(tmp_path):
     config = GPTSFTDatasetConfig(
         seq_length=128,
@@ -187,23 +290,27 @@ def test_packed_specs_reject_invalid_max_single_sequence_length(max_single_seque
 
 
 @pytest.mark.parametrize(
-    ("dataset_root", "per_split_data_source_manifest_path", "hf_dataset"),
+    ("dataset_root", "per_split_data_source_manifest_path", "hf_dataset", "error_match"),
     [
-        (None, None, None),
+        (None, None, None, "A text-only SFT source"),
         (
             "/tmp/local",
             None,
             HFDatasetSourceConfig(path_or_dataset="mock/squad", schema_adapter="squad"),
+            "Exactly one text-only SFT source",
         ),
-        ("/tmp/local", "/tmp/blend.json", None),
+        ("/tmp/local", "/tmp/blend.json", None, "Exactly one text-only SFT source"),
         (
             None,
             "/tmp/blend.json",
             HFDatasetSourceConfig(path_or_dataset="mock/squad", schema_adapter="squad"),
+            "Exactly one text-only SFT source",
         ),
     ],
 )
-def test_config_requires_exactly_one_source(dataset_root, per_split_data_source_manifest_path, hf_dataset):
+def test_config_requires_a_non_competing_source(
+    dataset_root, per_split_data_source_manifest_path, hf_dataset, error_match
+):
     config = GPTSFTDatasetConfig(
         seq_length=128,
         dataset_root=dataset_root,
@@ -211,7 +318,7 @@ def test_config_requires_exactly_one_source(dataset_root, per_split_data_source_
         hf_dataset=hf_dataset,
     )
 
-    with pytest.raises(ValueError, match="Exactly one text-only SFT source"):
+    with pytest.raises(ValueError, match=error_match):
         config.validate()
 
 
@@ -1103,4 +1210,25 @@ def test_deprecated_config_rejects_runtime_objects_in_legacy_kwargs(tmp_path):
         )
 
     with pytest.raises(TypeError, match="declarative values"):
+        config.validate()
+
+
+def test_config_rejects_competing_raw_and_packed_blends(tmp_path):
+    """A raw manifest must not silently take precedence over packed training."""
+    train_a = tmp_path / "train-a.parquet"
+    train_b = tmp_path / "train-b.parquet"
+    train_a.touch()
+    train_b.touch()
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        per_split_data_source_manifest_path=tmp_path / "blend.json",
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
+            packed_sequence_size=128,
+            packed_train_data_blend=([str(train_a), str(train_b)], [0.5, 0.5]),
+        ),
+        do_validation=False,
+        do_test=False,
+    )
+    with pytest.raises(ValueError, match="cannot be combined"):
         config.validate()
