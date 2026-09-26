@@ -22,6 +22,14 @@ from megatron.bridge.training.config import ConfigContainer
 
 def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× VR200, MXFP8 (alias of GB300)."""
+    # This benchmark targets MCore dev. Known-good pair (128x VR200, 50 steps, full-iteration CUDA graph):
+    # Megatron-Bridge 254cfe279a7a3ca6007e660113419420897827bc + Megatron-LM dev
+    # 7b2991228bb207571e45a268cf84927c46c75fd1.
+    # - Newer Megatron-Bridge imports MCore-main-only APIs and fails on dev at import time:
+    #   save_tokenizer_assets (#5532) and FullyShardedDataParallelV1/V2 (#5933).
+    # - Newer MCore dev (NVIDIA/Megatron-LM#6980, c630b477b) requires Bridge setup to call
+    #   initialize_dsa_metric_tracker before CUDA graph capture; without it, capture fails with
+    #   "DSA metric tracker must be initialized before CUDA Graph capture."
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
 
     # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
