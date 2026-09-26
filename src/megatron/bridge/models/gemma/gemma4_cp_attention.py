@@ -30,18 +30,16 @@ from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_pa
 
 
 _FLEX_ATTENTION: Callable | None = None
-_CREATE_BLOCK_MASK: Callable | None = None
 
 
-def _load_flex_attention() -> tuple[Callable, Callable]:
+def _load_flex_attention() -> Callable:
     """Load and compile FlexAttention lazily to avoid import-time CUDA work."""
-    global _FLEX_ATTENTION, _CREATE_BLOCK_MASK
+    global _FLEX_ATTENTION
     if _FLEX_ATTENTION is None:
-        from torch.nn.attention.flex_attention import create_block_mask, flex_attention
+        from torch.nn.attention.flex_attention import flex_attention
 
         _FLEX_ATTENTION = torch.compile(flex_attention, dynamic=True, fullgraph=True)
-        _CREATE_BLOCK_MASK = torch.compile(create_block_mask, dynamic=True, fullgraph=True)
-    return _FLEX_ATTENTION, _CREATE_BLOCK_MASK
+    return _FLEX_ATTENTION
 
 
 def _nonpacked_local_positions(
@@ -143,6 +141,91 @@ def _packed_document_metadata(
     valid_queries = query_positions - document_starts[query_document_ids] < real_lengths[query_document_ids]
     valid_keys = key_positions - document_starts[key_document_ids] < real_lengths[key_document_ids]
     return query_document_ids, key_document_ids, valid_queries, valid_keys
+
+
+def _position_extrema(
+    positions: Tensor,
+    block_size: int,
+    valid: Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Return per-block min/max without a token-pair mask."""
+    maximum = torch.iinfo(positions.dtype).max
+    if valid is not None:
+        low_values = torch.where(valid, positions, maximum)
+        high_values = torch.where(valid, positions, -1)
+    else:
+        low_values = positions
+        high_values = positions
+    padding = (-positions.numel()) % block_size
+    low_values = torch.cat(
+        (low_values, torch.full((padding,), maximum, device=positions.device, dtype=positions.dtype))
+    )
+    high_values = torch.cat((high_values, torch.full((padding,), -1, device=positions.device, dtype=positions.dtype)))
+    return (
+        low_values.reshape(-1, block_size).min(dim=-1).values,
+        high_values.reshape(-1, block_size).max(dim=-1).values,
+    )
+
+
+def _sparse_block_mask(
+    query_positions: Tensor,
+    key_positions: Tensor,
+    query_document_ids: Tensor | None,
+    key_document_ids: Tensor | None,
+    valid_keys: Tensor | None,
+    mask_mod: Callable,
+    block_size: int = 128,
+):
+    """Construct FlexAttention metadata at block granularity.
+
+    The active-block predicate is a conservative superset of the token mask;
+    ``mask_mod`` handles partially occupied blocks exactly. This avoids the
+    Q-by-K boolean tensor created internally by ``create_block_mask``.
+    """
+    from torch.nn.attention.flex_attention import BlockMask
+
+    query_min, query_max = _position_extrema(query_positions, block_size)
+    key_min, key_max = _position_extrema(key_positions, block_size, valid_keys)
+    active = query_max[:, None] >= key_min[None, :]
+    full = query_min[:, None] >= key_max[None, :]
+
+    if query_document_ids is not None:
+        assert key_document_ids is not None
+        query_doc_min, query_doc_max = _position_extrema(query_document_ids, block_size)
+        key_doc_min, key_doc_max = _position_extrema(key_document_ids, block_size, valid_keys)
+        active = active & (query_doc_min[:, None] <= key_doc_max[None, :])
+        active = active & (key_doc_min[None, :] <= query_doc_max[:, None])
+        full = full & (query_doc_min == query_doc_max)[:, None]
+        full = full & (key_doc_min == key_doc_max)[None, :]
+        full = full & (query_doc_min[:, None] == key_doc_min[None, :])
+
+    if valid_keys is not None:
+        padding = (-valid_keys.numel()) % block_size
+        padded_valid_keys = torch.cat((valid_keys, torch.zeros(padding, device=valid_keys.device, dtype=torch.bool)))
+        key_block_all_valid = padded_valid_keys.reshape(-1, block_size).all(dim=-1)
+        full = full & key_block_all_valid[None, :]
+    full = active & full
+    partial = active & ~full
+
+    num_key_blocks = key_min.numel()
+    key_block_indices = torch.arange(num_key_blocks, device=key_positions.device)
+
+    def _ordered_indices(blocks: Tensor) -> tuple[Tensor, Tensor]:
+        counts = blocks.sum(dim=-1).to(torch.int32)[None, None]
+        indices = torch.where(blocks, key_block_indices[None, :], num_key_blocks).sort(dim=-1).values
+        return counts, indices.to(torch.int32)[None, None]
+
+    partial_counts, partial_indices = _ordered_indices(partial)
+    full_counts, full_indices = _ordered_indices(full)
+    return BlockMask.from_kv_blocks(
+        partial_counts,
+        partial_indices,
+        full_counts,
+        full_indices,
+        BLOCK_SIZE=block_size,
+        mask_mod=mask_mod,
+        seq_lengths=(query_positions.numel(), key_positions.numel()),
+    )
 
 
 class Gemma4DenseHybridCPAttention(torch.nn.Module):
@@ -333,24 +416,18 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
         query_bhsd = query.permute(1, 2, 0, 3)
         key_bhsd = key.permute(1, 2, 0, 3)
         value_bhsd = value.permute(1, 2, 0, 3)
-        flex_attention, create_block_mask = _load_flex_attention()
+        flex_attention = _load_flex_attention()
 
         cache_key = None if packed_seq_params is not None else (local_seq_len, key.size(0), query.device)
         block_mask = self._block_mask_cache.get(cache_key) if cache_key is not None else None
         if block_mask is None:
-            block_mask = create_block_mask(
-                self._mask_mod(
-                    query_positions,
-                    key_positions,
-                    query_document_ids,
-                    key_document_ids,
-                    valid_keys,
-                ),
-                B=None,
-                H=None,
-                Q_LEN=local_seq_len,
-                KV_LEN=key.size(0),
-                device=query.device,
+            block_mask = _sparse_block_mask(
+                query_positions,
+                key_positions,
+                query_document_ids,
+                key_document_ids,
+                valid_keys,
+                self._mask_mod(query_positions, key_positions, query_document_ids, key_document_ids, valid_keys),
             )
             if cache_key is not None:
                 self._block_mask_cache[cache_key] = block_mask

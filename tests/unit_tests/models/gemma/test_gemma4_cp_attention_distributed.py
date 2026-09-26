@@ -27,6 +27,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.enums import AttnMaskType
+from torch.utils.checkpoint import checkpoint
 
 from megatron.bridge.models.gemma.gemma4_cp_attention import (
     Gemma4DenseHybridCPAttention,
@@ -98,6 +99,7 @@ def _assert_global_parity(
     global_positions: torch.Tensor,
     allowed: torch.Tensor,
     valid_queries: torch.Tensor | None = None,
+    recompute: bool = False,
 ) -> None:
     rank = dist.get_rank()
     device = torch.device("cuda", int(os.environ["LOCAL_RANK"]))
@@ -132,7 +134,16 @@ def _assert_global_parity(
     else:
         query_input, key_input, value_input = query, key, value
 
-    actual = _build_attention()(query_input, key_input, value_input, None, packed_seq_params=packed_seq_params)
+    attention = _build_attention()
+
+    def _forward(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        return attention(q, k, v, None, packed_seq_params=packed_seq_params)
+
+    actual = (
+        checkpoint(_forward, query_input, key_input, value_input, use_reentrant=True)
+        if recompute
+        else _forward(query_input, key_input, value_input)
+    )
     if packed_seq_params is not None:
         actual = actual.unsqueeze(1)
     actual_loss = actual.float().square().sum()
@@ -163,7 +174,8 @@ def _assert_global_parity(
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("packed", [False, True])
-def test_gemma4_global_cp2_matches_reference_forward_backward(packed: bool) -> None:
+@pytest.mark.parametrize("recompute", [False, True])
+def test_gemma4_global_cp2_matches_reference_forward_backward(packed: bool, recompute: bool) -> None:
     """CP2 global head-dim-512 attention must match a full-sequence reference."""
     if int(os.environ.get("WORLD_SIZE", "1")) != _CP_SIZE:
         pytest.skip("requires a two-rank torch.distributed launch")
@@ -181,7 +193,7 @@ def test_gemma4_global_cp2_matches_reference_forward_backward(packed: bool) -> N
     if not packed:
         positions = torch.arange(16, device=device)
         allowed = positions[None, :] <= positions[:, None]
-        _assert_global_parity(None, positions, allowed)
+        _assert_global_parity(None, positions, allowed, recompute=recompute)
         return
 
     # Unequal real lengths exercise multi-document rank-major gather. Each
@@ -203,4 +215,4 @@ def test_gemma4_global_cp2_matches_reference_forward_backward(packed: bool) -> N
         & (document_ids[None, :] == document_ids[:, None])
         & valid_tokens[None, :]
     )
-    _assert_global_parity(packed_seq_params, positions, allowed, valid_tokens)
+    _assert_global_parity(packed_seq_params, positions, allowed, valid_tokens, recompute=recompute)
