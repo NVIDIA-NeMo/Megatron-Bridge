@@ -64,6 +64,7 @@ models/stepfun/index.md
 
 training/config-container-overview.md
 training/entry-points.md
+training/determinism.md
 training/data-preparation.md
 training/training-loop-settings.md
 training/optimizer-scheduler.md
