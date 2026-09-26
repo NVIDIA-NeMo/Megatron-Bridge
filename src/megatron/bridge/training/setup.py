@@ -596,12 +596,27 @@ def _register_setup_pre_wrap_hook(
     _register_pre_wrap_hook(model_cfg, hook)
 
 
+def _freeze_base_model_for_mtp(model: list[MegatronModule]) -> list[MegatronModule]:
+    """Freeze backbone parameters and router bias updates before distributed wrapping."""
+    for model_chunk in model:
+        for name, parameter in model_chunk.named_parameters():
+            parameter.requires_grad_("mtp.layers." in name)
+        for name, module in model_chunk.named_modules():
+            if hasattr(module, "expert_bias"):
+                module.frozen_expert_bias = "mtp.layers." not in name
+    return model
+
+
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
     if not isinstance(model_config, ModelConfig):
         model_config.finalize()
     configure_gtp_remat(model_config)
+    if getattr(model_config, "freeze_base_model_for_mtp", False):
+        _register_setup_pre_wrap_hook(
+            model_config, _freeze_base_model_for_mtp, setup_hook_name="freeze_base_model_for_mtp"
+        )
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
