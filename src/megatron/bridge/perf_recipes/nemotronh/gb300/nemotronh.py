@@ -338,7 +338,6 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # op fuser + fused weighted squared-ReLU with moe_act activation recompute
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-        "FLASHINFER_DISABLE_VERSION_CHECK": 1,
     }
     return cfg
 
