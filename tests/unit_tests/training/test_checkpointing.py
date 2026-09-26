@@ -16,7 +16,7 @@
 import os
 import pickle
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from functools import partial
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, mock_open, patch
@@ -3541,10 +3541,12 @@ class TestLoadModelStateDictHelper:
 
     @pytest.fixture(autouse=True)
     def _disable_gtp_load_context(self, monkeypatch):
-        monkeypatch.setattr("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", False)
+        monkeypatch.setattr(
+            "megatron.bridge.training.checkpointing.get_gtp_native_fp8_load_context",
+            lambda _module: nullcontext(),
+        )
 
-    @patch("megatron.core.tensor_parallel.gtp_api.gtp_native_fp8_load_context", create=True)
-    @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
+    @patch("megatron.bridge.training.checkpointing.get_gtp_native_fp8_load_context")
     def test_load_model_state_dict_wraps_gtp_native_fp8_loads(self, mock_load_context):
         module = Mock()
         load_return = Mock(missing_keys=[], unexpected_keys=[])
