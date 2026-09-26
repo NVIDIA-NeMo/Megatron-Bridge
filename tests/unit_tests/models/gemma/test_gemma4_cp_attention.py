@@ -214,3 +214,23 @@ def test_sliding_layer_passes_window_and_cp_communication_to_te(monkeypatch: pyt
     assert config.window_attn_skip_freq == 6
     assert attention._sliding_packed_flex
     assert attention(torch.ones(1, 1, 1, 256), None, None, None).shape == (1, 1, 1, 256)
+
+
+def test_packed_sliding_flex_fallback_rejects_noncausal_window() -> None:
+    config = SimpleNamespace(
+        window_size=(7, 1),
+        window_attn_skip_freq=6,
+        softmax_scale=1.0,
+        attention_dropout=0.0,
+        num_attention_heads=8,
+        num_query_groups=4,
+        tensor_model_parallel_size=4,
+        context_parallel_size=2,
+    )
+    with pytest.raises(NotImplementedError, match="causal sliding windows"):
+        Gemma4DenseHybridCPAttention(
+            config=config,
+            layer_number=1,
+            attn_mask_type=AttnMaskType.causal,
+            pg_collection=SimpleNamespace(cp=object()),
+        )

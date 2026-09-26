@@ -281,6 +281,8 @@ class Gemma4DenseHybridCPAttention(torch.nn.Module):
             # kernel does not support sliding windows. Use Flex for this packed
             # combination; TE A2A and non-packed all_gather remain unchanged.
             self._sliding_packed_flex = sliding_cp_comm_type == "all_gather"
+            if self._sliding_packed_flex and config.window_size[1] != 0:
+                raise NotImplementedError("Packed Gemma 4 CP Flex fallback supports causal sliding windows only.")
             self._sliding_attention = TEDotProductAttention(
                 config=sliding_config,
                 layer_number=layer_number,
