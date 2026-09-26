@@ -253,7 +253,9 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3.5 Lightning pretrain: 8× VR200, BF16 (alias of GB300)."""
     cfg = _build_nemotron_3_5_lightning_gb300_bf16()
-    # Offload MoE expert activations to host memory to fit the newer VR200 container's larger peak memory.
+    # Offload MoE expert activations to host memory: the current Rubin base image ships a Transformer
+    # Engine without TE PR #3273, whose fused cross entropy holds an extra fp32 gradient per loss head.
+    # Revert this offload once the Rubin image picks up TE PR #3273.
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["expert_fc1", "moe_act"]
 
