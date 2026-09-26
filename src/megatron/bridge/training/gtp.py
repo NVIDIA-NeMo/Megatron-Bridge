@@ -21,6 +21,25 @@ from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 
+def get_gtp_api() -> Any | None:
+    """Return MCore's optional GTP API when the selected core provides it."""
+    try:
+        from megatron.core.tensor_parallel import gtp_api
+    except ImportError:
+        return None
+    return gtp_api
+
+
+def get_gtp_native_fp8_load_context(module: torch.nn.Module):
+    """Return the native-FP8 load context, or a no-op on cores without GTP."""
+    gtp_api = get_gtp_api()
+    if gtp_api is None or not gtp_api.HAVE_GTP:
+        from contextlib import nullcontext
+
+        return nullcontext()
+    return gtp_api.gtp_native_fp8_load_context(module)
+
+
 def get_transformer_config(model_config: Any) -> Any:
     """Return the MCore transformer config nested in a Bridge model config."""
     model_fields = getattr(type(model_config), "__dataclass_fields__", {})
@@ -43,12 +62,8 @@ def configure_gtp_remat(model_config: Any) -> None:
         return
 
     transformer_config = get_transformer_config(model_config)
-    try:
-        from megatron.core.tensor_parallel import gtp_api
-    except ImportError as error:
-        raise RuntimeError("GTP requires TransformerEngine >= 2.19.") from error
-
-    if not gtp_api.HAVE_GTP:
+    gtp_api = get_gtp_api()
+    if gtp_api is None or not gtp_api.HAVE_GTP:
         raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     gtp_api.configure_gtp_remat_from_recipe(
@@ -65,10 +80,9 @@ def classify_gtp_remat_chains(model: list[torch.nn.Module], model_config: Any) -
         return
 
     transformer_config = get_transformer_config(model_config)
-    try:
-        from megatron.core.tensor_parallel import gtp_api
-    except ImportError as error:
-        raise RuntimeError("GTP requires TransformerEngine >= 2.19.") from error
+    gtp_api = get_gtp_api()
+    if gtp_api is None:
+        raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     gtp_api.classify_gtp_remat_chains(
         model,

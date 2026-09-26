@@ -67,7 +67,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
-from megatron.bridge.training.gtp import get_data_distribution_group
+from megatron.bridge.training.gtp import get_data_distribution_group, get_gtp_native_fp8_load_context
 from megatron.bridge.training.optim import memory_efficient_precision_aware_optimizer_state_checkpointing
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -2865,13 +2865,7 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         for key in list(state_dict.keys()):
             state_dict[f"module.{key}"] = state_dict.pop(key)
 
-    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
-
-    load_context = contextlib.nullcontext
-    if HAVE_GTP:
-        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
-
-        load_context = partial(gtp_native_fp8_load_context, module)
+    load_context = partial(get_gtp_native_fp8_load_context, module)
 
     try:
         with load_context():
