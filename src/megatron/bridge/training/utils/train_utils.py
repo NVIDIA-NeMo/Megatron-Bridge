@@ -27,6 +27,9 @@ import torch.nn as nn
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
+from megatron.core.transformer.experimental_attention_variant.dsa import (
+    DSAIndexerLossLoggingHelper,
+)
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
@@ -620,6 +623,32 @@ def _track_moe_metrics_supports_num_moe_layers() -> bool:
     return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
 
 
+def _get_indexer_logging_layer_counts(model_config: Any) -> tuple[int, int | None]:
+    """Return tracker slots and active CSA indexer contributors for loss logging."""
+    num_layers = model_config.num_layers
+    tracker_layers = num_layers + (getattr(model_config, "mtp_num_layers", None) or 0)
+    ratios = getattr(model_config, "csa_compress_ratios", None)
+    if ratios is None:
+        return tracker_layers, None
+
+    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
+        pattern = parse_hybrid_pattern(model_config.hybrid_layer_pattern)
+        tracker_layers = num_layers + len(pattern.mtp_pattern or "")
+        main_indexers = sum(ratio == 4 for ratio in ratios[:num_layers])
+        mtp_indexers = sum(ratio == 4 for ratio in ratios[num_layers:tracker_layers])
+        repeats = 1 if getattr(model_config, "mtp_use_repeated_layer", False) else pattern.mtp_num_depths
+        indexer_layers = main_indexers + mtp_indexers * repeats
+    else:
+        indexer_layers = sum(ratio == 4 for ratio in ratios[:tracker_layers])
+    return tracker_layers, 0 if getattr(model_config, "csa_dense_mode", False) else indexer_layers
+
+
+def _should_track_dsa_indexer_metrics(model_config: Any) -> bool:
+    """Return True when DSA indexer loss is enabled (matches MCore training.py)."""
+    coeff = getattr(model_config, "dsa_indexer_loss_coeff", None)
+    return coeff is not None and coeff > 0
+
+
 def _get_num_moe_layers(model_config: Any) -> int:
     """Count MoE aux-loss contributors for MCore metric averaging."""
     num_layers = model_config.num_layers
@@ -1076,6 +1105,23 @@ def training_log(
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
+        )
+
+    if _should_track_dsa_indexer_metrics(config.model):
+        # Match MCore training.py: logged value is already KL * dsa_indexer_loss_coeff.
+        indexer_loss_scale = 1 / get_num_microbatches()
+        indexer_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
+        tracker_layers, indexer_layers = _get_indexer_logging_layer_counts(config.model)
+        DSAIndexerLossLoggingHelper.track_indexer_metrics(
+            loss_scale=indexer_loss_scale,
+            iteration=iteration,
+            writer=indexer_metric_writer,
+            wandb_writer=wandb_writer,
+            total_loss_dict=total_loss_dict,
+            pg_collection=pg_collection,
+            num_layers=tracker_layers,
+            num_indexer_layers=indexer_layers,
+            preserve_groups=getattr(config.model, "cuda_graph_impl", "none") != "none",
         )
 
     if iteration % logger_config.log_interval == 0:
