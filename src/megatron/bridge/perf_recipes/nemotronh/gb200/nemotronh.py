@@ -238,8 +238,11 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _apply_nemotron_3_ultra_perf_defaults(cfg)
 
-    # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
-    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
+    # Shard dense weights with GTP within each 64-GPU rack. GTP currently
+    # requires a single distributed-optimizer instance.
+    _apply_nemotron_3_ultra_gtp(cfg)
+    # Also, enable GTP sharding for the moe_latent_proj module due to memory pressure on GB200
+    cfg.model.gtp_remat_opt_in_modules = ["moe_latent_proj"]
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2
@@ -303,6 +306,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
         # op fuser + fused weighted squared-ReLU with moe_act activation recompute
         # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "FLASHINFER_DISABLE_VERSION_CHECK": 1,
     }
     return cfg
 
