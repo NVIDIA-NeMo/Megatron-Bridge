@@ -255,7 +255,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     cfg = _build_nemotron_3_5_lightning_gb300_bf16()
     # Offload MoE expert activations to host memory to fit the newer VR200 container's larger peak memory.
     cfg.model.fine_grained_activation_offloading = True
-    cfg.model.offload_modules = ["expert_fc1"]
+    cfg.model.offload_modules = ["expert_fc1", "moe_act"]
 
     # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
