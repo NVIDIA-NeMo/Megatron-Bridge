@@ -39,7 +39,12 @@ _DEFAULT_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: all
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
 
 
-def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDatasetConfig:
+def _make_nemotron_omni_energon_dataset(
+    micro_batch_size: int,
+    *,
+    hf_processor_path: str = _DEFAULT_HF_PATH,
+    hf_processor_revision: str | None = _DEFAULT_HF_REVISION,
+) -> EnergonDatasetConfig:
     """Create the declarative temporal-video Energon config used by Omni recipes."""
     return EnergonDatasetConfig(
         path=None,
@@ -47,8 +52,8 @@ def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDataset
         micro_batch_size=micro_batch_size,
         num_workers=2,
         task_encoder=NemotronOmniEnergonTaskEncoderConfig(
-            hf_processor_path=_DEFAULT_HF_PATH,
-            hf_processor_revision=_DEFAULT_HF_REVISION,
+            hf_processor_path=hf_processor_path,
+            hf_processor_revision=hf_processor_revision,
             max_audio_duration=10.0,
             num_mel_bins=128,
             visual_keys=("pixel_values",),
@@ -494,7 +499,10 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.separate_video_embedder = True
     cfg.model.temporal_ckpt_compat = True
 
-    cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
+    cfg.dataset = _make_nemotron_omni_energon_dataset(
+        cfg.train.micro_batch_size,
+        hf_processor_path=_DEFAULT_HF_PATH,
+    )
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
@@ -538,7 +546,10 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
+    cfg.dataset = _make_nemotron_omni_energon_dataset(
+        cfg.train.micro_batch_size,
+        hf_processor_path=_DEFAULT_HF_PATH,
+    )
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {

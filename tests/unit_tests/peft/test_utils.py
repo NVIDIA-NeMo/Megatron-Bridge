@@ -1978,11 +1978,11 @@ class TestGroupedExpertLinearAdapter:
             expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
         torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
 
-    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17", "2.18"])
+    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17", "2.18", "2.19"])
     @pytest.mark.parametrize("grad_enabled", [True, False])
     @pytest.mark.parametrize("active_expert_indices", [(0, 1), (1, 2)])
     def test_grouped_expert_linear_adapter_fp8_te_contract(self, te_version, grad_enabled, active_expert_indices):
-        """FP8 dispatch should pack the supported TE 2.14 through 2.18 call layouts."""
+        """FP8 dispatch should pack the supported TE 2.14 through 2.19 call layouts."""
         calls = []
         expected = torch.randn(3, 2)
 
@@ -2065,6 +2065,29 @@ class TestGroupedExpertLinearAdapter:
 
             @staticmethod
             def forward(ctx, inp, m_splits, non_tensor_args, *weights_and_biases):
+                (
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
                 assert ctx is None
                 calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
                 return expected, []
@@ -2079,6 +2102,72 @@ class TestGroupedExpertLinearAdapter:
 
             @staticmethod
             def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                (
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    debug,
+                ) = non_tensor_args
+                assert ctx is None
+                assert out is None
+                assert dgrad_out is None
+                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
+                return expected, []
+
+        class TE219GroupedLinear:
+            @staticmethod
+            def apply(inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                return TE219GroupedLinear.forward(
+                    None, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases
+                )
+
+            @staticmethod
+            def forward(ctx, inp, m_splits, non_tensor_args, out, dgrad_out, *weights_and_biases):
+                (
+                    use_bias,
+                    is_first_microbatch,
+                    fp8,
+                    fp8_calibration,
+                    wgrad_store,
+                    input_quantizers,
+                    weight_quantizers,
+                    output_quantizers,
+                    grad_input_quantizers,
+                    grad_weight_quantizers,
+                    grad_output_quantizers,
+                    fuse_wgrad_accumulation,
+                    cpu_offloading,
+                    sequence_parallel,
+                    activation_dtype,
+                    is_grad_enabled,
+                    weight_workspaces,
+                    cache_weight,
+                    skip_fp8_weight_update,
+                    save_original_input,
+                    delayed_scaling_input_quantizer,
+                    unsafe_requantization_input_quantizer,
+                    debug,
+                    single_grouped_weight,
+                    single_grouped_bias,
+                    use_grouped_tensor,
+                ) = non_tensor_args
                 assert ctx is None
                 assert out is None
                 assert dgrad_out is None
@@ -2090,6 +2179,7 @@ class TestGroupedExpertLinearAdapter:
             "2.16": TE216GroupedLinear,
             "2.17": TE217GroupedLinear,
             "2.18": TE218GroupedLinear,
+            "2.19": TE219GroupedLinear,
         }
         autograd_function = autograd_functions[te_version]
         helper = Mock()
@@ -2105,6 +2195,9 @@ class TestGroupedExpertLinearAdapter:
         helper.sequence_parallel = False
         helper.activation_dtype = torch.float32
         helper.save_original_input = False
+        helper._delayed_scaling_input_quantizer = object()
+        helper._unsafe_requantization_input_quantizer = object()
+        helper.use_grouped_tensor = True
         if te_version == "2.16":
             helper._fp8_workspaces = {}
 
@@ -2161,7 +2254,12 @@ class TestGroupedExpertLinearAdapter:
             assert non_tensor_args[17] is False
             assert non_tensor_args[18] is None
             assert non_tensor_args[19] is False
-            assert non_tensor_args[20] is False
+            if te_version == "2.19":
+                assert non_tensor_args[20] is helper._delayed_scaling_input_quantizer
+                assert non_tensor_args[21] is helper._unsafe_requantization_input_quantizer
+                assert non_tensor_args[22:] == (False, False, False, False)
+            else:
+                assert non_tensor_args[20] is False
         assert common_non_tensor_args[0] is False
         assert common_non_tensor_args[2] is True
         assert common_non_tensor_args[12] is True

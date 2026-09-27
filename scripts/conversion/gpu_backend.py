@@ -317,6 +317,7 @@ def import_checkpoint(
     low_memory_save: bool,
     distributed_timeout_minutes: int | None,
     overwrite: bool,
+    text_only: bool = False,
 ) -> None:
     """Import a Hugging Face model into a distributed Megatron checkpoint.
 
@@ -333,6 +334,7 @@ def import_checkpoint(
         low_memory_save: Reduce peak GPU memory while saving the imported checkpoint.
         distributed_timeout_minutes: Process-group timeout in minutes.
         overwrite: Delete a non-empty destination before conversion.
+        text_only: Convert only the supported model's language component.
     """
     _ensure_distributed_initialized(distributed_timeout_minutes)
     _prepare_distributed_output(megatron_path, overwrite=overwrite, source_paths=[hf_model])
@@ -341,6 +343,8 @@ def import_checkpoint(
     print_rank_0(f"GPU import: {hf_model} -> {megatron_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
@@ -391,6 +395,7 @@ def export_checkpoint(
     show_progress: bool,
     distributed_save: bool,
     save_every_n_ranks: int,
+    text_only: bool = False,
     distributed_timeout_minutes: int | None,
     export_weight_dtype: str | None,
     overwrite: bool,
@@ -432,13 +437,19 @@ def export_checkpoint(
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=trusted,
         torch_dtype=dtype,
         **revision_kwargs,
     )
-    reference_model = resolve_hf_model_revision(hf_model, hf_revision)
+    reference_model = (
+        resolve_hf_model_revision(hf_model, hf_revision, config_only=True)
+        if text_only
+        else resolve_hf_model_revision(hf_model, hf_revision)
+    )
     checkpoint_config_bridge = AutoBridge.from_auto_config(
         megatron_path,
         reference_model,
