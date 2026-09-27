@@ -5151,10 +5151,17 @@ def test_shortcut_moe_rejects_fsdp(backend):
         restore_get_world_size_safe(original, module)
 
 
-def test_layerwise_optimizer_rejects_single_grouped_weight():
+@pytest.mark.parametrize("use_recipe", [False, True])
+def test_layerwise_optimizer_rejects_single_grouped_weight(use_recipe):
     cfg, original, module = create_test_config_container(1, create_test_gpt_config(moe_single_grouped_weight=True))
     try:
-        cfg.optimizer.use_layer_wise_distributed_optimizer = True
+        if use_recipe:
+            from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
+
+            cfg.optimizer, cfg.scheduler = distributed_muon_with_cosine_annealing()
+            assert not cfg.optimizer.use_layer_wise_distributed_optimizer
+        else:
+            cfg.optimizer.use_layer_wise_distributed_optimizer = True
         with pytest.raises(ValueError, match="moe_single_grouped_weight"):
             cfg.validate()
     finally:
@@ -5171,18 +5178,34 @@ def test_mtp_freeze_requires_mtp_layers():
 
 
 @pytest.mark.parametrize(
-    "dense,expert", [("no_shard", "optim_grads"), ("optim", "optim_grads_params"), ("optim_grads", "no_shard")]
+    "dense,expert",
+    [
+        ("no_shard", "optim_grads"),
+        ("optim", "optim_grads_params"),
+        ("optim_grads", "no_shard"),
+        ("optim_grads_params", None),
+        ("optim", "no_shard"),
+        ("no_shard", None),
+    ],
 )
-def test_fsdp_v1_considers_both_sharding_strategies(dense, expert, monkeypatch):
+@pytest.mark.parametrize("fusion", [False, True])
+def test_fsdp_v1_considers_both_sharding_strategies(dense, expert, fusion, monkeypatch):
     monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
     cfg, original, module = create_test_config_container(1, create_test_gpt_config())
     try:
         cfg.checkpoint.save = cfg.checkpoint.load = None
         cfg.ddp.data_parallel_sharding_strategy = dense
         cfg.ddp.expert_data_parallel_sharding_strategy = expert
-        cfg.model.gradient_accumulation_fusion = True
-        cfg._validate_and_apply_megatron_fsdp_v1_configs()
-        assert cfg.model.gradient_accumulation_fusion is False
+        cfg.model.gradient_accumulation_fusion = fusion
+        with patch("megatron.bridge.training.config.warn_rank_0") as warn:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        assert cfg.model.gradient_accumulation_fusion is fusion
+        if fusion and {dense, expert} & {"optim_grads", "optim_grads_params"}:
+            warn.assert_called_once_with(
+                "Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP."
+            )
+        else:
+            warn.assert_not_called()
         cfg.train.check_weight_hash_across_dp_replicas_interval = 10
         if "optim_grads_params" in {dense, expert}:
             with pytest.raises(AssertionError, match="check_weight_hash"):

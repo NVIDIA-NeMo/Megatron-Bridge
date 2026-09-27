@@ -1135,8 +1135,8 @@ class ConfigContainer(Container):
         sharding_strategies = {self.ddp.data_parallel_sharding_strategy}
         if self.ddp.expert_data_parallel_sharding_strategy is not None:
             sharding_strategies.add(self.ddp.expert_data_parallel_sharding_strategy)
-        if sharding_strategies & {"optim_grads", "optim_grads_params"}:
-            self.model.gradient_accumulation_fusion = False
+        if sharding_strategies & {"optim_grads", "optim_grads_params"} and self.model.gradient_accumulation_fusion:
+            warn_rank_0("Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP.")
         if self.model.init_model_with_meta_device and sharding_strategies == {"no_shard"}:
             raise ValueError("Meta device initialization is not supported with only no_shard strategies.")
         if "optim_grads_params" in sharding_strategies:
@@ -1519,7 +1519,10 @@ class ConfigContainer(Container):
             self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
         ):
             raise ValueError("moe_shortcut_connection is not supported with FSDP.")
-        if self.optimizer.use_layer_wise_distributed_optimizer and self.model.moe_single_grouped_weight:
+        # Core also enables LayerWise for legacy dist_* optimizer names.
+        if (
+            self.optimizer.use_layer_wise_distributed_optimizer or self.optimizer.optimizer.startswith("dist_")
+        ) and self.model.moe_single_grouped_weight:
             raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
