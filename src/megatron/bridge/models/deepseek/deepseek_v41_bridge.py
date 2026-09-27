@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager, nullcontext
 from copy import deepcopy
-from types import SimpleNamespace
 from typing import Any, Dict, Mapping, Optional, Union
 
 import torch
@@ -23,11 +22,14 @@ import torch.distributed
 import torch.nn as nn
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.transformer.module import MegatronModule
-from transformers import AutoConfig, PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import (
+    HFWeightTuple,
+    MegatronModelBridge,
+    WeightConversionTask,
+)
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -42,34 +44,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 
 
-class DeepSeekV41HFConfig(PretrainedConfig):
-    """Lightweight Transformers config for checkpoints without ``auto_map``."""
-
-    model_type = "deepseek_v41"
-    is_composition = True
-
-    def __init__(self, text_config=None, vision_config=None, **kwargs):
-        super().__init__(**kwargs)
-        self._text_config_dict = deepcopy(text_config or {})
-        self._vision_config_dict = deepcopy(vision_config)
-        self.text_config = SimpleNamespace(**self._text_config_dict)
-        self.vision_config = SimpleNamespace(**vision_config) if vision_config is not None else None
-        for name in ("vocab_size", "tie_word_embeddings", "max_position_embeddings"):
-            if hasattr(self.text_config, name):
-                setattr(self, name, getattr(self.text_config, name))
-
-    def to_dict(self):
-        output = super().to_dict()
-        output.pop("_text_config_dict", None)
-        output.pop("_vision_config_dict", None)
-        output["text_config"] = deepcopy(self._text_config_dict)
-        output["vision_config"] = deepcopy(self._vision_config_dict)
-        return output
-
-
-AutoConfig.register("deepseek_v41", DeepSeekV41HFConfig, exist_ok=True)
-
-
 def _value(obj: Any, name: str, default=None):
     if isinstance(obj, Mapping):
         return obj.get(name, default)
@@ -78,6 +52,27 @@ def _value(obj: Any, name: str, default=None):
 
 def _text_config(config: Any):
     return _value(config, "text_config", config)
+
+
+def _vision_config(config: Any):
+    vision = _value(config, "vision_config")
+    if vision is not None:
+        return vision
+    flat_fields = {
+        "num_hidden_layers": "vision_n_layers",
+        "hidden_size": "vision_dim",
+        "num_attention_heads": "vision_n_heads",
+        "intermediate_size": "vision_inter_dim",
+        "patch_size": "vision_patch_size",
+        "rope_theta": "vision_rope_theta",
+        "downsample_ratio": "vision_downsample_ratio",
+        "max_image_tokens": "vision_max_n_token",
+        "min_pixels": "vision_min_pixels",
+        "max_wh_ratio": "vision_max_wh_ratio",
+    }
+    if _value(config, "vision_n_layers") is None:
+        return None
+    return {name: _value(config, flat_name) for name, flat_name in flat_fields.items()}
 
 
 def _load_deepseek_v41_config_class():
@@ -165,6 +160,56 @@ class _EngramEmbeddingMapping(MegatronParamMapping[torch.Tensor]):
         torch.distributed.all_gather(gathered, padded, group=self.ep_group)
         full = torch.cat([shard[:rows] for shard, rows in zip(gathered, row_counts)], dim=0)
         return {str(self.hf_param): full}
+
+    def _iter_ep_rows(
+        self,
+        table: torch.Tensor,
+        megatron_module: nn.Module,
+        device: torch.device,
+        chunk_bytes: int = 64 << 20,
+    ):
+        """Yield logical Engram rows without assembling an EP-global tensor."""
+        if chunk_bytes <= 0:
+            raise ValueError("Engram chunk_bytes must be positive")
+        if self.ep_size == 1:
+            owner_ranges = [(0, int(megatron_module.global_num_embeddings))]
+            owner_rank = 0
+            group = None
+        else:
+            group = self.ep_group
+            owner_rank = torch.distributed.get_rank(group)
+            global_rows = int(megatron_module.global_num_embeddings)
+            base, remainder = divmod(global_rows, self.ep_size)
+            owner_ranges = [
+                (rank * base + min(rank, remainder), (rank + 1) * base + min(rank + 1, remainder))
+                for rank in range(self.ep_size)
+            ]
+
+        local_range = (int(megatron_module.row_start), int(megatron_module.row_end))
+        if local_range != owner_ranges[owner_rank]:
+            raise ValueError(
+                f"Engram shard {self.hf_param} reports rows {local_range}; "
+                f"EP rank {owner_rank} should own {owner_ranges[owner_rank]}"
+            )
+        width = int(table.shape[1])
+        if tuple(table.shape) != (local_range[1] - local_range[0], width):
+            raise ValueError(f"Engram shard {self.hf_param} has an invalid local shape {tuple(table.shape)}")
+
+        chunk_rows = max(1, chunk_bytes // (width * table.element_size()))
+        for owner, (begin, end) in enumerate(owner_ranges):
+            for start in range(begin, end, chunk_rows):
+                rows = min(chunk_rows, end - start)
+                if owner == owner_rank:
+                    chunk = table[start - begin : start - begin + rows].to(device=device).contiguous()
+                else:
+                    chunk = torch.empty((rows, width), device=device, dtype=table.dtype)
+                if group is not None:
+                    torch.distributed.broadcast(
+                        chunk,
+                        src=torch.distributed.get_global_rank(group, owner),
+                        group=group,
+                    )
+                yield f"{self.hf_param}.__rows_{start}", chunk
 
 
 def _hc_mappings(megatron_prefix: str, hf_prefix: str) -> list[MegatronParamMapping]:
@@ -266,7 +311,12 @@ class DeepSeekV41Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> DeepSeekV41ModelProvider:
         hf_dict = hf_pretrained.config.to_dict()
         config_class = _load_deepseek_v41_config_class()
-        native_config = config_class.from_hf(hf_dict)
+        native_hf_dict = deepcopy(hf_dict)
+        if native_hf_dict.get("vision_config") is None:
+            vision = _vision_config(native_hf_dict)
+            if vision is not None:
+                native_hf_dict["vision_config"] = vision
+        native_config = config_class.from_hf(native_hf_dict)
 
         provider_fields = DeepSeekV41ModelProvider.__dataclass_fields__
         kwargs = {
@@ -282,6 +332,12 @@ class DeepSeekV41Bridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = False
         provider.should_pad_vocab = False
         provider.mtp_num_layers = 0
+        # The released mtp.* tensors belong to the separately supervised
+        # DSpark drafter.  verl trains the text backbone only, so do not build
+        # the optional DSpark module in the actor provider.
+        provider.dspark_config = None
+        # Keep the released V4.1 correction biases unchanged during actor updates.
+        provider.moe_router_bias_update_rate = 0.0
         provider.hf_model_id = str(hf_pretrained.model_name_or_path)
         provider.hf_model_revision = hf_pretrained.init_kwargs.get("revision")
         provider._deepseek_v41_hf_config = deepcopy(hf_dict)
@@ -386,6 +442,80 @@ class DeepSeekV41Bridge(MegatronModelBridge):
         if getattr(self, "_defer_engram_import", False):
             return
         return super().finalize_hf_import(megatron_model)
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model,
+        hf_pretrained,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks=None,
+        merge_adapter_weights: bool = True,
+        weight_dtype=None,
+        with_megatron_names: bool = False,
+    ):
+        """Export V4.1 Engram rows without materializing an EP-global table."""
+        if conversion_tasks is None:
+            conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
+            weight_dtype = None
+        elif weight_dtype is not None:
+            raise ValueError(
+                "weight_dtype is not supported with caller-supplied conversion_tasks; "
+                "omit conversion_tasks so the dtype can be recorded at task-build time."
+            )
+
+        engram_tasks = [task for task in conversion_tasks if isinstance(task.mapping, _EngramEmbeddingMapping)]
+        hf_state_dict = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
+        with self._state_scale_reader(hf_state_dict) as scale_reader:
+            self._deepseek_v41_scale_reader = scale_reader
+            try:
+                if not engram_tasks:
+                    yield from super().stream_weights_megatron_to_hf(
+                        megatron_model,
+                        hf_pretrained,
+                        cpu=cpu,
+                        show_progress=show_progress,
+                        conversion_tasks=conversion_tasks,
+                        merge_adapter_weights=merge_adapter_weights,
+                        weight_dtype=weight_dtype,
+                        with_megatron_names=with_megatron_names,
+                    )
+                    return
+
+                regular_tasks = [
+                    task for task in conversion_tasks if not isinstance(task.mapping, _EngramEmbeddingMapping)
+                ]
+                yield from super().stream_weights_megatron_to_hf(
+                    megatron_model,
+                    hf_pretrained,
+                    cpu=cpu,
+                    show_progress=show_progress,
+                    conversion_tasks=regular_tasks,
+                    merge_adapter_weights=merge_adapter_weights,
+                    weight_dtype=None,
+                    with_megatron_names=with_megatron_names,
+                )
+
+                for task in engram_tasks:
+                    if task.param_weight is None or task.megatron_module is None:
+                        raise RuntimeError("DeepSeek-V4.1 Engram export requires PP=1 ownership on every rank")
+                    for name, rows in task.mapping._iter_ep_rows(
+                        task.param_weight,
+                        task.megatron_module,
+                        torch.device("cuda", torch.cuda.current_device())
+                        if torch.cuda.is_available()
+                        else task.param_weight.device,
+                    ):
+                        if task.weight_dtype is not None:
+                            rows = rows.to(dtype=task.weight_dtype)
+                        yield from HFWeightTuple(name, rows).iter_finalized(
+                            cpu=cpu,
+                            export_hook=task.export_hook,
+                            megatron_param_names=(task.param_name,) if with_megatron_names else None,
+                        )
+            finally:
+                self._deepseek_v41_scale_reader = None
 
     @torch.no_grad()
     def _load_engram_tasks_streaming(
@@ -520,6 +650,29 @@ class DeepSeekV41Bridge(MegatronModelBridge):
                 slices[name] = checkpoints[filename].get_slice(name)
             yield lambda name, row_start, row_end: slices[name][row_start:row_end]
 
+    @contextmanager
+    def _state_scale_reader(self, hf_state_dict: Mapping[str, Any]):
+        """Keep released checkpoint shards open while exporting quantized weights."""
+        source = getattr(hf_state_dict, "source", None)
+        if not isinstance(source, SafeTensorsStateSource):
+            yield None
+            return
+
+        from safetensors import safe_open
+
+        with ExitStack() as stack:
+            checkpoints = {}
+
+            def read_scale(name: str):
+                filename = source.key_to_filename_map[name]
+                if filename not in checkpoints:
+                    checkpoints[filename] = stack.enter_context(
+                        safe_open(source.path / filename, framework="pt", device="cpu")
+                    )
+                return checkpoints[filename].get_tensor(name)
+
+            yield read_scale
+
     @staticmethod
     def _load_state_rows(
         hf_state_dict: Mapping[str, Any],
@@ -573,7 +726,7 @@ class DeepSeekV41Bridge(MegatronModelBridge):
                 _moe_mappings(
                     f"decoder.layers.{2 * layer + 1}",
                     hf_prefix,
-                    multimodal_router=_value(config, "vision_config") is not None,
+                    multimodal_router=_vision_config(config) is not None,
                 )
             )
 
@@ -599,7 +752,7 @@ class DeepSeekV41Bridge(MegatronModelBridge):
             )
         )
 
-        vision = _value(config, "vision_config")
+        vision = _vision_config(config)
         if vision is not None:
             mappings.extend(
                 ReplicatedMapping(name, name)
@@ -682,7 +835,8 @@ class DeepSeekV41Bridge(MegatronModelBridge):
             if scale_key not in hf_state_dict:
                 result[hf_param] = weight
                 continue
-            source_scale = hf_state_dict[scale_key]
+            scale_reader = getattr(self, "_deepseek_v41_scale_reader", None)
+            source_scale = scale_reader(scale_key) if scale_reader is not None else hf_state_dict[scale_key]
             if ".ffn.experts." in hf_param and ".shared_experts." not in hf_param:
                 q_weight, q_scale = quantization_utils.quantize_mxfp4_e2m1_like_scale(
                     weight,
