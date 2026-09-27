@@ -34,7 +34,8 @@ from tests.unit_tests.training.test_checkpointing import load_checkpoint_fixture
 
 
 @pytest.mark.parametrize(
-    "mode", ["resume", "skip", "finetune", "no_optim", "release", "stub", "missing_optimizer", "load_error"]
+    "mode",
+    ["resume", "skip", "finetune", "no_optim", "release", "stub", "missing_optimizer", "load_error", "conversion"],
 )
 @pytest.mark.parametrize("override", [False, True])
 @pytest.mark.parametrize("precision", ["fp8", "fp4", "bf16"])
@@ -48,10 +49,12 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
     cfg.optimizer.lr, cfg.optimizer.min_lr = 0.02, 0.002
     fixtures["mock_model"][0].hide_loss_modules.return_value = nullcontext()
     cfg.checkpoint.load_rng = False
-    cfg.checkpoint.load_optim = mode != "no_optim"
+    cfg.checkpoint.load_optim = mode not in ("no_optim", "conversion")
     cfg.checkpoint.finetune = mode == "finetune"
     cfg.ddp.fp8_param_gather = precision == "fp8"
     cfg.ddp.fp4_param_gather = precision == "fp4"
+    if mode == "conversion":
+        cfg.ddp = None
     state.train_state = TrainState(step=3, consumed_train_samples=48)
     optimizer, scheduler = fixtures["mock_optimizer"], fixtures["mock_scheduler"]
     optimizer.is_stub_optimizer = mode == "stub"
@@ -102,11 +105,21 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
         if mode == "load_error":
             with pytest.raises(KeyError, match="missing main"):
                 checkpointing._load_checkpoint_from_path(
-                    "/checkpoints", state, fixtures["mock_model"], optimizer, scheduler, **kwargs
+                    "/checkpoints",
+                    state,
+                    fixtures["mock_model"],
+                    None if mode == "conversion" else optimizer,
+                    scheduler,
+                    **kwargs,
                 )
         else:
             checkpointing._load_checkpoint_from_path(
-                "/checkpoints", state, fixtures["mock_model"], optimizer, scheduler, **kwargs
+                "/checkpoints",
+                state,
+                fixtures["mock_model"],
+                None if mode == "conversion" else optimizer,
+                scheduler,
+                **kwargs,
             )
     expected = mode == "resume" and precision != "bf16"
     assert optimizer.quantize_and_sync_model_params_from_main_params.call_count == int(expected)
@@ -388,3 +401,30 @@ def test_two_rank_rng_checkpoint_round_trip(tmp_path, legacy, fully_parallel):
         nprocs=2,
         join=True,
     )
+
+
+def test_mimo_checkpoint_load_without_top_level_quantization_fields():
+    from megatron.core.transformer.spec_utils import ModuleSpec
+
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+    provider = MegatronMIMOProvider(language_model_spec=ModuleSpec(module=torch.nn.Identity))
+    assert not hasattr(provider, "fp4")
+    tensor = ShardedTensor.from_rank_offsets("weight", torch.zeros(10, 4))
+    ckpt_cfg = CheckpointConfig(fully_parallel_load=False, fully_parallel_save=False)
+    loaded = {"model": {"weight": torch.ones(10, 4)}}
+    with patch.object(checkpointing.dist_checkpointing, "load", return_value=loaded) as load:
+        result, _, _, _ = checkpointing._load_global_dist_base_checkpoint(
+            "/checkpoints",
+            ckpt_cfg,
+            False,
+            {"weight": tensor},
+            1,
+            False,
+            is_megatron_mimo=True,
+            pg_collection=SimpleNamespace(),
+            cfg=SimpleNamespace(model=provider),
+        )
+    assert result is loaded
+    assert tensor.allow_shape_mismatch is False
+    assert load.call_args.kwargs["validate_access_integrity"] is False

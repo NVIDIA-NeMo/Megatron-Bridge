@@ -3302,11 +3302,16 @@ def _load_checkpoint_from_path(
             not skip_load_to_model_and_opt
             and optimizer is not None
             and not getattr(optimizer, "is_stub_optimizer", False)
+            and cfg.ddp is not None
             and (cfg.ddp.fp8_param_gather or cfg.ddp.fp4_param_gather)
         ):
             optimizer.quantize_and_sync_model_params_from_main_params()
     else:
-        if not skip_load_to_model_and_opt and (cfg.ddp.fp8_param_gather or cfg.ddp.fp4_param_gather):
+        if (
+            not skip_load_to_model_and_opt
+            and cfg.ddp is not None
+            and (cfg.ddp.fp8_param_gather or cfg.ddp.fp4_param_gather)
+        ):
             print_rank_0(
                 "WARNING: quantized parameters were loaded without optimizer main parameters; "
                 "their block scales may differ from the saved training state."
@@ -3729,7 +3734,9 @@ def _load_global_dist_base_checkpoint(
         validate_sharding_integrity = False
     if cfg is not None:
         alignment = resolve_gtp_pad_for_alignment(
-            fp4=bool(cfg.model.fp4), fp8_recipe=cfg.model.fp8_recipe, fp8=bool(cfg.model.fp8)
+            fp4=bool(getattr(cfg.model, "fp4", None)),
+            fp8_recipe=getattr(cfg.model, "fp8_recipe", None),
+            fp8=bool(getattr(cfg.model, "fp8", None)),
         )
         grant_shape_mismatch_for_gtp_padding(sharded_state_dict, checkpoint_name, alignment)
     state_dict = dist_checkpointing.load(
