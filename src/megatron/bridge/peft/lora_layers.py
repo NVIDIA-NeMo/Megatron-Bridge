@@ -83,8 +83,18 @@ class LoRALinear(AdapterWrapper):
         # Serialize full-width branch buffers to keep long-context peak at two outputs.
         combined_output = linear_output.clone()
         del linear_output
-        adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
+        adapter_input = layernorm_output.contiguous()
+        adapter_param = next(self.adapter.parameters(), None)
+        if (
+            adapter_param is not None
+            and adapter_input.is_floating_point()
+            and adapter_input.dtype != adapter_param.dtype
+        ):
+            adapter_input = adapter_input.to(dtype=adapter_param.dtype)
+        adapter_output = self.adapter_forward(self.adapter, adapter_input, *args, **kwargs)
         adapter_output = adapter_output.reshape(combined_output.shape)
+        if adapter_output.dtype != combined_output.dtype:
+            adapter_output = adapter_output.to(dtype=combined_output.dtype)
         combined_output.add_(adapter_output)
         if not self._base_returns_tuple:
             return combined_output
