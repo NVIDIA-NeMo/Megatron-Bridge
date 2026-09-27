@@ -46,24 +46,6 @@ class DeepSeekV41ModelProvider(MLAModelProvider):
         """Return the attention/expert physical-layer pattern."""
         return "VE" * (int(self.num_layers) // 2)
 
-    def finalize(self) -> None:
-        """Validate the topology supported by the native V4.1 wrapper."""
-        if (self.tensor_model_parallel_size or 1) != 1 or (self.context_parallel_size or 1) != 1:
-            raise NotImplementedError("Megatron-Core DeepSeekV41Model currently requires TP=CP=1")
-        if (self.pipeline_model_parallel_size or 1) != 1:
-            raise NotImplementedError(
-                "Megatron-Core DeepSeekV41Model currently requires pipeline_model_parallel_size=1"
-            )
-        if self.virtual_pipeline_model_parallel_size not in (None, 1):
-            raise NotImplementedError("DeepSeekV41Model does not support virtual pipeline parallelism")
-        if self.recompute_granularity is not None:
-            raise NotImplementedError("DeepSeekV41Model does not support stack activation recomputation")
-
-        # The released ``mtp.*`` namespace is DSpark, not legacy autoregressive MTP.
-        self.mtp_num_layers = 0
-        self.share_embeddings_and_output_weights = False
-        super().finalize()
-
     def _tokenizer_for_engram(self):
         if self.engram_config is None:
             return None
