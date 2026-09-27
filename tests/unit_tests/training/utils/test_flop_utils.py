@@ -16,6 +16,7 @@
 
 import subprocess
 import sys
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -3516,7 +3517,7 @@ class TestLoraSquadPackedFlopBranch:
 
 
 @pytest.mark.parametrize("householders, expected_layer", [(1, 784), (2, 1152), (3, 1520)])
-@pytest.mark.parametrize("spec_kind", ["module", "factory", "provider_factory"])
+@pytest.mark.parametrize("spec_kind", ["module", "factory", "provider_factory", "lazy_module"])
 def test_hybrid_gdp_flops(householders, expected_layer, spec_kind):
     from megatron.core.models.hybrid.hybrid_layer_specs import gated_delta_product_stack_spec
 
@@ -3525,6 +3526,12 @@ def test_hybrid_gdp_flops(householders, expected_layer, spec_kind):
         spec = lambda: gated_delta_product_stack_spec
     elif spec_kind == "provider_factory":
         spec = lambda provider: gated_delta_product_stack_spec
+    elif spec_kind == "lazy_module":
+        spec = deepcopy(gated_delta_product_stack_spec)
+        spec.submodules.mamba_layer.submodules.mixer.module = (
+            "megatron.core.ssm.gated_delta_product",
+            "GatedDeltaProductMixer",
+        )
     model = MockModelConfig(
         hybrid_layer_pattern="M",
         num_layers=1,

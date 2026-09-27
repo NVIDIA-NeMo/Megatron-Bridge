@@ -25,7 +25,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     get_hybrid_layer_counts,
     parse_hybrid_pattern,
 )
-from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.spec_utils import ModuleSpec, get_module
 from megatron.core.utils import get_attr_wrapped_model
 
 from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
@@ -59,7 +59,7 @@ def _uses_gated_delta_product(model_config: Any) -> bool:
         spec = spec(model_config) if inspect.signature(spec).parameters else spec()
     mamba_layer = getattr(getattr(spec, "submodules", None), "mamba_layer", None)
     mixer = getattr(getattr(mamba_layer, "submodules", None), "mixer", None)
-    module = mixer.module if isinstance(mixer, ModuleSpec) else mixer
+    module = get_module(mixer) if isinstance(mixer, ModuleSpec) else mixer
     if not isinstance(module, type):
         return False
     from megatron.core.ssm.gated_delta_product import GatedDeltaProductMixer
