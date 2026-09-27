@@ -18,8 +18,8 @@ from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
 )
 from megatron.bridge.perf_recipes.kimi.gb300.kimi_k2 import (
+    _build_kimi_k2_gb300_fp8mx,
     kimi_k2_pretrain_256gpu_gb300_bf16_config,
-    kimi_k2_pretrain_256gpu_gb300_fp8mx_config,
 )
 
 
@@ -51,7 +51,7 @@ def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
 
 def kimi_k2_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB300)."""
-    cfg = kimi_k2_pretrain_256gpu_gb300_fp8mx_config()
+    cfg = _build_kimi_k2_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

@@ -215,8 +215,17 @@ class MultiLoRALinear(AdapterWrapper):
         # forward never synchronizes each layer to recover split sizes.
         self.tokens_per_adapter_splits: Optional[Tuple[int, ...]] = None
         self.tokens_per_adapter_total: Optional[int] = None
-        device = next(to_wrap.parameters()).device
-        dtype = next(to_wrap.parameters()).dtype
+        # The buffers live where the adapters just built above live: that follows the
+        # active construction context (CPU initialization with a visible GPU, a
+        # ``torch.device("meta")`` build, or the accelerator), and it also covers a
+        # tied output layer (``skip_weight_param_allocation=True``) that owns no
+        # weight of its own. The dtype stays the compute dtype -- the wrapped weight's
+        # when there is one, else the model-parallel config's ``params_dtype`` -- because
+        # the adapters may still be fp32 here and the alpha/rank scaling must never
+        # promote the activation dtype.
+        device = next(self.adapters.parameters()).device
+        reference = next(to_wrap.parameters(), None)
+        dtype = reference.dtype if reference is not None else to_wrap.config.params_dtype
         # Non-persistent: slot lifecycle is externally managed, not checkpointed.
         self.register_buffer("alpha_values", torch.ones(n_adapters, dtype=dtype, device=device), persistent=False)
         self.register_buffer(
@@ -953,17 +962,67 @@ def install_moe_slot_routing(model) -> int:
     return installed
 
 
-def init_adapter_slot(model, idx: int, rank: int, alpha: float) -> None:
+def _reseed_rng_tracker(seed: int) -> None:
+    """Rebuild the CUDA RNG tracker's streams from ``seed`` with Megatron-Core's topology offsets.
+
+    Delegates to :func:`megatron.core.tensor_parallel.random.model_parallel_cuda_manual_seed`,
+    so every stream keeps the rank dependence the base weights were initialised with:
+    ``data-parallel-rng`` gets ``seed`` (equal on every rank), ``model-parallel-rng``
+    ``seed + 2718 + tp_rank`` and ``expert-parallel-rng`` ``seed + 1024 + 100 * ep_rank +
+    etp_rank``. TP and EP/ETP shards therefore draw distinct values while DP replicas
+    match. Like :func:`megatron.bridge.training.initialize._set_random_seed`, pipeline
+    stages are offset by ``100 * pp_rank`` so layer ``k`` of one stage does not reproduce
+    layer ``k`` of another. The caller snapshots and restores the tracker and the default
+    CUDA generator (which Megatron-Core reseeds as a side effect).
+    """
+    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+
+    if not parallel_state.model_parallel_is_initialized():
+        raise RuntimeError(
+            "init_adapter_slot(seed=...) requires megatron.core.parallel_state to be initialized: "
+            "the slot re-initialisation follows the model-parallel topology."
+        )
+    model_parallel_cuda_manual_seed(seed + 100 * parallel_state.get_pipeline_model_parallel_rank())
+
+
+def init_adapter_slot(model, idx: int, rank: int, alpha: float, seed: int | None = None) -> None:
     """Claim slot ``idx`` across every multi-LoRA layer for an adapter.
 
     A model-wide adapter is the set of slot-``idx`` chunks across all layers;
     this initialises that set with the given ``rank``/``alpha``. Thin iterator
     over the model — per-slot setup (rank/alpha bookkeeping + rank-mask
     invariant) lives on the layer itself in
-    :meth:`MultiLoRALinear.init_adapter_slot` /
+    :meth:`MultiLoRALinear.init_adapter_slot`.
+
+    Without ``seed`` the slot keeps whatever weights construction or the last
+    :func:`clear_adapter_slot` re-init left behind (DP-consistent but not
+    reproducible). With ``seed`` every layer's slot weights are re-initialised
+    deterministically first: the RNG-tracker streams are rebuilt from ``seed``
+    with Megatron-Core's own TP/EP/ETP-dependent offsets (see
+    :func:`_reseed_rng_tracker`) for the duration and restored afterwards. A given
+    seed therefore reproduces the same adapter weights on every run, DP replicas
+    stay identical, and tensor- or expert-parallel shards keep distinct draws
+    exactly as the base weights do (layers draw sequentially from the streams).
     """
-    for module in _iter_multi_lora_modules(model):
-        module.init_adapter_slot(idx, rank, alpha)
+    if seed is None:
+        for module in _iter_multi_lora_modules(model):
+            module.init_adapter_slot(idx, rank, alpha)
+        return
+
+    from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
+
+    tracker = get_cuda_rng_tracker()
+    saved_states = tracker.get_states()
+    saved_default_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
+    try:
+        _reseed_rng_tracker(seed)
+        for module in _iter_multi_lora_modules(model):
+            module.reset_adapter(idx)
+            module.init_adapter_slot(idx, rank, alpha)
+    finally:
+        tracker.set_states(saved_states)
+        if saved_default_rng_state is not None:
+            torch.cuda.set_rng_state(saved_default_rng_state)
 
 
 def clear_adapter_slot(model, idx: int) -> None:

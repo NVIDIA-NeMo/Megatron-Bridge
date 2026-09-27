@@ -34,6 +34,10 @@ navigation:
   - page: Supported Models
     path: ./nightly/pages/models/README.mdx
   - contents:
+    - page: BAGEL-7B-MoT
+      path: ./nightly/pages/models/bagel/bagel.mdx
+    section: BAGEL
+  - contents:
     - page: EXAONE and K-EXAONE
       path: ./nightly/pages/models/exaone/exaone.mdx
     section: EXAONE
@@ -130,6 +134,8 @@ navigation:
       path: ./nightly/pages/models/nemotron/nemotron3-super.mdx
     - page: Nemotron 3.5 Lightning
       path: ./nightly/pages/models/nemotron/nemotron3.5-lightning.mdx
+    - page: Nemotron 3.5 Super VL
+      path: ./nightly/pages/models/nemotron/nemotron3.5-super-vl.mdx
     - page: Nemotron 3 Ultra
       path: ./nightly/pages/models/nemotron/nemotron3-ultra.mdx
     - page: Nemotron Nano V2 VL

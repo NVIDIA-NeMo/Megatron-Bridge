@@ -297,6 +297,41 @@ class NemotronOmniModel(MegatronModule):
         self.sound_model = sound_model
         self.sound_projection = sound_projection
 
+        self._expose_language_model_for_cuda_graph_helper()
+
+    def _expose_language_model_for_cuda_graph_helper(self) -> None:
+        """Expose language-model fields on the multimodal root when CUDA graphs are enabled.
+
+        MCore's CUDA graph helper discovers ``decoder`` on the top-level model,
+        while Nemotron Omni stores it below ``language_model``. Properties
+        expose the nested modules without registering duplicate root aliases or
+        changing checkpoint keys.
+        """
+
+        llm_cuda_graph_enabled = (
+            self.language_model is not None
+            and getattr(self.language_model.config, "cuda_graph_impl", "none") != "none"
+        )
+        if not llm_cuda_graph_enabled:
+            return
+        assert not self.language_model.config.variable_seq_lengths, (
+            "Nemotron Omni with CUDA graphs requires fixed sequence lengths "
+            "(variable_seq_lengths=False). Disable variable-length inputs or turn off CUDA graphs."
+        )
+        self.position_embedding_type = self.language_model.position_embedding_type
+
+    @property
+    def rotary_pos_emb(self):
+        """Expose the nested language model's rotary embeddings to MCore helpers."""
+
+        return getattr(self.language_model, "rotary_pos_emb", None)
+
+    @property
+    def decoder(self):
+        """Expose the nested language decoder without registering a module alias."""
+
+        return getattr(self.language_model, "decoder", None)
+
     def shared_embedding_or_output_weight(self):
         """Expose the language embedding for Megatron gradient finalization."""
 
@@ -927,10 +962,6 @@ class NemotronOmniModel(MegatronModule):
         if combined_embeddings is not None and not mtp_enabled:
             lm_input_ids = None
 
-        # TODO(https://github.com/NVIDIA/Megatron-LM/issues/6111): Forward the
-        # CP/SP-local padding_mask once MCore's expert-bias router supports it.
-        # Until then, packed alignment gaps remain loss-masked but are counted
-        # by MoE router auxiliary statistics.
         output = self.language_model(
             input_ids=lm_input_ids,
             position_ids=position_ids,
@@ -942,6 +973,7 @@ class NemotronOmniModel(MegatronModule):
             inference_params=inference_params,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=language_packed_seq_params,
+            padding_mask=padding_mask,
         )
         if return_sliced_loss_mask:
             return output, loss_mask

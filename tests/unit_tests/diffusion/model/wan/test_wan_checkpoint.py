@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -20,6 +19,7 @@ import torch
 from megatron.core.dist_checkpointing import load, save
 from megatron.core.dist_checkpointing.optimizer import make_sharded_optimizer_tensor
 from megatron.core.models.common.vision_module.vision_module import VisionModule
+from megatron.core.transformer import TransformerConfig
 from torch import nn
 
 from megatron.bridge.diffusion.models.wan.wan_model import WanModel
@@ -31,7 +31,7 @@ pytestmark = [pytest.mark.unit]
 def _tiny_wan(value: float) -> WanModel:
     """Build the smallest WAN module that still exercises its checkpoint methods."""
     model = WanModel.__new__(WanModel)
-    VisionModule.__init__(model, SimpleNamespace())
+    VisionModule.__init__(model, TransformerConfig(num_layers=1, hidden_size=1, num_attention_heads=1))
     model.register_parameter("weight", nn.Parameter(torch.tensor([value], dtype=torch.float32)))
     model.tp_group = torch.distributed.group.WORLD
     return model
@@ -70,7 +70,11 @@ def test_wan_checkpoint_round_trip_strict(tmp_path):
         assert source_model_state.keys() == source.state_dict().keys()
         source_optimizer_state = _optimizer_state(source_model_state, 3.0)
 
-        with patch("torch.cuda.current_device", return_value="cpu"), patch("torch.cuda.synchronize"):
+        with (
+            patch("torch.cuda.is_available", return_value=False),
+            patch("torch.cuda.current_device", return_value="cpu"),
+            patch("torch.cuda.synchronize"),
+        ):
             save(
                 {"model": source_model_state, "optimizer": source_optimizer_state},
                 checkpoint_dir,

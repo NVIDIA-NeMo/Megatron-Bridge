@@ -438,7 +438,10 @@ class TestAbortCheckpoint:
 
     def test_abort_checkpoint_resets_async_results_queues(self):
         """Test AbortCheckpoint resets async result queue owners for a retry."""
-        from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        try:
+            from megatron.core.dist_checkpointing.strategies import filesystem_async as mcore_filesystem_async
+        except ImportError:
+            mcore_filesystem_async = None
         from nvidia_resiliency_ext.checkpointing.async_ckpt import filesystem_async as nvrx_filesystem_async
 
         mock_config = MagicMock(spec=InProcessRestartConfig)
@@ -461,7 +464,8 @@ class TestAbortCheckpoint:
         mock_global_state.async_calls_queue = None
         mock_mcore_results_queue = MagicMock()
         mock_nvrx_results_queue = MagicMock()
-        mcore_filesystem_async._results_queue = mock_mcore_results_queue
+        if mcore_filesystem_async is not None:
+            mcore_filesystem_async._results_queue = mock_mcore_results_queue
         nvrx_filesystem_async._results_queue = mock_nvrx_results_queue
 
         try:
@@ -480,12 +484,15 @@ class TestAbortCheckpoint:
                 frozen_state = MagicMock()
                 assert abort_checkpoint(frozen_state) is frozen_state
 
-            mock_mcore_results_queue._manager.shutdown.assert_called_once_with()
+            if mcore_filesystem_async is not None:
+                mock_mcore_results_queue._manager.shutdown.assert_called_once_with()
             mock_nvrx_results_queue._manager.shutdown.assert_called_once_with()
-            assert mcore_filesystem_async._results_queue is None
+            if mcore_filesystem_async is not None:
+                assert mcore_filesystem_async._results_queue is None
             assert nvrx_filesystem_async._results_queue is None
         finally:
-            mcore_filesystem_async._results_queue = None
+            if mcore_filesystem_async is not None:
+                mcore_filesystem_async._results_queue = None
             nvrx_filesystem_async._results_queue = None
 
     def test_abort_checkpoint_with_async_calls_queue(self):
@@ -510,7 +517,7 @@ class TestAbortCheckpoint:
                             async_calls_queue.close(abort=True)
                             mock_global_state._async_calls_queue = None
 
-                        from megatron.core.dist_checkpointing.strategies.filesystem_async import _results_queue
+                        from nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async import _results_queue
 
                         global _results_queue
 
