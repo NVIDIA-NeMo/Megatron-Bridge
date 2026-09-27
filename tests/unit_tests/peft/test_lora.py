@@ -470,6 +470,26 @@ class TestLoRA:
             assert fc1_out.shape == (batch_size, seq_len, 2048)
             assert fc2_out.shape == (batch_size, seq_len, 512)
 
+    def test_lora_forward_casts_mixed_dtype_adapter_branch(self):
+        """LoRA may use lower-precision weights than an FP32 base projection."""
+        base = nn.Linear(4, 3, bias=False, dtype=torch.float32)
+        adapter = LinearAdapter(base, dim=2, alpha=2, lora_dtype=torch.bfloat16)
+        with torch.no_grad():
+            adapter.linear_out.weight.fill_(0.25)
+        wrapped = LoRALinear(base, adapter)
+        x = torch.randn(2, 4, dtype=torch.float32, requires_grad=True)
+
+        output = wrapped(x)
+        expected = base(x) + adapter(x.to(torch.bfloat16)).to(torch.float32)
+
+        assert output.dtype == torch.float32
+        torch.testing.assert_close(output, expected)
+        output.sum().backward()
+        assert x.grad is not None
+        assert x.grad.dtype == torch.float32
+        assert adapter.linear_in.weight.grad is not None
+        assert adapter.linear_in.weight.grad.dtype == torch.bfloat16
+
     def test_lora_training_vs_inference_mode(self):
         """Test LoRA behavior in training vs inference mode."""
         model = SimpleModel()
