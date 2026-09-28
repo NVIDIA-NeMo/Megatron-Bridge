@@ -1630,7 +1630,11 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Replicate weight to all TP ranks."""
-        if hasattr(megatron_module, "weight"):
+        target_name = str(self.megatron_param).rsplit(".", 1)[-1]
+        target = getattr(megatron_module, target_name, None)
+        if isinstance(target, torch.Tensor):
+            target_device = target.device
+        elif hasattr(megatron_module, "weight"):
             target_device = megatron_module.weight.device
         else:
             # the parameter may not be called "weight"

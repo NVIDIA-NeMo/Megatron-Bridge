@@ -30,6 +30,7 @@ The checkpoint is a VL model (``Qwen4ExpForConditionalGeneration``); only the la
 bridged, to :class:`~megatron.core.models.gpt.gpt_model.GPTModel`. The vision tower is not built.
 """
 
+import os
 import re
 from typing import Callable, Dict, Mapping, Optional
 
@@ -172,6 +173,8 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                 lambda i: shards[i], self.num_shards, total, shards[0].shape[0], self.tp_rank, self.tp_size
             )
         target = megatron_module.weight
+        if hasattr(megatron_module, "_table_loaded"):
+            megatron_module._table_loaded = True
         return rows.to(device=target.device, dtype=target.dtype)
 
     def megatron_to_hf(
@@ -183,6 +186,8 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         export loop iterates to it, so all TP ranks must consume the shards in the same order --
         which the export does, and which a ``dict(...)`` / ``.items()`` traversal preserves.
         """
+        if os.environ.get("QWEN48_PLE_CPU_OFFLOAD") == "1":
+            return _PLEHostShardExport(self, megatron_weights)
         megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.megatron_param))
         if megatron_weights is None:
             return {}
@@ -223,6 +228,62 @@ class _PLEShardExport(Mapping[str, torch.Tensor]):
 
     def __getitem__(self, name: str) -> torch.Tensor:
         return self._mapping.gather_shard(self._local_rows, self._index[name])
+
+    def __iter__(self):
+        return iter(self._names)
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+
+class _PLEHostShardExport(Mapping[str, torch.Tensor]):
+    """Stream pinned TP rows through bounded GPU PP/TP collectives for HF export."""
+
+    def __init__(self, mapping: PLENGramEmbeddingMapping, local_rows: Optional[torch.Tensor]):
+        self._mapping = mapping
+        self._local_rows = local_rows
+        self._names = [mapping.hf_param[f"shard_{i}"] for i in range(mapping.num_shards)]
+        self._index = {name: i for i, name in enumerate(self._names)}
+        if mapping.pp_size > 1:
+            specs = [None] * mapping.pp_size
+            spec = (tuple(local_rows.shape), local_rows.dtype) if local_rows is not None else None
+            torch.distributed.all_gather_object(specs, spec, group=mapping.pp_group)
+            owners = [(rank, item) for rank, item in enumerate(specs) if item is not None]
+            if len(owners) != 1:
+                raise ValueError(f"Expected one PP owner for host PLE table, got {owners}")
+            self._source_rank, (self._shape, self._dtype) = owners[0]
+            self._source_global_rank = torch.distributed.get_global_rank(mapping.pp_group, self._source_rank)
+        else:
+            if local_rows is None:
+                raise ValueError("Missing local PLE table for HF export")
+            self._shape, self._dtype = tuple(local_rows.shape), local_rows.dtype
+            self._source_global_rank = None
+
+    def __getitem__(self, name: str) -> torch.Tensor:
+        mapping = self._mapping
+        shard_index = self._index[name]
+        rows_per_rank, width = self._shape
+        total = rows_per_rank * mapping.tp_size
+        shard_rows = -(-total // mapping.num_shards)
+        start, end = shard_index * shard_rows, min(total, (shard_index + 1) * shard_rows)
+        result = torch.empty(end - start, width, dtype=self._dtype, device="cpu")
+        chunk_rows = max(1, (16 << 20) // (width * result.element_size()))
+        rank_start = mapping.tp_rank * rows_per_rank
+        device = torch.device("cuda", torch.cuda.current_device())
+        for chunk_start in range(start, end, chunk_rows):
+            chunk_end = min(end, chunk_start + chunk_rows)
+            local = torch.zeros(chunk_end - chunk_start, width, dtype=self._dtype, device=device)
+            lo, hi = max(chunk_start, rank_start), min(chunk_end, rank_start + rows_per_rank)
+            if hi > lo and self._local_rows is not None:
+                local[lo - chunk_start : hi - chunk_start].copy_(
+                    self._local_rows[lo - rank_start : hi - rank_start], non_blocking=False
+                )
+            if mapping.pp_size > 1:
+                torch.distributed.broadcast(local, src=self._source_global_rank, group=mapping.pp_group)
+            if mapping.tp_size > 1:
+                torch.distributed.all_reduce(local, group=mapping.tp_group)
+            result[chunk_start - start : chunk_end - start].copy_(local)
+        return result
 
     def __iter__(self):
         return iter(self._names)
@@ -521,6 +582,8 @@ class Qwen4ExpBridge(MegatronModelBridge):
         if isinstance(hf_param, dict) and hf_param and all(k.startswith("shard_") for k in hf_param):
             num_shards = len(hf_param)
             shard_names = [hf_param[f"shard_{i}"] for i in range(num_shards)]
+            scale_name = shard_names[0].replace(".shard_0.weight", ".weight_scale")
+            scale = hf_state_dict[scale_name] if scale_name in hf_state_dict else None
             if parallel_state.is_initialized():
                 tp_rank = parallel_state.get_tensor_model_parallel_rank()
                 tp_size = parallel_state.get_tensor_model_parallel_world_size()
@@ -535,7 +598,12 @@ class Qwen4ExpBridge(MegatronModelBridge):
                 total = shard_rows
 
             def load_shard(i: int) -> torch.Tensor:
-                return cache[i] if i in cache else hf_state_dict[shard_names[i]]
+                shard = cache[i] if i in cache else hf_state_dict[shard_names[i]]
+                if shard.dtype in (torch.float8_e4m3fn, torch.float8_e5m2):
+                    if scale is None:
+                        raise ValueError(f"FP8 PLE shard requires {scale_name}")
+                    return shard.float() * scale.float()
+                return shard
 
             rows = ple_local_rows_from_shards(load_shard, num_shards, total, shard_rows, tp_rank, tp_size)
             return {"local_rows": rows}

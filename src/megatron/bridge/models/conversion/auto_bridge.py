@@ -169,6 +169,19 @@ def _saved_config_disables_mtp(path: str | Path) -> bool:
         return _config_disables_mtp(json.load(f))
 
 
+def _ple_fp8_source_scale_keys(source: SafeTensorsStateSource) -> tuple[str, ...]:
+    """Return exact PLE scale keys consumed when FP8 host rows are dequantized."""
+    keys = source.get_all_keys()
+    suffix = ".ple.ple_embedding.ngram_embedding.weight_scale"
+    scales = tuple(sorted(key for key in keys if key.endswith(suffix)))
+    # save_generator currently filters by prefix; reject a collision rather than
+    # silently dropping another source tensor alongside a scale.
+    for scale in scales:
+        if any(key != scale and key.startswith(scale) for key in keys):
+            raise ValueError(f"PLE scale key prefix collision: {scale}")
+    return scales
+
+
 def _mtp_source_key_prefixes(source: Any, *configs: Any) -> tuple[str, ...]:
     """Source-checkpoint key prefixes for MTP/nextn tensors that must be ignored
     when exporting a model built without an MTP head.
@@ -1341,7 +1354,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 or _model_omits_mtp(model_config)
             )
             ignored_source_key_prefixes = (
-                _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
+                (_mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ())
+                + _ple_fp8_source_scale_keys(source)
             ) or None
             source.save_generator(
                 generator,
