@@ -228,7 +228,12 @@ def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(tttt|)*14tmL"
+    layout = cfg.model.pipeline_model_parallel_layout
+    assert [stage.count("decoder") for stage in layout] == [8] * 15 + [2]
+    assert [len(stage) for stage in cfg.model.hybrid_layer_pattern.split("|")] == [8] * 15 + [2]
+    assert layout[0][0] == "embedding"
+    assert layout[-1][-2:] == ["mtp", "loss"]
+    assert cfg.model.num_layers == 122
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_token_dispatcher_type == "flex"

@@ -61,6 +61,7 @@ Megatron-Core prerequisites:
   - Separate MTP e_proj / h_proj modules with hyper-connections
 """
 
+from collections.abc import Sequence
 from typing import Dict, Mapping
 
 import torch
@@ -137,45 +138,87 @@ def deepseek_v4_supports_fused_dsa_kernels() -> bool:
     )
 
 
-def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
-    """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
+def set_deepseek_v4_pipeline_model_parallel_layout(
+    model_cfg: MLAModelProvider, *, logical_layers_per_stage: Sequence[int] | None = None
+) -> None:
+    """Set matching native hybrid segments and pipeline layout metadata.
 
-    DeepSeek-V4 uses hash-routed MoE layers that must co-locate with the
-    embedding on the first pipeline stage, so an explicit
-    ``pipeline_model_parallel_layout`` is required whenever
-    ``pipeline_model_parallel_size > 1``. This builds an even decoder split with
-    the embedding on the first stage and the MTP/loss layers on the last stage.
+    DSv4 logical blocks contain an attention layer followed by a MoE layer.
+    Keep those pairs together while splitting across PP/VPP stages. The native
+    pattern controls MCore's layer allocation; the layout metadata records one
+    decoder entry per physical layer, plus embedding and MTP/loss placement.
+    Configurations without a hybrid pattern retain the legacy GPT layout.
 
     Args:
-        model_cfg: The DeepSeek-V4 model provider to configure in place.
+        model_cfg: DeepSeek-V4 provider to configure in place.
+        logical_layers_per_stage: Optional block counts in VPP-major, PP-minor
+            order. Otherwise distribute logical blocks as evenly as possible.
     """
     pp_size = model_cfg.pipeline_model_parallel_size or 1
-    if pp_size <= 1:
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None) or 1
+    if pp_size < 1 or vp_size < 1:
+        raise ValueError("Pipeline and virtual pipeline sizes must be positive.")
+
+    pattern = getattr(model_cfg, "hybrid_layer_pattern", None)
+    main_pattern, separator, mtp_pattern = (pattern or "").partition(Symbols.MTP_SEPARATOR)
+    main_pattern = main_pattern.replace(Symbols.PIPE, "")
+    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
+    if pattern:
+        blocks = [main_pattern[i : i + 2] for i in range(0, len(main_pattern), 2)]
+        if any(
+            len(block) != 2 or block[0] not in {Symbols.WINDOW, Symbols.CSA, Symbols.HCA} or block[1] != Symbols.MOE
+            for block in blocks
+        ):
+            raise ValueError("DSv4 hybrid layers must alternate W/C/H attention and E MoE layers.")
+        if num_layers and num_layers != len(main_pattern):
+            raise ValueError("num_layers must match the physical DSv4 hybrid layer count.")
+    else:
+        blocks = ["decoder"] * num_layers
+
+    if pp_size == 1:
+        if vp_size != 1:
+            raise ValueError("DSv4 virtual pipeline parallelism requires PP > 1.")
+        model_cfg.pipeline_model_parallel_layout = None
+        if pattern:
+            model_cfg.hybrid_layer_pattern = main_pattern + separator + mtp_pattern
+        return
+    if not blocks:
         model_cfg.pipeline_model_parallel_layout = None
         return
 
-    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
-    if num_layers <= 0:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
+    num_stages = pp_size * vp_size
+    if logical_layers_per_stage is None:
+        base, extra = divmod(len(blocks), num_stages)
+        counts = [base + int(stage < extra) for stage in range(num_stages)]
+    else:
+        counts = list(logical_layers_per_stage)
+        if (
+            len(counts) != num_stages
+            or any(not isinstance(count, int) or count < 0 for count in counts)
+            or sum(counts) != len(blocks)
+        ):
+            raise ValueError(
+                f"Expected {num_stages} nonnegative stage counts summing to {len(blocks)} logical layers."
+            )
 
     mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
-    base_layers, extra_layers = divmod(num_layers, pp_size)
     layout: list[list[str]] = []
-    for pp_rank in range(pp_size):
-        stage: list[str] = []
-        if pp_rank == 0:
-            stage.append("embedding")
-
-        decoder_layers = base_layers + int(pp_rank < extra_layers)
-        stage.extend(["decoder"] * decoder_layers)
-
-        if pp_rank == pp_size - 1:
+    segments: list[str] = []
+    offset = 0
+    for stage_idx, count in enumerate(counts):
+        stage = ["embedding"] if stage_idx == 0 else []
+        stage.extend(["decoder"] * count * (2 if pattern else 1))
+        if stage_idx == num_stages - 1:
             stage.extend(["mtp"] * mtp_layers)
             stage.append("loss")
         layout.append(stage)
+        if pattern:
+            segments.append("".join(blocks[offset : offset + count]))
+        offset += count
 
     model_cfg.pipeline_model_parallel_layout = layout
+    if pattern:
+        model_cfg.hybrid_layer_pattern = Symbols.PIPE.join(segments) + separator + mtp_pattern
 
 
 def _dsv4_num_hash_layers(hf_config) -> int:

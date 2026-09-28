@@ -90,7 +90,8 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
 
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
+    # MCore does not support mHC recompute together with activation offloading.
+    cfg.model.recompute_modules = ["moe_act", "mla_up_proj"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = True
@@ -152,7 +153,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     # Keep cuDNN attention enabled when indexer training is disabled.
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
-    cfg.model.recompute_modules = ["moe_act", "mhc", "mla_up_proj"]
+    cfg.model.recompute_modules = ["moe_act", "mla_up_proj"]
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=2000,
@@ -208,7 +209,7 @@ def deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config() -> ConfigConta
     cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.pipeline_model_parallel_layout = "Et*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*3|t*2|t*2|t*2|t*2|t*2mL"
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
     cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
 
@@ -317,7 +318,7 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config() -> ConfigConta
     cfg.model.moe_router_fusion = True
 
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe", "mhc", "mla_up_proj", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "mla_up_proj", "layernorm"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.calculate_per_token_loss = True

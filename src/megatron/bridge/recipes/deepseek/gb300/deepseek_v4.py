@@ -33,12 +33,7 @@ DEEPSEEK_V4_PRO_HF_PATH = "deepseek-ai/DeepSeek-V4-Pro"
 
 
 def deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
-    """Return the DeepSeek-V4-Pro GB300 pre-training base config.
-
-    DeepSeek-V4 still requires a compatible Megatron-Core development commit;
-    the Megatron-Core commit pinned by Megatron Bridge ``main`` is not a
-    supported runtime for this recipe.
-    """
+    """Return the DeepSeek-V4-Pro GB300 pre-training base config."""
     cfg = _pretrain_common()
     cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_PRO_HF_PATH, trust_remote_code=True).to_megatron_provider(
         load_weights=False

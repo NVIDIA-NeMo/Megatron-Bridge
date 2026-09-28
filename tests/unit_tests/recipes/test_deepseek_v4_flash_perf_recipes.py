@@ -49,6 +49,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.pipeline_model_parallel_layout is None
+    assert "|" not in cfg.model.hybrid_layer_pattern
+    assert len(cfg.model.hybrid_layer_pattern) == 86
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 1
 

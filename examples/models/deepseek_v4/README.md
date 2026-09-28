@@ -21,12 +21,28 @@ the requested Megatron training dtype.
 
 DeepSeek V4 training uses the native HybridModel, hash routing, and compressed
 sparse attention support in Megatron-LM `main`. These features are included in
-the repository's main-branch MCore pin. Select that pin and sync the environment:
+the repository's main-branch MCore pin for eager PP=1 training and checkpoint
+conversion. Select that pin and sync the environment:
 
 ```bash
 ./scripts/switch_mcore.sh main
 uv sync
 ```
+
+Pipeline recipes also require the native mHC PP/VPP support in
+[Megatron-LM #7336](https://github.com/NVIDIA/Megatron-LM/pull/7336).
+Recipes using Transformer Engine or full-iteration CUDA graphs require
+[Megatron-LM #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337).
+These capabilities are not included in the current main-branch pin. Use a
+compatible MCore revision containing the required changes for those recipes;
+the older `dev` revision uses different mHC configuration names and is not a
+direct replacement for this native-main bridge.
+
+Pipeline layouts split complete attention/MoE pairs in `hybrid_layer_pattern`,
+with matching physical-layer metadata for embedding and MTP/loss placement.
+The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
+The Pro benchmark also combines mHC CUDA graphs with recompute and activation
+offload, which remains unsupported by the main-based runtime above.
 
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
