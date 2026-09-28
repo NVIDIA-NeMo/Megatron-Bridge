@@ -1025,7 +1025,7 @@ def train_step(
                 val = torch.vstack(val).sum(dim=0)
                 dp_cp_group = get_data_distribution_group(pg_collection, cfg.model, with_context_parallel=True)
                 torch.distributed.all_reduce(val, group=dp_cp_group)
-                loss_reduced[key] = val[0] / val[1]
+                loss_reduced[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
             elif val[0].numel() == 1:
                 # legacy behavior, we average over the number of microbatches
                 val = torch.cat(val).mean()
