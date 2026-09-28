@@ -321,16 +321,22 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.fp8_output_proj = True
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
 
+    cfg.model.gradient_accumulation_fusion = False
+
+
     cfg.model.expert_model_parallel_size = 64
     cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
+    cfg.ddp.expert_outer_dp_sharding_strategy = "optim"
     cfg.ddp.num_distributed_optimizer_instances = 4
 
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
     cfg.model.average_in_collective = True
+    cfg.ddp.average_in_collective = True
 
     # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
     cfg.model.cuda_graph_impl = "full_iteration"
@@ -350,6 +356,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
 
+    cfg.model.mla_down_proj_fusion = True
+
     cfg.mixed_precision.fp8_dot_product_attention = False
 
     cfg.model.moe_router_force_load_balancing = True
@@ -358,6 +366,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_CUDNN_MXFP8_NORM_OUTPUT_IN_INPUT_DTYPE": 0,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
@@ -459,7 +468,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_partial_cg_dev_config() -> ConfigCon
 
     cfg.rng.te_rng_tracker = True
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(tttt|)*14tmL")
-    _enable_deepseek_precision_aware_optimizer(cfg)
+    # _enable_deepseek_precision_aware_optimizer(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
