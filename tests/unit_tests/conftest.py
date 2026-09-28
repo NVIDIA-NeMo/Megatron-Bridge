@@ -95,13 +95,11 @@ def clear_lru_cache():
     from megatron.bridge.training.utils.checkpoint_utils import read_train_state
 
     # Clear the cache before each test
-    read_run_config.cache_clear()
     read_train_state.cache_clear()
 
     yield
 
     # Clear cache after each test as well
-    read_run_config.cache_clear()
     read_train_state.cache_clear()
 
 
