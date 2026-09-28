@@ -90,6 +90,7 @@ QWEN_VL_RECIPE_PREFIXES = ("qwen3_vl_", "qwen35_vl_")
 # the same forward step.
 RECIPE_FORWARD_STEP_PREFIXES = (
     ("bagel_", "bagel_step"),
+    ("nemotron_35_super_vl_", "nemotron_omni_step"),
     ("nemotron_nano_v2_vl_", "llava_step"),
     ("nemotron_omni_", "nemotron_omni_step"),
     ("qwen2_audio_", "audio_lm_step"),

@@ -33,6 +33,7 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
 """
 
 import copy
+import json
 import warnings
 from collections.abc import Iterable
 from dataclasses import fields
@@ -40,6 +41,7 @@ from pathlib import Path
 
 import torch
 from megatron.core.activations import squared_relu
+from safetensors.torch import save_file
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import (
@@ -166,6 +168,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
 
         provider_kwargs["num_layers"] = None
+        hybrid_pattern = NemotronHBridge._hf_hybrid_pattern(llm_config)
+        if hybrid_pattern is None:
+            raise ValueError("Nemotron Omni requires hybrid_override_pattern or layers_block_type in llm_config.")
+        provider_kwargs["hybrid_layer_pattern"] = hybrid_pattern
         provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
 
         if hasattr(hf_config, "projector_hidden_size"):
@@ -208,7 +214,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             provider_kwargs["temporal_ckpt_compat"] = True
 
         provider = NemotronOmniModelProvider(**provider_kwargs)
-        provider.mtp_hybrid_override_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
+        NemotronHBridge._configure_mtp_provider(provider, llm_config)
         return provider
 
     @classmethod
@@ -228,6 +234,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
     # ------------------------------------------------------------------
     # Parameter mapping
     # ------------------------------------------------------------------
+
+    def _mtp_hf_prefix(self) -> str:
+        """Return the HF prefix applied to Nemotron-H MTP weights."""
+        return ""
 
     def _llava_mapping_registry(self) -> MegatronMappingRegistry:
         """Build mappings for the historical LLaVA wrapper namespace."""
@@ -310,7 +320,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
                     megatron_prefix="language_model.",
                     # The public Omni checkpoint keeps MTP at the top level,
                     # while the rest of NemotronH lives under language_model.
-                    hf_prefix="" if is_mtp else "language_model.",
+                    hf_prefix=self._mtp_hf_prefix() if is_mtp else "language_model.",
                 )
             )
 
@@ -363,6 +373,183 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             if not cpu and tensor.device.type == "cpu" and torch.cuda.is_available():
                 tensor = tensor.to(device=torch.cuda.current_device())
             yield from HFWeightTuple(name, tensor).iter_finalized(cpu=cpu, megatron_param_names=passthrough_sources)
+
+
+@MegatronModelBridge.register_bridge(
+    source="NemotronH_Omni_Reasoning_V3",
+    target=NemotronOmniModel,
+    provider=NemotronOmniModelProvider,
+    model_type="nemotron_h_omni",
+)
+class Nemotron35SuperVLBridge(NemotronOmniBridge):
+    """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
+
+    _HF_SUMMARY_IDXS_BUFFER = "vision_model.summary_idxs"
+    # A previous export includes this derived buffer in its source index. Keep
+    # it in the stream so strict re-export succeeds before postprocessing runs.
+    _HF_PASSTHROUGH_KEYS = (*NemotronOmniBridge._HF_PASSTHROUGH_KEYS, _HF_SUMMARY_IDXS_BUFFER)
+    _HF_SHARED_MTP_BLOCKS = 1
+    _MCORE_MTP_PREDICTION_DEPTHS = 2
+
+    @classmethod
+    def _validate_shared_mtp_config(cls, llm_config) -> None:
+        """Validate the serialized shared block before choosing training depths."""
+        blocks, pattern = NemotronHBridge._hf_mtp_config(llm_config)
+        if blocks != cls._HF_SHARED_MTP_BLOCKS:
+            raise ValueError(f"Nemotron 3.5 Super VL requires exactly one serialized shared MTP block; got {blocks}.")
+        if pattern != "*E" or not getattr(llm_config, "mtp_use_repeated_layer", True):
+            raise ValueError("Nemotron 3.5 Super VL requires a repeated attention+MoE MTP block.")
+
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """Select the native Nemotron-H language checkpoint, excluding all media.
+
+        Standalone Nemotron-H configs express the runtime prediction depth in
+        num_nextn_predict_layers. Super VL instead stores a serialized-block
+        count there; normalize it without duplicating the shared MTP weights.
+        """
+        config = copy.deepcopy(hf_pretrained.config.llm_config)
+        self._validate_shared_mtp_config(config)
+        config.architectures = ["NemotronHForCausalLM"]
+        if hasattr(config, "auto_map"):
+            del config.auto_map
+        config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+        config.mtp_use_repeated_layer = True
+        kwargs = dict(hf_pretrained.init_kwargs)
+        if kwargs.get("subfolder"):
+            raise ValueError(
+                "text_only=True does not yet support HF subfolder checkpoints; use a local model directory."
+            )
+        revision = getattr(hf_pretrained.config, "_commit_hash", None) or kwargs.get("revision")
+        if revision is not None:
+            kwargs["revision"] = revision
+        text = PreTrainedCausalLM(
+            hf_pretrained.model_name_or_path,
+            device=hf_pretrained.device,
+            torch_dtype=hf_pretrained.torch_dtype,
+            trust_remote_code=hf_pretrained.trust_remote_code,
+            **kwargs,
+        )
+        text.config = config
+        text._text_only = True
+        # Reuse the native text bridge with a namespace-local checkpoint view,
+        # as MIMO reuses component bridges with namespace-local registries.
+        text._state_dict_accessor = StateDict(
+            SafeTensorsStateSource(
+                hf_pretrained.model_name_or_path,
+                key_prefix="language_model.",
+                revision=revision,
+                hub_kwargs={
+                    key: kwargs[key]
+                    for key in ("token", "cache_dir", "local_files_only", "force_download")
+                    if key in kwargs
+                },
+            )
+        )
+        text._processor = None
+        text._image_processor = None
+        text.custom_file_patterns = []
+        return text
+
+    def postprocess_hf_export_artifacts(self, path: Path) -> None:
+        """Require the direct Transformers entrypoint used by Super VL exports."""
+        modeling_path = path / "modeling_nemotron_h_omni.py"
+        if not modeling_path.is_file():
+            raise FileNotFoundError(f"Nemotron 3.5 Super VL export is missing required artifact: {modeling_path}")
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:
+        """Create the shared Omni provider with Super-VL checkpoint features enabled."""
+        provider = super().provider_bridge(hf_pretrained)
+        hf_config = hf_pretrained.config
+        temporal_patch_dim = int(getattr(hf_config, "video_temporal_patch_size", 1) or 1)
+
+        # Super-VL serializes one shared MTP block in HF. Megatron training applies
+        # that block at two prediction depths, with the attention+MoE parameters
+        # shared across both applications.
+        self._validate_shared_mtp_config(hf_config.llm_config)
+        provider.mtp_num_layers = self._MCORE_MTP_PREDICTION_DEPTHS
+
+        provider.temporal_patch_dim = temporal_patch_dim
+        provider.separate_video_embedder = temporal_patch_dim > 1
+        # The Super-VL checkpoint carries a trained video embedder. Do not
+        # synthesize one from image weights if that parameter is missing.
+        provider.temporal_ckpt_compat = False
+        provider.vision_final_layernorm = bool(provider.mtp_num_layers)
+        return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Preserve HF's single-block serialization for the repeated MTP head."""
+        if (
+            provider.mtp_num_layers != cls._MCORE_MTP_PREDICTION_DEPTHS
+            or provider.mtp_hybrid_override_pattern != "*E"
+            or not provider.mtp_use_repeated_layer
+        ):
+            raise ValueError("Nemotron 3.5 Super VL export requires two repeated attention+MoE MTP depths.")
+
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config.pop("num_nextn_predict_layers", None)
+        hf_config["llm_config"] = {"num_nextn_predict_layers": cls._HF_SHARED_MTP_BLOCKS}
+        return hf_config
+
+    def postprocess_hf_export_weights(self, path: Path) -> None:
+        """Add the deterministic RADIO summary buffer omitted by the source index."""
+        index_path = path / "model.safetensors.index.json"
+        if not index_path.is_file():
+            raise FileNotFoundError(f"Nemotron 3.5 Super VL export is missing its weight index: {index_path}")
+
+        index = json.loads(index_path.read_text())
+        weight_map = index.get("weight_map")
+        if not isinstance(weight_map, dict):
+            raise ValueError(f"Nemotron 3.5 Super VL export has an invalid weight map: {index_path}")
+        if self._HF_SUMMARY_IDXS_BUFFER in weight_map:
+            return
+
+        config_path = path / "config.json"
+        config = json.loads(config_path.read_text())
+        summary_idxs = config.get("vision_config", {}).get("summary_idxs")
+        if (
+            not isinstance(summary_idxs, list)
+            or not summary_idxs
+            or not all(isinstance(value, int) for value in summary_idxs)
+        ):
+            raise ValueError(f"Nemotron 3.5 Super VL export has invalid vision summary indexes: {config_path}")
+
+        summary_tensor = torch.tensor(summary_idxs, dtype=torch.long)
+        shard_name = "model-summary-idxs.safetensors"
+        shard_path = path / shard_name
+        temporary_shard_path = path / f".{shard_name}.tmp"
+        save_file({self._HF_SUMMARY_IDXS_BUFFER: summary_tensor}, temporary_shard_path)
+        temporary_shard_path.replace(shard_path)
+
+        weight_map[self._HF_SUMMARY_IDXS_BUFFER] = shard_name
+        metadata = index.setdefault("metadata", {})
+        metadata["total_size"] = (
+            int(metadata.get("total_size", 0)) + summary_tensor.numel() * summary_tensor.element_size()
+        )
+        temporary_index_path = path / ".model.safetensors.index.json.tmp"
+        temporary_index_path.write_text(json.dumps(index, indent=4) + "\n")
+        temporary_index_path.replace(index_path)
+
+    def _mtp_hf_prefix(self) -> str:
+        """Nemotron 3.5 Super VL nests MTP below ``language_model``."""
+        return "language_model."
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Add the Super-VL vision final norm to the shared Omni mappings."""
+        mappings = list(super().mapping_registry().mappings)
+        mappings.extend(
+            [
+                AutoMapping(
+                    megatron_param="vision_model.decoder.final_layernorm.weight",
+                    hf_param="vision_projector.vision_final_layernorm.weight",
+                ),
+                AutoMapping(
+                    megatron_param="vision_model.decoder.final_layernorm.bias",
+                    hf_param="vision_projector.vision_final_layernorm.bias",
+                ),
+            ]
+        )
+        return MegatronMappingRegistry(*mappings)
 
 
 class NemotronOmniLlavaBridge(NemotronOmniBridge):

@@ -77,6 +77,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
 from megatron.bridge.utils import fusions
@@ -533,6 +534,13 @@ class MegatronModelBridge(
             path: Directory containing the exported Hugging Face artifacts.
         """
 
+    def postprocess_hf_export_weights(self, path: Path) -> None:
+        """Apply model-specific fixes after Hugging Face weights are saved.
+
+        Args:
+            path: Directory containing the complete exported Hugging Face checkpoint.
+        """
+
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
@@ -835,6 +843,14 @@ class MegatronModelBridge(
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
     MODEL_TYPE: str | None = None
+
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """Select a standalone language checkpoint view for an opted-in family.
+
+        Implementations must preserve language weights and tokenizer semantics
+        and return a config registered with the corresponding text bridge.
+        """
+        raise ValueError(f"{type(self).__name__} does not support text_only=True.")
 
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.

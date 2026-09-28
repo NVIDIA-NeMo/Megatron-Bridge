@@ -21,7 +21,7 @@ configuration field (``q_lora_rank``, ``output_projection_groups``,
 It is also a *hybrid* model: each logical DeepSeek-V4 block is expressed as two
 Megatron hybrid layers — an attention-only layer (``W``/``C``/``H`` symbol) and
 a MoE-only layer (``E`` symbol) — driven by ``hybrid_layer_pattern`` and built
-by :func:`hybrid_dsv4_stack_spec`. The hybrid ``provide()``/``finalize()`` logic
+by MCore's standard hybrid stack. The hybrid ``provide()``/``finalize()`` logic
 lives on :class:`HybridModelProvider`.
 
 This provider combines both. :class:`HybridModelProvider` is listed first so its

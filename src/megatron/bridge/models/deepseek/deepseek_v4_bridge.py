@@ -67,17 +67,6 @@ import torch
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 
-
-try:
-    from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_dsv4_stack_spec
-except ImportError:
-    # DeepSeek-V4 on HybridModel needs the DSv4 hybrid stack spec that megatron-core adds in
-    # its "Enable DeepSeek-v4 hybrid_model" series. Older pinned megatron-core lacks it: keep
-    # this module importable (the DSv4 hybrid tests are gated on that capability, and the real
-    # model build fails loudly on an unsupported core) rather than breaking the whole
-    # models package at import time.
-    hybrid_dsv4_stack_spec = None
-
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -90,6 +79,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import transformer_engine_hybrid_stack_spec
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
@@ -261,21 +251,10 @@ def _dsv4_compress_ratios(hf_config) -> list[int]:
 # translation used by the upstream ``hybrid_dsv4`` recipe.
 # ---------------------------------------------------------------------------
 
-# DSv4-specific hybrid layer symbols. An older megatron-core whose ``Symbols`` enum predates
-# the DSv4 additions has ATTENTION/MOE/MTP_SEPARATOR/PIPE but not WINDOW/CSA/HCA; fall back to
-# their canonical single-char values so this module stays importable (building a real DSv4
-# model still requires a core that understands these symbols).
-_SYM_WINDOW = getattr(Symbols, "WINDOW", "W")
-_SYM_CSA = getattr(Symbols, "CSA", "C")
-_SYM_HCA = getattr(Symbols, "HCA", "H")
-_SYM_MOE = getattr(Symbols, "MOE", "E")
-
-# Attention compression ratio -> hybrid layer symbol.
-_DSV4_RATIO_TO_HYBRID_SYMBOL = {0: _SYM_WINDOW, 4: _SYM_CSA, 128: _SYM_HCA}
-# Hybrid layer symbol -> attention compression ratio (inverse; W/E/others -> 0).
-_DSV4_HYBRID_SYMBOL_TO_RATIO = {_SYM_CSA: 4, _SYM_HCA: 128}
-# MTP depth pattern: DSv4 MTP layers use sliding-window attention (ratio 0) + MoE.
-_DSV4_MTP_HYBRID_PATTERN = _SYM_WINDOW + _SYM_MOE
+# Native symbols are available in both supported MCore pins.
+_DSV4_RATIO_TO_HYBRID_SYMBOL = {0: Symbols.WINDOW, 4: Symbols.CSA, 128: Symbols.HCA}
+_DSV4_HYBRID_SYMBOL_TO_RATIO = {symbol: ratio for ratio, symbol in _DSV4_RATIO_TO_HYBRID_SYMBOL.items()}
+_DSV4_MTP_HYBRID_PATTERN = Symbols.WINDOW + Symbols.MOE
 
 
 def _dsv4_hybrid_layer_pattern(compress_ratios: list[int], num_hidden_layers: int) -> str:
@@ -301,7 +280,7 @@ def _dsv4_hybrid_layer_pattern(compress_ratios: list[int], num_hidden_layers: in
                 f"Unsupported DeepSeek-V4 compression ratio {ratio!r}; expected one of "
                 f"{sorted(_DSV4_RATIO_TO_HYBRID_SYMBOL)}."
             ) from exc
-        parts.append(attn_symbol + _SYM_MOE)
+        parts.append(attn_symbol + Symbols.MOE)
     return "".join(parts)
 
 
@@ -469,7 +448,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     DeepSeek-V4 is built on Megatron-Core's :class:`HybridModel`: each logical
     DSv4 block is expressed as an attention-only hybrid layer (``W``/``C``/``H``)
     followed by a MoE-only hybrid layer (``E``), driven by ``hybrid_layer_pattern``
-    and :func:`hybrid_dsv4_stack_spec`. See the module docstring for the checkpoint
+    and :func:`transformer_engine_hybrid_stack_spec`. See the module docstring for the checkpoint
     naming implications of this split.
     """
 
@@ -519,10 +498,12 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.experimental_attention_variant = "dsv4_hybrid"
         provider.multi_latent_attention = True
         # HybridModel builds its heterogeneous per-layer stack from the hybrid layer
-        # pattern (set below) via ``hybrid_dsv4_stack_spec``. That config-aware spec
+        # pattern (set below) via the standard hybrid stack. That config-aware spec
         # reuses GPT's dsv4_hybrid attention module for the C/H/W symbols, so the
         # attention layers are numerically identical to the GPT-form dsv4_hybrid path.
-        provider.hybrid_stack_spec = hybrid_dsv4_stack_spec
+        # Keep a named factory so checkpoint reload does not deserialize the
+        # unused module templates in the expanded MCore stack.
+        provider.hybrid_stack_spec = transformer_engine_hybrid_stack_spec
         provider.qk_layernorm = True
         provider.normalization = "RMSNorm"
         provider.add_bias_linear = False
@@ -679,7 +660,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         main_pattern = hybrid_pattern.split(Symbols.MTP_SEPARATOR)[0].replace(Symbols.PIPE, "")
         attn_symbols = main_pattern[::2]
         num_hidden_layers = len(attn_symbols)
-        symbol_to_ratio = {_SYM_WINDOW: 0, _SYM_CSA: 4, _SYM_HCA: 128}
+        symbol_to_ratio = {Symbols.WINDOW: 0, Symbols.CSA: 4, Symbols.HCA: 128}
         flat_ratios = [symbol_to_ratio[symbol] for symbol in attn_symbols]
 
         hf_cfg["num_hidden_layers"] = num_hidden_layers

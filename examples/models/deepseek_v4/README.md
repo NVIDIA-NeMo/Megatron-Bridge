@@ -19,12 +19,9 @@ the requested Megatron training dtype.
 
 ## Runtime Requirements
 
-DeepSeek V4 training uses Megatron-LM `main` with the native feature series from
-[#6402](https://github.com/NVIDIA/Megatron-LM/pull/6402),
-[#6403](https://github.com/NVIDIA/Megatron-LM/pull/6403),
-[#6404](https://github.com/NVIDIA/Megatron-LM/pull/6404), and
-[#6405](https://github.com/NVIDIA/Megatron-LM/pull/6405). Use the Megatron Bridge
-`main`-branch MCore pin once it contains that series, then sync the environment:
+DeepSeek V4 training uses the native HybridModel, hash routing, and compressed
+sparse attention support in Megatron-LM `main`. These features are included in
+the repository's main-branch MCore pin. Select that pin and sync the environment:
 
 ```bash
 ./scripts/switch_mcore.sh main

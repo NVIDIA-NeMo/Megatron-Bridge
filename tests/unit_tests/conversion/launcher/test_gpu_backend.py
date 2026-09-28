@@ -301,9 +301,13 @@ class TestImportHfToMegatron:
 
 
 class TestExportMegatronToHf:
-    def test_export_uses_checkpoint_config_and_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch, tmp_path):
+    @pytest.mark.parametrize("text_only", [False, True])
+    def test_export_uses_checkpoint_config_and_does_not_move_loaded_model_to_cuda(
+        self, cli, monkeypatch, tmp_path, text_only
+    ):
         calls = []
         prepared_outputs = []
+        resolved = []
         checkpoint_config = types.SimpleNamespace(num_hidden_layers=2, num_nextn_predict_layers=0)
         reference_state_source = object()
         reference_pretrained = _FakeHfPretrained()
@@ -348,7 +352,8 @@ class TestExportMegatronToHf:
         monkeypatch.setattr(
             cli,
             "resolve_hf_model_revision",
-            lambda model, revision: f"{model}@{revision}" if revision else model,
+            lambda model, revision, **kwargs: resolved.append(kwargs)
+            or (f"{model}@{revision}" if revision else model),
         )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
         monkeypatch.setattr(cli.AutoBridge, "from_auto_config", fake_from_auto_config)
@@ -356,6 +361,7 @@ class TestExportMegatronToHf:
         checkpoint_path = tmp_path / "iter_0000000"
         checkpoint_path.mkdir()
         cli.export_checkpoint.__wrapped__(
+            text_only=text_only,
             hf_model="hf",
             hf_revision="0123456789abcdef",  # pragma: allowlist secret
             megatron_path=str(checkpoint_path),
@@ -383,11 +389,15 @@ class TestExportMegatronToHf:
 
         reference_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert reference_call[1] == ("hf",)
-        assert reference_call[2] == {
+        expected_kwargs = {
             "trust_remote_code": True,
             "torch_dtype": torch.bfloat16,
             "revision": "0123456789abcdef",  # pragma: allowlist secret
         }
+        if text_only:
+            expected_kwargs["text_only"] = True
+        assert reference_call[2] == expected_kwargs
+        assert resolved == ([{"config_only": True}] if text_only else [{}])
 
         bridge_call = next(call for call in calls if call[0] == "from_auto_config")
         assert bridge_call[1] == (str(checkpoint_path), "hf@0123456789abcdef")  # pragma: allowlist secret
