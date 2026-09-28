@@ -4836,6 +4836,66 @@ class TestCheckpointPathOverride:
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
 
+    @patch("megatron.bridge.training.checkpointing.mcore_utils", spec=[])
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_without_gtp_padding_helpers(self, mock_dist_ckpt, mock_strategy_cls, _mock_mcore_utils):
+        from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
+
+        mock_strategy_cls.return_value = Mock()
+        mock_dist_ckpt.load.return_value = {"model": "sharded_data"}
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+        sharded_state_dict = {"model": {}}
+
+        state_dict, _, _, _ = _load_global_dist_base_checkpoint(
+            load_dir="/checkpoints",
+            ckpt_cfg=CheckpointConfig(),
+            rank0=False,
+            sharded_state_dict=sharded_state_dict,
+            iteration=1000,
+            release=False,
+            pg_collection=mock_pg,
+            cfg=Mock(),
+        )
+
+        assert state_dict == {"model": "sharded_data"}
+        assert sharded_state_dict == {"model": {}}
+        mock_dist_ckpt.load.assert_called_once()
+
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_applies_supported_gtp_padding_helpers(self, mock_dist_ckpt, mock_strategy_cls):
+        from types import SimpleNamespace
+
+        from megatron.bridge.training import checkpointing
+
+        mock_strategy_cls.return_value = Mock()
+        mock_dist_ckpt.load.return_value = {"model": "sharded_data"}
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+        sharded_state_dict = {"model": {}}
+        mock_mcore_utils = Mock()
+        mock_mcore_utils.resolve_gtp_pad_for_alignment.return_value = 32
+
+        with patch.object(checkpointing, "mcore_utils", mock_mcore_utils):
+            checkpointing._load_global_dist_base_checkpoint(
+                load_dir="/checkpoints",
+                ckpt_cfg=CheckpointConfig(),
+                rank0=False,
+                sharded_state_dict=sharded_state_dict,
+                iteration=None,
+                release=False,
+                checkpoint_path_override="/direct/iter_0001000",
+                pg_collection=mock_pg,
+                cfg=SimpleNamespace(model=SimpleNamespace(fp4=True, fp8_recipe="mxfp8", fp8=True)),
+            )
+
+        mock_mcore_utils.resolve_gtp_pad_for_alignment.assert_called_once_with(fp4=True, fp8_recipe="mxfp8", fp8=True)
+        mock_mcore_utils.grant_shape_mismatch_for_gtp_padding.assert_called_once_with(
+            sharded_state_dict, "/direct/iter_0001000", 32
+        )
+
     @pytest.mark.parametrize("strictness", ["return_unexpected", "return_all"])
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")

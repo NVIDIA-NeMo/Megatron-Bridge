@@ -16,12 +16,14 @@ import os
 import re
 import types
 import warnings
+from collections.abc import Iterable
 from datetime import timedelta
 from pathlib import Path
 
 import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
+from megatron.core import _rank_utils
 from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
 from megatron.core._slurm_utils import resolve_slurm_rank
 from megatron.core.transformer.module import Float16Module
@@ -41,6 +43,13 @@ try:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, Float16Module)
 except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
+
+
+def set_default_log_ranks(ranks: Iterable[int]) -> None:
+    """Set MCore's default logging ranks when the pinned revision supports it."""
+    setter = getattr(_rank_utils, "set_default_log_ranks", None)
+    if setter is not None:
+        setter(ranks)
 
 
 def get_rank_safe() -> int:

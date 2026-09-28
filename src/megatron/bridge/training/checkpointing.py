@@ -36,6 +36,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from megatron.core import dist_checkpointing, tensor_parallel
+from megatron.core import utils as mcore_utils
 from megatron.core.dist_checkpointing.dict_utils import nested_values
 from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedStateDict, ShardedTensor
 from megatron.core.dist_checkpointing.serialization import StateDict
@@ -56,13 +57,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import (
-    get_pg_rank,
-    get_pg_size,
-    grant_shape_mismatch_for_gtp_padding,
-    resolve_gtp_pad_for_alignment,
-    unwrap_model,
-)
+from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -3867,13 +3862,15 @@ def _load_global_dist_base_checkpoint(
     validate_sharding_integrity = True
     if is_megatron_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
         validate_sharding_integrity = False
-    if cfg is not None:
-        alignment = resolve_gtp_pad_for_alignment(
+    resolve_gtp_alignment = getattr(mcore_utils, "resolve_gtp_pad_for_alignment", None)
+    grant_gtp_shape_mismatch = getattr(mcore_utils, "grant_shape_mismatch_for_gtp_padding", None)
+    if cfg is not None and resolve_gtp_alignment is not None and grant_gtp_shape_mismatch is not None:
+        alignment = resolve_gtp_alignment(
             fp4=bool(getattr(cfg.model, "fp4", None)),
             fp8_recipe=getattr(cfg.model, "fp8_recipe", None),
             fp8=bool(getattr(cfg.model, "fp8", None)),
         )
-        grant_shape_mismatch_for_gtp_padding(sharded_state_dict, checkpoint_name, alignment)
+        grant_gtp_shape_mismatch(sharded_state_dict, checkpoint_name, alignment)
     state_dict = dist_checkpointing.load(
         sharded_state_dict,
         checkpoint_name,
