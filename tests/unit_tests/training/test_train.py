@@ -22,6 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
+from megatron.core.optimizer.optimizer import MegatronOptimizer
 
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
@@ -1620,7 +1621,8 @@ def test_train_step_token_weighted_loss(
         timers=Mock(),
     )
     model = [Mock()]
-    optimizer = Mock()
+    # Model a non-chained optimizer instead of inventing optional attributes.
+    optimizer = Mock(spec=MegatronOptimizer)
     optimizer.step.return_value = (True, 1.0, 0)
     scheduler = Mock()
     forward_backward_func = Mock(return_value=[{"lm loss": torch.tensor(v)} for v in microbatches])
