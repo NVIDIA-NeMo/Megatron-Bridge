@@ -24,8 +24,11 @@ from unittest.mock import MagicMock, Mock, mock_open, patch
 import numpy as np
 import pytest
 import torch
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
-from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
+from megatron.core.dist_checkpointing.mapping import ShardedTensor
+from megatron.core.dist_checkpointing.strategies.torch import (
+    TorchDistLoadShardedStrategy,
+    TorchDistSaveShardedStrategy,
+)
 from megatron.core.msc_utils import MultiStorageClientFeature
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
@@ -75,9 +78,20 @@ from megatron.bridge.training.checkpointing import (
     save_checkpoint,
     schedule_async_save,
 )
-from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
+from megatron.bridge.training.config import (
+    CheckpointConfig,
+    ConfigContainer,
+    DistributedDataParallelConfig,
+    SchedulerConfig,
+)
 from megatron.bridge.training.state import GlobalState, TrainState
 from megatron.bridge.utils.instantiate_utils import InstantiationException
+
+
+try:
+    from megatron.core.dist_checkpointing.strategies.async_utils import AsyncRequest
+except ModuleNotFoundError:
+    AsyncRequest = None
 
 
 class _DummyClass:
@@ -497,8 +511,8 @@ class TestRNGState:
             data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
         )
 
-        # Verify get_pg_size was called with pg_collection.ep
-        mock_get_pg_size.assert_called_once_with(mock_pg_collection.ep)
+        # RNG layout does not depend on EP.
+        mock_get_pg_size.assert_not_called()
 
         # Verify the result is a ShardedObject with correct sharding
         assert result.key == "rng_state"
@@ -522,7 +536,7 @@ class TestRNGState:
         """Test RNG state collection without Expert Parallelism (EP = 1).
 
         When EP = 1, RNG state should be sharded by (PP, TP) dimensions
-        with replica_id=dp_rank (standard behavior).
+        with a separate DP/CP coordinate even without expert parallelism.
         """
         # Setup mocks
         mock_dist_init.return_value = False
@@ -544,23 +558,23 @@ class TestRNGState:
         mock_pg_collection.tp.rank.return_value = 3
         mock_pg_collection.tp.size.return_value = 4
         mock_pg_collection.dp_cp.rank.return_value = 5
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.dp_cp.size.return_value = 6
 
         result = get_rng_state(
             data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
         )
 
-        # Verify get_pg_size was called with pg_collection.ep
-        mock_get_pg_size.assert_called_once_with(mock_pg_collection.ep)
+        # RNG layout does not depend on EP.
+        mock_get_pg_size.assert_not_called()
 
         # Verify the result is a ShardedObject with correct sharding
         assert result.key == "rng_state"
-        # Shape should be (pp_size, tp_size) when EP = 1
-        assert result.global_shape == (2, 4)
-        # Global offset should NOT include dp_rank
-        assert result.global_offset == (1, 3)
-        # replica_id should be dp_rank when EP = 1
-        assert result.replica_id == 5
+        # Ordinary DP ranks need separate RNG shards too.
+        assert result.global_shape == (2, 4, 6)
+        # Global offset includes the DP/CP rank.
+        assert result.global_offset == (1, 3, 5)
+        # Each RNG shard has a single owner.
+        assert result.replica_id == 0
 
     @patch("megatron.bridge.training.checkpointing.get_pg_size")
     @patch("megatron.bridge.training.checkpointing.tensor_parallel")
@@ -575,7 +589,7 @@ class TestRNGState:
         """Test RNG state collection when EP group is None (not initialized).
 
         When pg_collection.ep is None, get_pg_size returns 1, so this should
-        behave the same as EP=1 (sharded by PP, TP with replica_id=dp_rank).
+        preserve each data rank in its own shard, as with an explicit EP group.
         """
         # Setup mocks
         mock_dist_init.return_value = False
@@ -597,21 +611,21 @@ class TestRNGState:
         mock_pg_collection.tp.rank.return_value = 1
         mock_pg_collection.tp.size.return_value = 4
         mock_pg_collection.dp_cp.rank.return_value = 3
-        mock_pg_collection.dp_cp.size.return_value = 1
+        mock_pg_collection.dp_cp.size.return_value = 4
         mock_pg_collection.ep = None  # Explicitly None
 
         result = get_rng_state(
             data_parallel_random_init=False, ckpt_format="torch_dist", pg_collection=mock_pg_collection
         )
 
-        # Verify get_pg_size was called with None
-        mock_get_pg_size.assert_called_once_with(None)
+        # RNG layout does not require an EP group.
+        mock_get_pg_size.assert_not_called()
 
         # Verify the result is a ShardedObject with correct sharding (same as EP=1)
         assert result.key == "rng_state"
-        assert result.global_shape == (2, 4)  # (pp_size, tp_size)
-        assert result.global_offset == (0, 1)  # (pp_rank, tp_rank)
-        assert result.replica_id == 3  # dp_rank
+        assert result.global_shape == (2, 4, 4)
+        assert result.global_offset == (0, 1, 3)
+        assert result.replica_id == 0
 
 
 class TestDeleteExtraState:
@@ -838,6 +852,10 @@ class TestSaveCheckpoint:
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.save_rng = save_rng
 
+        call_order = Mock()
+        call_order.attach_mock(mock_dist_ckpt.save, "model")
+        call_order.attach_mock(mock_save_dataloader, "loader")
+
         # Call save_checkpoint
         save_checkpoint(
             save_checkpoint_fixtures["mock_state"],
@@ -848,6 +866,8 @@ class TestSaveCheckpoint:
             checkpointing_context={},
             non_persistent_ckpt=False,
         )
+
+        assert [call[0] for call in call_order.mock_calls] == ["model", "loader"]
 
         # Verify calls
         mock_ft.on_checkpointing_start.assert_called_once()
@@ -875,6 +895,28 @@ class TestSaveCheckpoint:
         written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
         assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
 
+    def test_cpu_torch_dist_strategy_roundtrip_without_cuda(self, tmp_path):
+        """CPU checkpoint conversion must save and reload real tensor values."""
+        if torch.distributed.is_initialized():
+            pytest.skip("Requires an isolated CPU process group")
+        torch.distributed.init_process_group("gloo", store=torch.distributed.HashStore(), rank=0, world_size=1)
+        expected = torch.arange(12, dtype=torch.float32).reshape(3, 4)
+        try:
+            with (
+                patch("torch.cuda.is_available", return_value=False),
+                patch("torch.cuda.synchronize", side_effect=AssertionError("CPU save must not synchronize CUDA")),
+            ):
+                _CpuTorchDistSaveShardedStrategy().save(
+                    {"weight": ShardedTensor.from_rank_offsets("weight", expected)}, tmp_path
+                )
+                loaded = TorchDistLoadShardedStrategy().load(
+                    {"weight": ShardedTensor.from_rank_offsets("weight", torch.empty_like(expected))}, tmp_path
+                )
+            torch.testing.assert_close(loaded["weight"], expected)
+        finally:
+            torch.distributed.destroy_process_group()
+
+    @pytest.mark.skipif(AsyncRequest is None, reason="Legacy MCore async implementation is not present")
     def test_cpu_torch_dist_strategy_uses_blocking_preload(self, tmp_path):
         """CPU checkpoint staging must not synchronize an unavailable CUDA device."""
         preload_modes = []
@@ -898,7 +940,7 @@ class TestSaveCheckpoint:
         original_current_device = torch.cuda.current_device
 
         with (
-            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request),
+            patch.object(TorchDistSaveShardedStrategy, "async_save", return_value=request, autospec=True),
             patch("torch.distributed.barrier"),
         ):
             strategy.save({}, tmp_path)
@@ -1851,6 +1893,8 @@ def load_checkpoint_fixtures():
 
     mock_cfg = Mock(spec=ConfigContainer)
     mock_cfg.checkpoint = Mock(spec=CheckpointConfig)
+    mock_cfg.scheduler = SchedulerConfig()
+    mock_cfg.ddp = DistributedDataParallelConfig()
     mock_cfg.checkpoint.load = "/checkpoints"
     mock_cfg.checkpoint.pretrained_checkpoint = None
     mock_cfg.checkpoint.finetune = False
@@ -1878,6 +1922,7 @@ def load_checkpoint_fixtures():
     mock_state.cfg = mock_cfg
 
     mock_model = [Mock()]
+    mock_model[0].parameters.return_value = []
     mock_optimizer = Mock()
     mock_scheduler = Mock()
 
@@ -3153,6 +3198,7 @@ class TestLoadModelWeightsFromCheckpoint:
     def mock_model(self):
         """Create a mock model for testing."""
         model = Mock()
+        model.parameters.return_value = []
         model.sharded_state_dict.return_value = {"weight": torch.randn(10, 10)}
         return [model]
 
@@ -3160,8 +3206,10 @@ class TestLoadModelWeightsFromCheckpoint:
     def mock_multiple_models(self):
         """Create multiple mock models for testing."""
         model1 = Mock()
+        model1.parameters.return_value = []
         model1.sharded_state_dict.return_value = {"weight1": torch.randn(10, 10)}
         model2 = Mock()
+        model2.parameters.return_value = []
         model2.sharded_state_dict.return_value = {"weight2": torch.randn(5, 5)}
         return [model1, model2]
 
@@ -3782,6 +3830,7 @@ class TestMegatronLMCompatibility:
         mock_is_last_rank.return_value = False
         mock_exists_checkpoint.return_value = True
         mock_unwrap.return_value = [Mock()]
+        mock_unwrap.return_value[0].parameters.return_value = []
 
         # Mock file existence checks
         def mock_exists_side_effect(path):
@@ -3846,6 +3895,8 @@ class TestMegatronLMCompatibility:
         mock_state.wandb_logger = Mock()
 
         mock_cfg = Mock()
+        mock_cfg.scheduler = SchedulerConfig()
+        mock_cfg.ddp = DistributedDataParallelConfig()
         mock_cfg.checkpoint = Mock()
         mock_cfg.checkpoint.load = "/legacy/checkpoint"
         mock_cfg.checkpoint.pretrained_checkpoint = None
@@ -6207,6 +6258,7 @@ class TestMaybeSaveDataloaderState:
         """A named MSC profile must not be passed to PyTorch's local-path serializer."""
         mock_get_checkpoint_name.return_value = "msc://named/checkpoints/energon/iter_0000010"
         msc = Mock()
+        msc.glob.return_value = []
         train_iterator = self._iterator()
 
         with (
@@ -6308,12 +6360,11 @@ class TestAsyncCheckpointScheduling:
     """Test async request handoff to the NVRx worker."""
 
     def test_schedule_async_save_forwards_nvrx_request(self):
-        """The NVRx queue must ignore the inherited stale strategy value."""
+        """The NVRx queue must receive the original async request unchanged."""
         async_queue = Mock()
         state = Mock()
         state.async_calls_queue = async_queue
         state.cfg.checkpoint = CheckpointConfig()
-        assert state.cfg.checkpoint.async_strategy == "mcore"
         state.cfg.checkpoint.async_save = True
         nvrx_request = NVRxAsyncRequest(
             async_fn=Mock(),

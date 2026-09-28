@@ -422,6 +422,31 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    def test_fsdp_v2_cp2_pretrain(self) -> None:
+        """Pretrain a small GPT model for ten iterations with MFSDP V2 and CP=2."""
+        initialize_distributed()
+        assert torch.distributed.get_world_size() == 2, "This test requires two GPUs."
+        torch.distributed.barrier()
+
+        cfg = create_fsdp_config_container(
+            seq_length=128,
+            train_iters=10,
+            model={
+                "context_parallel_size": 2,
+                "params_dtype": torch.bfloat16,
+                "hidden_size": 128,
+                "ffn_hidden_size": 512,
+                "num_attention_heads": 8,
+            },
+            ddp={"megatron_fsdp_version": 2},
+            optimizer={"use_precision_aware_optimizer": True},
+        )
+
+        pretrain(cfg, forward_step)
+
+        torch.distributed.barrier()
+
+    @pytest.mark.run_only_on("GPU")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
         """Train a dense two-layer HybridModel with MFSDP V2 in eager mode."""
         initialize_distributed()

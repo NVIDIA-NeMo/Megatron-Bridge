@@ -5,6 +5,12 @@ HF/Megatron model comparison from a Slurm login node. It uses NeMo Run's Slurm
 executor and launches one srun-native process per GPU; users should not enter an
 allocation or wrap it in `srun`, `torchrun`, or `sbatch`.
 
+The launcher waits for completion and checks Slurm status every 60 seconds.
+Use `--poll-interval SECONDS` to increase the interval (minimum 60), or
+`--detach` to submit without monitoring. Logs remain in the NeMo Run experiment
+directory; no separate scheduler-querying log tailer is started. A monitoring
+error or interruption does not cancel the submitted job.
+
 ```bash
 ./scripts/inference/infer.sh \
   --nodes 1 \
@@ -30,6 +36,14 @@ parity. `--task legacy-full-prefix-generation` selects a slow, non-optimized
 compatibility path and requires `--legacy-full-prefix`. It recomputes the
 accumulated prefix for every decoding step for models such as GLM-5 whose
 AbsorbedMLA attention does not yet support cached inference.
+
+Nemotron Omni-family visual inference uses the checkpoint's native processor
+and passes its post-resize image sizes and video frame counts to Bridge.
+Generation accepts `--image_path`, `--image_paths`, or `--video_path`; comparison
+accepts one image or one video. This does not change training preprocessing.
+For comparison with an HF checkpoint that enables video pruning, explicitly
+pass `--disable-hf-video-pruning` to compare both backends without pruning.
+That comparison does not certify the original pruned HF behavior.
 
 ```bash
 ./scripts/inference/infer.sh \
@@ -110,14 +124,25 @@ of inference tasks. Small inference jobs share nodes by default; use
 `--mem` to request a specific amount of host memory when the cluster default is
 not sufficient.
 
+Pass allocation-level settings with
+`--additional-slurm-params 'segment=1;reservation=testing'`, using the training
+launcher's semicolon-separated `KEY=VALUE` format. Values become sbatch
+parameters, not srun flags or inference-worker arguments. The launcher retains
+control of `export` to preserve name-only environment forwarding.
+
 ## Output, failures, and detached jobs
 
-By default the command waits for inference, tails the Slurm logs, prints the
-rank-zero generated text in the invoking terminal, and exits nonzero if the
-NeMo Run task fails. The experiment and scheduler logs remain in NeMo Run's
+By default the command waits for inference and exits nonzero if the NeMo Run
+task fails. Generated text is written to the job logs, not streamed to the
+invoking terminal. The experiment and scheduler logs remain in NeMo Run's
 experiment directory under `~/.nemo_run/experiments`.
 
 Pass `--detach` to return as soon as Slurm accepts the job. NeMo Run prints the
 experiment and job identifiers needed to inspect the logs later. Use
 `--submission-dry-run` (or `--dry-run`) to render the experiment without
 submitting it.
+
+## Optional container backend
+
+The public launcher also supports an [all-Lustre direct-Enroot backend](../common/README.md).
+Pyxis remains the default; select `--container-runtime enroot` only when needed.

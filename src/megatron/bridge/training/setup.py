@@ -38,6 +38,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.multi_token_prediction import get_mtp_ranks
+from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
@@ -476,7 +477,8 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, HybridModelConfig)) else cfg.model,
+        # Providers may copy their configuration while constructing the model.
+        get_model_config(model[0]),
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
@@ -535,6 +537,7 @@ def setup(
             state.train_state.step,
             dataloader_load_path,
             pg_collection=pg_collection,
+            data_parallel_group=get_data_distribution_group(pg_collection, cfg.model),
         )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:

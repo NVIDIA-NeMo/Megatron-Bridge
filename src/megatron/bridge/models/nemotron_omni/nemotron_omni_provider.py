@@ -95,6 +95,11 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
     radio_interpolate_only_cpe: bool = True
     radio_cpe_aspect_ratio_select: bool = False
     radio_disable_cpe: bool = False
+    recompute_vision: bool = False
+    vision_recompute_granularity: Literal["full", "selective"] | None = None
+    vision_recompute_modules: list[str] | None = None
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
     vision_proj_ffn_hidden_size: int = 20480
     vision_class_token_len: Optional[int] = None
 
@@ -105,6 +110,8 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
 
     def _build_vision_config(self, language_cfg):
         """Build RADIO ViT-H vision encoder config from a language config copy."""
+        if self.recompute_vision and self.radio_force_eval_mode:
+            raise ValueError("Vision recompute requires radio_force_eval_mode=False.")
         vision_cfg = copy.deepcopy(language_cfg)
         if not self.use_vision_backbone_fp8_arch:
             vision_cfg.fp8 = None
@@ -112,9 +119,6 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
         vision_cfg.sequence_parallel = False
         vision_cfg.context_parallel_size = 1
         vision_cfg.tp_comm_overlap = False
-        vision_cfg.recompute_granularity = None
-        vision_cfg.recompute_method = None
-        vision_cfg.recompute_num_layers = None
         vision_cfg.mtp_num_layers = None
         vision_cfg.num_layers = 32
         vision_cfg.num_attention_heads = 16
@@ -132,6 +136,60 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
         vision_cfg.normalization = "LayerNorm"
         vision_cfg.qk_layernorm = False
         vision_cfg.layernorm_epsilon = 1e-6
+        if self.recompute_vision:
+            granularity = (
+                self.vision_recompute_granularity
+                if self.vision_recompute_granularity is not None
+                else vision_cfg.recompute_granularity
+            )
+            if granularity is None:
+                raise ValueError("Vision recompute requires an effective recompute granularity.")
+            if granularity not in {"full", "selective"}:
+                raise ValueError("Vision recompute granularity must be 'full' or 'selective'.")
+            vision_cfg.recompute_granularity = granularity
+
+            if granularity == "selective":
+                if self.vision_recompute_method is not None or self.vision_recompute_num_layers is not None:
+                    raise ValueError("Selective vision recompute does not use a method or layer count.")
+                vision_cfg.recompute_method = None
+                vision_cfg.recompute_num_layers = None
+                if self.vision_recompute_modules is not None:
+                    if not self.vision_recompute_modules:
+                        raise ValueError("Selective vision recompute modules must not be empty.")
+                    vision_cfg.recompute_modules = list(self.vision_recompute_modules)
+            else:
+                if self.vision_recompute_modules is not None:
+                    raise ValueError("Full vision recompute does not use selective recompute modules.")
+                method = (
+                    self.vision_recompute_method
+                    if self.vision_recompute_method is not None
+                    else vision_cfg.recompute_method
+                )
+                num_layers = (
+                    self.vision_recompute_num_layers
+                    if self.vision_recompute_num_layers is not None
+                    else vision_cfg.recompute_num_layers
+                )
+                if method is None:
+                    raise ValueError("Full vision recompute requires a recompute method.")
+                if method not in {"uniform", "block"}:
+                    raise ValueError("Full vision recompute method must be 'uniform' or 'block'.")
+                if num_layers is None:
+                    raise ValueError("Full vision recompute requires a layer count.")
+                if (
+                    not isinstance(num_layers, int)
+                    or isinstance(num_layers, bool)
+                    or not 1 <= num_layers <= vision_cfg.num_layers
+                ):
+                    raise ValueError(
+                        f"Full vision recompute layer count must be an integer between 1 and {vision_cfg.num_layers}."
+                    )
+                vision_cfg.recompute_method = method
+                vision_cfg.recompute_num_layers = num_layers
+        else:
+            vision_cfg.recompute_granularity = None
+            vision_cfg.recompute_method = None
+            vision_cfg.recompute_num_layers = None
         if self.vision_class_token_len is not None:
             vision_cfg.class_token_len = self.vision_class_token_len
         return vision_cfg
@@ -181,6 +239,7 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     temporal_patch_dim: int = 1
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
+    vision_final_layernorm: bool = False
 
     # Shard images (or tubelets, when temporal compression is on) across the
     # context-parallel group instead of encoding every image on every CP rank.
@@ -247,6 +306,17 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         """
         vision_cfg = super()._build_vision_config(language_cfg)
         vision_cfg.pipeline_model_parallel_size = 1
+        vision_cfg.virtual_pipeline_model_parallel_size = None
+        vision_cfg.num_layers_in_first_pipeline_stage = None
+        vision_cfg.num_layers_in_last_pipeline_stage = None
+        vision_cfg.pipeline_model_parallel_layout = None
+        vision_cfg.account_for_embedding_in_pipeline_split = False
+        vision_cfg.account_for_loss_in_pipeline_split = False
+        if self.vision_final_layernorm:
+            # MCore places a final norm in the vision TransformerBlock when
+            # mtp_num_layers is non-None. Nemotron 3.5 Super VL was trained
+            # with that layout and its HF projector applies the same norm.
+            vision_cfg.mtp_num_layers = 1
         return vision_cfg
 
     def _build_vision_projection_config(self, language_cfg):
@@ -259,6 +329,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         vision_proj_cfg = super()._build_vision_projection_config(language_cfg)
         vision_proj_cfg.activation_func = squared_relu
         vision_proj_cfg.pipeline_model_parallel_size = 1
+        vision_proj_cfg.virtual_pipeline_model_parallel_size = None
+        vision_proj_cfg.num_layers_in_first_pipeline_stage = None
+        vision_proj_cfg.num_layers_in_last_pipeline_stage = None
+        vision_proj_cfg.pipeline_model_parallel_layout = None
+        vision_proj_cfg.account_for_embedding_in_pipeline_split = False
+        vision_proj_cfg.account_for_loss_in_pipeline_split = False
         return vision_proj_cfg
 
     def _build_sound_projection_config(self, language_cfg):

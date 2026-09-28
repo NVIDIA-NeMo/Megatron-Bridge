@@ -272,6 +272,7 @@ def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str
     assert paths["muse-glimmer-30b"] == "models/muse_glimmer/muse-glimmer.md"
     assert paths["nemotron-3-nano-4b"] == "models/nemotron/nemotron3-nano-4b.md"
     assert paths["nemotron-3-super-120b-a12b"] == "models/nemotron/nemotron3-super.md"
+    assert paths["nemotron-3.5-super-vl-120b-a12b"] == "models/nemotron/nemotron3.5-super-vl.md"
     assert paths["nemotron-3-ultra-550b-a55b"] == "models/nemotron/nemotron3-ultra.md"
     assert paths["qwen3.8-27b"] == "models/qwen/qwen3.8-27b.md"
 
