@@ -26,7 +26,6 @@ from megatron.bridge.training.gpt_step import (
     _cu_seqlens_for_cp_partition,
     _forward_step_common,
     _partition_packed_batch_for_cp,
-    _patch_mcore_expert_bias_padding_mask,
     _patch_mcore_schedule_plan_padding_mask,
     _prepare_packed_padding_mask,
     _validate_packed_moe_cuda_graph,
@@ -887,28 +886,34 @@ class TestGetBatch:
         assert torch.equal(model.forward_kwargs["padding_mask"], padding_mask)
         assert (model.forward_kwargs.get("packed_seq_params") is not None) == packed
 
-    def test_mcore_expert_bias_padding_mask_compat(self, monkeypatch):
-        """The pinned MCore expert-bias path must receive a broadcastable mask."""
-        observed = {}
+    @pytest.mark.parametrize(
+        ("mask", "expected"),
+        [([False, True, False], [2, 1]), ([False, False, False], [2, 2]), ([True, True, True], [0, 0])],
+    )
+    def test_packed_mask_uses_native_expert_bias_accumulation(self, mask, expected):
+        """The native router excludes padding without a global Bridge monkeypatch."""
+        native_apply = TopKRouter._apply_expert_bias
+        config = Mock(moe_router_enable_expert_bias=True, sequence_parallel=False)
+        padding_mask = torch.tensor([mask])
+        prepared = _prepare_packed_padding_mask(
+            padding_mask, config=config, model=Mock(pre_process=True), pg_collection=_MockPGCollection()
+        )
+        assert prepared is padding_mask
+        assert TopKRouter._apply_expert_bias is native_apply
 
-        def current_apply_expert_bias(_self, routing_map, padding_mask=None):
-            observed["routing_map"] = routing_map & (~padding_mask)
-
-        monkeypatch.setattr(TopKRouter, "_apply_expert_bias", current_apply_expert_bias)
-
-        _patch_mcore_expert_bias_padding_mask()
-        patched_apply_expert_bias = TopKRouter._apply_expert_bias
-        _patch_mcore_expert_bias_padding_mask()
-
+        # Only the native accumulation method is under test; avoid constructing
+        # CUDA router weights or distributed process groups for this CPU unit test.
+        router = TopKRouter.__new__(TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.enable_expert_bias = True
+        router.register_buffer("local_tokens_per_expert", torch.zeros(2))
         routing_map = torch.tensor([[True, False], [False, True], [True, True]])
-        padding_mask = torch.tensor([False, True, False])
-        patched_apply_expert_bias(object(), routing_map, padding_mask=padding_mask)
-
-        assert TopKRouter._apply_expert_bias is patched_apply_expert_bias
-        assert observed["routing_map"].tolist() == [[True, False], [False, False], [True, True]]
-
-        with pytest.raises(AssertionError, match="padding_mask flat"):
-            patched_apply_expert_bias(object(), routing_map, padding_mask=torch.zeros(4, dtype=torch.bool))
+        with torch.enable_grad():
+            router._apply_expert_bias(routing_map, padding_mask=prepared.reshape(-1))
+        assert router.local_tokens_per_expert.tolist() == expected
+        with torch.no_grad():
+            router._apply_expert_bias(routing_map, padding_mask=prepared.reshape(-1))
+        assert router.local_tokens_per_expert.tolist() == expected
 
     def test_mcore_schedule_plan_routes_with_chunk_padding_mask(self, monkeypatch):
         """The pinned MCore EP-overlap callable must pass its chunk-local router mask."""
