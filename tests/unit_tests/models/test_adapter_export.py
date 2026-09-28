@@ -2072,3 +2072,132 @@ class TestStreamSharedOuterAdapterWeights:
         torch.testing.assert_close(gu[f"{stem}.base_layer.lora_B.weight"], exp_base_b)
         torch.testing.assert_close(dn[f"{stem}.lora_A.weight"], exp_down_a)
         torch.testing.assert_close(dn[f"{stem}.lora_B.weight"], exp_down_b)
+
+    # ------------------------------------------------------------------
+    # moe_shared_loras: vLLM 2D shared-MoE layout (experts.w1/w2/w3)
+    # ------------------------------------------------------------------
+
+    def _run_serving_layout(
+        self, bridge, linear_in, linear_out, num_experts, mapping_registry, *, gate_up_split=None, **flags
+    ):
+        """Stream one shared-outer adapter at EP=1 and return ``{hf_name: tensor}``.
+
+        ``gate_up_split`` is the gate-half size of a fused FC1 ``linear_out``; ``None`` means
+        there is no fused projection to split.
+        """
+
+        def split(_model, names, tensor, is_expert=False):
+            return {names[0]: tensor[:gate_up_split], names[1]: tensor[gate_up_split:]}
+
+        task = SimpleNamespace(global_base_prefix="mlp.experts", adapter_key=None)
+        with (
+            patch(
+                "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+                return_value=1,
+            ),
+            patch.object(bridge, "_gather_expert_adapter_weight", return_value=None),
+            patch.object(bridge, "_select_expert_adapter_weight", side_effect=lambda w, g, i, n: w[i]),
+            patch.object(
+                bridge,
+                "_get_fused_adapter_linear_out_slices",
+                side_effect=split if gate_up_split is not None else None,
+                return_value=None,
+            ),
+            patch("megatron.bridge.models.conversion.peft_bridge.is_expert_linear", return_value=True),
+        ):
+            items = bridge._stream_shared_outer_adapter_weights(
+                megatron_model=[],
+                mapping_registry=mapping_registry,
+                adapter_task=task,
+                linear_in_tensor=linear_in,
+                linear_out_tensor=linear_out,
+                num_moe_experts=num_experts,
+                cpu=False,
+                **flags,
+            )
+            return {item.param_name: item.weight for item in items}
+
+    def test_moe_shared_loras_repacks_legacy_emission_as_w1_w2_w3(self):
+        """Shared factors keep expert-dim 1, per-expert factors stack in expert order, w1=gate and w3=up."""
+        bridge = self._make_bridge()
+        E, r, hid, mi = 3, 2, 6, 4
+        stem = "model.layers.0.mlp.experts"
+        gate_up_a, gate_up_b = torch.randn(r, hid), torch.randn(E, 2 * mi, r)
+        down_a, down_b = torch.randn(E, r, mi), torch.randn(hid, r)
+
+        gate_up = self._run_serving_layout(
+            bridge,
+            gate_up_a,
+            gate_up_b,
+            E,
+            self._mapping_gate_up(),
+            gate_up_split=mi,
+            expand_shared_outer=False,
+            moe_shared_loras=True,
+        )
+        assert set(gate_up) == {
+            f"{stem}.w1.lora_A.weight",
+            f"{stem}.w1.lora_B.weight",
+            f"{stem}.w3.lora_A.weight",
+            f"{stem}.w3.lora_B.weight",
+        }
+        torch.testing.assert_close(gate_up[f"{stem}.w1.lora_A.weight"], gate_up_a.unsqueeze(0))
+        torch.testing.assert_close(gate_up[f"{stem}.w3.lora_A.weight"], gate_up_a.unsqueeze(0))
+        torch.testing.assert_close(gate_up[f"{stem}.w1.lora_B.weight"], gate_up_b[:, :mi])
+        torch.testing.assert_close(gate_up[f"{stem}.w3.lora_B.weight"], gate_up_b[:, mi:])
+
+        down = self._run_serving_layout(
+            bridge, down_a, down_b, E, self._mapping_down(), expand_shared_outer=False, moe_shared_loras=True
+        )
+        assert set(down) == {f"{stem}.w2.lora_A.weight", f"{stem}.w2.lora_B.weight"}
+        torch.testing.assert_close(down[f"{stem}.w2.lora_A.weight"], down_a)
+        torch.testing.assert_close(down[f"{stem}.w2.lora_B.weight"], down_b.unsqueeze(0))
+
+    @pytest.mark.parametrize(
+        ("flags", "expected_modules"),
+        [
+            ({"expand_shared_outer": True, "stack_3d_moe": True, "moe_shared_loras": True}, ["base_layer"]),
+            ({"expand_shared_outer": False, "stack_3d_moe": True, "moe_shared_loras": True}, ["base_layer"]),
+            ({"expand_shared_outer": True, "stack_3d_moe": False, "moe_shared_loras": True}, ["w1", "w3"]),
+        ],
+    )
+    def test_serving_layout_flag_priority(self, flags, expected_modules):
+        """stack_3d_moe wins over moe_shared_loras, which wins over expand_shared_outer."""
+        bridge = self._make_bridge()
+        E, r, hid, mi = 3, 2, 6, 4
+
+        out = self._run_serving_layout(
+            bridge,
+            torch.randn(r, hid),
+            torch.randn(E, 2 * mi, r),
+            E,
+            self._mapping_gate_up(),
+            gate_up_split=mi,
+            **flags,
+        )
+
+        assert set(out) == {
+            f"model.layers.0.mlp.experts.{module}.lora_{side}.weight"
+            for module in expected_modules
+            for side in ("A", "B")
+        }
+
+    def test_moe_shared_loras_rejects_non_gated_experts(self):
+        """Non-gated experts have no w1/w3 pair, so the shared-MoE layout cannot represent them."""
+        bridge = self._make_bridge()
+        E, r, hid, mi = 3, 2, 6, 4
+        mapping = MagicMock()
+        mapping.megatron_to_hf_lookup.side_effect = lambda name: SimpleNamespace(
+            hf_param=f"model.layers.0.mlp.experts.{name.rsplit('.weight', 1)[1]}.up_proj.weight"
+        )
+
+        with pytest.raises(ValueError, match=r"requires gated routed experts.*\['up_proj'\]"):
+            self._run_serving_layout(
+                bridge,
+                torch.randn(r, hid),
+                torch.randn(E, mi, r),
+                E,
+                mapping,
+                expand_shared_outer=False,
+                moe_shared_loras=True,
+            )
