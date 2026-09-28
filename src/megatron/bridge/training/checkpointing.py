@@ -3435,7 +3435,11 @@ def _load_checkpoint_from_path(
             and cfg.ddp is not None
             and (cfg.ddp.fp8_param_gather or cfg.ddp.fp4_param_gather)
         ):
-            optimizer.quantize_and_sync_model_params_from_main_params()
+            quantize_and_sync_model_params = getattr(
+                optimizer, "quantize_and_sync_model_params_from_main_params", None
+            )
+            if callable(quantize_and_sync_model_params):
+                quantize_and_sync_model_params()
     else:
         if (
             not skip_load_to_model_and_opt
@@ -3826,6 +3830,51 @@ def _restore_scheduler_runtime_overrides(
     scheduler.step(increment=0)
 
 
+def _resolve_gtp_pad_for_alignment(*, fp4: bool = False, fp8_recipe: str | None = None, fp8: bool = False) -> int:
+    """Map quantized GTP recipes to their dim-0 alignment without requiring a newer MCore."""
+    if fp4:
+        return 16
+    if fp8_recipe == "mxfp8":
+        return 32
+    if fp8:
+        return 16
+    return 1
+
+
+def _grant_shape_mismatch_for_gtp_padding(
+    sharded_state_dict: dict[str, Any], checkpoint_dir: str, pad_for_alignment: int
+) -> None:
+    """Allow only checkpoint shape differences explained by GTP dim-0 padding."""
+    from megatron.core.dist_checkpointing.dict_utils import nested_values
+    from megatron.core.dist_checkpointing.mapping import ShardedTensor
+    from megatron.core.dist_checkpointing.serialization import load_tensors_metadata
+
+    sharded_tensors = [value for value in nested_values(sharded_state_dict) if isinstance(value, ShardedTensor)]
+    if not sharded_tensors:
+        return
+    try:
+        checkpoint_metadata = load_tensors_metadata(str(checkpoint_dir))
+    except Exception as exc:  # noqa: BLE001
+        getLogger(__name__).warning("Could not read checkpoint metadata for GTP padding: %s", exc)
+        return
+    for sharded_tensor in sharded_tensors:
+        if sharded_tensor.allow_shape_mismatch or sharded_tensor.key not in checkpoint_metadata:
+            continue
+        checkpoint_shape = checkpoint_metadata[sharded_tensor.key].global_shape
+        axis = sharded_tensor.prepend_axis_num
+        if axis >= len(checkpoint_shape):
+            continue
+        checkpoint_dim = int(checkpoint_shape[axis])
+        required_dim = int(sharded_tensor.global_shape[axis])
+        if checkpoint_dim == required_dim:
+            continue
+        unpadded_dim = required_dim - int(getattr(sharded_tensor, "gtp_pad_length", 0))
+        is_valid_padding = checkpoint_dim == unpadded_dim or (
+            pad_for_alignment > 1 and checkpoint_dim % pad_for_alignment == 0
+        )
+        sharded_tensor.allow_shape_mismatch = checkpoint_dim >= unpadded_dim and is_valid_padding
+
+
 def _load_global_dist_base_checkpoint(
     load_dir: str,
     ckpt_cfg: CheckpointConfig,
@@ -3871,9 +3920,11 @@ def _load_global_dist_base_checkpoint(
     validate_sharding_integrity = True
     if is_megatron_mimo and ckpt_cfg.ckpt_format == "torch_dist" and not ckpt_cfg.fully_parallel_save:
         validate_sharding_integrity = False
-    resolve_gtp_alignment = getattr(mcore_utils, "resolve_gtp_pad_for_alignment", None)
-    grant_gtp_shape_mismatch = getattr(mcore_utils, "grant_shape_mismatch_for_gtp_padding", None)
-    if cfg is not None and resolve_gtp_alignment is not None and grant_gtp_shape_mismatch is not None:
+    resolve_gtp_alignment = getattr(mcore_utils, "resolve_gtp_pad_for_alignment", _resolve_gtp_pad_for_alignment)
+    grant_gtp_shape_mismatch = getattr(
+        mcore_utils, "grant_shape_mismatch_for_gtp_padding", _grant_shape_mismatch_for_gtp_padding
+    )
+    if cfg is not None:
         alignment = resolve_gtp_alignment(
             fp4=bool(getattr(cfg.model, "fp4", None)),
             fp8_recipe=getattr(cfg.model, "fp8_recipe", None),

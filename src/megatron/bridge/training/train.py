@@ -1670,9 +1670,11 @@ def _handle_mxfp8_param_buffer_copy(
         optimizer: The MegatronOptimizer instance
         model: List of model chunks (MegatronModule instances)
     """
+    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
+    optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
     eligible_optimizers = [
         child
-        for child in getattr(optimizer, "chained_optimizers", [optimizer])
+        for child in optimizers
         if isinstance(child, DistributedOptimizer)
         and child.ddp_config.reuse_grad_buf_for_mxfp8_param_ag
         and child.ddp_config.overlap_param_gather

@@ -1134,8 +1134,9 @@ class ConfigContainer(Container):
             # Only compatible with NCCL UBR.
             assert not self.ddp.fsdp_manual_registration, "DDP.fsdp_manual_registration requires DDP.nccl_ub!"
         sharding_strategies = {self.ddp.data_parallel_sharding_strategy}
-        if self.ddp.expert_data_parallel_sharding_strategy is not None:
-            sharding_strategies.add(self.ddp.expert_data_parallel_sharding_strategy)
+        expert_sharding_strategy = getattr(self.ddp, "expert_data_parallel_sharding_strategy", None)
+        if expert_sharding_strategy is not None:
+            sharding_strategies.add(expert_sharding_strategy)
         if sharding_strategies & {"optim_grads", "optim_grads_params"} and self.model.gradient_accumulation_fusion:
             warn_rank_0("Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP.")
         if self.model.init_model_with_meta_device and sharding_strategies == {"no_shard"}:
