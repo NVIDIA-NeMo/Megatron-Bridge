@@ -219,7 +219,7 @@ class TestQwen4ExpProvider:
             input_ids=labels,
             position_ids=None,
             attention_mask=None,
-            mtp_kwargs={"mtp_labels": labels},
+            mtp_kwargs={"mtp_labels": labels, "mtp_input_mask": torch.ones_like(labels, dtype=torch.bool)},
         )
         assert forwarded["labels"] is labels
         torch.testing.assert_close(forwarded["mhc_multistream"], torch.ones(2, 1, 8))
@@ -229,7 +229,7 @@ class TestQwen4ExpProvider:
             input_ids=labels,
             position_ids=None,
             attention_mask=None,
-            mtp_kwargs={"mtp_labels": labels},
+            mtp_kwargs={"mtp_labels": labels, "mtp_input_mask": torch.ones_like(labels, dtype=torch.bool)},
         )
         torch.testing.assert_close(second["mhc_multistream"], torch.full((2, 1, 8), 2.0))
         assert not hasattr(decoder, "_mtp_multistream")
