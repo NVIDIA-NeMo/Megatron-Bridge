@@ -13,11 +13,13 @@
 # limitations under the License.
 """GB300 performance recipes for Qwen3.5-VL."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
+    _enable_partial_cuda_graphs,
     _perf_precision,
     _qwen35_vl_common,
     _qwen35_vl_post,
@@ -27,8 +29,8 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
 )
 
 
-def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, BF16, EP=8."""
+def _build_qwen35_vl_35b_a3b_gb300_bf16() -> ConfigContainer:
+    """Shared HybridEP BF16 base for the Qwen3.5-VL 35B-A3B GB300 recipes."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _qwen35_vl_common(cfg)
@@ -41,13 +43,10 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 8
+    cfg.train.micro_batch_size = 4
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=True,
@@ -57,6 +56,17 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
+    _enable_partial_cuda_graphs(cfg)
+    return cfg
+
+
+def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
+    """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, BF16, EP=8, NCCL EP."""
+    cfg = _build_qwen35_vl_35b_a3b_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -68,11 +78,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -82,7 +89,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, FP8 current-scaling."""
-    cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config()
+    cfg = _build_qwen35_vl_35b_a3b_gb300_bf16()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -108,9 +115,21 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, MXFP8."""
-    cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config()
+    """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, MXFP8 with the CuTe DSL grouped MLP."""
+    cfg = _build_qwen35_vl_35b_a3b_gb300_bf16()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    # Route the MoE experts through Transformer Engine's CuTe DSL fused grouped
+    # MLP (ForwardGroupedMLP_CuTeGEMMSwiGLU_MXFP8), which fuses FC1 + SwiGLU +
+    # FC2 for the MXFP8 recipe on SM100+.
+    #
+    # All three settings below are required together. Enabling the op fuser
+    # without the 32-wide GLU interleaving does NOT fail: Transformer Engine
+    # silently declines to match the joint fusion and falls back to the cuBLASLt
+    # grouped GEMM, so the recipe would look enabled while running unfused.
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -129,6 +148,10 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        # Gate for the CuTe DSL fused grouped MLP. Transformer Engine checks this
+        # env var when it registers the joint fusion, so it must be set for
+        # use_transformer_engine_op_fuser above to take effect.
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
@@ -251,7 +274,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1024
@@ -259,9 +282,6 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=True,
@@ -271,6 +291,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
+    _enable_partial_cuda_graphs(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -283,7 +304,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -310,7 +331,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -337,7 +358,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
