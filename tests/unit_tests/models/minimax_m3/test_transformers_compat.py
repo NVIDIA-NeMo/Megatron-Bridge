@@ -78,3 +78,30 @@ def test_vision_rope_correction_is_version_gated_and_idempotent(monkeypatch):
         monkeypatch.setattr(transformers, "__version__", version)
         assert patch_minimax_m3_vision_rope() is False
         assert getattr(modeling, symbol) is original
+
+
+@pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+def test_hf_vision_rope_keeps_fp32_frequencies_after_dtype_conversion(dtype):
+    config = MiniMaxM3VLVisionConfig(
+        hidden_size=160,
+        num_attention_heads=2,
+        intermediate_size=320,
+        num_hidden_layers=1,
+        spatial_merge_size=2,
+        rope_parameters={"rope_type": "default", "rope_theta": 10000.0},
+    )
+    rotary = modeling.MiniMaxM3VLVisionModel(config).rotary_emb
+    grid = torch.tensor([[2, 2, 64]])
+    if hasattr(modeling, "MiniMaxM3VLVisionRotaryEmbedding"):
+        positions = torch.tensor([[0, 0, 32], [1, 16, 0], [2, 4, 128]])
+        inputs = torch.empty(3, 80, dtype=dtype)
+        expected = rotary(inputs, positions)
+        rotary.to(dtype=dtype)
+        actual = rotary(inputs, positions)
+    else:
+        expected = rotary(grid, device=torch.device("cpu"), dtype=dtype)
+        rotary.to(dtype=dtype)
+        actual = rotary(grid, device=torch.device("cpu"), dtype=dtype)
+    for result, reference in zip(actual, expected):
+        assert result.dtype == dtype
+        torch.testing.assert_close(result, reference, rtol=0, atol=0)

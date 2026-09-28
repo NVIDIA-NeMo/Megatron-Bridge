@@ -42,6 +42,16 @@ if transformers.__version__ == "5.17.0":
             frequencies = freq.flatten(1)
             return torch.cat((frequencies, frequencies), dim=-1)
 
+        def forward(self, x: torch.Tensor, position_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            # Match 5.16 even after model.half()/bfloat16() rounds the inherited buffers.
+            device_type = x.device.type if x.device.type != "mps" else "cpu"
+            with torch.autocast(device_type=device_type, enabled=False):
+                inv_freq, scaling = self.compute_axial_rope_parameters(self.config, x.device)
+                frequencies = position_ids.to(device=x.device, dtype=torch.float32)[..., None] * inv_freq
+                cosine = self.recomposition_frequencies(frequencies.cos() * scaling)
+                sine = self.recomposition_frequencies(frequencies.sin() * scaling)
+            return cosine.to(x.dtype), sine.to(x.dtype)
+
 
 def patch_minimax_m3_vision_rope() -> bool:
     """Restore 3D vision RoPE for new HF MiniMax models on Transformers 5.17.0.
