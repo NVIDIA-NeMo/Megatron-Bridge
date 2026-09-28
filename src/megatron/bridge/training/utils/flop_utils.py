@@ -28,7 +28,12 @@ from megatron.core.utils import get_attr_wrapped_model
 
 from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import (
+    ConfigContainer,
+    GPTDatasetConfig,
+    GPTFIMDatasetConfig,
+    MockGPTDatasetConfig,
+)
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -132,6 +137,26 @@ def _accumulator_to_int(value) -> int:
     return 0
 
 
+def requires_global_flops_reduce(dataset_config: object) -> bool:
+    """Return whether dataset batches require exact data-parallel FLOP sums.
+
+    Only the built-in fixed-length pretraining datasets guarantee identical
+    sequence statistics across DP ranks. SFT and custom loaders can vary both
+    sequence lengths and batch sizes, even when their config declares a maximum
+    length. Use the same configuration-based decision on every rank, never a
+    comparison between a local batch length and that maximum.
+
+    Args:
+        dataset_config: The training dataset configuration or custom provider.
+
+    Returns:
+        Whether to sum runtime statistics over the pure data-parallel group.
+    """
+    # Exact types avoid granting custom subclasses a fixed-shape guarantee.
+    fixed_pretraining = type(dataset_config) in (GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig)
+    return not fixed_pretraining or getattr(dataset_config, "dataloader_type", None) == "external"
+
+
 def resolve_global_flops_runtime_stats(
     state,
     *,
@@ -150,12 +175,12 @@ def resolve_global_flops_runtime_stats(
     products) and reduces them to global totals across the
     data-parallel group.
 
-    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
-    differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
-    to get the exact global sum. Dense BSHD training never requests this reduce:
-    every DP rank contributes the same fixed sequence statistics, so
-    extrapolating ``local * data_parallel_size`` is exact and avoids an
-    unnecessary collective.
+    Variable-length dense and THD packed batches can differ across DP ranks,
+    so a single SUM all-reduce over ``dp_group`` gives the exact global sum.
+    The training loop initializes the reduction flag from the dataset contract;
+    packed, vision, and cross-attention collectors may additionally enable it.
+    Built-in fixed-length pretraining keeps the ``local * data_parallel_size``
+    fast path and avoids an unnecessary collective.
 
     Args:
         state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).

@@ -169,6 +169,9 @@ def train(
     timers = global_state.timers
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
+    # This decision must be identical across DP ranks, including when one local
+    # dense SFT batch reaches the configured maximum and another is shorter.
+    flops_require_global_reduce = flop_utils.requires_global_flops_reduce(config.dataset)
 
     # Prepare forward_step_func (check signature and inject state if needed).
     # This is done once to prevent creating new partial objects every iteration.
@@ -490,7 +493,7 @@ def train(
         global_state._flops_vision_merged_token_sum = 0
         global_state._flops_cross_seqlen_sum = 0
         global_state._flops_cross_seqlen_product_sum = 0
-        global_state._flops_requires_global_reduce = False
+        global_state._flops_requires_global_reduce = flops_require_global_reduce
 
         (
             loss_dict,
@@ -611,10 +614,9 @@ def train(
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
         # Resolve this step's data-parallel-global FLOPS sequence stats and fold the
-        # step's FLOPS into the running total. Dense BSHD batches extrapolate exact
-        # fixed-length stats from the local DP rank; THD batches request one exact SUM
-        # all-reduce over the pure DP group because packed sub-sequence lengths can
-        # differ by rank.
+        # step's FLOPS into the running total. Only known fixed-length pretraining
+        # extrapolates local stats; SFT/custom batches and packed metadata request
+        # one exact SUM over pure DP because lengths can differ by rank.
         flops_stats = flop_utils.resolve_global_flops_runtime_stats(
             global_state,
             data_parallel_size=dp_size,
