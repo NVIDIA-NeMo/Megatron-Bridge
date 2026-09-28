@@ -755,8 +755,8 @@ class ProfilingConfig(MTrainProfilingConfig):
     profile_ranks: list[int] = field(default_factory=lambda: [0])
     """Ranks to capture in memory snapshots / nsys / pytorch profiler.
 
-    Memory-snapshot and recording-start guards use a strict membership check,
-    so an empty list disables capture. Default ``[0]`` gives rank-0 capture
+    An empty list captures on all ranks, including memory snapshots and
+    allocator history. Default ``[0]`` gives rank-0 capture
     whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
     enabled, with no further override required.
     """

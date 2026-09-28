@@ -45,6 +45,8 @@ def _load_vr200_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     gb300 = ModuleType("megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3")
     for precision in ("bf16", "fp8cs", "fp8mx", "nvfp4"):
         setattr(gb300, f"deepseek_v3_pretrain_256gpu_gb300_{precision}_config", lambda: SimpleNamespace())
+        # HybridEP base builders shared with the VR200 aliases (the GB300 configs add NCCL EP on top).
+        setattr(gb300, f"_build_deepseek_v3_gb300_{precision}", lambda: SimpleNamespace())
     monkeypatch.setitem(sys.modules, gb300.__name__, gb300)
 
     environment = ModuleType("megatron.bridge.perf_recipes.environment")

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
+from copy import deepcopy
+
 import torch
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -23,8 +27,33 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import Qwen3ASRThinkerConfig
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
+
+
+def _get_thinker_config(hf_config: PretrainedConfig) -> Qwen3ASRThinkerConfig:
+    """Normalize the legacy checkpoint layout without replacing native HF registrations."""
+    thinker = getattr(hf_config, "thinker_config", None)
+    if not isinstance(thinker, (Mapping, Qwen3ASRThinkerConfig)):
+        raise ValueError("Qwen3-ASR requires thinker_config as a mapping or Qwen3ASRThinkerConfig.")
+
+    # Native Transformers uses a flat ASR schema, so legacy thinker_config is
+    # retained as a dictionary. Require its subconfigs rather than constructing
+    # default backbones for an incomplete checkpoint configuration.
+    for name in ("audio_config", "text_config"):
+        nested = thinker.get(name) if isinstance(thinker, Mapping) else getattr(thinker, name, None)
+        if not isinstance(nested, (Mapping, PretrainedConfig)) or (isinstance(nested, Mapping) and not nested):
+            raise ValueError(f"Qwen3-ASR thinker_config.{name} must be a non-empty mapping or PretrainedConfig.")
+
+    if isinstance(thinker, Qwen3ASRThinkerConfig):
+        return thinker
+
+    config = dict(thinker)
+    for name in ("audio_config", "text_config"):
+        if isinstance(config[name], Mapping):
+            config[name] = dict(config[name])
+    return Qwen3ASRThinkerConfig(**deepcopy(config))
 
 
 # Use string-based registration because Qwen3ASRForConditionalGeneration is not in
@@ -48,7 +77,7 @@ class Qwen3ASRBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3ASRModelProvider:
         """Create a Qwen3ASRModelProvider from a HuggingFace pretrained model."""
         hf_config = hf_pretrained.config
-        thinker_config = hf_config.thinker_config
+        thinker_config = _get_thinker_config(hf_config)
         text_config = thinker_config.text_config
         model_dtype = self.dtype_from_hf(thinker_config, default=torch.float32)
 

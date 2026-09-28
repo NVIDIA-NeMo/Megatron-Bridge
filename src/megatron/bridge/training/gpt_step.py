@@ -532,17 +532,11 @@ def _forward_step_common(
         )
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches. The THD attention term Σᵢ sᵢ² is
-    # derived inline from cu_seqlens (kept on-device, sync-free); see
-    # accumulate_flops_metadata. Falls back to BSHD when cu_seqlens is absent.
-    #
-    # The cu_seqlens-driven THD path is only wired/validated for CP == 1 in this PR.
-    # Under context parallelism the batch (and its cu_seqlens) is CP-partitioned per
-    # rank, so the per-rank Σᵢ sᵢ² accounting here is not yet correct — that is the
-    # follow-up tracked in #4161. Until then, forward cu_seqlens only for CP == 1 so
-    # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
-    # change), instead of running the not-yet-CP-safe cu_seqlens path.
-    cp_use_thd = pg_collection.cp.size() == 1
+    # Packed CP partitions tokens but preserves full-sequence cu_seqlens.
+    # Restore the physical token count for linear FLOPS; attention uses the
+    # unchanged sub-sequence boundaries. train.py reduces over pure DP, not CP.
+    # A post-process-only PP stage has labels but no input token ids.
+    flops_tokens = tokens if tokens is not None else labels
     cu_seqlens = None
     cu_seqlens_argmin = None
     cu_seqlens_unpadded = None
@@ -560,13 +554,14 @@ def _forward_step_common(
             cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
     accumulate_flops_metadata(
         state,
-        tokens,
+        flops_tokens,
         vp_stage=vp_stage,
         config_seq_len=getattr(config, "seq_length", None),
-        cu_seqlens=cu_seqlens if cp_use_thd else None,
-        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
-        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
-        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
+        context_parallel_size=pg_collection.cp.size(),
+        cu_seqlens=cu_seqlens,
+        cu_seqlens_argmin=cu_seqlens_argmin,
+        cu_seqlens_unpadded=cu_seqlens_unpadded,
+        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin,
     )
 
     forward_args = {
