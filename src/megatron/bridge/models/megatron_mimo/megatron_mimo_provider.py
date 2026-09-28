@@ -26,7 +26,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.utils import get_model_config, set_default_log_ranks
+from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
     EXPERT_VIEW_NAME,
@@ -38,6 +38,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 from megatron.bridge.models.megatron_mimo.megatron_mimo_ddp import wrap_megatron_mimo_model_distributed
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils.common_utils import set_default_log_ranks
 
 
 if TYPE_CHECKING:

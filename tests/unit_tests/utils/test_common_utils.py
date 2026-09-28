@@ -31,7 +31,20 @@ from megatron.bridge.utils.common_utils import (
     maybe_initialize_distributed,
     print_rank_0,
     print_rank_last,
+    set_default_log_ranks,
 )
+
+
+def test_set_default_log_ranks_delegates_when_supported():
+    with patch("megatron.bridge.utils.common_utils._rank_utils.set_default_log_ranks", create=True) as mock_setter:
+        set_default_log_ranks({0, 4})
+
+    mock_setter.assert_called_once_with({0, 4})
+
+
+def test_set_default_log_ranks_is_noop_when_unsupported():
+    with patch("megatron.bridge.utils.common_utils._rank_utils", object()):
+        set_default_log_ranks({0, 4})
 
 
 class TestGetRankSafe:
