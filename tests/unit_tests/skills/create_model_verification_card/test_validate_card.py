@@ -18,6 +18,8 @@ pytestmark = pytest.mark.unit
 # Audited from recipe-owned GBS, the resolved card sequence or pack length, and
 # the public command topology: (sequence_or_pack_length, global_batch_size, GPUs).
 TRAINING_THROUGHPUT_INPUTS = {
+    ("bagel", "pretrain", "H100"): (36864, 8, 8),
+    ("bagel", "pretrain_fsdp", "H100"): (36864, 32, 32),
     ("deepseek-v3", "pretrain_performance", "H100"): (4096, 16384, 1024),
     ("deepseek-v3", "pretrain_performance", "GB200"): (4096, 4096, 256),
     ("deepseek-v3", "pretrain_performance", "GB300"): (4096, 4096, 256),

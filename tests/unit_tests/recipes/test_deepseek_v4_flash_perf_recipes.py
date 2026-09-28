@@ -14,6 +14,8 @@
 
 """Regression tests for the DeepSeek V4 Flash performance recipes."""
 
+from dataclasses import fields
+
 import pytest
 import torch
 
@@ -22,6 +24,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_flash_pretrain_128gpu_b300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+    deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -129,6 +132,27 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+
+
+def test_deepseek_v4_flash_128gpu_vr200_fp8mx_disables_clamp_for_cutedsl() -> None:
+    vr200_cfg = deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config()
+    gb300_cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
+
+    assert vr200_cfg.model.activation_func_clamp_value is None
+    assert vr200_cfg.model.use_transformer_engine_op_fuser is True
+    assert vr200_cfg.model.moe_use_grouped_tensor is True
+    assert vr200_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert vr200_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 1
+    assert is_full_iteration_cuda_graph(vr200_cfg.model)
+
+    gb300_cfg.model.activation_func_clamp_value = None
+    gb300_cfg.model.use_transformer_engine_op_fuser = True
+    gb300_cfg.model.moe_use_grouped_tensor = True
+    gb300_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = 1
+    assert vars(vr200_cfg.model) == vars(gb300_cfg.model)
+    for field in fields(vr200_cfg):
+        if field.name != "model":
+            assert getattr(vr200_cfg, field.name) == getattr(gb300_cfg, field.name), field.name
 
 
 def test_deepseek_v4_flash_128gpu_b300_fp8mx_config() -> None:

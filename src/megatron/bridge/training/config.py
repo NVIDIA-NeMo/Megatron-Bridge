@@ -535,6 +535,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
+    save_rng_state_per_dp_rank: bool = False
+    """Save distinct RNG states for data-parallel ranks whose runtime RNG streams can diverge."""
+
     custom_manager_class: str | None = None
     """Fully qualified class name for a custom CheckpointManager implementation.
 
@@ -752,8 +755,8 @@ class ProfilingConfig(MTrainProfilingConfig):
     profile_ranks: list[int] = field(default_factory=lambda: [0])
     """Ranks to capture in memory snapshots / nsys / pytorch profiler.
 
-    Memory-snapshot and recording-start guards use a strict membership check,
-    so an empty list disables capture. Default ``[0]`` gives rank-0 capture
+    An empty list captures on all ranks, including memory snapshots and
+    allocator history. Default ``[0]`` gives rank-0 capture
     whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
     enabled, with no further override required.
     """
@@ -1141,7 +1144,7 @@ class ConfigContainer(Container):
 
         MFSDP V2 owns its sharded parameter and gradient storage, so it must use
         its dedicated optimizer rather than Bridge's distributed-optimizer path.
-        Checkpointing and model-parallel topologies remain intentionally unsupported
+        Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
         upstream and are rejected here before model construction.
         """
         if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
@@ -1152,7 +1155,6 @@ class ConfigContainer(Container):
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
-            "context_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1160,9 +1162,7 @@ class ConfigContainer(Container):
             if getattr(self.model, name) != 1
         ]
         if configured_parallelisms:
-            raise ValueError(
-                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
-            )
+            raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.expert_model_parallel_size > 1:
             if self.model.num_moe_experts is None:
                 raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
@@ -1411,6 +1411,22 @@ class ConfigContainer(Container):
                 )
             if self.ddp.average_in_collective:
                 raise ValueError("GTP requires ddp.average_in_collective=False.")
+            if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
+                if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+                    raise ValueError(
+                        "GTP + mxfp8 is not supported with Megatron FSDP because "
+                        "reuse_grad_buf_for_mxfp8_param_ag is required."
+                    )
+                if not self.ddp.fp8_param_gather:
+                    raise ValueError(
+                        "GTP + mxfp8 requires ddp.fp8_param_gather=True because GTP does not keep "
+                        "or re-quantize a BF16 weight."
+                    )
+                if not self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
+                    raise ValueError(
+                        "GTP + mxfp8 requires ddp.reuse_grad_buf_for_mxfp8_param_ag=True because "
+                        "MXFP8 parameters cannot be mapped into the contiguous parameter buffer."
+                    )
 
         self.logger.finalize()
         self.train.finalize()

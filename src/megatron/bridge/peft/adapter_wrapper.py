@@ -139,6 +139,18 @@ class AdapterWrapper(nn.Module):
         """Disable the adapter layers, making the forward pass return only the base module output."""
         self._adapter_enabled = False
 
+    @property
+    def gather_output(self) -> bool:
+        """Report whether the wrapped layer gathers its tensor-parallel output.
+
+        ``GPTModel._postprocess`` and ``HybridModel`` read ``output_layer.gather_output``
+        to describe the logits layout to the tensor observation hooks
+        (NVIDIA/Megatron-LM#6648). Any wrapper placed in that slot must answer the way
+        the wrapped module does. A wrapped layer without the attribute is not
+        tensor-parallel, so its output is already replicated.
+        """
+        return getattr(self.to_wrap, "gather_output", True)
+
     def base_linear_forward(
         self, x: torch.Tensor, *args: Any, **kwargs: Any
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor]:
