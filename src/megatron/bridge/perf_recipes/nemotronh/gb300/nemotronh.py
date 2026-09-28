@@ -296,6 +296,11 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     # requires a single distributed-optimizer instance.
     _apply_nemotron_3_ultra_gtp(cfg)
 
+    cfg.model.cuda_graph_impl = "local"
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
+    # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
     return cfg
 
 

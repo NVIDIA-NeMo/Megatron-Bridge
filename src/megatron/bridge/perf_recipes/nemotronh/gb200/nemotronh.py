@@ -278,6 +278,14 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act"]
 
+    # Enable GTP sharding for the moe_latent_proj module
+    cfg.model.gtp_remat_opt_in_modules = ["moe_latent_proj"]
+
+    cfg.model.cuda_graph_impl = "local"
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
+    # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
