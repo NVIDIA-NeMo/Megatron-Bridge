@@ -557,6 +557,7 @@ def test_flat_hydra_ep_override_updates_hybridep_topology_environment(monkeypatc
     override_utils.set_cli_overrides = apply_hydra
     override_utils.set_user_overrides = lambda config, _args: config
     override_utils._apply_flat_cli_environment_compatibility = lambda config, *_args, **_kwargs: config
+    override_utils.apply_one_gpu_per_rank_device_mapping = lambda config: config
     monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
     environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
     environment_module.HYBRID_EP_ENV_NAMES = {
