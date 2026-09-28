@@ -162,6 +162,8 @@ dataset = GPTSFTDatasetConfig(
 
 If `hf_output_root` is omitted, the generated JSONL is cached under the NeMo datasets cache for the source. Keep `hf_rewrite=False` when later runs should reuse those files. With builder-managed offline packing, `hf_rewrite=True` regenerates both normalized JSONL and packed artifacts; explicit packed output paths are rejected in this mode to avoid stale data.
 
+When `hf_validation_proportion` derives validation data from training, the builder splits row indices using `seed` and writes the original normalized JSON examples. Nested fields can differ between rows, including scalar versus list values and missing versus explicit `null` fields. The split preserves those payloads without changing tokenization, packing, or loss masks. Splitting is by row; related examples are not automatically grouped together.
+
 > **Deprecated compatibility APIs:** `FinetuningDatasetConfig` and `FinetuningDatasetBuilder` remain only for existing callers. New code must use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
 
 The generic launcher accepts public Hugging Face dataset names directly:

@@ -112,6 +112,7 @@ _QWEN35_VL_GB200_FUNCS = [
 ]
 
 _QWEN35_VL_GB300_FUNCS = [
+    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config,
     _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config,
 ]
 
@@ -459,10 +460,54 @@ def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.M
     assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
     assert cfg.model.cuda_graph_impl == "transformer_engine"
     assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
-    assert cfg.model.vision_cuda_graph_impl == "none"
-    assert cfg.model.vision_cuda_graph_scope == []
+    # Vision graphs at the cap measured for micro_batch_size=1 (max 980 + 5%).
+    assert cfg.model.vision_cuda_graph_impl == "transformer_engine"
+    assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert cfg.model.max_vision_cuda_graph_seq_length == 1029
     assert cfg.train.global_batch_size == 1024
+    # micro_batch_size is load-bearing for the vision graph cap above.
     assert cfg.train.micro_batch_size == 1
+    assert cfg.checkpoint.pretrained_checkpoint is None
+
+
+def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 16-GB300 library pretrain recipe should own the measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    # EP4 on 16 GPUs; the HybridEP NVLink rank count must track it or the
+    # domain is split wrongly.
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    # LayerNorm SM margin is 0 at 35B, not the 397B recipe's 20.
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
+    assert cfg.model.recompute_granularity == "selective"
+    # No "moe_act": the CuTe DSL fused grouped MLP rejects it.
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    # Vision graphs at the cap measured for micro_batch_size=4 (max 3532 + 5%).
+    assert cfg.model.vision_cuda_graph_impl == "transformer_engine"
+    assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert cfg.model.max_vision_cuda_graph_seq_length == 3712
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.train.global_batch_size == 2048
+    # micro_batch_size is load-bearing for the vision graph cap above.
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.checkpoint.pretrained_checkpoint is None
 
 

@@ -537,6 +537,7 @@ def setup(
             state.train_state.step,
             dataloader_load_path,
             pg_collection=pg_collection,
+            data_parallel_group=get_data_distribution_group(pg_collection, cfg.model),
         )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
