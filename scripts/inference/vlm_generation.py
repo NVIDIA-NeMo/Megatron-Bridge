@@ -37,6 +37,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoConfig, AutoProcessor, AutoTokenizer, GenerationConfig
 from vlm_generation_utils import (
     decode_generated_tokens,
+    load_image,
     pad_input_ids_to_tp_multiple,
     patch_kimi_vision_processor,
     process_image_inputs,
@@ -47,6 +48,11 @@ from vlm_generation_utils import (
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.models.nemotron_omni.inference_inputs import (
+    is_nemotron_omni,
+    load_nemotron_omni_video,
+    prepare_nemotron_omni_inputs,
+)
 from megatron.bridge.utils.common_utils import (
     get_last_rank,
     maybe_initialize_distributed,
@@ -76,6 +82,8 @@ class SingleBatchIterator:
         pixel_values_videos=None,
         video_grid_thw=None,
         image_position_ids=None,
+        imgs_sizes=None,
+        num_frames=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -96,6 +104,10 @@ class SingleBatchIterator:
             self.batch["video_grid_thw"] = video_grid_thw
         if image_position_ids is not None:
             self.batch["image_position_ids"] = image_position_ids
+        if imgs_sizes is not None:
+            self.batch["imgs_sizes"] = imgs_sizes
+        if num_frames is not None:
+            self.batch["num_frames"] = num_frames
         self._yielded = False
 
     def __iter__(self):
@@ -124,6 +136,8 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         "pixel_values_videos",
         "video_grid_thw",
         "image_position_ids",
+        "imgs_sizes",
+        "num_frames",
     ):
         if key in batch:
             forward_args[key] = batch[key]
@@ -233,6 +247,7 @@ def main(args) -> None:
     is_gemma4 = "gemma4" in model_type
     is_minimax = model_type == "minimax_m3_vl"
     is_mistral3 = model_type == "mistral3"
+    is_omni = is_nemotron_omni(config)
 
     # ------------------------------------------------------------------
     # Load model
@@ -352,8 +367,24 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     pixel_values = image_grid_thw = image_sizes = mm_token_type_ids = image_position_ids = None
     pixel_values_videos = video_grid_thw = None
+    imgs_sizes = num_frames = None
 
-    if args.video_path:
+    if is_omni and (args.video_path or args.image_path or args.image_paths):
+        if args.video_path and (args.image_path or args.image_paths):
+            raise ValueError("Choose Omni image inputs or one video, not both.")
+        frames = metadata = images = None
+        if args.video_path:
+            frames, metadata = load_nemotron_omni_video(args.video_path, fps=args.video_fps)
+        else:
+            images = [load_image(path).convert("RGB") for path in (args.image_paths or [args.image_path])]
+        omni_inputs = prepare_nemotron_omni_inputs(
+            processor, prompt=args.prompt, images=images, video_frames=frames, video_metadata=metadata
+        )
+        input_ids_raw = omni_inputs.hf["input_ids"]
+        pixel_values = omni_inputs.bridge["pixel_values"]
+        imgs_sizes = omni_inputs.bridge["imgs_sizes"]
+        num_frames = omni_inputs.bridge["num_frames"]
+    elif args.video_path:
         input_ids_raw, pixel_values_videos, video_grid_thw = process_video_inputs(
             processor, args.video_path, args.prompt, fps=args.video_fps
         )
@@ -388,6 +419,8 @@ def main(args) -> None:
     pixel_values_videos = to_cuda(pixel_values_videos)
     video_grid_thw = to_cuda(video_grid_thw)
     image_position_ids = to_cuda(image_position_ids)
+    imgs_sizes = to_cuda(imgs_sizes)
+    num_frames = to_cuda(num_frames)
 
     # ------------------------------------------------------------------
     # Greedy generation loop
@@ -437,6 +470,8 @@ def main(args) -> None:
                 pixel_values_videos=pixel_values_videos,
                 video_grid_thw=video_grid_thw,
                 image_position_ids=image_position_ids,
+                imgs_sizes=imgs_sizes,
+                num_frames=num_frames,
             )
 
             output = fwd_bwd_function(
@@ -521,9 +556,9 @@ if __name__ == "__main__":
         type=str,
         nargs="+",
         default=None,
-        help="Paths to N image files in order (multi-image; Qwen-family only).",
+        help="Paths to N image files in order (multi-image; Qwen or Nemotron Omni).",
     )
-    parser.add_argument("--video_path", type=str, default=None, help="Path to a video file (Qwen-family only).")
+    parser.add_argument("--video_path", type=str, default=None, help="Path to a video file (Qwen or Nemotron Omni).")
     parser.add_argument(
         "--video_fps", type=float, default=2.0, help="Frames per second to sample from the video (default: 2.0)."
     )

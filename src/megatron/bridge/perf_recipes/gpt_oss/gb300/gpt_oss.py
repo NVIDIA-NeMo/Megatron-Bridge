@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
@@ -214,8 +215,8 @@ def gpt_oss_120b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× GB300, FP8-MX."""
+def _build_gpt_oss_120b_gb300_fp8mx() -> ConfigContainer:
+    """Shared HybridEP MXFP8 base for the GPT-OSS 120B GB300 recipe and its VR200 alias."""
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.moe_router_fusion = True
@@ -231,6 +232,16 @@ def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg)
+    return cfg
+
+
+def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× GB300, FP8-MX, NCCL EP."""
+    cfg = _build_gpt_oss_120b_gb300_fp8mx()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -242,11 +253,8 @@ def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -211,10 +211,15 @@ def process_audio_inputs(processor, audio_path: Optional[str], prompt: str):
         # Process inputs with audio
         inputs = processor(text=text, audio=[audio_data], return_tensors="pt", padding=True)
 
+        feature_attention_mask = getattr(inputs, "feature_attention_mask", None)
+        if feature_attention_mask is None:
+            # Native Qwen3-ASR processors use input_features_mask for mel frames.
+            feature_attention_mask = getattr(inputs, "input_features_mask", None)
+
         return (
             inputs.input_ids,
             inputs.input_features,
-            getattr(inputs, "feature_attention_mask", None),
+            feature_attention_mask,
             messages,
         )
     else:

@@ -26,7 +26,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_model_config, set_default_log_ranks
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
     EXPERT_VIEW_NAME,
@@ -261,10 +261,13 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         """
         if self.megatron_mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.megatron_mimo_parallelism_config)
+            language_grid = grids.get(MIMO_LANGUAGE_MODULE_KEY)
+            set_default_log_ranks({0, language_grid.rank_offset} if language_grid is not None else {0})
             pg_collections = self._get_pg_collections_from_grids(grids)
         else:
             grids = {}
             pg_collections = {}
+            set_default_log_ranks({0})
 
         if self.topology is not None:
             topology = self.topology
