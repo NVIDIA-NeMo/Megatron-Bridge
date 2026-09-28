@@ -510,8 +510,19 @@ def load_megatron_model(
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
+        # Allowlist of fields where explicitly passing None clears the saved value;
+        # other None overrides are ignored. Omitted fields are not overridden here.
+        # For example, inference may override a saved moe_expert_capacity_factor=1.1
+        # with None to disable capacity-based token dropping. Ignoring that None
+        # would incorrectly retain the training-time capacity limit.
+        nullable_overrides = {
+            "pipeline_model_parallel_layout",
+            "moe_expert_capacity_factor",
+            "moe_expert_rank_capacity_factor",
+            "moe_router_force_biased",
+        }
         for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
+            if hasattr(model_cfg, key) and (value is not None or key in nullable_overrides):
                 setattr(model_cfg, key, value)
 
         if (
