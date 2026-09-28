@@ -85,7 +85,7 @@ def _has_packed_sequence_metadata(batch: dict[str, torch.Tensor]) -> bool:
 
 
 def _packed_metadata_for_forward(batch: dict[str, torch.Tensor]) -> dict[str, _PackedMetadataValue] | None:
-    """Extract packed-sequence metadata needed by the forward step."""
+    """Extract sequence metadata, including padding masks for unpacked batches."""
     if batch.get("cu_seqlens_q") is not None:
         metadata: dict[str, _PackedMetadataValue] = {
             key: batch[key] for key in _CURRENT_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None
@@ -95,6 +95,8 @@ def _packed_metadata_for_forward(batch: dict[str, torch.Tensor]) -> dict[str, _P
         return metadata
     if batch.get("cu_seqlens") is not None:
         return {key: batch[key] for key in _LEGACY_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+    if batch.get("padding_mask") is not None:
+        return {"padding_mask": batch["padding_mask"]}
     return None
 
 
@@ -182,7 +184,7 @@ def _patch_mcore_schedule_plan_padding_mask() -> None:
 
 
 def _validate_packed_moe_cuda_graph(config) -> None:
-    """Reject router-scoped TE graphs that cannot consume packed padding masks."""
+    """Reject router-scoped TE graphs that cannot consume token padding masks."""
     if (
         not getattr(config, "num_moe_experts", None)
         or getattr(config, "cuda_graph_impl", "none") != "transformer_engine"
@@ -193,7 +195,7 @@ def _validate_packed_moe_cuda_graph(config) -> None:
     captures_router = not graph_modules or bool(graph_modules & {"moe", "moe_router", "moe_preprocess"})
     if captures_router:
         raise ValueError(
-            "Packed MoE padding masks do not support router-scoped Transformer Engine CUDA graphs in the pinned "
+            "MoE padding masks do not support router-scoped Transformer Engine CUDA graphs in the pinned "
             "MCore. Use an attention-only CUDA graph scope or disable scoped CUDA graphs."
         )
 
@@ -258,7 +260,9 @@ def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
     """Return whether middle PP stages need batch metadata for attention."""
     dataset_cfg = getattr(cfg, "dataset", None)
     uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
-    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg)
+    dataset_kwargs = getattr(dataset_cfg, "dataset_kwargs", None) or {}
+    returns_padding_mask = dataset_kwargs.get("return_padding_mask", False)
+    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg) or returns_padding_mask
 
 
 def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
@@ -388,11 +392,11 @@ def get_batch_from_iterator(
     if "cu_seqlens_q" in batch:
         required_device_keys.update(key for key in _CURRENT_PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _CURRENT_PACKED_SEQ_HOST_KEYS if key in batch)
-        if batch.get("padding_mask") is not None:
-            required_device_keys.add("padding_mask")
     elif "cu_seqlens" in batch:
         required_device_keys.update(key for key in _LEGACY_PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _LEGACY_PACKED_SEQ_HOST_KEYS if key in batch)
+    if batch.get("padding_mask") is not None:
+        required_device_keys.add("padding_mask")
 
     if not include_full_batch_fields:
         if is_first_pp_stage or include_mtp_inputs:
@@ -590,14 +594,15 @@ def _forward_step_common(
         # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
-        if getattr(config, "is_hybrid_model", False):
-            if tokens is not None:
-                packed_seq_metadata["total_tokens"] = tokens.size(1)
-            elif labels is not None:
-                packed_seq_metadata["total_tokens"] = labels.size(1)
-            else:
-                packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
+        if _has_packed_sequence_metadata(packed_seq_metadata):
+            if getattr(config, "is_hybrid_model", False):
+                if tokens is not None:
+                    packed_seq_metadata["total_tokens"] = tokens.size(1)
+                elif labels is not None:
+                    packed_seq_metadata["total_tokens"] = labels.size(1)
+                else:
+                    packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
+            forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
         if padding_mask is not None:
             forward_args["padding_mask"] = padding_mask
 
