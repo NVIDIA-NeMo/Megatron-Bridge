@@ -13,6 +13,7 @@ resolution-markers = [
 prerelease-mode = "allow"
 
 [manifest]
+constraints = [{ name = "tokenizers", specifier = "!=0.23.0rc0" }]
 overrides = [
     { name = "apache-tvm-ffi", specifier = "==0.1.11" },
     { name = "av", marker = "sys_platform == 'never'" },

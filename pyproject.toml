@@ -123,6 +123,8 @@ no-build-isolation-package = [
     "fast-hadamard-transform",
 ]
 prerelease = "allow"
+# Transformers 5.15 still passes cls= to RobertaProcessing; this prerelease renamed it.
+constraint-dependencies = ["tokenizers!=0.23.0rc0"]
 override-dependencies = [
     "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
