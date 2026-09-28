@@ -40,6 +40,8 @@ class DeepSeekV41ModelProvider(MLAModelProvider):
     engram_config: Any | None = None
     vision_config: Any | None = None
     dspark_config: Any | None = None
+    moe_router_bias_update_rate: float = 0.0
+    engram_cpu_lookup: bool = False
 
     @property
     def hybrid_pattern(self) -> str:
