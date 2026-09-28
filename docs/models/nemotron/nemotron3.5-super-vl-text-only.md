@@ -1,4 +1,4 @@
-# Nemotron 3.5 Super VL — Text-only
+# Nemotron-3.5 Super Text-only
 
 The text-only bridge imports language and shared Multi-Token Prediction (MTP) weights from the Nemotron 3.5 Super VL checkpoint while excluding the vision encoder, projector, and temporal video embedder. Export produces a standalone `NemotronHForCausalLM` checkpoint that uses the native Nemotron-H text bridge.
 

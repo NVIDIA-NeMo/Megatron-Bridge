@@ -1,4 +1,4 @@
-# Nemotron 3.5 Super VL as a text-only Nemotron-H checkpoint
+# Nemotron-3.5 Super Text-only
 
 Use `text_only=True` to import the language model and MTP weights directly from
 the VL checkpoint. This selects the existing Nemotron-H bridge and plain hybrid

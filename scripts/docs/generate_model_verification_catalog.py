@@ -123,7 +123,7 @@ MODEL_PAGE_TITLES = {
     "gpt-oss-20b": "GPT OSS 20B",
     "nemotron-3-nano-4b": "Nemotron 3 Nano 4B",
     "nemotron-3.5-lightning": "Nemotron 3.5 Lightning",
-    "nemotron-3.5-super-vl-120b-a12b-text-only": "Nemotron 3.5 Super VL — Text-only",
+    "nemotron-3.5-super-vl-120b-a12b-text-only": "Nemotron-3.5 Super Text-only",
     "qwen3-235b-a22b": "Qwen3-235B-A22B",
     "qwen3-30b-a3b": "Qwen3-30B-A3B",
     "qwen3-8b": "Qwen3-8B",
