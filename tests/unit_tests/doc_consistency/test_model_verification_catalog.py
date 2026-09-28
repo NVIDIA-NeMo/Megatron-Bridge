@@ -273,6 +273,7 @@ def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str
     assert paths["nemotron-3-nano-4b"] == "models/nemotron/nemotron3-nano-4b.md"
     assert paths["nemotron-3-super-120b-a12b"] == "models/nemotron/nemotron3-super.md"
     assert paths["nemotron-3.5-super-vl-120b-a12b"] == "models/nemotron/nemotron3.5-super-vl.md"
+    assert paths["nemotron-3.5-super-vl-120b-a12b-text-only"] == "models/nemotron/nemotron3.5-super-vl-text-only.md"
     assert paths["nemotron-3-ultra-550b-a55b"] == "models/nemotron/nemotron3-ultra.md"
     assert paths["qwen3.8-27b"] == "models/qwen/qwen3.8-27b.md"
 
@@ -287,6 +288,18 @@ def test_model_page_merge_preserves_intro_and_replaces_old_sections(generator: M
     assert "Details." not in merged
     assert generator._merge_model_page(merged, section) == merged
     assert generator._merge_model_page(original, section, title="New title").startswith("# New title\n\n")
+
+
+def test_nemotron_text_only_guide_is_in_both_navigation_trees() -> None:
+    guide = "nemotron3.5-super-vl-text-only"
+    index = (REPO_ROOT / "docs/models/nemotron/index.md").read_text(encoding="utf-8")
+    fern_index = (REPO_ROOT / "docs/fern/versions/nightly/pages/models/nemotron/index.mdx").read_text(encoding="utf-8")
+    nav = (REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8")
+
+    assert f"\n{guide}.md\n" in index
+    assert f"]({guide}.md)" in index
+    assert f"]({guide}.md)" in fern_index
+    assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" in nav
 
 
 def test_generated_outputs_and_navigation_are_current(generator: ModuleType, catalog: dict[str, object]) -> None:

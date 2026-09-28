@@ -293,6 +293,15 @@ def main(args) -> None:
             "expert_tensor_parallel_size": etp,
             "pipeline_dtype": torch.bfloat16,
             "deterministic_mode": args.deterministic,
+            # Preserve the saved dispatcher, but never drop tokens or force routing in inference.
+            "moe_expert_capacity_factor": None,
+            "moe_expert_rank_capacity_factor": None,
+            "moe_paged_stash": False,
+            "moe_ncclep_zero_copy": False,
+            "moe_pad_expert_input_to_capacity": False,
+            "moe_router_force_load_balancing": False,
+            "moe_router_force_biased": None,
+            "moe_hybridep_pad_uneven_dispatch_inputs": True,
         }
         if args.pp_layout:
             mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout

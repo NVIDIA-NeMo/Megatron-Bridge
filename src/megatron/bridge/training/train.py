@@ -903,8 +903,6 @@ def train_step(
         _handle_mxfp8_param_buffer_copy(
             optimizer=optimizer,
             model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
-            overlap_param_gather=cfg.ddp.overlap_param_gather,
         )
 
         # Handle finetuning vs pretraining data consumption
@@ -1022,7 +1020,7 @@ def train_step(
                 val = torch.vstack(val).sum(dim=0)
                 dp_cp_group = get_data_distribution_group(pg_collection, cfg.model, with_context_parallel=True)
                 torch.distributed.all_reduce(val, group=dp_cp_group)
-                loss_reduced[key] = val[0] / val[1]
+                loss_reduced[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
             elif val[0].numel() == 1:
                 # legacy behavior, we average over the number of microbatches
                 val = torch.cat(val).mean()
@@ -1650,8 +1648,6 @@ def _dummy_train_step(
 def _handle_mxfp8_param_buffer_copy(
     optimizer: MegatronOptimizer,
     model: list[MegatronModule],
-    reuse_grad_buf_for_mxfp8_param_ag: bool,
-    overlap_param_gather: bool,
 ) -> None:
     """Copy main params to param buffer for mxfp8 with grad buffer reuse.
 
@@ -1673,17 +1669,23 @@ def _handle_mxfp8_param_buffer_copy(
     Args:
         optimizer: The MegatronOptimizer instance
         model: List of model chunks (MegatronModule instances)
-        reuse_grad_buf_for_mxfp8_param_ag: Config flag for grad buffer reuse
-        overlap_param_gather: Config flag for overlapping param gathering
     """
-    if reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather:
-        # Check if forward_pre_hook is enabled by checking if hooks are registered.
-        forward_pre_hook_enabled = len(model[0].remove_forward_pre_hook_handles) > 0
-        full_cg_captured = FullCudaGraphWrapper.cuda_graph.get("training") is not None
-        if forward_pre_hook_enabled or full_cg_captured:
-            for optim_instance in optimizer.chained_optimizers:
-                if isinstance(optim_instance, DistributedOptimizer):
-                    optim_instance._copy_main_params_to_param_buffer()
+    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
+    optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
+    eligible_optimizers = [
+        child
+        for child in optimizers
+        if isinstance(child, DistributedOptimizer)
+        and child.ddp_config.reuse_grad_buf_for_mxfp8_param_ag
+        and child.ddp_config.overlap_param_gather
+    ]
+    if not eligible_optimizers:
+        return
+    forward_pre_hook_enabled = bool(model[0].remove_forward_pre_hook_handles)
+    full_cg_captured = FullCudaGraphWrapper.cuda_graph.get("training") is not None
+    if forward_pre_hook_enabled or full_cg_captured:
+        for child in eligible_optimizers:
+            child._copy_main_params_to_param_buffer()
 
 
 def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):

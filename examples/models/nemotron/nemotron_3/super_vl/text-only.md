@@ -1,4 +1,4 @@
-# Nemotron 3.5 Super VL as a text-only Nemotron-H checkpoint
+# Nemotron-3.5 Super Text-only
 
 Use `text_only=True` to import the language model and MTP weights directly from
 the VL checkpoint. This selects the existing Nemotron-H bridge and plain hybrid
@@ -15,7 +15,7 @@ performs conversion; there is no separate text-only model or pretrained subclass
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
-    "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
+    "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
     text_only=True,
     trust_remote_code=True,
     revision="<checkpoint-commit>",
@@ -36,7 +36,7 @@ The shared CLI accepts `--text-only` for import and export. For example, in a
 GPU-enabled environment with sufficient aggregate memory:
 
 ```bash
-HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B
+HF_MODEL=nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
 HF_REVISION='<checkpoint-commit>'
 
 bash scripts/conversion/convert.sh import \
@@ -60,11 +60,15 @@ are retained; keeping media tokens in the vocabulary does not retain the media
 encoder. The lazy source wrapper itself is for conversion, not HF generation;
 use the Megatron model or the standalone HF export for inference.
 
-Super VL stores one shared attention+MoE MTP block. The text config expresses
-two runtime prediction depths, matching the existing Super training convention,
-with `mtp_use_repeated_layer=True`. This does not duplicate the serialized
-weights. Native Transformers inference may ignore the MTP weights; a successful
-HF generation test alone therefore does not validate MTP training.
+Super VL stores one shared attention+MoE MTP block. Text-only import and HF
+export preserve `num_nextn_predict_layers=1`. The Super training recipes
+explicitly set `mtp_num_layers=2` and `mtp_use_repeated_layer=True`, applying
+that same block at two prediction depths without duplicating its weights.
+When building a training provider directly through `AutoBridge` instead of a
+Super recipe, set these two training options explicitly. A bare HF import
+does not infer the repetition count from the block's attention and MoE layers.
+Native Transformers inference may ignore the MTP weights; a successful HF
+generation test alone therefore does not validate MTP training.
 
 ## Reuse the Super recipes
 
@@ -75,7 +79,7 @@ H100/GB200 variants and legacy aliases) accept the same source options:
 from megatron.bridge.recipes.nemotronh import nemotron_3_super_sft_config
 
 cfg = nemotron_3_super_sft_config(
-    hf_path="nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B",
+    hf_path="nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16",
     text_only=True,
     revision="<checkpoint-commit>",
     trust_remote_code=True,

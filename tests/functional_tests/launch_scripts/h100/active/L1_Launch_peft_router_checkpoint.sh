@@ -1,5 +1,5 @@
-#!/usr/bin/env bash
-# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#!/bin/bash
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,14 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -euo pipefail
+# CI_TIMEOUT=10
+set -xeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-cd "${REPO_ROOT}"
-
-UV_ARGS=(--no-project --with nemo-run==0.10.0)
-if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    UV_ARGS=(--active --no-sync)
-fi
-exec uv run "${UV_ARGS[@]}" python "${SCRIPT_DIR}/setup_inference.py" "$@"
+export CUDA_VISIBLE_DEVICES="0"
+uv run python -m torch.distributed.run --nproc_per_node=1 -m pytest -v -s -x --tb=short \
+  tests/unit_tests/peft/test_router_bias_checkpoint_distributed.py
