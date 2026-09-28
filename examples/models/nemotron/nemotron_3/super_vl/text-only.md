@@ -60,11 +60,15 @@ are retained; keeping media tokens in the vocabulary does not retain the media
 encoder. The lazy source wrapper itself is for conversion, not HF generation;
 use the Megatron model or the standalone HF export for inference.
 
-Super VL stores one shared attention+MoE MTP block. The text config expresses
-two runtime prediction depths, matching the existing Super training convention,
-with `mtp_use_repeated_layer=True`. This does not duplicate the serialized
-weights. Native Transformers inference may ignore the MTP weights; a successful
-HF generation test alone therefore does not validate MTP training.
+Super VL stores one shared attention+MoE MTP block. Text-only import and HF
+export preserve `num_nextn_predict_layers=1`. The Super training recipes
+explicitly set `mtp_num_layers=2` and `mtp_use_repeated_layer=True`, applying
+that same block at two prediction depths without duplicating its weights.
+When building a training provider directly through `AutoBridge` instead of a
+Super recipe, set these two training options explicitly. A bare HF import
+does not infer the repetition count from the block's attention and MoE layers.
+Native Transformers inference may ignore the MTP weights; a successful HF
+generation test alone therefore does not validate MTP training.
 
 ## Reuse the Super recipes
 

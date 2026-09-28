@@ -171,10 +171,11 @@ def test_super_vl_text_only_uses_native_super_bridge_and_shared_mtp(tmp_path):
     provider = bridge.to_megatron_provider(load_weights=False)
     assert type(provider) is HybridModelProvider
     assert provider.hf_model_text_only
-    assert provider.mtp_num_layers == 2
+    assert provider.mtp_num_layers == 1
     assert provider.mtp_hybrid_override_pattern == "*E"
     assert provider.mtp_use_repeated_layer
     assert source.config.llm_config.num_nextn_predict_layers == 1
+    assert text.config.num_nextn_predict_layers == 1
     assert not hasattr(text.config, "vision_config")
     assert not hasattr(provider, "vision_model")
 
@@ -263,8 +264,10 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
     source.config = full_config
     selected = AutoBridge(Nemotron35SuperVLBridge().text_only_pretrained(source))
     provider = selected.to_megatron_provider(load_weights=False)
-    assert provider.mtp_num_layers == 2
+    assert provider.mtp_num_layers == 1
     assert provider.mtp_use_repeated_layer
+    # Match the Super training recipe: use the physical block at two depths.
+    provider.mtp_num_layers = 2
     reference = selected
     if reference_id == "org/text-export":
         native_source = PreTrainedCausalLM.from_pretrained(reference_id, revision="text-revision")
@@ -287,22 +290,21 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
     assert restored.hf_model_revision == reference.hf_model_revision
     assert isinstance(restored._model_bridge, NemotronHBridge)
     assert restored.hf_pretrained.architectures == ["NemotronHForCausalLM"]
-    # Exporting the selected native text checkpoint must retain prediction
-    # depths, not replace them with the number of physical shared blocks.
-    assert restored.hf_pretrained.num_nextn_predict_layers == 2
+    # Export the one shared block, not the training repetition count.
+    assert restored.hf_pretrained.num_nextn_predict_layers == 1
     assert restored.hf_pretrained.mtp_use_repeated_layer
-    assert selected.hf_pretrained.config.num_nextn_predict_layers == 2
+    assert selected.hf_pretrained.config.num_nextn_predict_layers == 1
     assert full_config.llm_config.num_nextn_predict_layers == 1
     assert not hasattr(restored.hf_pretrained, "vision_config")
     assert not hasattr(restored.hf_pretrained, "auto_map")
     reimported = restored.to_megatron_provider(load_weights=False)
-    assert reimported.mtp_num_layers == provider.mtp_num_layers == 2
+    assert reimported.mtp_num_layers == 1
+    assert provider.mtp_num_layers == 2
     assert reimported.mtp_use_repeated_layer
     assert reimported.mtp_hybrid_override_pattern == "*E"
-    assert reimported.hf_mtp_num_layers_is_prediction_depth
-    # A native standalone reference no longer has projection provenance. Its
-    # second export must still preserve the native config's prediction depth.
-    assert NemotronHBridge.megatron_to_hf_config(reimported)["num_nextn_predict_layers"] == 2
+    # A second training/export cycle must keep the same physical HF count.
+    reimported.mtp_num_layers = 2
+    assert NemotronHBridge.megatron_to_hf_config(reimported)["num_nextn_predict_layers"] == 1
 
 
 def test_public_nemotron_omni_architecture_is_registered():

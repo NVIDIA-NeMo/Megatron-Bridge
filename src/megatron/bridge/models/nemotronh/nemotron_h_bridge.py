@@ -386,10 +386,6 @@ class NemotronHBridge(MegatronModelBridge):
         if hasattr(hf_config, "moe_shared_expert_overlap"):
             provider.moe_shared_expert_overlap = hf_config.moe_shared_expert_overlap
         self._configure_mtp_provider(provider, hf_config)
-        # Native Transformers' list-based text schema uses prediction depths.
-        # Retain that schema across save/reload and subsequent exports, including
-        # when the source is already a standalone text checkpoint.
-        provider.hf_mtp_num_layers_is_prediction_depth = bool(getattr(hf_config, "layers_block_type", None))
 
         return provider
 
@@ -448,15 +444,8 @@ class NemotronHBridge(MegatronModelBridge):
         # Megatron uses None="not set/disabled", but HF modeling code expects integers
         # and will crash on None (e.g. n_routed_experts // n_group → TypeError)
         mtp_num_layers = int(hf_cfg.get("num_nextn_predict_layers") or 0)
-        # Native text configs use runtime prediction depths; legacy remote-code
-        # configs serialize physical blocks. Keep the schema across round trips.
-        # The text-only flag also covers checkpoints saved before schema tracking.
-        if (
-            mtp_num_layers > 0
-            and getattr(provider, "mtp_use_repeated_layer", False)
-            and not getattr(provider, "hf_model_text_only", False)
-            and not getattr(provider, "hf_mtp_num_layers_is_prediction_depth", False)
-        ):
+        # HF serializes the physical shared block; recipes set its training repetitions.
+        if mtp_num_layers > 0 and getattr(provider, "mtp_use_repeated_layer", False):
             mtp_num_layers = 1
         hf_cfg["num_nextn_predict_layers"] = mtp_num_layers
         hf_cfg["n_group"] = hf_cfg.get("n_group") or 1

@@ -587,31 +587,23 @@ class TestNemotronHBridgeMegatronToHFConfig:
 
     @pytest.mark.parametrize("depth", [0, 1, 2, 3])
     @pytest.mark.parametrize("repeated", [False, True])
-    def test_text_only_export_preserves_mtp_prediction_depth(self, depth, repeated):
+    @pytest.mark.parametrize("text_only", [False, True])
+    def test_export_preserves_physical_mtp_block_count(self, depth, repeated, text_only):
         provider = SimpleNamespace(
             hybrid_layer_pattern="MEME" + "/*E" * depth,
             mtp_num_layers=depth,
             mtp_use_repeated_layer=repeated,
-            hf_model_text_only=True,
+            hf_model_text_only=text_only,
         )
         config = NemotronHBridge.megatron_to_hf_config(provider)
-        assert config["num_nextn_predict_layers"] == depth
+        physical_blocks = 1 if depth and repeated else depth
+        assert config["num_nextn_predict_layers"] == physical_blocks
         reimported = SimpleNamespace()
-        # The reference HF config retains the sharing flag independently of depth.
+        # Reimport preserves stored blocks; the training recipe selects repetitions.
         config["mtp_use_repeated_layer"] = repeated
         NemotronHBridge._configure_mtp_provider(reimported, SimpleNamespace(**config))
-        assert reimported.mtp_num_layers == depth
+        assert reimported.mtp_num_layers == physical_blocks
         assert reimported.mtp_use_repeated_layer is bool(depth and repeated)
-
-    def test_native_text_reexport_preserves_prediction_depth_without_projection(self):
-        provider = SimpleNamespace(
-            hybrid_layer_pattern="MEME/*E/*E",
-            mtp_num_layers=2,
-            mtp_use_repeated_layer=True,
-            hf_model_text_only=False,
-            hf_mtp_num_layers_is_prediction_depth=True,
-        )
-        assert NemotronHBridge.megatron_to_hf_config(provider)["num_nextn_predict_layers"] == 2
 
     def test_megatron_to_hf_config_disables_mtp_with_zero_physical_layers(self):
         """Export zero physical MTP layers when MTP is disabled."""

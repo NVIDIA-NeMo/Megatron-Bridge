@@ -405,16 +405,15 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
         """Select the native Nemotron-H language checkpoint, excluding all media.
 
-        Standalone Nemotron-H configs express the runtime prediction depth in
-        num_nextn_predict_layers. Super VL instead stores a serialized-block
-        count there; normalize it without duplicating the shared MTP weights.
+        Preserve the HF count of one serialized shared MTP block. Super text
+        recipes explicitly set two training prediction depths, independently
+        of this checkpoint representation.
         """
         config = copy.deepcopy(hf_pretrained.config.llm_config)
         self._validate_shared_mtp_config(config)
         config.architectures = ["NemotronHForCausalLM"]
         if hasattr(config, "auto_map"):
             del config.auto_map
-        config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
         config.mtp_use_repeated_layer = True
         kwargs = dict(hf_pretrained.init_kwargs)
         if kwargs.get("subfolder"):
