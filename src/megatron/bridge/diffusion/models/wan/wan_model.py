@@ -284,7 +284,7 @@ class WanModel(VisionModule):
         self.decoder.set_input_tensor(input_tensor[0])
 
     def sharded_state_dict(
-        self, prefix: str = "module.", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
     ) -> ShardedStateDict:
         """Sharded state dict implementation for GPTModel backward-compatibility (removing extra state).
 
