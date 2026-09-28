@@ -373,7 +373,8 @@ def accumulate_flops_metadata(
       (dense / non-packed) or degenerate, the host-int BSHD fallback
       ``mbs * dense_seq_len²`` is accumulated instead (bit-exact with the
       pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
-      otherwise ``tokens.shape[1]``.
+      otherwise ``tokens.shape[1]`` for unsharded inputs. Dense CP-sharded
+      inputs require an explicit positive ``config_seq_len``.
     - ``_flops_vision_patches``: legacy total patch-count approximation.
     - ``_flops_vision_patch_sum``, ``_flops_vision_patch_sq_sum``, and
       ``_flops_vision_merged_token_sum``: exact additive ViT statistics that
@@ -395,18 +396,19 @@ def accumulate_flops_metadata(
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
 
-    Set ``context_parallel_size`` only when packed ``tokens`` have already been
+    Set ``context_parallel_size`` only when ``tokens`` have already been
     CP-sharded but ``cu_seqlens`` still describes the full sequences, as in
     ``gpt_step``. Callers accumulating before CP slicing, such as VLM steps,
-    must leave it at 1. Only the token-linear count is rescaled; attention
-    statistics are already global within CP and are reduced over pure DP later.
+    must leave it at 1. For packed inputs, only the token-linear count is
+    rescaled; attention statistics are already global within CP and are reduced
+    over pure DP later. For dense inputs, pass the full sequence length explicitly
+    rather than inferring model work from a CP-local tensor.
     """
     if vp_stage not in (None, 0) or tokens is None:
         return
 
     mbs = tokens.shape[0]
     tensor_seq_len = tokens.shape[1]
-    dense_seq_len = config_seq_len if isinstance(config_seq_len, int) and config_seq_len > 0 else tensor_seq_len
 
     # THD attention term Σᵢ sᵢ², computed inline from cu_seqlens. The squared
     # sub-sequence lengths stay on-device (``_scalar_sum_for_accumulator`` returns a
@@ -422,6 +424,12 @@ def accumulate_flops_metadata(
     else:
         # No cu_seqlens (dense / non-packed) or a degenerate pack with no real
         # sub-sequences → BSHD fallback (single pack-length sequence).
+        has_full_seq_len = (
+            isinstance(config_seq_len, int) and not isinstance(config_seq_len, bool) and config_seq_len > 0
+        )
+        if context_parallel_size > 1 and not has_full_seq_len:
+            raise ValueError("Dense CP-sharded FLOP metadata requires a positive full config_seq_len.")
+        dense_seq_len = config_seq_len if has_full_seq_len else tensor_seq_len
         _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
 

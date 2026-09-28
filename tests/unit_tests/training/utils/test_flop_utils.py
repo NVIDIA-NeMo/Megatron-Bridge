@@ -2815,6 +2815,19 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sq_sum == 4096**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
 
+    @pytest.mark.parametrize("config_seq_len", [None, 0, -1, True, 4096.0])
+    @pytest.mark.parametrize("cu_seqlens", [None, torch.tensor([0], dtype=torch.int32)])
+    def test_dense_cp_fallback_rejects_missing_or_invalid_full_sequence(self, config_seq_len, cu_seqlens):
+        state = _State()
+        with pytest.raises(ValueError, match="full config_seq_len"):
+            accumulate_flops_metadata(
+                state,
+                torch.zeros(1, 2048),
+                config_seq_len=config_seq_len,
+                context_parallel_size=2,
+                cu_seqlens=cu_seqlens,
+            )
+
     def test_mock_state_accumulators_start_at_zero(self):
         state = MagicMock()
         tokens = torch.zeros(1, 8)
