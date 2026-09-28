@@ -782,6 +782,18 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                # Preserve the saved dispatcher/backend, but never drop tokens or
+                # use synthetic routing when comparing against HF inference.
+                "moe_expert_capacity_factor": None,
+                "moe_expert_rank_capacity_factor": None,
+                "moe_paged_stash": False,
+                # Zero-copy NCCL-EP requires the fixed capacity disabled above.
+                "moe_ncclep_zero_copy": False,
+                "moe_pad_expert_input_to_capacity": False,
+                "moe_router_force_load_balancing": False,
+                "moe_router_force_biased": None,
+                # Eager prompts can have unequal or unaligned token counts.
+                "moe_hybridep_pad_uneven_dispatch_inputs": True,
             },
             wrap_with_ddp=False,
         )

@@ -171,10 +171,11 @@ def test_super_vl_text_only_uses_native_super_bridge_and_shared_mtp(tmp_path):
     provider = bridge.to_megatron_provider(load_weights=False)
     assert type(provider) is HybridModelProvider
     assert provider.hf_model_text_only
-    assert provider.mtp_num_layers == 2
+    assert provider.mtp_num_layers == 1
     assert provider.mtp_hybrid_override_pattern == "*E"
     assert provider.mtp_use_repeated_layer
     assert source.config.llm_config.num_nextn_predict_layers == 1
+    assert text.config.num_nextn_predict_layers == 1
     assert not hasattr(text.config, "vision_config")
     assert not hasattr(provider, "vision_model")
 
@@ -263,8 +264,10 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
     source.config = full_config
     selected = AutoBridge(Nemotron35SuperVLBridge().text_only_pretrained(source))
     provider = selected.to_megatron_provider(load_weights=False)
-    assert provider.mtp_num_layers == 2
+    assert provider.mtp_num_layers == 1
     assert provider.mtp_use_repeated_layer
+    # Match the Super training recipe: use the physical block at two depths.
+    provider.mtp_num_layers = 2
     reference = selected
     if reference_id == "org/text-export":
         native_source = PreTrainedCausalLM.from_pretrained(reference_id, revision="text-revision")
@@ -287,14 +290,21 @@ def test_text_only_auto_config_restores_native_config_and_mode(tmp_path, referen
     assert restored.hf_model_revision == reference.hf_model_revision
     assert isinstance(restored._model_bridge, NemotronHBridge)
     assert restored.hf_pretrained.architectures == ["NemotronHForCausalLM"]
-    # Native Nemotron-H exports the physical shared block count, not the
-    # number of runtime prediction depths (see NemotronHBridge).
+    # Export the one shared block, not the training repetition count.
     assert restored.hf_pretrained.num_nextn_predict_layers == 1
     assert restored.hf_pretrained.mtp_use_repeated_layer
-    assert selected.hf_pretrained.config.num_nextn_predict_layers == 2
+    assert selected.hf_pretrained.config.num_nextn_predict_layers == 1
     assert full_config.llm_config.num_nextn_predict_layers == 1
     assert not hasattr(restored.hf_pretrained, "vision_config")
     assert not hasattr(restored.hf_pretrained, "auto_map")
+    reimported = restored.to_megatron_provider(load_weights=False)
+    assert reimported.mtp_num_layers == 1
+    assert provider.mtp_num_layers == 2
+    assert reimported.mtp_use_repeated_layer
+    assert reimported.mtp_hybrid_override_pattern == "*E"
+    # A second training/export cycle must keep the same physical HF count.
+    reimported.mtp_num_layers = 2
+    assert NemotronHBridge.megatron_to_hf_config(reimported)["num_nextn_predict_layers"] == 1
 
 
 def test_public_nemotron_omni_architecture_is_registered():
@@ -392,6 +402,20 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
     assert serialized["has_sound"] is True
     assert "add_sound_encoder" not in serialized
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("overlap", [False, True, None])
+@pytest.mark.parametrize("super_vl", [False, True])
+def test_nemotron_omni_shared_expert_overlap_config_roundtrip(overlap, super_vl):
+    config = _mock_nemotron_35_super_vl_hf_config() if super_vl else _mock_omni_hf_config()
+    if overlap is not None:
+        config.llm_config.moe_shared_expert_overlap = overlap
+    bridge = Nemotron35SuperVLBridge() if super_vl else NemotronOmniBridge()
+    provider = bridge.provider_bridge(SimpleNamespace(config=config))
+    expected = True if overlap is None else overlap
+    assert provider.moe_shared_expert_overlap is expected
+    assert bridge.megatron_to_hf_config(provider)["moe_shared_expert_overlap"] is expected
 
 
 def test_nemotron_omni_provider_bridge_omits_sound_when_config_is_absent():
@@ -599,6 +623,30 @@ def test_nemotron_omni_export_with_megatron_names_marks_source_only_buffers_sour
     assert all(type(item) is HFSourcedWeightTuple for item in exported[1:])
     assert {item.param_name for item in exported[1:]} == set(source_tensors)
     assert all(item.megatron_param_names == () and item.megatron_param_name is None for item in exported[1:])
+
+
+@pytest.mark.parametrize("bridge_cls", [NemotronOmniBridge, Nemotron35SuperVLBridge])
+@pytest.mark.parametrize("has_parser", [False, True])
+def test_export_preserves_optional_reasoning_parser(tmp_path, bridge_cls, has_parser):
+    source = tmp_path / "source"
+    source.mkdir()
+    target = tmp_path / "export"
+    target.mkdir()
+    parser_name = "ultra_v3_reasoning_parser.py"
+    parser_source = b"# Optional vLLM reasoning parser\n"
+    if has_parser:
+        (source / parser_name).write_bytes(parser_source)
+    (source / "modeling.py").write_text("# Model entrypoint\n")
+    (source / "unrelated.py").write_text("# Not an export artifact\n")
+    pretrained = PreTrainedCausalLM(model_name_or_path=str(source))
+
+    pretrained._copy_custom_modeling_files(source, target, file_patterns=bridge_cls.ADDITIONAL_FILE_PATTERNS)
+
+    assert (target / "modeling.py").read_bytes() == (source / "modeling.py").read_bytes()
+    assert not (target / "unrelated.py").exists()
+    assert (target / parser_name).exists() is has_parser
+    if has_parser:
+        assert (target / parser_name).read_bytes() == parser_source
 
 
 def test_nemotron_omni_export_exposes_transitive_dynamic_modules(tmp_path):
