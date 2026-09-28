@@ -2183,10 +2183,11 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
         config.ddp.overlap_param_gather = True
         config.optimizer.overlap_param_gather = True
 
-    # 混合 ZeRO: Muon 专用的 ZeRO 并行度上限 (Z) 把 DP × CP
-    # 拆成 N = ceil(dp_cp / Z) 个 intra 组。Muon 矩阵于是是在 <=Z 个 rank 内分片、并在
-    # N 个副本组上冗余更新 (以计算换内存)；Adam/Lion 参数保持全 ZeRO，N == 1 (默认值)
-    # 保持当前的 full-ZeRO 行为。
+    # Mixed ZeRO: a Muon-specific ZeRO parallelism cap (Z) decomposes the
+    # data-parallel x context-parallel domain into N = ceil(dp_cp / Z) intra groups.
+    # Muon matrices then shard within <=Z ranks and are redundantly updated across the
+    # N replica groups (compute-for-memory); Adam/Lion params keep full ZeRO. N == 1
+    # (the default) preserves the current full-ZeRO behavior.
     muon_zero_parallelism = config.optimizer.muon_zero_parallelism
     if muon_zero_parallelism > 0:
         assert config.optimizer.use_layer_wise_distributed_optimizer, (
@@ -2195,15 +2196,16 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
         )
         dp_cp = config.data_parallel_size * config.model.context_parallel_size
         if muon_zero_parallelism < dp_cp:
-            num_instances = -(-dp_cp // muon_zero_parallelism) # 向上取整：ceil(dp_cp / Z)
+            num_instances = -(-dp_cp // muon_zero_parallelism) # ceil(dp_cp / Z)
             assert dp_cp % num_instances == 0, (
                 f"muon_zero_parallelism={muon_zero_parallelism} yields "
                 f"num_distributed_optimizer_instances={num_instances}, which must evenly "
                 f"divide data_parallel_size * context_parallel_size = {dp_cp}. "
                 f"Choose a Z that divides dp*cp evenly."
             )
-            # MoE (EP) 的 Muon 矩阵同样在 intra expert-DP 组内分片
-            # (大小为 expert_dp / N)，因此 N 还必须能整除 expert data-parallel 大小
+            # MoE (expert-parallel) Muon matrices are sharded across the FULL expert-DP group
+            # (no ZeRO parallelism limit for MoE). This assert only guarantees the partial-ZeRO
+            # intra_expt_dp process group stays well-formed; MoE no longer shards over intra_expt_dp
             expert_parallel_size = getattr(config.model, 'expert_model_parallel_size', 1) or 1
             if expert_parallel_size > 1:
                 expert_tensor_parallel_size = (
@@ -2227,7 +2229,7 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
                     f"dp*cp and expert_dp."
                 )
             config.ddp.num_distributed_optimizer_instances = num_instances
-    # muon_zero_parallelism >= dp_cp: 不设上限，保持 N==1
+    # muon_zero_parallelism >= dp_cp: no cap, keep N==1
 
 
 def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:

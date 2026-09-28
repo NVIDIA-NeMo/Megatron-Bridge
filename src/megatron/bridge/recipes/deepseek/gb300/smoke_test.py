@@ -11,7 +11,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 
 def _minimal_pro_provider() -> MLAModelProvider:
     provider = MLAModelProvider(
-        # ---- 基础架构 ----
+        # ---- Base architecture ----
         num_layers=8,
         hidden_size=2048, 
         ffn_hidden_size=2048,
@@ -41,7 +41,7 @@ def _minimal_pro_provider() -> MLAModelProvider:
     # ---- Attention ----
     provider.experimental_attention_variant = "dsv4_hybrid"
     provider.multi_latent_attention = True
-    provider.transformer_layer_spec = _get_exp_attn_spec  # 换成 DSv4 实验 attention spec
+    provider.transformer_layer_spec = _get_exp_attn_spec  # use the DSv4 experimental attention spec
     provider.qk_layernorm = True
     provider.normalization = "RMSNorm"
     provider.add_bias_linear = False
@@ -150,6 +150,7 @@ def deepseek_v4_pro_smoketest_1gpu_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
 
     cfg.optimizer.optimizer = 'muon'
+    cfg.optimizer.muon_zero_parallelism = 2
     cfg.optimizer.use_layer_wise_distributed_optimizer = True
     cfg.optimizer.use_layer_wise_param_layout = True
 
