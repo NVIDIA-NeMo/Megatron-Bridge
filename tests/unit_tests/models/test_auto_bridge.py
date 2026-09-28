@@ -79,6 +79,49 @@ def _make_tiny_llama_config(**overrides) -> LlamaConfig:
     return LlamaConfig(**config_kwargs)
 
 
+def _make_legacy_args(**overrides):
+    """Create the minimum native Megatron arguments used by config conversion."""
+    values = {
+        "num_layers": 2,
+        "hidden_size": 64,
+        "num_attention_heads": 4,
+        "ffn_hidden_size": 128,
+        "kv_channels": 16,
+        "seq_length": 256,
+        "max_position_embeddings": 256,
+        "params_dtype": torch.bfloat16,
+        "padded_vocab_size": 128,
+        "untie_embeddings_and_output_weights": True,
+        "use_rope_scaling": False,
+        "no_persist_layer_norm": False,
+        "apply_layernorm_1p": False,
+        "norm_epsilon": 1e-5,
+        "overlap_p2p_comm": False,
+        "decoder_first_pipeline_num_layers": None,
+        "decoder_last_pipeline_num_layers": None,
+        "num_experts": None,
+        "rotary_interleaved": False,
+        "fp8_param_gather": False,
+        "swiglu": False,
+        "bias_gelu_fusion": False,
+        "bias_swiglu_fusion": False,
+        "squared_relu": False,
+        "init_method_xavier_uniform": False,
+        "group_query_attention": False,
+        "config_logger_dir": None,
+        "cp_comm_type": ["ring"],
+        "is_hybrid_model": False,
+        "multi_latent_attention": False,
+        "heterogeneous_layers_config_path": None,
+        "bf16": True,
+        "fp16": False,
+        "fp8": None,
+        "fp8_param": False,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
 def _save_minimal_fast_tokenizer(path: Path) -> PreTrainedTokenizerFast:
     backend = Tokenizer(
         models.WordLevel(
@@ -1071,6 +1114,7 @@ class TestAutoBridge:
         """from_auto_config synthesizes config and tags bridge with source model id."""
         ckpt_dir = tmp_path / "ckpt"
         ckpt_dir.mkdir()
+        (ckpt_dir / "common.pt").touch()
         (ckpt_dir / "run_config.yaml").write_text("dummy: true\n")
 
         mock_hf_cfg = Mock()
@@ -1111,6 +1155,7 @@ class TestAutoBridge:
         iter_latest = ckpt_dir / "iter_0000003"
         iter_latest.mkdir()
         (iter_latest / "run_config.yaml").write_text("dummy: true\n")
+        (ckpt_dir / "latest_checkpointed_iteration.txt").write_text("3\n")
 
         mock_hf_cfg = Mock()
         mock_hf_cfg.to_dict.return_value = {"vocab_size": 32000}
@@ -1143,8 +1188,90 @@ class TestAutoBridge:
         ckpt_dir.mkdir()
         (ckpt_dir / "iter_0000001").mkdir()
 
-        with pytest.raises(FileNotFoundError, match="Could not find run_config.yaml"):
+        with pytest.raises(FileNotFoundError, match="Could not resolve a checkpoint iteration"):
             AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
+
+    @pytest.mark.parametrize("checkpoint_layout", ["direct", "root"])
+    def test_from_auto_config_native_checkpoint_synthesizes_config(self, tmp_path, checkpoint_layout):
+        """Native direct checkpoints and tracked roots synthesize a reference config."""
+        if checkpoint_layout == "direct":
+            checkpoint_path = tmp_path / "checkpoint"
+            checkpoint_path.mkdir()
+            (checkpoint_path / "common.pt").touch()
+        else:
+            checkpoint_path = tmp_path / "checkpoint"
+            iteration_path = checkpoint_path / "iter_0000003"
+            iteration_path.mkdir(parents=True)
+            (iteration_path / "common.pt").touch()
+            (checkpoint_path / "latest_checkpointed_iteration.txt").write_text("3\n")
+
+        hf_config = _make_tiny_llama_config()
+        first_bridge = AutoBridge.from_hf_config(hf_config)
+        second_bridge = Mock()
+        legacy_args = _make_legacy_args()
+
+        with (
+            patch("transformers.AutoConfig.from_pretrained", return_value=hf_config),
+            patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(name="megatron_cfg"), legacy_args),
+            ) as load_model_config,
+            patch(
+                "megatron.bridge.models.conversion.utils.conform_config_to_reference",
+                return_value=hf_config.to_dict(),
+            ),
+            patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]) as patch_from_config,
+        ):
+            result = AutoBridge.from_auto_config(str(checkpoint_path), "hf/llama")
+
+        expected_path = checkpoint_path if checkpoint_layout == "direct" else checkpoint_path / "iter_0000003"
+        assert result is second_bridge
+        load_model_config.assert_called_once_with(str(expected_path))
+        synthesized_config = patch_from_config.call_args_list[1].args[0]
+        assert synthesized_config.vocab_size == hf_config.vocab_size
+
+    def test_from_auto_config_native_text_only_keeps_reference_metadata(self, tmp_path):
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "common.pt").touch()
+        hf_config = _make_tiny_llama_config()
+        reference = Mock(hf_pretrained=SimpleNamespace(config=hf_config), text_only=True, hf_model_revision="rev")
+        legacy_bridge = Mock()
+        first_bridge = Mock()
+        first_bridge._legacy_bridge_for_checkpoint.return_value = legacy_bridge
+        saved_config = SimpleNamespace(hf_model_text_only=True, hf_model_id="hf/llama", hf_model_revision="rev")
+
+        with (
+            patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(saved_config, _make_legacy_args()),
+            ),
+            patch("transformers.AutoConfig.from_pretrained") as load_config,
+            patch.object(AutoBridge, "from_hf_pretrained", return_value=reference) as load_reference,
+            patch.object(AutoBridge, "from_hf_config", return_value=first_bridge),
+        ):
+            bridge = AutoBridge.from_auto_config(str(checkpoint), "hf/llama")
+
+        load_config.assert_not_called()
+        load_reference.assert_called_once_with("hf/llama", text_only=True, trust_remote_code=False, revision="rev")
+        assert bridge is legacy_bridge
+        assert bridge.text_only is True
+        assert bridge.hf_model_revision == "rev"
+
+    def test_legacy_args_convert_to_generic_provider_config(self):
+        """Native argument aliases map to a generic GPT provider."""
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+        from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
+
+        config = _transformer_config_from_args(
+            _make_legacy_args(padded_vocab_size=256, use_rope_scaling=True),
+            GPTModelProvider,
+        )
+
+        assert config.vocab_size == 256
+        assert config.share_embeddings_and_output_weights is False
+        assert config.rope_scaling is True
+        assert config.params_dtype is torch.bfloat16
 
     def test_supports_method(self):
         """Test the supports class method."""
@@ -2366,8 +2493,110 @@ class TestAutoBridge:
             with pytest.raises(ImportError, match="megatron.bridge.training is not available"):
                 bridge.save_megatron_model([Mock()], "./path")
 
-    def test_load_megatron_model_basic(self):
+    @staticmethod
+    def _native_checkpoint(tmp_path: Path) -> Path:
+        checkpoint = tmp_path / "native-checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "common.pt").touch()
+        return checkpoint
+
+    def test_load_megatron_model_native_uses_generic_provider(self, tmp_path):
+        """Native checkpoints use the generic provider and model-loading path."""
+        checkpoint = self._native_checkpoint(tmp_path)
+        config = _make_tiny_llama_config()
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = config
+        bridge.trust_remote_code = False
+
+        legacy_config = Mock(name="legacy_config")
+        legacy_bridge = Mock()
+        legacy_bridge.hf_pretrained = legacy_config
+        provider = Mock(name="generic_provider")
+        legacy_bridge.to_megatron_provider.return_value = provider
+        loaded_model = Mock(name="loaded_model")
+
+        with (
+            patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(), _make_legacy_args()),
+            ),
+            patch.object(bridge, "_legacy_bridge_for_checkpoint", return_value=legacy_bridge),
+            patch("megatron.bridge.training.model_load_save._prepare_model_config_for_load") as prepare_config,
+            patch(
+                "megatron.bridge.training.model_load_save.build_and_load_model", return_value=loaded_model
+            ) as build_model,
+        ):
+            result = bridge.load_megatron_model(checkpoint)
+
+        assert result == [loaded_model]
+        legacy_bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
+        prepare_config.assert_called_once_with(provider, use_cpu_init=False, mp_overrides=None)
+        build_model.assert_called_once_with(
+            str(checkpoint),
+            provider,
+            use_cpu_init=False,
+            skip_temp_dist_context=False,
+        )
+
+    def test_load_megatron_model_native_retains_lazy_wrapper_source(self, tmp_path):
+        """Replacing native config does not replace a loaded wrapper's lazy source."""
+        checkpoint = self._native_checkpoint(tmp_path)
+        original_config = _make_tiny_llama_config()
+        wrapper = PreTrainedCausalLM.from_pretrained("hf/llama")
+        wrapper.config = original_config
+        bridge = AutoBridge(wrapper)
+        legacy_config = _make_tiny_llama_config(vocab_size=256)
+        legacy_bridge = Mock()
+        legacy_bridge.hf_pretrained = legacy_config
+        legacy_bridge.to_megatron_provider.return_value = Mock()
+
+        with (
+            patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(), _make_legacy_args()),
+            ),
+            patch.object(bridge, "_legacy_bridge_for_checkpoint", return_value=legacy_bridge),
+            patch("megatron.bridge.training.model_load_save._prepare_model_config_for_load"),
+            patch("megatron.bridge.training.model_load_save.build_and_load_model", return_value=[]),
+        ):
+            bridge.load_megatron_model(checkpoint)
+
+        assert bridge.hf_pretrained is wrapper
+        assert wrapper.model_name_or_path == "hf/llama"
+        assert wrapper.config is legacy_config
+        assert wrapper.config is not original_config
+
+    def test_load_megatron_model_invalidates_cached_config_only_shim(self, tmp_path):
+        """Native config replacement invalidates a previously cached config-only shim."""
+        checkpoint = self._native_checkpoint(tmp_path)
+        bridge = AutoBridge(_make_tiny_llama_config())
+        old_shim = bridge._config_only_pretrained
+        legacy_config = _make_tiny_llama_config(vocab_size=256)
+        legacy_bridge = Mock()
+        legacy_bridge.hf_pretrained = legacy_config
+        legacy_bridge.to_megatron_provider.return_value = Mock()
+
+        with (
+            patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(Mock(), _make_legacy_args()),
+            ),
+            patch.object(bridge, "_legacy_bridge_for_checkpoint", return_value=legacy_bridge),
+            patch("megatron.bridge.training.model_load_save._prepare_model_config_for_load"),
+            patch("megatron.bridge.training.model_load_save.build_and_load_model", return_value=[]),
+        ):
+            bridge.load_megatron_model(checkpoint)
+
+        assert bridge.hf_pretrained is legacy_config
+        assert bridge._config_only_pretrained is not old_shim
+        assert bridge._config_only_pretrained.config is legacy_config
+
+    def test_load_megatron_model_basic(self, tmp_path):
         """Test load_megatron_model method."""
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "common.pt").touch()
+        (checkpoint / "run_config.yaml").touch()
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_config = Mock(spec=PretrainedConfig)
         mock_config.architectures = ["LlamaForCausalLM"]
@@ -2378,24 +2607,21 @@ class TestAutoBridge:
         bridge.trust_remote_code = False
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
-            from pathlib import Path
+            mock_model = Mock()
+            mock_load_megatron_model.return_value = mock_model
+            result = bridge.load_megatron_model(checkpoint)
 
-            with patch.object(Path, "iterdir") as mock_iterdir:
-                # Setup mocks
-                mock_model = Mock()
-                mock_load_megatron_model.return_value = mock_model
+        assert result == [mock_model]
+        mock_load_megatron_model.assert_called_once()
 
-                # Mock iterdir to return empty list (no iter_ folders)
-                mock_iterdir.return_value = []
-
-                result = bridge.load_megatron_model("./checkpoint_path")
-
-                assert result == [mock_model]
-                mock_load_megatron_model.assert_called_once()
-                mock_iterdir.assert_called_once()
-
-    def test_load_megatron_model_with_iter_folder(self):
-        """Test load_megatron_model with iter_ folders."""
+    def test_load_megatron_model_with_iter_folder(self, tmp_path):
+        """Test load_megatron_model with a tracked iter_ folder."""
+        checkpoint = tmp_path / "checkpoint"
+        (checkpoint / "iter_0000010").mkdir(parents=True)
+        (checkpoint / "iter_0000020").mkdir()
+        (checkpoint / "iter_0000010" / "run_config.yaml").touch()
+        (checkpoint / "iter_0000020" / "run_config.yaml").touch()
+        (checkpoint / "latest_checkpointed_iteration.txt").write_text("20\n")
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
 
         bridge = AutoBridge.__new__(AutoBridge)
@@ -2403,33 +2629,13 @@ class TestAutoBridge:
         bridge.trust_remote_code = False
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
-            from pathlib import Path
+            mock_model = Mock()
+            mock_load_megatron_model.return_value = mock_model
+            result = bridge.load_megatron_model(checkpoint)
 
-            # Create mock folder objects
-            mock_iter_folder_1 = Mock()
-            mock_iter_folder_1.is_dir.return_value = True
-            mock_iter_folder_1.name = "iter_0000010"
-
-            mock_iter_folder_2 = Mock()
-            mock_iter_folder_2.is_dir.return_value = True
-            mock_iter_folder_2.name = "iter_0000020"
-
-            # Mock path.iterdir()
-            with patch.object(Path, "iterdir") as mock_iterdir:
-                # Setup mocks
-                mock_model = Mock()
-                mock_load_megatron_model.return_value = mock_model
-
-                # Mock iterdir to return the iter folders
-                mock_iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
-
-                result = bridge.load_megatron_model("./checkpoint_path")
-
-                assert result == [mock_model]
-                mock_load_megatron_model.assert_called_once()
-                mock_iterdir.assert_called_once()
-                # Should use the latest iteration (iter_0000020)
-                assert mock_load_megatron_model.call_args.args[0].endswith("iter_0000020")
+        assert result == [mock_model]
+        mock_load_megatron_model.assert_called_once()
+        assert mock_load_megatron_model.call_args.args[0].endswith("iter_0000020")
 
     def test_load_megatron_model_root_uses_published_tracker(self, tmp_path):
         """A checkpoint root must not select an unpublished newer iteration directory."""
@@ -2447,60 +2653,38 @@ class TestAutoBridge:
 
         assert load_model.call_args.args[0] == str(durable_checkpoint)
 
-    def test_load_megatron_model_with_mp_overrides(self):
+    def test_load_megatron_model_with_mp_overrides(self, tmp_path):
         """Test load_megatron_model with model-parallel overrides argument."""
-
-        mock_hf_model = Mock(spec=PreTrainedCausalLM)
-        mock_config = Mock(spec=PretrainedConfig)
-        mock_config.architectures = ["LlamaForCausalLM"]
-        mock_hf_model.config = mock_config
-
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "common.pt").touch()
+        (checkpoint / "run_config.yaml").touch()
         bridge = AutoBridge.__new__(AutoBridge)
-        bridge.hf_pretrained = mock_hf_model
+        bridge.hf_pretrained = Mock(spec=PreTrainedCausalLM)
         bridge.trust_remote_code = False
+        mp_overrides = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
 
-        # Create model-parallel overrides
-        mp_overrides = {
-            "tensor_model_parallel_size": 2,
-            "pipeline_model_parallel_size": 1,
-        }
+        with (
+            patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model,
+            patch("torch.distributed.is_initialized", return_value=False),
+        ):
+            mock_model = Mock()
+            mock_load_megatron_model.return_value = mock_model
+            result = bridge.load_megatron_model(checkpoint, mp_overrides=mp_overrides, wrap_with_ddp=False)
 
-        with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
-            with patch("torch.distributed.is_available", return_value=False):
-                with patch("torch.distributed.is_initialized", return_value=False):
-                    from pathlib import Path
+        assert result == [mock_model]
+        mock_load_megatron_model.assert_called_once()
+        call_args = mock_load_megatron_model.call_args
+        assert call_args.kwargs["mp_overrides"] == mp_overrides
+        assert call_args.args[0] == str(checkpoint)
+        assert "skip_temp_dist_context" in call_args.kwargs
 
-                    with patch.object(Path, "iterdir") as mock_iterdir:
-                        # Setup mocks
-                        mock_model = Mock()
-                        mock_load_megatron_model.return_value = mock_model
-
-                        # Mock iterdir to return empty list (no iter_ folders)
-                        mock_iterdir.return_value = []
-
-                        # Call load_megatron_model with model-parallel overrides
-                        result = bridge.load_megatron_model(
-                            "checkpoint_path",
-                            mp_overrides=mp_overrides,
-                            wrap_with_ddp=False,
-                        )
-
-                        # Verify the result
-                        assert result == [mock_model]
-
-                        # Verify that load_megatron_model was called with mp_overrides
-                        mock_load_megatron_model.assert_called_once()
-                        call_args = mock_load_megatron_model.call_args
-
-                        # Check that mp_overrides was passed correctly
-                        assert call_args.kwargs["mp_overrides"] == mp_overrides
-
-                        # Check other expected arguments
-                        assert call_args.args[0] == "checkpoint_path"  # path argument
-                        assert "skip_temp_dist_context" in call_args.kwargs
-
-    def test_load_megatron_model_honors_cpu_initialization(self):
+    def test_load_megatron_model_honors_cpu_initialization(self, tmp_path):
         """Test explicit CPU initialization reaches the checkpoint loader."""
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "common.pt").touch()
+        (checkpoint / "run_config.yaml").touch()
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = Mock(spec=PreTrainedCausalLM)
         bridge.trust_remote_code = False
@@ -2508,22 +2692,20 @@ class TestAutoBridge:
         with (
             patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model,
             patch("torch.distributed.is_initialized", return_value=False),
-            patch.object(Path, "iterdir", return_value=[]),
         ):
             mock_model = Mock()
             mock_load_megatron_model.return_value = mock_model
-
-            result = bridge.load_megatron_model(
-                "checkpoint_path",
-                wrap_with_ddp=False,
-                use_cpu_initialization=True,
-            )
+            result = bridge.load_megatron_model(checkpoint, wrap_with_ddp=False, use_cpu_initialization=True)
 
         assert result == [mock_model]
         assert mock_load_megatron_model.call_args.kwargs["use_cpu_init"] is True
 
-    def test_load_megatron_model_registers_prefix_when_trust_remote_code(self):
+    def test_load_megatron_model_registers_prefix_when_trust_remote_code(self, tmp_path):
         """Test that load_megatron_model registers transformers_modules prefix when trust_remote_code=True."""
+        checkpoint = tmp_path / "checkpoint"
+        checkpoint.mkdir()
+        (checkpoint / "common.pt").touch()
+        (checkpoint / "run_config.yaml").touch()
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_config = Mock(spec=PretrainedConfig)
         mock_config.architectures = ["LlamaForCausalLM"]
@@ -2533,17 +2715,14 @@ class TestAutoBridge:
         bridge.hf_pretrained = mock_hf_model
         bridge.trust_remote_code = True
 
-        with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
-            with patch("megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix") as mock_register:
-                from pathlib import Path
+        with (
+            patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model,
+            patch("megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix") as mock_register,
+        ):
+            mock_load_megatron_model.return_value = Mock()
+            bridge.load_megatron_model(checkpoint)
 
-                with patch.object(Path, "iterdir") as mock_iterdir:
-                    mock_load_megatron_model.return_value = Mock()
-                    mock_iterdir.return_value = []
-
-                    bridge.load_megatron_model("./checkpoint_path")
-
-                    mock_register.assert_called_once_with("transformers_modules.")
+        mock_register.assert_called_once_with("transformers_modules.")
 
     @patch("torch.distributed.is_available")
     @patch("torch.distributed.is_initialized")
