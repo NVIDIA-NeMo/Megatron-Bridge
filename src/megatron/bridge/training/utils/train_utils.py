@@ -114,7 +114,7 @@ def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
     """
     if profiling is None or not profiling.record_memory_history:
         return
-    if get_rank_safe() not in profiling.profile_ranks:
+    if profiling.profile_ranks and get_rank_safe() not in profiling.profile_ranks:
         return
 
     torch.cuda.memory._record_memory_history(
@@ -809,7 +809,7 @@ def training_log(
 
     if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
         rank = get_rank_safe()
-        if rank in config.profiling.profile_ranks:
+        if not config.profiling.profile_ranks or rank in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 

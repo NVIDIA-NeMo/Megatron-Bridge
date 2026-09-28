@@ -29,6 +29,30 @@ To import the HF VL model to your desired Megatron path:
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B
 ```
 
+### Prepare a text-only checkpoint with pretrained MTP
+
+For the Qwen3.5 MoE text training path, extract a local, unquantized HF VL
+snapshot before importing it into Megatron:
+
+```bash
+uv run python scripts/conversion/extract_qwen35_text_checkpoint.py \
+  --source /models/Qwen3.5-35B-A3B \
+  --output /models/Qwen3.5-35B-A3B-text
+```
+
+The extractor copies decoder, LM-head, and pretrained MTP tensors exactly on
+CPU, one shard at a time, and omits vision weights. It retains tokenizer and
+chat-template assets and creates a standalone `Qwen3_5MoeForCausalLM` config
+with MTP enabled. This path requires exactly one pretrained MTP layer and
+rejects quantized checkpoints, unexpected tensor names, and incomplete shard
+indexes. It does not construct a Transformers model or initialize new weights.
+
+Choose a new output directory outside the source snapshot. The output becomes
+visible only after extraction completes; failed extractions retain a temporary
+directory whose path is logged. Import the resulting text checkpoint with
+`scripts/conversion/convert.sh import --hf-model /models/Qwen3.5-35B-A3B-text
+--megatron-path /checkpoints/Qwen3.5-35B-A3B-text`.
+
 ### Export Megatron → HF
 ```bash
 ./scripts/conversion/convert.sh export \
@@ -89,6 +113,44 @@ Before training, ensure the following environment variables are set:
 2. `HF_TOKEN`: to download models from HF Hub (if required)
 3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
 4. `WANDB_API_KEY`: (optional) to enable WandB logging
+
+### Vision activation recomputation
+
+Qwen3.5 dense and MoE providers expose vision recomputation independently of
+the decoder. `vision_recompute_granularity` selects the policy:
+
+- `"inherit"` (default): preserve the existing decoder granularity, method, and
+  layer-count inheritance. Selective vision modules retain the vision default
+  (`["core_attn"]`); decoder-only module names are not copied.
+- `None`: disable vision recomputation, even when the decoder uses it.
+- `"full"`: require `vision_recompute_method` (`"uniform"` or `"block"`) and
+  `vision_recompute_num_layers` (an integer from 1 through the vision depth).
+  Uniform checkpoints chunks of that size; block checkpoints that many initial
+  layers individually.
+- `"selective"`: require a non-empty `vision_recompute_modules` list drawn from
+  `"core_attn"` and `"mlp"`. The TE vision spec fuses layernorm into QKV/FC1;
+  separate `"layernorm"`, GDN, and MoE recomputation options are not supported.
+
+For example, a recipe can checkpoint every vision layer while retaining its
+selective decoder policy:
+
+```python
+cfg.model.vision_recompute_granularity = "full"
+cfg.model.vision_recompute_method = "uniform"
+cfg.model.vision_recompute_num_layers = 1
+```
+
+The method, layer count, and module-list fields default to `None`. Only set
+fields applicable to the selected policy; unused fields must remain `None`.
+Explicit vision policies do not inherit missing fields from the decoder.
+
+Per-layer vision CUDA graphs are incompatible with full recomputation. If a
+recipe enables them, also set `cfg.model.vision_cuda_graph_impl = "none"`.
+Decoder graph settings remain independent.
+
+These options apply to the Megatron vision encoder and do not alter checkpoint
+parameter names or shapes. Set the policy in the training configuration when
+resuming.
 
 ### Pretrain
 
