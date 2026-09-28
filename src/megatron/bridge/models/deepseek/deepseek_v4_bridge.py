@@ -892,7 +892,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 (f"{mg_pfx}.hc_head_scale", f"{ck_pfx}.hc_head_scale"),
             ]
             for mg, hf in _mtp_plain:
-                mappings.append(AutoMapping(mg, hf))
+                mapping_cls = _AutoOptional if mg.endswith(".mlp.router.expert_bias") else AutoMapping
+                mappings.append(mapping_cls(mg, hf))
             for mg, hf in _mtp_hc_plain:
                 mappings.append(ReplicatedMapping(mg, hf))
             # MTP attn_sink: TP-split like the main model attn_sink
