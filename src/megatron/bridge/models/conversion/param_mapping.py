@@ -3671,12 +3671,12 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(config, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3684,6 +3684,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -3887,12 +3888,12 @@ def split_qkv_weights(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3900,6 +3901,7 @@ def split_qkv_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -3963,12 +3965,12 @@ def split_qkv_weights_scale(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3976,6 +3978,7 @@ def split_qkv_weights_scale(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -4024,7 +4027,9 @@ def split_qkvg_weights(
 
         q_slice = torch.cat(
             [
-                torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+                torch.arange(
+                    total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkvg.device
+                )
                 for i in range(num_query_groups)
             ]
         )
@@ -4033,12 +4038,13 @@ def split_qkvg_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkvg.device,
                 )
                 for i in range(num_query_groups)
             ]
         )
-        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group)
-        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group)
+        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
+        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
 
         q = qkvg_reshaped[q_slice].reshape(-1, hidden_size)
         k = qkvg_reshaped[k_slice].reshape(-1, hidden_size)
@@ -4299,8 +4305,8 @@ def split_kv_biases(config: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.
 
     kv_reshaped = kv.view(kv_total_dim, head_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1)
     v = kv_reshaped[v_slice].reshape(-1)
@@ -4334,8 +4340,8 @@ def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[tor
 
     kv_reshaped = kv.view(kv_total_dim, head_size, hidden_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1, hidden_size)
     v = kv_reshaped[v_slice].reshape(-1, hidden_size)
