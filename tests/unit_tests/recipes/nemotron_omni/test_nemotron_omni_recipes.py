@@ -48,7 +48,7 @@ _super_vl_gb200_recipe_module = importlib.import_module(
 )
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
-_SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-120B-A12B"
+_SUPER_VL_HF_ID = "nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16"
 _SUPER_VL_HF_REVISION = None
 _PUBLIC_HF_REVISION = "24e67ea000b7c2837fc8f9488aa2008524fac8ba"  # pragma: allowlist secret
 _CORD_V2_REVISION = "7f0115a4b758a71d6473b8d085751692da2fef98"  # pragma: allowlist secret
