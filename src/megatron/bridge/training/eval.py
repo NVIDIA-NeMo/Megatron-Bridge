@@ -378,7 +378,7 @@ def evaluate(
         # Evaluation is not on the hot path, so the warning's host sync costs nothing,
         # and without it a substituted zero reads as a real validation loss.
         if denominator.item() == 0:
-            print_rank_0(
+            print_rank_last(
                 f"WARNING: no unmasked tokens in the evaluation set for '{key}'. "
                 "Reporting 0.0; check the dataset's loss mask."
             )

@@ -138,6 +138,7 @@ def train_step_megatron_mimo(
         skipped_iter = 1
 
     loss_dict = {}
+    zero_token_step = None
     if losses_reduced:
         is_last_stage = False
         # Access role from unwrapped model (handles Float16Module wrapper)
@@ -151,7 +152,6 @@ def train_step_megatron_mimo(
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
             # Tracks whether any key saw an empty token count this step; read at
             # log_interval so the step itself never synchronizes with the host.
-            zero_token_step = None
             for key in losses_reduced[0].keys():
                 val = [x[key].view(-1) for x in losses_reduced]
                 if val[0].numel() == 2:
@@ -183,13 +183,17 @@ def train_step_megatron_mimo(
 
     # Only broadcast if the source and logging rank differ and a valid source exists.
     if source_rank >= 0 and source_rank != last_rank:
-        obj = [loss_dict if my_rank == source_rank else None]
+        obj = [loss_dict, zero_token_step] if my_rank == source_rank else [None, None]
         torch.distributed.broadcast_object_list(obj, src=source_rank)
         if my_rank == last_rank:
             received = obj[0] or {}
             # Tensors inside the received dict carry the source rank's CUDA device;
             # move them to this rank's device so training_log arithmetic works.
             loss_dict = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in received.items()}
+            # The logging rank may own an encoder, so it has no local loss counter.
+            # Carry the source's flag with its loss and count it exactly once here.
+            if obj[1] is not None:
+                accumulate_zero_token_step(global_state, obj[1].cuda())
 
     return loss_dict, skipped_iter, grad_norm, num_zeros_in_grad
 

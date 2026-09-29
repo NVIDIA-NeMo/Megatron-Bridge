@@ -657,7 +657,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
 
 
 # Attribute on GlobalState holding the running count of steps whose global token
-# count was zero. Follows the same dynamic-attribute convention as _flops_*.
+# count was zero. GlobalState clears it when restarting an interrupted attempt.
 ZERO_TOKEN_ITERS_ATTR = "_zero_token_iters"
 
 

@@ -394,14 +394,19 @@ def test_evaluate_runs_non_loss_collection_on_every_pipeline_rank():
     assert forward_backward_func.call_args.kwargs["collect_non_loss_data"] is True
 
 
-def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1):
+def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1, rank=1, remote=None):
     """Drive evaluate() through its loss-aggregation path on the last pipeline stage."""
     state = _make_evaluate_state(eval_iters=eval_iters)
     pg_collection = SimpleNamespace(
-        pp=SimpleNamespace(size=lambda: 1),
+        pp=SimpleNamespace(size=lambda: 2),
         dp=SimpleNamespace(size=lambda: 1),
         dp_cp=object(),
     )
+
+    def reduce(value, **kwargs):
+        assert kwargs["group"] is pg_collection.dp_cp
+        if remote is not None:
+            value.add_(value.new_tensor(remote))
 
     with (
         patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
@@ -413,11 +418,14 @@ def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1):
             "megatron.bridge.training.eval.get_forward_backward_func",
             return_value=MagicMock(return_value=loss_dicts),
         ),
-        patch("megatron.bridge.training.eval.is_pp_last_stage", return_value=True),
+        patch("megatron.bridge.training.eval.is_pp_last_stage", return_value=rank == 1),
         patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_start"),
         patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_end"),
-        patch("megatron.bridge.training.eval.torch.distributed.all_reduce"),
-        patch("megatron.bridge.training.eval.print_rank_0") as printed,
+        patch("megatron.bridge.training.eval.torch.distributed.all_reduce", side_effect=reduce),
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("torch.distributed.get_rank", return_value=rank),
+        patch("torch.distributed.get_world_size", return_value=2),
+        patch("builtins.print") as printed,
     ):
         total_loss_dict, _, timelimit = evaluate(
             state=state,
@@ -460,4 +468,20 @@ def test_evaluate_token_weighted_average_is_unchanged():
     )
 
     assert total_loss_dict["lm loss"].item() == pytest.approx(5.0)
+    assert not any("no unmasked tokens" in message for message in messages)
+
+
+def test_evaluate_first_pipeline_stage_does_not_warn():
+    total_loss_dict, messages = _run_evaluate_loss_reduction([], rank=0)
+
+    assert total_loss_dict == {}
+    assert not any("no unmasked tokens" in message for message in messages)
+
+
+def test_evaluate_locally_masked_batch_uses_remote_tokens():
+    total_loss_dict, messages = _run_evaluate_loss_reduction(
+        [{"lm loss": torch.tensor([0.0, 0.0], device="cuda")}], remote=[12.0, 3.0]
+    )
+
+    assert total_loss_dict["lm loss"].item() == pytest.approx(4.0)
     assert not any("no unmasked tokens" in message for message in messages)
