@@ -46,6 +46,10 @@ class GLM45VBridge(MegatronModelBridge):
             text_config.num_hidden_layers - text_config.first_k_dense_replace
         )
 
+        def visual_token_id(name: str, default: int) -> int:
+            """Read visual token IDs from the top-level HF config with legacy fallback."""
+            return getattr(hf_config, name, getattr(text_config, name, default))
+
         provider = GLM45VModelProvider(
             add_qkv_bias=text_config.attention_bias,
             kv_channels=text_config.head_dim,
@@ -77,12 +81,12 @@ class GLM45VBridge(MegatronModelBridge):
             vision_config=hf_config.vision_config,
             # VL-specific token IDs
             eos_token_id=getattr(text_config, "eos_token_id", 151329),
-            image_start_token_id=getattr(text_config, "image_start_token_id", 151339),
-            image_end_token_id=getattr(text_config, "image_end_token_id", 151340),
-            video_start_token_id=getattr(text_config, "video_start_token_id", 151341),
-            video_end_token_id=getattr(text_config, "video_end_token_id", 151342),
-            image_token_id=getattr(text_config, "image_token_id", 151363),
-            video_token_id=getattr(text_config, "video_token_id", 151364),
+            image_start_token_id=visual_token_id("image_start_token_id", 151339),
+            image_end_token_id=visual_token_id("image_end_token_id", 151340),
+            video_start_token_id=visual_token_id("video_start_token_id", 151341),
+            video_end_token_id=visual_token_id("video_end_token_id", 151342),
+            image_token_id=visual_token_id("image_token_id", 151363),
+            video_token_id=visual_token_id("video_token_id", 151364),
         )
         return provider
 
