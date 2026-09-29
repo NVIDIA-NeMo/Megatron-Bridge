@@ -380,6 +380,29 @@ class TestLoadMegatronModel:
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
 
+    def test_legacy_parallel_overrides_are_applied_before_config_construction(self):
+        saved_args = SimpleNamespace(context_parallel_size=8, tensor_model_parallel_size=4, sequence_parallel=True)
+        overrides = {"context_parallel_size": 1, "tensor_model_parallel_size": 2, "sequence_parallel": False}
+
+        with (
+            patch.object(model_load_save, "file_exists", return_value=False),
+            patch(
+                "megatron.bridge.training.mlm_compat.arguments._load_args_from_checkpoint",
+                return_value=saved_args,
+            ),
+            patch("megatron.bridge.training.mlm_compat.arguments._transformer_config_from_args") as convert,
+        ):
+            _, runtime_args = load_model_config("/checkpoint", mp_overrides=overrides)
+
+        assert runtime_args is not saved_args
+        assert runtime_args.context_parallel_size == 1
+        assert runtime_args.tensor_model_parallel_size == 2
+        assert runtime_args.sequence_parallel is False
+        assert saved_args.context_parallel_size == 8
+        assert saved_args.tensor_model_parallel_size == 4
+        assert saved_args.sequence_parallel is True
+        convert.assert_called_once_with(runtime_args, mp_overrides=overrides)
+
     @pytest.mark.parametrize(
         "pipeline_layout",
         [None, [["embedding", "decoder"], ["decoder", "loss"]]],

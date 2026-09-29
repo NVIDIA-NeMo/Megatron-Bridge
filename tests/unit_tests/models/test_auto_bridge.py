@@ -1143,7 +1143,7 @@ class TestAutoBridge:
         assert bridge is second_bridge
         assert second_bridge.hf_model_id == hf_model_id
         mock_auto_cfg.assert_called_once_with(hf_model_id, trust_remote_code=False)
-        mock_load_cfg.assert_called_once_with(str(ckpt_dir))
+        mock_load_cfg.assert_called_once_with(str(ckpt_dir), mp_overrides=None)
         mock_conform.assert_called_once_with({"vocab_size": 64000}, {"vocab_size": 32000})
         assert mock_from_config.call_args_list[1].args[0].name_or_path == hf_model_id
 
@@ -1175,7 +1175,7 @@ class TestAutoBridge:
                     with patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]):
                         AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
 
-        mock_load_cfg.assert_called_once_with(str(iter_latest))
+        mock_load_cfg.assert_called_once_with(str(iter_latest), mp_overrides=None)
 
     def test_from_auto_config_missing_checkpoint_path(self):
         """from_auto_config fails with clear message for nonexistent checkpoint root."""
@@ -1192,7 +1192,8 @@ class TestAutoBridge:
             AutoBridge.from_auto_config(str(ckpt_dir), "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16")
 
     @pytest.mark.parametrize("checkpoint_layout", ["direct", "root"])
-    def test_from_auto_config_native_checkpoint_synthesizes_config(self, tmp_path, checkpoint_layout):
+    @pytest.mark.parametrize("mp_overrides", [None, {"context_parallel_size": 1, "tensor_model_parallel_size": 2}])
+    def test_from_auto_config_native_checkpoint_synthesizes_config(self, tmp_path, checkpoint_layout, mp_overrides):
         """Native direct checkpoints and tracked roots synthesize a reference config."""
         if checkpoint_layout == "direct":
             checkpoint_path = tmp_path / "checkpoint"
@@ -1222,11 +1223,11 @@ class TestAutoBridge:
             ),
             patch.object(AutoBridge, "from_hf_config", side_effect=[first_bridge, second_bridge]) as patch_from_config,
         ):
-            result = AutoBridge.from_auto_config(str(checkpoint_path), "hf/llama")
+            result = AutoBridge.from_auto_config(str(checkpoint_path), "hf/llama", mp_overrides=mp_overrides)
 
         expected_path = checkpoint_path if checkpoint_layout == "direct" else checkpoint_path / "iter_0000003"
         assert result is second_bridge
-        load_model_config.assert_called_once_with(str(expected_path))
+        load_model_config.assert_called_once_with(str(expected_path), mp_overrides=mp_overrides)
         synthesized_config = patch_from_config.call_args_list[1].args[0]
         assert synthesized_config.vocab_size == hf_config.vocab_size
 
@@ -2500,7 +2501,8 @@ class TestAutoBridge:
         (checkpoint / "common.pt").touch()
         return checkpoint
 
-    def test_load_megatron_model_native_uses_generic_provider(self, tmp_path):
+    @pytest.mark.parametrize("mp_overrides", [None, {"context_parallel_size": 1, "tensor_model_parallel_size": 2}])
+    def test_load_megatron_model_native_uses_generic_provider(self, tmp_path, mp_overrides):
         """Native checkpoints use the generic provider and model-loading path."""
         checkpoint = self._native_checkpoint(tmp_path)
         config = _make_tiny_llama_config()
@@ -2515,22 +2517,25 @@ class TestAutoBridge:
         legacy_bridge.to_megatron_provider.return_value = provider
         loaded_model = Mock(name="loaded_model")
 
+        legacy_args = _make_legacy_args()
         with (
             patch(
                 "megatron.bridge.training.model_load_save.load_model_config",
-                return_value=(Mock(), _make_legacy_args()),
-            ),
-            patch.object(bridge, "_legacy_bridge_for_checkpoint", return_value=legacy_bridge),
+                return_value=(Mock(), legacy_args),
+            ) as load_config,
+            patch.object(bridge, "_legacy_bridge_for_checkpoint", return_value=legacy_bridge) as legacy_factory,
             patch("megatron.bridge.training.model_load_save._prepare_model_config_for_load") as prepare_config,
             patch(
                 "megatron.bridge.training.model_load_save.build_and_load_model", return_value=loaded_model
             ) as build_model,
         ):
-            result = bridge.load_megatron_model(checkpoint)
+            result = bridge.load_megatron_model(checkpoint, mp_overrides=mp_overrides)
 
         assert result == [loaded_model]
+        load_config.assert_called_once_with(str(checkpoint), mp_overrides=mp_overrides)
+        legacy_factory.assert_called_once_with(legacy_args, mp_overrides=mp_overrides)
         legacy_bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
-        prepare_config.assert_called_once_with(provider, use_cpu_init=False, mp_overrides=None)
+        prepare_config.assert_called_once_with(provider, use_cpu_init=False, mp_overrides=mp_overrides)
         build_model.assert_called_once_with(
             str(checkpoint),
             provider,

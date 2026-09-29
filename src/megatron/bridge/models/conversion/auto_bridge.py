@@ -467,7 +467,14 @@ class AutoBridge(Generic[MegatronModelT]):
         return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
 
     @classmethod
-    def from_auto_config(cls, megatron_path: str, hf_model_id: str, trust_remote_code: bool = False) -> "AutoBridge":
+    def from_auto_config(
+        cls,
+        megatron_path: str,
+        hf_model_id: str,
+        trust_remote_code: bool = False,
+        *,
+        mp_overrides: ModelParallelKwargs | None = None,
+    ) -> "AutoBridge":
         """
         Create a config-only AutoBridge by synthesizing an HF config from a Megatron checkpoint.
 
@@ -483,6 +490,7 @@ class AutoBridge(Generic[MegatronModelT]):
             trust_remote_code: Whether to trust remote code when loading config.
                 Defaults to False for security. Set to True only for models that
                 require custom modeling code from the repository.
+            mp_overrides: Runtime model-parallel overrides for legacy checkpoint config construction.
 
         Returns:
             AutoBridge: Bridge instance configured for the architecture
@@ -499,7 +507,7 @@ class AutoBridge(Generic[MegatronModelT]):
         from megatron.bridge.training.model_load_save import load_model_config
 
         checkpoint_path = _resolve_checkpoint_path(megatron_path)
-        megatron_cfg, legacy_args = load_model_config(str(checkpoint_path))
+        megatron_cfg, legacy_args = load_model_config(str(checkpoint_path), mp_overrides=mp_overrides)
         if legacy_args is None and not (checkpoint_path / "run_config.yaml").is_file():
             raise ValueError(f"Native checkpoint at {checkpoint_path} has no legacy model arguments in common.pt")
 
@@ -528,7 +536,7 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = cls.from_hf_config(hf_cfg)
 
         if legacy_args is not None:
-            bridge = bridge._legacy_bridge_for_checkpoint(legacy_args)
+            bridge = bridge._legacy_bridge_for_checkpoint(legacy_args, mp_overrides=mp_overrides)
         else:
             megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
             megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
@@ -544,7 +552,9 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge.trust_remote_code = trust_remote_code
         return bridge
 
-    def _legacy_bridge_for_checkpoint(self, legacy_args: Any) -> "AutoBridge":
+    def _legacy_bridge_for_checkpoint(
+        self, legacy_args: Any, *, mp_overrides: ModelParallelKwargs | None = None
+    ) -> "AutoBridge":
         """Build a bridge config from native Megatron argparse metadata."""
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
@@ -553,7 +563,9 @@ class AutoBridge(Generic[MegatronModelT]):
             self.hf_pretrained if isinstance(self.hf_pretrained, PretrainedConfig) else self.hf_pretrained.config
         )
         provider_class = self._model_bridge.PROVIDER_CLASS or GPTModelProvider
-        legacy_config = _transformer_config_from_args(legacy_args, config_class=provider_class)
+        legacy_config = _transformer_config_from_args(
+            legacy_args, config_class=provider_class, mp_overrides=mp_overrides
+        )
         config_dict = self._model_bridge.megatron_to_hf_config(legacy_config)
         config_dict = conform_config_to_reference(config_dict, reference_config.to_dict())
         config_dict = _drop_readonly_config_properties(config_dict, type(reference_config))
@@ -1617,10 +1629,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 mp_overrides=mp_overrides,
             )
         else:
-            _, legacy_args = load_model_config(str(checkpoint_path))
+            _, legacy_args = load_model_config(str(checkpoint_path), mp_overrides=mp_overrides)
             if legacy_args is None:
                 raise ValueError(f"Native checkpoint at {checkpoint_path} has no legacy model arguments in common.pt")
-            legacy_bridge = self._legacy_bridge_for_checkpoint(legacy_args)
+            legacy_bridge = self._legacy_bridge_for_checkpoint(legacy_args, mp_overrides=mp_overrides)
             if isinstance(self.hf_pretrained, PretrainedConfig):
                 self.hf_pretrained = legacy_bridge.hf_pretrained
                 self.__dict__.pop("_config_only_pretrained", None)

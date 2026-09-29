@@ -173,6 +173,26 @@ class TestTransformerConfigFromArgs:
 
         return args
 
+    def test_model_parallel_overrides_follow_legacy_alias_translation(self, basic_args):
+        cfg = _transformer_config_from_args(
+            basic_args,
+            mp_overrides={
+                "tensor_model_parallel_size": 2,
+                "sequence_parallel": True,
+                "pipeline_dtype": torch.bfloat16,
+                "num_layers_in_first_pipeline_stage": None,
+                "num_layers_in_last_pipeline_stage": None,
+            },
+        )
+
+        assert cfg.tensor_model_parallel_size == 2
+        assert cfg.sequence_parallel is True
+        assert cfg.pipeline_dtype == torch.bfloat16
+        assert cfg.num_layers_in_first_pipeline_stage is None
+        assert cfg.num_layers_in_last_pipeline_stage is None
+        assert basic_args.decoder_first_pipeline_num_layers == 4
+        assert basic_args.decoder_last_pipeline_num_layers == 4
+
     def test_basic_transformer_config(self, basic_args):
         """Test basic transformer config creation."""
         cfg = _transformer_config_from_args(basic_args)

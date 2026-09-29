@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import copy
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -262,6 +263,8 @@ def _normalize_moe_dispatcher_sm_config(model_dict: dict[str, Any]) -> None:
 
 def load_model_config(
     checkpoint_path: str,
+    *,
+    mp_overrides: ModelParallelKwargs | None = None,
 ) -> tuple[TransformerConfig | ModelConfig, Optional[argparse.Namespace]]:
     """Returns the model config saved in the checkpoint.
 
@@ -270,6 +273,7 @@ def load_model_config(
     Args:
         checkpoint_path: path to an MCore distributed checkpoint directory
                           (e.g., /path/to/model/checkpoints/iter_0000001).
+        mp_overrides: Runtime parallelism to apply before constructing a legacy config.
 
     Returns:
         - The model config from the checkpoint. The object returned will be a
@@ -302,6 +306,11 @@ def load_model_config(
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
+            if mp_overrides:
+                mlm_args = copy.copy(mlm_args)
+                for name, value in mp_overrides.items():
+                    if hasattr(mlm_args, name):
+                        setattr(mlm_args, name, value)
             mbridge_ckpt = False
         except AssertionError:
             raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
@@ -320,7 +329,7 @@ def load_model_config(
         else:
             model_cfg = instantiate(run_config["model"])
     else:
-        model_cfg = _transformer_config_from_args(mlm_args)
+        model_cfg = _transformer_config_from_args(mlm_args, mp_overrides=mp_overrides)
 
     return model_cfg, mlm_args
 
@@ -539,7 +548,7 @@ def load_megatron_model(
         The model instance with loaded weights if return_state_dict is False,
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
-    model_cfg, mlm_args = load_model_config(checkpoint_path)
+    model_cfg, mlm_args = load_model_config(checkpoint_path, mp_overrides=mp_overrides)
     _prepare_model_config_for_load(model_cfg, use_cpu_init=use_cpu_init, mp_overrides=mp_overrides)
 
     return build_and_load_model(

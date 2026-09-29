@@ -14,6 +14,8 @@
 
 import argparse
 import dataclasses
+from collections.abc import Mapping
+from typing import Any
 
 import torch
 import torch.nn.functional as F
@@ -66,7 +68,10 @@ def _tokenizer_config_from_args(args: argparse.Namespace) -> TokenizerConfig:
 
 
 def _transformer_config_from_args(
-    args: argparse.Namespace, config_class: type[TransformerConfig] = TransformerConfig
+    args: argparse.Namespace,
+    config_class: type[TransformerConfig] = TransformerConfig,
+    *,
+    mp_overrides: Mapping[str, Any] | None = None,
 ) -> TransformerConfig:
     """Build a variant of TransformerConfig based on contents of the MLM argparse args object."""
     if args.multi_latent_attention:
@@ -139,5 +144,7 @@ def _transformer_config_from_args(
         kw_args["use_kitchen"] = True
         kw_args["quant_recipe"] = kitchen_quantization_recipe_config(args.kitchen_recipe_number)
 
-    # Return config.
+    # Apply runtime overrides after translating legacy argument aliases.
+    if mp_overrides:
+        kw_args.update({name: value for name, value in mp_overrides.items() if name in config_fields})
     return config_class(**kw_args)
