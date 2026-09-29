@@ -149,12 +149,12 @@ class TestDeepSeekV4FinetuneRecipes:
         total = train_samples + eval_samples + test_samples
         config.dataset.split = [train_samples / total, eval_samples / total, test_samples / total]
 
-        from megatron.bridge.training.finetune import finetune
         from megatron.bridge.training.gpt_step import forward_step
+        from megatron.bridge.training.pretrain import pretrain
         from tests.functional_tests.utils import clear_directories, initialize_distributed
 
         initialize_distributed()
         try:
-            finetune(config, forward_step)
+            pretrain(config, forward_step)
         finally:
             clear_directories(tmp_path)

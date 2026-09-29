@@ -32,7 +32,7 @@ GLM_45V_TOY_CHAT_TEMPLATE = """\
 {% else %}{{ content['text'] }}{% endif %}\
 {% endif %}\
 {% endfor %}\
-{% endif %}<|endoftext|>\
+{% endif %}{% if not (loop.last and message['role'] == 'assistant') %}<|endoftext|>{% endif %}\
 {% endfor %}\
 {% if add_generation_prompt %}<|assistant|>
 {% endif %}"""
@@ -69,6 +69,19 @@ def _save_minimal_tokenizer(model_dir: Path, *, image_tokens: bool = False, chat
         pad_token="<pad>",
         unk_token="<unk>",
     )
+    if image_tokens:
+        hf_tokenizer.add_special_tokens(
+            {
+                "additional_special_tokens": [
+                    "<|image|>",
+                    "<|video|>",
+                    "<|system|>",
+                    "<|user|>",
+                    "<|assistant|>",
+                    "<|observation|>",
+                ]
+            }
+        )
     hf_tokenizer.chat_template = chat_template
     hf_tokenizer.save_pretrained(model_dir)
 
