@@ -211,6 +211,7 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
     }
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""
     cfg = deepseek_v3_pretrain_config()
