@@ -10498,6 +10498,38 @@
           "status": "verified",
           "variant": null,
           "workflow": "pretrain_performance"
+        },
+        {
+          "bridge_commit": "17664a82de013c6689891748febfa73221de076b",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "2",
+              "recipe": "qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config",
+              "total_gpus": 16
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 model.sequence_parallel=true dataset.hf_processor_path=Qwen/Qwen3.8-27B tokenizer.tokenizer_model=Qwen/Qwen3.8-27B model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 scheduler.lr_decay_iters=20 train.eval_iters=0 validation.eval_iters=0 validation.eval_interval=0 checkpoint.save=null checkpoint.load=null logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-performance-h100/resolved-config.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "qwen3-8-27b-pretrain-performance-h100",
+          "expected_result": "On two nodes with 16x H100, the BF16 language-and-projector MockVLM recipe warm-starts from the card's imported GPU Megatron checkpoint and completes 20 steps at TP4/PP4/CP1, DP1, sequence length 4096, and MBS2/GBS32. Sequence parallelism is enabled by the explicit model.sequence_parallel=true override; the recipe default leaves it disabled, which exhausts H100 memory on the first pipeline stage in bounded runs. The language model, including its single MTP layer, and the multimodal vision merger train while the vision encoder remains frozen. Gated DeltaNet runs fused, without activation recompute or CUDA graphs, and evaluation and checkpoint output are disabled. Loss remains finite from 6.860321 to 4.485981 with zero skipped or NaN iterations. Excluding first-iteration Triton compilation and autotuning, steps 11-20 average 4,591.290 ms, 299.620 model TFLOP/s/GPU, and 1,784.248 token slots/s/GPU. The run used a NeMo 26.10 release-candidate base container with the pinned Megatron-Core submodule, and the process exits successfully. This mock-data result is throughput evidence, not convergence evidence.\n",
+          "hardware": "H100",
+          "last_verified": "2026-09-28",
+          "metrics": {
+            "final_loss": 4.485981,
+            "initial_loss": 6.860321,
+            "last_10_steps_model_tflops_per_gpu_avg": 299.62,
+            "last_10_steps_step_time_ms_avg": 4591.29,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 1784.248
+          },
+          "precision": "bf16",
+          "source_pointer": "items.pretrain_performance.H100",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain_performance"
         }
       ],
       "hf_id": "Qwen/Qwen3.8-27B",
@@ -10505,7 +10537,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "qwen3.8-27b",
       "source_card": "examples/model_verification_cards/qwen3.8-27b/card.yaml",
-      "summary": "Performance scope: pretrain_performance.GB200 uses the tuned canonical language-and-projector MockVLM recipe and records 819.190 corrected model TFLOP/s/GPU on 16 GB200 GPUs; timing from all functional items remains sanity evidence. All workloads in this card target GB200 hardware. Conversion, deterministic inference, pretraining, full-language checkpoint resume, SFT, long-context SFT, PEFT, and post-SFT export are verified. No dense-27B Megatron FSDP recipe is available.\n",
+      "summary": "Performance scope: pretrain_performance.GB200 uses the tuned canonical language-and-projector MockVLM recipe and records 819.190 corrected model TFLOP/s/GPU on 16 GB200 GPUs; pretrain_performance.H100 runs the 16-GPU H100 MockVLM recipe with sequence parallelism enabled and records 299.620 model TFLOP/s/GPU on 16 H100 GPUs. Timing from all functional items remains sanity evidence. All functional workloads in this card target GB200 hardware. Conversion, deterministic inference, pretraining, full-language checkpoint resume, SFT, long-context SFT, PEFT, and post-SFT export are verified. No dense-27B Megatron FSDP recipe is available.\n",
       "title": "qwen3_8_27b"
     },
     {

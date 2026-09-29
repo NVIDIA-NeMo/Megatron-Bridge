@@ -44,6 +44,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <div class="verification-hardware-controls" aria-label="GPU filter">
         <span>GPU</span>
         <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
         <button type="button" data-hardware="GB200">GB200</button>
       </div>
       <span class="verification-combination-count" aria-live="polite"></span>
@@ -109,6 +110,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-8-27b-pretrain-performance-gb200" aria-controls="qwen3-8-27b-pretrain-performance-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Benchmark · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="qwen3-8-27b-pretrain-performance-h100" aria-controls="qwen3-8-27b-pretrain-performance-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Benchmark · H100</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
@@ -475,6 +483,57 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>On 16 GB200 GPUs, the exact canonical BF16 language-and-projector MockVLM recipe completes 20 steps at TP2/PP1/CP1, DP8, sequence length 4096, and MBS2/GBS32. The language model and multimodal vision merger train while the vision encoder remains frozen. The recipe uses fused Gated DeltaNet execution without activation recompute and disables evaluation and checkpoint output for the bounded run. Loss remains finite from 6.852387 to 3.884668 with finite gradients and zero skipped or NaN iterations. Excluding first-iteration kernel compilation, steps 11-20 average 1,679.460 ms, 819.190 corrected model TFLOP/s/GPU, and 4,877.758 token slots/s/GPU; peak allocated memory is 174.120 GiB. The process exits successfully. This mock-data result is throughput evidence, not convergence evidence.
+</p>
+      </section>
+    </article>
+    <article id="qwen3-8-27b-pretrain-performance-h100" class="verification-model-detail" data-entry-detail="qwen3-8-27b-pretrain-performance-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Benchmark · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-28</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>6.860321</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>4.485981</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>4,591.290 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>299.620 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,784.248 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 model.sequence_parallel=true dataset.hf_processor_path=Qwen/Qwen3.8-27B tokenizer.tokenizer_model=Qwen/Qwen3.8-27B model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 scheduler.lr_decay_iters=20 train.eval_iters=0 validation.eval_iters=0 validation.eval_interval=0 checkpoint.save=null checkpoint.load=null logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain-performance-h100/resolved-config.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On two nodes with 16x H100, the BF16 language-and-projector MockVLM recipe warm-starts from the card&#x27;s imported GPU Megatron checkpoint and completes 20 steps at TP4/PP4/CP1, DP1, sequence length 4096, and MBS2/GBS32. Sequence parallelism is enabled by the explicit model.sequence_parallel=true override; the recipe default leaves it disabled, which exhausts H100 memory on the first pipeline stage in bounded runs. The language model, including its single MTP layer, and the multimodal vision merger train while the vision encoder remains frozen. Gated DeltaNet runs fused, without activation recompute or CUDA graphs, and evaluation and checkpoint output are disabled. Loss remains finite from 6.860321 to 4.485981 with zero skipped or NaN iterations. Excluding first-iteration Triton compilation and autotuning, steps 11-20 average 4,591.290 ms, 299.620 model TFLOP/s/GPU, and 1,784.248 token slots/s/GPU. The run used a NeMo 26.10 release-candidate base container with the pinned Megatron-Core submodule, and the process exits successfully. This mock-data result is throughput evidence, not convergence evidence.
 </p>
       </section>
     </article>
