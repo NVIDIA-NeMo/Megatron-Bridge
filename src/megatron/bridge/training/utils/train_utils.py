@@ -656,6 +656,48 @@ def _get_num_moe_layers(model_config: Any) -> int:
     return main_moe_layers + mtp_moe_layers
 
 
+# Attribute on GlobalState holding the running count of steps whose global token
+# count was zero. Follows the same dynamic-attribute convention as _flops_*.
+ZERO_TOKEN_ITERS_ATTR = "_zero_token_iters"
+
+
+def accumulate_zero_token_step(global_state: GlobalState, zero_token_step: torch.Tensor) -> None:
+    """Record whether this step reduced an empty global token count.
+
+    A zero global token count means every rank in the data-parallel x context-parallel
+    group had a fully masked batch, so the reported loss is a substituted zero rather
+    than a measured value. Counting these keeps a data or masking bug visible instead
+    of it reading as a genuine 0.0 loss.
+
+    The count stays on device and is only read back at the logging interval, so the
+    training step itself never synchronizes with the host.
+
+    Args:
+        global_state: The global training state the counter is attached to.
+        zero_token_step: Bool tensor that is True when the step had no tokens.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    # isinstance rather than "is None" so a mocked state does not masquerade as a counter.
+    if not isinstance(counter, torch.Tensor):
+        counter = torch.zeros((), dtype=torch.int32, device=zero_token_step.device)
+        setattr(global_state, ZERO_TOKEN_ITERS_ATTR, counter)
+    counter += zero_token_step
+
+
+def _consume_zero_token_iters(global_state: GlobalState) -> int:
+    """Read and reset the zero-token step counter. Returns 0 when never recorded.
+
+    Only pipeline-last-stage ranks compute a reduced loss, so ranks without a counter
+    report zero.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    if not isinstance(counter, torch.Tensor):
+        return 0
+    count = int(counter.item())
+    counter.zero_()
+    return count
+
+
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
@@ -1197,6 +1239,12 @@ def training_log(
             log_string += f" max attention logit: {log_max_attention_logit:.3f} |"
         log_string += " number of skipped iterations: {:3d} |".format(total_loss_dict[skipped_iters_key])
         log_string += " number of nan iterations: {:3d} |".format(total_loss_dict[nan_iters_key])
+        # Only surfaced when non-zero: these steps report a substituted 0.0 loss, which
+        # is otherwise indistinguishable from a real one. Keeping the field out of the
+        # normal log line leaves existing log output unchanged.
+        zero_token_iters = _consume_zero_token_iters(global_state)
+        if zero_token_iters > 0:
+            log_string += " number of zero-token iterations: {:3d} |".format(zero_token_iters)
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0

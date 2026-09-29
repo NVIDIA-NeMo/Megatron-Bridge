@@ -44,6 +44,7 @@ from megatron.bridge.training.profiling import (
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import checkpoint_and_decide_exit, maybe_run_manual_gc, save_checkpoint_and_time
 from megatron.bridge.training.utils.train_utils import (
+    accumulate_zero_token_step,
     prepare_forward_step_func,
     training_log,
 )
@@ -148,17 +149,25 @@ def train_step_megatron_mimo(
 
         if is_last_stage:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
+            # Tracks whether any key saw an empty token count this step; read at
+            # log_interval so the step itself never synchronizes with the host.
+            zero_token_step = None
             for key in losses_reduced[0].keys():
                 val = [x[key].view(-1) for x in losses_reduced]
                 if val[0].numel() == 2:
                     val = torch.vstack(val).sum(dim=0)
                     if llm_pg is not None and llm_pg.dp_cp is not None:
                         torch.distributed.all_reduce(val, group=llm_pg.dp_cp)
+                    is_empty = val[1] == 0
+                    zero_token_step = is_empty if zero_token_step is None else zero_token_step | is_empty
                     loss_dict[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
                 elif val[0].numel() == 1:
                     loss_dict[key] = torch.cat(val).mean()
                 else:
                     raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+
+            if zero_token_step is not None:
+                accumulate_zero_token_step(global_state, zero_token_step)
 
     # Broadcast loss_dict to all ranks (the last rank is the logging rank for
     # W&B/TensorBoard). Use broadcast_object_list from the source rank so every

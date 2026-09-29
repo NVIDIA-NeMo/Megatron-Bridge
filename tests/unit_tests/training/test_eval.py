@@ -392,3 +392,72 @@ def test_evaluate_runs_non_loss_collection_on_every_pipeline_rank():
     assert result == ({}, [], False)
     forward_backward_func.assert_called_once()
     assert forward_backward_func.call_args.kwargs["collect_non_loss_data"] is True
+
+
+def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1):
+    """Drive evaluate() through its loss-aggregation path on the last pipeline stage."""
+    state = _make_evaluate_state(eval_iters=eval_iters)
+    pg_collection = SimpleNamespace(
+        pp=SimpleNamespace(size=lambda: 1),
+        dp=SimpleNamespace(size=lambda: 1),
+        dp_cp=object(),
+    )
+
+    with (
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_pg_collection", return_value=pg_collection),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch(
+            "megatron.bridge.training.eval.get_forward_backward_func",
+            return_value=MagicMock(return_value=loss_dicts),
+        ),
+        patch("megatron.bridge.training.eval.is_pp_last_stage", return_value=True),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_start"),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_end"),
+        patch("megatron.bridge.training.eval.torch.distributed.all_reduce"),
+        patch("megatron.bridge.training.eval.print_rank_0") as printed,
+    ):
+        total_loss_dict, _, timelimit = evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=object(),
+            model=[_ModeTrackingModel()],
+            process_non_loss_data_func=None,
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MagicMock(),
+            callback_manager=CallbackManager(),
+        )
+    assert timelimit is False
+    return total_loss_dict, [call.args[0] for call in printed.call_args_list]
+
+
+def test_evaluate_all_masked_batch_reports_finite_zero():
+    """A fully masked evaluation set leaves a zero denominator.
+
+    Dividing by it produced NaN, which then propagated into the validation
+    perplexity and every metric writer. Matches the training-side reduction.
+    """
+    total_loss_dict, messages = _run_evaluate_loss_reduction(
+        [{"lm loss": torch.tensor([0.0, 0.0], dtype=torch.float, device="cuda")}]
+    )
+
+    value = total_loss_dict["lm loss"]
+    assert torch.isfinite(value)
+    assert value.item() == 0.0
+    # The substituted zero is otherwise indistinguishable from a real loss.
+    assert any("no unmasked tokens" in message for message in messages)
+
+
+def test_evaluate_token_weighted_average_is_unchanged():
+    """The guard must not disturb the normal token-weighted average."""
+    total_loss_dict, messages = _run_evaluate_loss_reduction(
+        [
+            {"lm loss": torch.tensor([6.0, 2.0], dtype=torch.float, device="cuda")},
+            {"lm loss": torch.tensor([9.0, 1.0], dtype=torch.float, device="cuda")},
+        ]
+    )
+
+    assert total_loss_dict["lm loss"].item() == pytest.approx(5.0)
+    assert not any("no unmasked tokens" in message for message in messages)
