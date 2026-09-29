@@ -17,7 +17,7 @@ import inspect
 import logging
 import warnings
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Callable, Literal, Self
 
 import torch
 from megatron.core.models.hybrid.hybrid_layer_specs import (
@@ -273,6 +273,12 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
         return _configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
 
+    def _copy_config_without_runtime_process_groups(self, *, deep: bool) -> Self:
+        """Copy this config without the runtime-only process-group collection."""
+        model_config = copy.copy(self)
+        model_config._pg_collection = None
+        return copy.deepcopy(model_config) if deep else model_config
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreHybridModel:
         """Configure and instantiate a Megatron Core Hybrid model based on this configuration.
 
@@ -302,20 +308,30 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         pre_process = pre_process if pre_process is not None else is_pp_first_stage(self._pg_collection.pp)
         post_process = post_process if post_process is not None else is_pp_last_stage(self._pg_collection.pp)
 
-        return MCoreHybridModel(
-            config=self,
-            hybrid_stack_spec=hybrid_stack_spec,
-            vocab_size=padded_vocab_size,
-            max_sequence_length=self.seq_length,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
-            fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
-            parallel_output=self.parallel_output,
-            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
-            position_embedding_type=self.position_embedding_type,
-            rotary_percent=self.rotary_percent,
-            rotary_base=self.rotary_base,
-            seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process,
-            post_process=post_process,
-            pg_collection=self._pg_collection,
-        )
+        # MCore creates independent per-layer configs by deep-copying this config. Detach
+        # runtime-only process groups during construction and pass them through the dedicated
+        # argument instead; torch.distributed.ProcessGroup cannot be deep-copied. The model must
+        # retain this provider as its root config because Bridge installs DDP schedule callbacks
+        # on the provider after wrapping the model.
+        pg_collection = self._pg_collection
+        self._pg_collection = None
+        try:
+            return MCoreHybridModel(
+                config=self,
+                hybrid_stack_spec=hybrid_stack_spec,
+                vocab_size=padded_vocab_size,
+                max_sequence_length=self.seq_length,
+                hybrid_layer_pattern=self.hybrid_layer_pattern,
+                fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                parallel_output=self.parallel_output,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                position_embedding_type=self.position_embedding_type,
+                rotary_percent=self.rotary_percent,
+                rotary_base=self.rotary_base,
+                seq_len_interpolation_factor=self.seq_len_interpolation_factor,
+                pre_process=pre_process,
+                post_process=post_process,
+                pg_collection=pg_collection,
+            )
+        finally:
+            self._pg_collection = pg_collection
