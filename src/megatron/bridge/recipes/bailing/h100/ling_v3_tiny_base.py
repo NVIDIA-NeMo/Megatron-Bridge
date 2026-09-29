@@ -24,7 +24,8 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 LING_V3_TINY_BASE_HF_MODEL = "inclusionAI/Ling-3.0-tiny-base"
-LING_V3_TINY_BASE_HF_REVISION = "bab7297fa02713af237e378bf21107718b8e0e1a"
+# Public Hugging Face checkpoint revision, not a credential.
+LING_V3_TINY_BASE_HF_REVISION = "bab7297fa02713af237e378bf21107718b8e0e1a"  # pragma: allowlist secret
 _LING_V3_TINY_BASE_SFT_SEQ_LENGTH = 2048
 
 
