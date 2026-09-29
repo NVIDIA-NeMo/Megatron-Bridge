@@ -17,8 +17,8 @@
 Mirrors ``test_deepseek_recipes_pretrain.py`` (toy HF model + DSv4-in-mcore guard) but
 exercises the *finetune* path: build the SFT recipe on a 2-layer toy model, swap in a
 mock dataset, and run 5 finetune iterations. Like the pretrain functional test, this
-skips unless the synthetic DSv4 toy model is available and mcore ships the DSv4
-prerequisites.
+builds its synthetic DSv4 config and tokenizer offline when managed test data is absent,
+and skips only when mcore does not ship the DSv4 prerequisites.
 """
 
 import importlib.util
@@ -34,6 +34,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_sft_openmath_thinking_packed_config,
 )
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
+from tests.functional_tests.test_groups.recipes.toy_hf_models import create_deepseek_v4_toy_artifacts
 
 
 DEEPSEEK_V4_TEST_MODEL_ENV = "DEEPSEEK_V4_TOY_HF_PATH"
@@ -54,14 +55,11 @@ def _has_dsv4_in_mcore() -> bool:
         return False
 
 
-def _deepseek_v4_toy_model_path() -> str:
+def _deepseek_v4_toy_model_path(tmp_path: Path) -> str:
     model_path = Path(os.environ.get(DEEPSEEK_V4_TEST_MODEL_ENV, DEEPSEEK_V4_TEST_MODEL_PATH))
-    if not model_path.exists():
-        pytest.skip(
-            f"DeepSeek-V4 toy HF model not found at {model_path}. "
-            f"Set {DEEPSEEK_V4_TEST_MODEL_ENV} or upload the synthetic model to CI test data."
-        )
-    return str(model_path)
+    if model_path.exists():
+        return str(model_path)
+    return create_deepseek_v4_toy_artifacts(tmp_path)
 
 
 # Shrink the Flash architecture to a 2-layer toy. Keep the validated SFT path
@@ -105,7 +103,7 @@ class TestDeepSeekV4FinetuneRecipes:
         if requires_blackwell and torch.cuda.get_device_capability()[0] < 10:
             pytest.skip("DeepSeek-V4 MXFP8 recipe requires Blackwell GPUs.")
 
-        hf_path = _deepseek_v4_toy_model_path()
+        hf_path = _deepseek_v4_toy_model_path(tmp_path)
         with pytest.MonkeyPatch.context() as monkeypatch:
             monkeypatch.setattr(deepseek_v4_h100_module, "DEEPSEEK_V4_FLASH_HF_PATH", hf_path)
             config = config_func()
