@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ from typing import Dict, Mapping, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.utils import unwrap_model
 from transformers import GptOssForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -26,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     _align_expert_weight_to_shape,
 )
+from megatron.bridge.models.conversion.peft_bridge import MegatronModel
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -52,6 +54,32 @@ class GPTOSSBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    def _get_fused_adapter_linear_out_slices(
+        self,
+        megatron_model: list[MegatronModel],
+        base_hf_weight_names: list[str],
+        linear_out_tensor: torch.Tensor,
+        is_expert: bool = False,
+    ) -> dict[str, torch.Tensor] | None:
+        """Put expert LoRA-B output rows in HF's alternating gate/up order."""
+        if is_expert and len(base_hf_weight_names) == 1 and base_hf_weight_names[0].endswith(".experts.gate_up_proj"):
+            # Adapter tasks use generic parallel mappings, bypassing the base
+            # weight's GPT-OSS permutation. Reorder B's output rows, but keep
+            # factors in [out, rank] form: only the base weight is transposed.
+            # Materialization concatenates expert-TP shards, each of which has
+            # its own [gate, up] halves. Permute within each shard before joining.
+            config = unwrap_model(megatron_model)[0].config
+            expert_tp_size = config.expert_tensor_parallel_size or 1
+            shards = torch.chunk(linear_out_tensor, expert_tp_size, dim=0)
+            return {
+                base_hf_weight_names[0]: torch.cat(
+                    [GPTOSSMLPGateUpProjMapping._uninterleave(shard) for shard in shards], dim=0
+                )
+            }
+        return super()._get_fused_adapter_linear_out_slices(
+            megatron_model, base_hf_weight_names, linear_out_tensor, is_expert=is_expert
+        )
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
@@ -292,7 +320,8 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     def _interleave(gate_up_proj):
         return torch.cat((gate_up_proj[::2, ...], gate_up_proj[1::2, ...]), dim=0)
 
-    def _uninterleave(self, elem):
+    @staticmethod
+    def _uninterleave(elem: torch.Tensor) -> torch.Tensor:
         gate, up = torch.chunk(elem, 2, dim=0)
         output = torch.empty_like(elem)
         output[::2, ...] = gate
