@@ -28,6 +28,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
     gpt_oss_120b_pretrain_config,
 )
 
+
 def gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 8× GB300, FP8-MX."""
     cfg = gpt_oss_20b_pretrain_config()
