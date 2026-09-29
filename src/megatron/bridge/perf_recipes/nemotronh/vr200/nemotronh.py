@@ -207,6 +207,8 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # BF16 MTP experts bypass the op-fuser and need capacity-aware grouped GEMM.
+        "NVTE_GROUPED_LINEAR_USE_FUSED_GROUPED_GEMM": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
