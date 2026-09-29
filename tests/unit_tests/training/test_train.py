@@ -23,6 +23,7 @@ import pytest
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
+from megatron.bridge.training.config import GPTDatasetConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
@@ -73,6 +74,7 @@ class TestCheckpointManagerLifecycle:
                 check_weight_hash_across_dp_replicas_interval=None,
             ),
             validation=SimpleNamespace(),
+            dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
             checkpoint=SimpleNamespace(save=None),
             logger=SimpleNamespace(log_throughput_to_tensorboard=False),
             model=SimpleNamespace(

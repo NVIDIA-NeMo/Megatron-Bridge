@@ -18,13 +18,18 @@ import subprocess
 import sys
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
+from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetConfig
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.config import GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.flop_utils import (
     GlobalFlopsRuntimeStats,
@@ -32,6 +37,7 @@ from megatron.bridge.training.utils.flop_utils import (
     _packed_data_exists,
     accumulate_flops_metadata,
     num_floating_point_operations,
+    requires_global_flops_reduce,
     resolve_global_flops_runtime_stats,
     resolve_global_flops_seqlen_stats,
     vision_patch_stats_from_grid_thw,
@@ -2818,6 +2824,19 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sq_sum == 4096**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
 
+    @pytest.mark.parametrize("config_seq_len", [None, 0, -1, True, 4096.0])
+    @pytest.mark.parametrize("cu_seqlens", [None, torch.tensor([0], dtype=torch.int32)])
+    def test_dense_cp_fallback_rejects_missing_or_invalid_full_sequence(self, config_seq_len, cu_seqlens):
+        state = _State()
+        with pytest.raises(ValueError, match="full config_seq_len"):
+            accumulate_flops_metadata(
+                state,
+                torch.zeros(1, 2048),
+                config_seq_len=config_seq_len,
+                context_parallel_size=2,
+                cu_seqlens=cu_seqlens,
+            )
+
     def test_mock_state_accumulators_start_at_zero(self):
         state = MagicMock()
         tokens = torch.zeros(1, 8)
@@ -3089,12 +3108,77 @@ class TestAccumulateFlopsMetadata:
 
 
 @pytest.mark.unit
-class TestResolveGlobalFlopsSeqlenStats:
-    """Unit tests for ``resolve_global_flops_seqlen_stats`` (non-distributed paths).
+class TestGlobalFlopsReductionPolicy:
+    @pytest.mark.parametrize("dataset_type", [GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig])
+    @pytest.mark.parametrize("dataloader_type", ["single", "cyclic", "batch", "external"])
+    def test_only_builtin_pretraining_keeps_extrapolation(self, dataset_type, dataloader_type):
+        dataset = dataset_type(seq_length=64, random_seed=1234, dataloader_type=dataloader_type)
+        assert requires_global_flops_reduce(dataset) == (dataloader_type == "external")
 
-    ``torch.distributed`` is not initialized in unit tests, so the helper takes the
-    extrapolation fallback (``local * data_parallel_size``). The exact all-reduce
-    path is covered by functional/distributed tests.
+    @pytest.mark.parametrize("pad_to_max_length", [False, True])
+    def test_sft_policy_handles_both_padding_config_layouts(self, pad_to_max_length):
+        datasets = [
+            GPTSFTDatasetConfig(seq_length=64, dataset_kwargs={"pad_to_max_length": pad_to_max_length}),
+            DirectHFSFTDatasetConfig(
+                seq_length=64,
+                source=HFDatasetSourceConfig(path_or_dataset="unused"),
+                pad_to_max_length=pad_to_max_length,
+            ),
+        ]
+        for dataset in datasets:
+            assert requires_global_flops_reduce(dataset)
+
+    def test_unknown_and_custom_subclasses_do_not_inherit_fast_path(self):
+        class CustomGPTDatasetConfig(GPTDatasetConfig):
+            pass
+
+        assert requires_global_flops_reduce(SimpleNamespace(seq_length=64, pad_to_max_length=True))
+        assert requires_global_flops_reduce(CustomGPTDatasetConfig(seq_length=64, random_seed=1234))
+        assert requires_global_flops_reduce(GPTSFTDatasetConfig(seq_length=64))
+
+
+def _dense_sft_dp_worker(rank, rendezvous):
+    # Keep this a CPU/Gloo test even on GPU CI workers.
+    with patch("torch.cuda.is_available", return_value=False):
+        torch.distributed.init_process_group(
+            "gloo", init_method=f"file://{rendezvous}", rank=rank, world_size=2, timeout=timedelta(seconds=30)
+        )
+        try:
+            dataset = GPTSFTDatasetConfig(seq_length=64)
+            for cp_size in (1, 2, 8):
+                for widths in ((32, 64), (64, 32)):
+                    # One rank reaches the configured maximum while the other
+                    # is shorter. Both must participate, independently of width.
+                    state = _State()
+                    state._flops_requires_global_reduce = requires_global_flops_reduce(dataset)
+                    width = widths[rank]
+                    accumulate_flops_metadata(
+                        state,
+                        torch.zeros(2, width // cp_size),
+                        config_seq_len=width,
+                        context_parallel_size=cp_size,
+                    )
+                    stats = resolve_global_flops_runtime_stats(
+                        state, data_parallel_size=2, dp_group=torch.distributed.group.WORLD
+                    )
+                    assert stats.seqlen_sum == 2 * (32 + 64)
+                    assert stats.seqlen_squared_sum == 2 * (32**2 + 64**2)
+        finally:
+            torch.distributed.destroy_process_group()
+
+
+@pytest.mark.unit
+@pytest.mark.skipif(not torch.distributed.is_gloo_available(), reason="Requires Gloo")
+def test_two_rank_dense_sft_sums_runtime_lengths(tmp_path):
+    torch.multiprocessing.spawn(_dense_sft_dp_worker, args=(str(tmp_path / "rendezvous"),), nprocs=2, join=True)
+
+
+@pytest.mark.unit
+class TestResolveGlobalFlopsSeqlenStats:
+    """Unit tests for ``resolve_global_flops_seqlen_stats``.
+
+    Mocked collectives cover optional metadata fields; the two-rank Gloo test
+    above verifies unequal dense lengths with a real collective.
     """
 
     def test_extrapolates_local_by_dp_size(self):
@@ -3169,10 +3253,10 @@ class TestResolveGlobalFlopsSeqlenStats:
         assert seqlen_sq_sum == 400
 
     def test_dense_stats_extrapolate_without_all_reduce_when_distributed_initialized(self, monkeypatch):
-        # Dense BSHD stats are identical across DP ranks, so extrapolation is exact.
-        # The helper should not create a tiny NCCL collective unless THD metadata
-        # explicitly requested exact global reduction.
+        # Known fixed-length pretraining stats are identical across DP ranks.
         state = _State()
+        dataset = GPTDatasetConfig(seq_length=10, random_seed=1234)
+        state._flops_requires_global_reduce = requires_global_flops_reduce(dataset)
         state._flops_seqlen_sum = 10
         state._flops_seqlen_sq_sum = 100
         all_reduce = MagicMock()

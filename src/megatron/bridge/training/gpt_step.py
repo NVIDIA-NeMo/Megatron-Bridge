@@ -509,6 +509,11 @@ def _forward_step_common(
     # unchanged sub-sequence boundaries. train.py reduces over pure DP, not CP.
     # A post-process-only PP stage has labels but no input token ids.
     flops_tokens = tokens if tokens is not None else labels
+    cp_size = pg_collection.cp.size()
+    # get_batch has already CP-sharded the sequence dimension. Recover the
+    # physical batch length, not the configured maximum: dense SFT batches can
+    # be shorter, and builder-backed model.config has no seq_length field.
+    full_seq_len = flops_tokens.shape[1] * cp_size if flops_tokens is not None else None
     cu_seqlens = None
     cu_seqlens_argmin = None
     cu_seqlens_unpadded = None
@@ -528,8 +533,8 @@ def _forward_step_common(
         state,
         flops_tokens,
         vp_stage=vp_stage,
-        config_seq_len=getattr(config, "seq_length", None),
-        context_parallel_size=pg_collection.cp.size(),
+        config_seq_len=full_seq_len,
+        context_parallel_size=cp_size,
         cu_seqlens=cu_seqlens,
         cu_seqlens_argmin=cu_seqlens_argmin,
         cu_seqlens_unpadded=cu_seqlens_unpadded,
