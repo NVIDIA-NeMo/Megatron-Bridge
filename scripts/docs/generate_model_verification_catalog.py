@@ -87,6 +87,7 @@ DETECT_SECRETS_ALLOWLIST_MODEL_NAMES = frozenset(
     }
 )
 MODEL_PAGE_PATHS = {
+    "bagel": "models/bagel/bagel.md",
     "deepseek-v3": "models/deepseek/deepseek-v3.md",
     "deepseek-v4-flash": "models/deepseek/deepseek-v4.md",
     "gemma-3-4b-it": "models/gemma/gemma3-vl.md",
@@ -106,6 +107,8 @@ MODEL_PAGE_PATHS = {
     "nemotron-3-super-120b-a12b": "models/nemotron/nemotron3-super.md",
     "nemotron-3-ultra-550b-a55b": "models/nemotron/nemotron3-ultra.md",
     "nemotron-3.5-lightning": "models/nemotron/nemotron3.5-lightning.md",
+    "nemotron-3.5-super-vl-120b-a12b": "models/nemotron/nemotron3.5-super-vl.md",
+    "nemotron-3.5-super-vl-120b-a12b-text-only": "models/nemotron/nemotron3.5-super-vl-text-only.md",
     "qwen3-235b-a22b": "models/qwen/qwen3-235b-a22b.md",
     "qwen3-30b-a3b": "models/qwen/qwen3-30b-a3b.md",
     "qwen3-8b": "models/qwen/qwen3-8b.md",
@@ -120,6 +123,7 @@ MODEL_PAGE_TITLES = {
     "gpt-oss-20b": "GPT OSS 20B",
     "nemotron-3-nano-4b": "Nemotron 3 Nano 4B",
     "nemotron-3.5-lightning": "Nemotron 3.5 Lightning",
+    "nemotron-3.5-super-vl-120b-a12b-text-only": "Nemotron-3.5 Super Text-only",
     "qwen3-235b-a22b": "Qwen3-235B-A22B",
     "qwen3-30b-a3b": "Qwen3-30B-A3B",
     "qwen3-8b": "Qwen3-8B",

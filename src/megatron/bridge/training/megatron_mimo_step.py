@@ -97,7 +97,8 @@ def loss_func(
         check_for_spiky_loss: Whether to check for unexpectedly large losses.
 
     Returns:
-        Tuple of (total_loss, num_tokens, {'lm loss': reporting_loss}).
+        A tuple containing the total loss, valid-token count, and reporting
+        metrics under the ``lm loss`` key.
 
     Note:
         Only the LLM module produces a loss. Encoders produce activations

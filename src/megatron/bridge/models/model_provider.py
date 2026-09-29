@@ -548,7 +548,7 @@ class GetModelKwargs(TypedDict, total=False):
 
 
 class ModelParallelKwargs(TypedDict, total=False):
-    """Model-parallel override kwargs.
+    """Model-parallel and checkpoint inference override kwargs.
 
     Attributes map to `TransformerConfig`/provider fields that control parallelism.
     Only provided values are applied as overrides.
@@ -566,6 +566,14 @@ class ModelParallelKwargs(TypedDict, total=False):
     hierarchical_context_parallel_sizes: list[int] | None
     pipeline_model_parallel_layout: list[list[str]] | None
     pipeline_dtype: torch.dtype
+    moe_expert_capacity_factor: float | None
+    moe_expert_rank_capacity_factor: float | None
+    moe_paged_stash: bool
+    moe_ncclep_zero_copy: bool
+    moe_pad_expert_input_to_capacity: bool
+    moe_router_force_load_balancing: bool
+    moe_router_force_biased: float | None
+    moe_hybridep_pad_uneven_dispatch_inputs: bool
 
 
 def get_model(

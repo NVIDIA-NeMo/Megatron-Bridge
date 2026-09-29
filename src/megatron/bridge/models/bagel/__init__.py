@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Megatron-FSDP wrapper compatibility helpers."""
+import importlib.util
 
-try:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-        FullyShardedDataParallelV1,
-        FullyShardedDataParallelV2,
-    )
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallelV1, FullyShardedDataParallelV2)
-    MCORE_HAS_MEGATRON_FSDP_V2 = True
-except ImportError:
-    from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel
+__all__ = []
+if (
+    importlib.util.find_spec("megatron.core.models.bagel") is not None
+    and importlib.util.find_spec("megatron.core.models.bagel.bagel_mimo") is not None
+):
+    from megatron.bridge.models.bagel.conversion import BagelBridge, BagelConfig
+    from megatron.bridge.models.bagel.provider import BagelModelProvider
 
-    MEGATRON_FSDP_TYPES = (FullyShardedDataParallel,)
-    MCORE_HAS_MEGATRON_FSDP_V2 = False
+    __all__ = ["BagelBridge", "BagelConfig", "BagelModelProvider"]

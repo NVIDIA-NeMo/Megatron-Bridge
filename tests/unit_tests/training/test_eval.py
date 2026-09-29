@@ -46,6 +46,31 @@ class _ModeTrackingModel:
         self.training = True
 
 
+class _StrictTimer:
+    def __init__(self):
+        self.started = False
+
+    def start(self, barrier=False):
+        assert not self.started, "timer has already been started"
+        self.started = True
+
+    def stop(self):
+        assert self.started, "timer is not started"
+        self.started = False
+
+
+class _StrictTimers:
+    def __init__(self):
+        self.timer = _StrictTimer()
+
+    def __call__(self, name, log_level=None):
+        assert name == "evaluate"
+        return self.timer
+
+    def log(self, names):
+        assert names == ["evaluate"]
+
+
 def _make_evaluate_state(*, eval_iters, exit_duration_in_mins=None):
     timer = MagicMock()
     timers = MagicMock(return_value=timer)
@@ -222,6 +247,32 @@ def test_evaluate_timelimit_fires_start_but_not_end_callback():
 
     assert result == (None, None, True)
     assert observed == [("on_eval_start", False)]
+
+
+def test_evaluate_timelimit_releases_lifecycle_state_before_next_evaluation():
+    state = _make_evaluate_state(eval_iters=1, exit_duration_in_mins=1)
+    state.timers = _StrictTimers()
+    model = _ModeTrackingModel()
+    callback_manager = CallbackManager()
+
+    validation_result = _run_evaluate(
+        state=state,
+        model=model,
+        callback_manager=callback_manager,
+        timelimit_hit=True,
+    )
+    test_result = _run_evaluate(
+        state=state,
+        model=model,
+        callback_manager=callback_manager,
+        is_test=True,
+        timelimit_hit=True,
+    )
+
+    assert validation_result == (None, None, True)
+    assert test_result == (None, None, True)
+    assert not state.timers.timer.started
+    assert model.training
 
 
 def test_evaluate_uses_injected_eval_data_parallel_size_for_microbatches():

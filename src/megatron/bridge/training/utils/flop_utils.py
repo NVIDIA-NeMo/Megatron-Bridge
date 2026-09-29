@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import torch
 from megatron.core.models.gpt import experimental_attention_variant_module_specs
@@ -24,6 +25,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     get_hybrid_layer_counts,
     parse_hybrid_pattern,
 )
+from megatron.core.transformer.spec_utils import ModuleSpec, get_module
 from megatron.core.utils import get_attr_wrapped_model
 
 from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
@@ -46,6 +48,23 @@ def _is_gated_delta_net_variant(experimental_attention_variant: str | None) -> b
     if _mcore_is_gated_delta_net_variant is not None:
         return _mcore_is_gated_delta_net_variant(experimental_attention_variant)
     return experimental_attention_variant in {"gated_delta_net", "gdn"}
+
+
+def _uses_gated_delta_product(model_config: Any) -> bool:
+    """Identify GDP from the configured hybrid mixer's module specification."""
+    spec = getattr(model_config, "hybrid_stack_spec", None)
+    if spec is None:
+        return False
+    if not isinstance(spec, ModuleSpec) and callable(spec):
+        spec = spec(model_config) if inspect.signature(spec).parameters else spec()
+    mamba_layer = getattr(getattr(spec, "submodules", None), "mamba_layer", None)
+    mixer = getattr(getattr(mamba_layer, "submodules", None), "mixer", None)
+    module = get_module(mixer) if isinstance(mixer, ModuleSpec) else mixer
+    if not isinstance(module, type):
+        return False
+    from megatron.core.ssm.gated_delta_product import GatedDeltaProductMixer
+
+    return issubclass(module, GatedDeltaProductMixer)
 
 
 @dataclass(frozen=True)
@@ -340,6 +359,7 @@ def accumulate_flops_metadata(
     *,
     vp_stage: int | None = None,
     config_seq_len: int | None = None,
+    context_parallel_size: int = 1,
     cu_seqlens: torch.Tensor | None = None,
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
@@ -358,9 +378,10 @@ def accumulate_flops_metadata(
 
     Writes accumulators consumed by ``train.py`` at end of step:
 
-    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
-      this microbatch contributes), or ``mbs * config_seq_len`` for dense
-      non-packed batches whose tensors were already context-parallel sliced.
+    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1] * context_parallel_size``
+      (padded total tokens this packed microbatch contributes), or
+      ``mbs * config_seq_len`` for dense non-packed batches whose tensors were
+      already context-parallel sliced.
       Drives the linear MLP/proj/logit terms.
     - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ², computed inline from
       ``cu_seqlens`` (preferring ``cu_seqlens_unpadded``). The per-pack sub-sequence
@@ -392,6 +413,12 @@ def accumulate_flops_metadata(
     treating the whole pack as one length-``seq_len`` sequence over-counts
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
+
+    Set ``context_parallel_size`` only when packed ``tokens`` have already been
+    CP-sharded but ``cu_seqlens`` still describes the full sequences, as in
+    ``gpt_step``. Callers accumulating before CP slicing, such as VLM steps,
+    must leave it at 1. Only the token-linear count is rescaled; attention
+    statistics are already global within CP and are reduced over pure DP later.
     """
     if vp_stage not in (None, 0) or tokens is None:
         return
@@ -408,7 +435,7 @@ def accumulate_flops_metadata(
     # (which would force a data-dependent-size sync) is needed.
     sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
     if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * tensor_seq_len)
+        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * tensor_seq_len * context_parallel_size)
         setattr(state, "_flops_requires_global_reduce", True)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2))
     else:
@@ -834,6 +861,28 @@ def num_floating_point_operations(
             + (2 * batch_size * seq_len * d_in * hidden_size)  # out_proj
         )
 
+    def gdp_layer_flops(
+        batch_size: int,
+        seq_len: float,
+        hidden_size: int,
+        state_dim: int,
+        head_dim: int,
+        num_groups: int,
+        num_heads: int | None,
+        num_householder: int,
+    ) -> float:
+        """Estimate GDP FLOPs using the recurrent lower bound for its core."""
+        d_inner = num_heads * head_dim if num_heads is not None else 2 * hidden_size
+        nheads = d_inner // head_dim
+        h = num_householder
+        in_proj_dim = (d_inner + num_groups * state_dim + nheads) * (1 + h)
+        conv_dim = d_inner * h + num_groups * state_dim * (1 + h)
+        tokens = batch_size * seq_len
+        # The chunked FLA kernel may perform additional work beyond this core estimate.
+        return 2 * tokens * (hidden_size * in_proj_dim + 4 * conv_dim + d_inner * hidden_size) + (
+            (4 * h + 3) * tokens * d_inner * state_dim
+        )
+
     def gdn_layer_flops(
         batch_size,
         seq_len,
@@ -843,16 +892,18 @@ def num_floating_point_operations(
         num_qk_heads=16,
         num_v_heads=32,
         conv_kernel_dim=4,
+        use_gdn2=False,
     ):
         """Calculate FLOPs for a Gated Delta Net (GDN) layer."""
         qk_dim = qk_head_dim * num_qk_heads
         v_dim = v_head_dim * num_v_heads
+        in_proj_dim = 4 * qk_dim + 3 * v_dim if use_gdn2 else 2 * qk_dim + 2 * v_dim + 2 * num_v_heads
         return (
             2
             * batch_size
             * seq_len
             * (
-                hidden_size * (2 * qk_dim + 2 * v_dim + 2 * num_v_heads)
+                hidden_size * in_proj_dim
                 + conv_kernel_dim * (2 * qk_dim + v_dim)
                 + num_v_heads * (v_head_dim**2) * 4
                 + hidden_size * v_dim
@@ -872,6 +923,8 @@ def num_floating_point_operations(
         mamba_head_dim=64,
         mamba_num_groups=8,
         mamba_num_heads=128,
+        use_gdp=False,
+        gdp_num_householder=1,
         num_attn_heads=32,
         gqa_groups=8,
         kv_channels=None,
@@ -886,6 +939,7 @@ def num_floating_point_operations(
         gdn_num_qk_heads=16,
         gdn_num_v_heads=32,
         gdn_conv_kernel_dim=4,
+        gdn_use_gdn2=False,
         vocab_size=256000,
         mtp_num_layers=0,
         num_swa_attn_layers=0,
@@ -922,14 +976,27 @@ def num_floating_point_operations(
             + swa_attn_flops
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
-            * mamba_layer_flops(
-                batch_size,
-                seq_len,
-                hidden_size,
-                mamba_state_dim,
-                mamba_head_dim,
-                mamba_num_groups,
-                mamba_num_heads,
+            * (
+                gdp_layer_flops(
+                    batch_size,
+                    seq_len,
+                    hidden_size,
+                    mamba_state_dim,
+                    mamba_head_dim,
+                    mamba_num_groups,
+                    mamba_num_heads,
+                    gdp_num_householder,
+                )
+                if use_gdp
+                else mamba_layer_flops(
+                    batch_size,
+                    seq_len,
+                    hidden_size,
+                    mamba_state_dim,
+                    mamba_head_dim,
+                    mamba_num_groups,
+                    mamba_num_heads,
+                )
             )
             + num_moe_layers
             * moe_layer_flops(
@@ -952,6 +1019,7 @@ def num_floating_point_operations(
                 gdn_num_qk_heads,
                 gdn_num_v_heads,
                 gdn_conv_kernel_dim,
+                gdn_use_gdn2,
             )
             + (2 * batch_size * seq_len * hidden_size * vocab_size * (1 + mtp_num_layers))  # logits computation
         )
@@ -1645,6 +1713,8 @@ def num_floating_point_operations(
             mamba_head_dim=getattr(cfg.model, "mamba_head_dim", 64),
             mamba_num_groups=getattr(cfg.model, "mamba_num_groups", 8),
             mamba_num_heads=getattr(cfg.model, "mamba_num_heads", 128),
+            use_gdp=num_mamba_layers > 0 and _uses_gated_delta_product(cfg.model),
+            gdp_num_householder=getattr(cfg.model, "gdp_num_householder", 1),
             num_attn_heads=cfg.model.num_attention_heads,
             gqa_groups=num_query_groups,
             kv_channels=getattr(cfg.model, "kv_channels", None),
@@ -1667,6 +1737,7 @@ def num_floating_point_operations(
             gdn_num_qk_heads=getattr(cfg.model, "linear_num_key_heads", None) or 16,
             gdn_num_v_heads=getattr(cfg.model, "linear_num_value_heads", None) or 32,
             gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
+            gdn_use_gdn2=getattr(cfg.model, "experimental_attention_variant", None) == "gdn2",
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
             num_swa_attn_layers=num_swa_attn_layers,
