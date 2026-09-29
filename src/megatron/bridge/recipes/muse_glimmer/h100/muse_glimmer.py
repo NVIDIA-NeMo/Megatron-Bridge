@@ -86,11 +86,11 @@ def muse_glimmer_30b_pretrain_32gpu_h100_bf16_multimodal_config() -> ConfigConta
     cfg.logger.log_throughput = True
     cfg.rng.seed = 1234
     cfg.train.train_iters = 100
-    # TP8/PP2 leaves two data-parallel replicas on 32 GPUs. One sample per
-    # replica keeps this bounded verification recipe to one microbatch per
-    # optimizer step while exercising the complete multimodal model.
-    cfg.train.global_batch_size = 2
-    cfg.train.micro_batch_size = 1
+    # Standard bounded-pretraining batch: 1024 x 4096 token slots per step. Micro-batch
+    # size drives throughput here. MBS4 fragments the first pipeline stage's memory across
+    # 128 variable-shape multimodal micro-batches per replica and runs out of memory in step 2.
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 2
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 10
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
