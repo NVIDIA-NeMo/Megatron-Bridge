@@ -189,7 +189,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
       </a>
       <a class="verification-model-link" href="qwen/qwen3.8-27b.html#verified-qwen3.8-27b">
         <strong title="Qwen/Qwen3.8-27B">Qwen3.8-27B</strong>
-        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </a>
     </div>
   </section>

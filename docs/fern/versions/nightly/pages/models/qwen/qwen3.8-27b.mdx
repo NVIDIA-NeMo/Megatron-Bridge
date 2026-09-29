@@ -227,30 +227,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-20</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-28</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>6.858159</dd>
+            <dd>6.852052</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>3.955657</dd>
+            <dd>3.831639</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>41,391.140 ms</dd>
+            <dd>3,551.780 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>33.240 TFLOP/s/GPU</dd>
+            <dd>390.360 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>197.917 tokens/s/GPU</dd>
+            <dd>2,306.449 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -261,12 +261,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --deterministic --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.8-27b/pretrain/checkpoints --save_interval 10 dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain/resolved-config.yaml scheduler.lr_decay_iters=20</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 4 --recipe qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config --mode pretrain --pretrained_checkpoint work/model-verification/qwen3.8-27b/gpu-megatron/iter_0000000 --max_steps 20 --warmup_iters 2 --save_dir work/model-verification/qwen3.8-27b/pretrain/checkpoints --save_interval 10 dataset.hf_processor_path=work/model-verification/qwen3.8-27b/gpu-hf-export tokenizer.tokenizer_model=work/model-verification/qwen3.8-27b/gpu-hf-export model.hf_model_id=Qwen/Qwen3.8-27B model.bos_token_id=248044 checkpoint.load=null validation.eval_iters=0 validation.eval_interval=0 ddp.check_for_large_grads=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/qwen3.8-27b/pretrain/resolved-config.yaml scheduler.lr_decay_iters=20</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 16-GB200 MockVLM pretrain completed exactly 20 deterministic steps at TP4/PP4, sequence length 4096, and MBS2/GBS32. The language model and multimodal vision merger trained while the vision encoder remained frozen. Loss remained finite from 6.858159 to 3.955657 with finite gradients and zero skipped or NaN iterations. Steps 11-20 averaged 41,391.140 ms, 33.240 corrected model TFLOP/s/GPU, and 197.917 token slots/s/GPU. Checkpoints at iterations 10 and 20 each contain 20 files totaling 399,257,378,741 bytes, and the tracker records iteration 20. Both built-in 32-iteration validation and test passes completed at loss 3.907797. The process exited successfully in 26m31s.
+        <p>The 16-GB200 MockVLM pretrain warm-started from the imported checkpoint and completed exactly 20 steps at TP4/PP4, sequence length 4096, and MBS2/GBS32. The language model and multimodal vision merger trained while the vision encoder remained frozen. Deterministic mode is omitted: it replaces the fused Gated DeltaNet kernels with a torch-native reference path and is rejected alongside the recipe&#x27;s pre-gated-delta-rule fusion. Loss remained finite from 6.852052 to 3.831639 with finite gradients and zero skipped or NaN iterations. Steps 11-20 averaged 3,551.780 ms, 390.360 model TFLOP/s/GPU, and 2,306.449 token slots/s/GPU; step 11, the first step after the iteration-10 save, took 4,593.5 ms. Checkpoints at iterations 10 and 20 each contain 20 files totaling 399,255,348,187 bytes, and the tracker records iteration 20. The built-in 32-iteration validation and test passes completed at loss 3.824842 and 3.824848. The process exited successfully in 16m03s.
 </p>
       </section>
     </article>
