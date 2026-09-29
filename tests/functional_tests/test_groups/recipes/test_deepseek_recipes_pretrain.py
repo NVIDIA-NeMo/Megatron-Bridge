@@ -63,7 +63,6 @@ DEEPSEEK_V4_MODEL_OVERRIDES = {
     "moe_router_topk": 1,
     "moe_layer_freq": [0, 1],
     "csa_compress_ratios": [0, 0],
-    "csa_backend": "unfused",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
     "dsa_indexer_loss_coeff": 0.0,
