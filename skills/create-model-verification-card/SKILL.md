@@ -367,6 +367,13 @@ Never record or reproduce:
 - tokens, token-loading commands, private URLs, or private registry references;
 - environment-specific launcher overlays.
 
+Literal chat delimiters (`<|im_start|>`, `<|im_end|>`, `<think>`, and
+`</think>`) are prompt or output data, not placeholders or storage paths.
+Loopback IP literals (IPv4 `127.0.0.0/8` and IPv6 `::1`) may identify a
+single-node inference coordinator; they do not identify private infrastructure.
+These narrow exceptions do not exempt text enclosed by chat delimiters, other
+IP addresses, URLs, runtime orchestration flags, or caller-supplied deny terms.
+
 Keep private run notes outside the tracked repository and public PR text. If a
 private codename cannot be recognized generically, pass it to the validator via
 `--deny-term` or an untracked file through `--denylist "$PRIVATE_DENYLIST"`.
