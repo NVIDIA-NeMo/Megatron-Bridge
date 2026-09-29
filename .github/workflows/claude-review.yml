@@ -154,69 +154,32 @@ jobs:
             is nothing to flag, the body is just "LGTM" followed by the
             test-case list.
 
-  manual-review:
-    if: github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(fromJson('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_claude_review.yml@1fc7b2f024bac423b1825a57182f3628c5fcb1f1 # v1.7.0
-    with:
-      model: ${{ vars.CLAUDE_MODEL }}
-      prompt: |
-        Mandatory workflow — never skip or reorder:
-        1. Read the PR diff first.
-        2. Based on the changed files and areas, identify relevant skills from skills/<name>/SKILL.md.
-           Common skill names: linting-and-formatting, testing, cicd, build-and-dependency,
-           adding-model-support, perf-activation-recompute, perf-memory-tuning, etc.
-        3. Read the SKILL.md files for all relevant areas using the Read tool.
-        4. Only then perform the review using the skill context.
+  redirect-to-review:
+    name: Redirect to /review
+    if: |
+      github.event_name == 'issue_comment' &&
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      (contains(github.event.comment.body, '/claude review') ||
+       contains(github.event.comment.body, '/claude strict-review'))
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.issue.number }}
+      RETIRED_COMMAND: ${{ contains(github.event.comment.body, '/claude strict-review') && '/claude strict-review' || '/claude review' }}
+      REVIEW_COMMAND: ${{ contains(github.event.comment.body, '/claude strict-review') && '/review mode=strict' || '/review' }}
+    steps:
+      - name: Explain the replacement command
+        env:
+          NOTICE: |
+            @${{ github.event.comment.user.login }} `${{ env.RETIRED_COMMAND }}` has been retired. Pull-request reviews now run through `/review`; comment this instead:
 
-        You are doing a light code review. Keep it concise and actionable.
+            ```
+            ${{ env.REVIEW_COMMAND }}
+            ```
 
-        Focus ONLY on:
-        - Critical bugs or logic errors
-        - Typos in code, comments, or strings
-        - Missing or insufficient test coverage for changed code
-        - Outdated or inaccurate documentation affected by the changes
-
-        Do NOT comment on:
-        - Style preferences or formatting
-        - Minor naming suggestions
-        - Architectural opinions or refactoring ideas
-        - Performance unless there is a clear, measurable issue
-
-        Provide feedback using inline comments for specific code suggestions.
-        Use top-level comments for general observations.
-
-        Always end the review with a "Suggested test cases" bullet list, derived
-        from the diff.
-
-        Map source changes → test-case globs using:
-        - A function `<model>_<task>_config_<gpu>` in scripts/performance/configs/<family>/...
-          impacts cases matching `<model>_*gpu_<gpu>_*_perf`.
-        - A base config `<MODEL>_..._<GPU>_<PRECISION>_V<N>` impacts that precision,
-          plus any V<N+1> / LARGE_SCALE configs derived from it via `replace(...)`.
-
-        Each bullet must be an explicit test case name — do NOT use globs
-        or brace expansion. Enumerate every relevant combination, e.g.
-        `qwen3_235b_a22b_512gpu_b300_bf16_perf`,
-        `qwen3_235b_a22b_512gpu_b300_fp8_cs_perf`,
-        `qwen3_235b_a22b_512gpu_b300_fp8_mx_perf`,
-        `qwen3_235b_a22b_512gpu_b300_nvfp4_perf`. Discover the exact names
-        by grepping the diff and the `scripts/performance/configs/` tree
-        for the affected model/GPU/precision combinations.
-        If no perf/recipe configs are touched, write "No perf tests impacted."
-
-        End the review by posting it as a top-level PR comment using
-        bash ANSI-C quoting so newlines render correctly:
-          gh pr comment <PR NUMBER> --repo <REPO> --body $'line1\nline2\n...'
-        Use $'...' (NOT plain "..."). Inside "..." the sequence \n is
-        passed to gh literally and shows up as the two characters \n in
-        the rendered comment; inside $'...' bash expands \n to a real
-        newline before gh sees it. Do NOT use --body-file, output
-        redirection, or HEREDOCs — the action sandbox blocks all three.
-        The body must include the "Suggested test cases" list. If there
-        is nothing to flag, the body is just "LGTM" followed by the
-        test-case list. Inline comments via
-        mcp__github_inline_comment__create_inline_comment are optional —
-        use them only for specific code suggestions.
-    secrets:
-      NVIDIA_INFERENCE_URL: ${{ secrets.NVIDIA_INFERENCE_URL }}
-      NVIDIA_INFERENCE_KEY: ${{ secrets.NVIDIA_INFERENCE_KEY }}
+            Add `model=claude` to keep a Claude reviewer (the default is `model=codex`). `mode=light|strict` selects the review depth. Comment `/review help` for all options.
+        run: gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$NOTICE"
