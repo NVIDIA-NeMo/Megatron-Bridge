@@ -1621,6 +1621,7 @@ def test_train_step_token_weighted_loss(
     )
     model = [Mock()]
     optimizer = Mock()
+    optimizer.chained_optimizers = []
     optimizer.step.return_value = (True, 1.0, 0)
     scheduler = Mock()
     forward_backward_func = Mock(return_value=[{"lm loss": torch.tensor(v)} for v in microbatches])
