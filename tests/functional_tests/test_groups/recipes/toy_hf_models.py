@@ -17,25 +17,60 @@
 from pathlib import Path
 
 
-def _save_minimal_tokenizer(model_dir: Path, *, image_tokens: bool = False) -> None:
+GLM_45V_TOY_CHAT_TEMPLATE = """\
+{% for message in messages %}<|{{ message['role'] }}|>
+\
+{% if message['content'] is string %}\
+{% if message['role'] == 'assistant' %}{% generation %}{{ message['content'] }}{% endgeneration %}\
+{% else %}{{ message['content'] }}{% endif %}\
+{% else %}\
+{% for content in message['content'] %}\
+{% if content['type'] == 'image' %}<|image|>\
+{% elif content['type'] == 'video' %}<|video|>\
+{% elif content['type'] == 'text' %}\
+{% if message['role'] == 'assistant' %}{% generation %}{{ content['text'] }}{% endgeneration %}\
+{% else %}{{ content['text'] }}{% endif %}\
+{% endif %}\
+{% endfor %}\
+{% endif %}<|endoftext|>\
+{% endfor %}\
+{% if add_generation_prompt %}<|assistant|>
+{% endif %}"""
+
+
+def _save_minimal_tokenizer(model_dir: Path, *, image_tokens: bool = False, chat_template: str | None = None) -> None:
     from tokenizers import Tokenizer
     from tokenizers.models import WordLevel
     from tokenizers.pre_tokenizers import Whitespace
     from transformers import PreTrainedTokenizerFast
 
     vocab = {"<pad>": 0, "<bos>": 1, "<eos>": 2, "<unk>": 3}
+    eos_token = "<eos>"
     if image_tokens:
-        vocab.update({"<|image|>": 4, "<|video|>": 5})
+        vocab.update(
+            {
+                "<|image|>": 4,
+                "<|video|>": 5,
+                "<|system|>": 6,
+                "<|user|>": 7,
+                "<|assistant|>": 8,
+                "<|observation|>": 9,
+                "<|endoftext|>": 10,
+            }
+        )
+        eos_token = "<|endoftext|>"
 
     tokenizer = Tokenizer(WordLevel(vocab=vocab, unk_token="<unk>"))
     tokenizer.pre_tokenizer = Whitespace()
-    PreTrainedTokenizerFast(
+    hf_tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=tokenizer,
         bos_token="<bos>",
-        eos_token="<eos>",
+        eos_token=eos_token,
         pad_token="<pad>",
         unk_token="<unk>",
-    ).save_pretrained(model_dir)
+    )
+    hf_tokenizer.chat_template = chat_template
+    hf_tokenizer.save_pretrained(model_dir)
 
 
 def create_deepseek_v4_toy_artifacts(root: Path) -> str:
@@ -65,6 +100,6 @@ def create_glm_45v_toy_artifacts(root: Path) -> str:
     model_dir = root / "glm_45v_toy"
     model_dir.mkdir(parents=True, exist_ok=True)
     Glm4vConfig(**HF_GLM_45V_TOY_MODEL_CONFIG).save_pretrained(model_dir)
-    _save_minimal_tokenizer(model_dir, image_tokens=True)
+    _save_minimal_tokenizer(model_dir, image_tokens=True, chat_template=GLM_45V_TOY_CHAT_TEMPLATE)
     Glm4vImageProcessor().save_pretrained(model_dir)
     return str(model_dir)
