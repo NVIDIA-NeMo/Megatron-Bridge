@@ -46,10 +46,11 @@ def distill(
 
     Args:
         config: The main configuration container holding all necessary parameters.
-        forward_step_func: Step function to distill with, defaulting to the GPT step. Models
-            that shard the sequence themselves need their own -- pass
-            ``qwen3_vl_step.forward_step_modelopt`` for Qwen3-VL under context parallelism.
-            It must attach the KD loss, or training silently runs without distillation.
+        forward_step_func: Step function to distill with, defaulting to the GPT step. Pass
+            ``qwen3_vl_step.forward_step_modelopt`` when distilling a *whole* Qwen3-VL model under
+            context parallelism; for ``distill_submodule="language_model"`` the default is correct,
+            since that forward never re-shards the sequence. A custom step must attach the KD loss,
+            or training silently runs without distillation.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
