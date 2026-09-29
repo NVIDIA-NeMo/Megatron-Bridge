@@ -78,7 +78,7 @@ def mock_vision_config():
 @pytest.fixture
 def mock_hf_config(mock_text_config, mock_vision_config):
     """Create a mock HF config for GLM-4.5V."""
-    config = Mock()
+    config = Mock(spec=["text_config", "vision_config"])
     config.text_config = mock_text_config
     config.vision_config = mock_vision_config
     return config
