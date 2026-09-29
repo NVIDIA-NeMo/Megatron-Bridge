@@ -1,0 +1,49 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import torch
+
+from megatron.bridge.models.conversion.utils import unwrap_model
+
+
+def test_unwrap_model_uses_fsdp_wrapper_types(monkeypatch):
+    class FSDPV1(torch.nn.Module):
+        def __init__(self, module):
+            super().__init__()
+            self.module = module
+
+    class FSDPV2(FSDPV1):
+        pass
+
+    def fsdp_factory(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(
+        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallel",
+        fsdp_factory,
+    )
+    monkeypatch.setattr(
+        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV1",
+        FSDPV1,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "megatron.core.distributed.fsdp.mcore_fsdp_adapter.FullyShardedDataParallelV2",
+        FSDPV2,
+        raising=False,
+    )
+
+    module = torch.nn.Linear(1, 1)
+
+    assert unwrap_model(FSDPV2(FSDPV1(module))) is module
