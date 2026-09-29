@@ -228,7 +228,12 @@ def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_layout == "Et*4|(tttt|)*14tmL"
+    layout = cfg.model.pipeline_model_parallel_layout
+    assert [stage.count("decoder") for stage in layout] == [8] * 15 + [2]
+    assert [len(stage) for stage in cfg.model.hybrid_layer_pattern.split("|")] == [8] * 15 + [2]
+    assert layout[0][0] == "embedding"
+    assert layout[-1][-2:] == ["mtp", "loss"]
+    assert cfg.model.num_layers == 122
     assert cfg.model.recompute_modules == ["mla_up_proj", "mhc"]
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -244,7 +249,7 @@ def test_deepseek_v4_pro_gb300_matches_r050_performance_config() -> None:
     assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
     assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 0.0
 
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.model.cross_entropy_fusion_impl == "native"
     assert cfg.model.moe_mlp_glu_interleave_size == 32
