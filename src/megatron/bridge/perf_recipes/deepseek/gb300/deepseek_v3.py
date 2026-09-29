@@ -332,6 +332,9 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.ddp.expert_outer_dp_sharding_strategy = "optim"
     cfg.ddp.num_distributed_optimizer_instances = 4
 
+    cfg.optimizer.lr = 3e-6
+    cfg.optimizer.min_lr = 1e-6
+
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
@@ -340,6 +343,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
 
     # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
     cfg.model.cuda_graph_impl = "full_iteration"
+    #cfg.model.cuda_graph_impl = "none"
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
     cfg.ddp.megatron_fsdp_cuda_graph_mode = True
     cfg.ddp.fsdp_all_gather_in_start_param_sync = False
