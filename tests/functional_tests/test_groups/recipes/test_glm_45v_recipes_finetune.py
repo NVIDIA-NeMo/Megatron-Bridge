@@ -37,6 +37,8 @@ def _recipe_with_toy_model(config_func, tmp_path):
         with pytest.MonkeyPatch.context() as monkeypatch:
             monkeypatch.setattr(glm_45v_h100_module, "AutoBridge", LocalAutoBridge)
             config = config_func()
+        # Keep the toy vision projector aligned with the language width overridden below.
+        config.model.vision_config.out_hidden_size = 4096
         config.dataset.hf_processor_path = hf_path
         return config
 
