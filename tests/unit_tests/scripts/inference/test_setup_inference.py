@@ -101,7 +101,8 @@ def test_additional_slurm_parameters_reject_malformed_pairs(value):
         module.parse_args(["--additional-slurm-params", value])
 
 
-def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
+@pytest.mark.parametrize("active_environment", [False, True])
+def test_shell_launcher_reuses_active_environment_or_provisions_nemo_run(tmp_path, active_environment):
     fake_uv = tmp_path / "uv"
     uv_args = tmp_path / "uv-args.txt"
     fake_uv.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$UV_ARGS_FILE"\n', encoding="utf-8")
@@ -111,9 +112,12 @@ def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
         {
             "PATH": f"{tmp_path}:{env['PATH']}",
             "UV_ARGS_FILE": str(uv_args),
-            "VIRTUAL_ENV": str(tmp_path / "active-environment"),
         }
     )
+    if active_environment:
+        env["VIRTUAL_ENV"] = str(tmp_path / "active-environment")
+    else:
+        env.pop("VIRTUAL_ENV", None)
 
     subprocess.run(
         [str(REPO_ROOT / "scripts" / "inference" / "infer.sh"), "--help"],
@@ -121,12 +125,12 @@ def test_shell_launcher_provisions_nemo_run_in_active_environment(tmp_path):
         env=env,
     )
 
+    expected_options = (
+        ["--active", "--no-sync"] if active_environment else ["--no-project", "--with", "nemo-run==0.10.0"]
+    )
     assert uv_args.read_text(encoding="utf-8").splitlines() == [
         "run",
-        "--active",
-        "--no-sync",
-        "--with",
-        "nemo-run==0.10.0",
+        *expected_options,
         "python",
         str(REPO_ROOT / "scripts" / "inference" / "setup_inference.py"),
         "--help",

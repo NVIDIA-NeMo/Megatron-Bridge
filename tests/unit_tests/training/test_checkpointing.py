@@ -43,12 +43,12 @@ from megatron.bridge.training.checkpointing import (
     DefaultCheckpointManager,
     _align_rng_state_sharded_metadata,
     _build_auto_bridge_for_save,
+    _checkpoint_dp_cp_group,
     _checkpoint_has_per_dp_rng_states,
     _clear_auto_bridge_cache,
     _CpuTorchDistSaveShardedStrategy,
     _extract_megatron_lm_args_from_state_dict,
     _generate_model_state_dict,
-    _get_checkpoint_dp_cp_group,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
     _get_run_config_tp_pp,
@@ -105,11 +105,11 @@ def test_checkpoint_group_includes_gtp_and_supports_older_collections():
     replica_group = Mock()
     distribution_group = Mock()
     pg = SimpleNamespace(dp_cp=replica_group, dp_cp_gtp_remat=distribution_group)
-    assert _get_checkpoint_dp_cp_group(pg) is distribution_group
+    assert _checkpoint_dp_cp_group(pg) is distribution_group
     pg.dp_cp_gtp_remat = None
-    assert _get_checkpoint_dp_cp_group(pg) is replica_group
+    assert _checkpoint_dp_cp_group(pg) is replica_group
     del pg.dp_cp_gtp_remat
-    assert _get_checkpoint_dp_cp_group(pg) is replica_group
+    assert _checkpoint_dp_cp_group(pg) is replica_group
 
 
 def test_model_checkpoint_metadata_includes_gtp_without_mutating_caller():
@@ -3678,7 +3678,11 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_pg_collection.gtp_remat = None
         mock_pg_collection.expt_gtp_remat = None
         mock_dp_cp_group = Mock()
-        mock_pg_collection.dp_cp_gtp_remat = mock_dp_cp_group
+        mock_pg_collection.dp_cp = mock_dp_cp_group
+        # The wrapper re-elects one writer per shard within the group it is given, so it must get
+        # the gtp_remat-INCLUSIVE group, not the gtp-excluded replicate group.
+        mock_dp_cp_gtp_remat_group = Mock()
+        mock_pg_collection.dp_cp_gtp_remat = mock_dp_cp_gtp_remat_group
         mock_get_pg_collection.return_value = mock_pg_collection
 
         # Call the function
@@ -3692,8 +3696,8 @@ class TestLoadModelWeightsFromCheckpoint:
             strict=True,
         )
 
-        # Verify fully parallel wrapper was used with pg_collection.dp_cp
-        mock_fully_parallel_wrapper.assert_called_once_with(mock_strategy, mock_dp_cp_group)
+        # Verify fully parallel wrapper was used with pg_collection.dp_cp_gtp_remat
+        mock_fully_parallel_wrapper.assert_called_once_with(mock_strategy, mock_dp_cp_gtp_remat_group)
 
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
@@ -6729,3 +6733,29 @@ class TestAsyncCheckpointScheduling:
 
         scheduled_request = async_queue.schedule_async_request.call_args.args[0]
         assert scheduled_request is nvrx_request
+
+
+class TestCheckpointDpCpGroup:
+    """`_checkpoint_dp_cp_group` picks the group sharded-checkpoint replica_id is derived from."""
+
+    def test_prefers_gtp_remat_inclusive_group(self):
+        """With GTP active, replica_id must come from the gtp_remat-INCLUSIVE group."""
+        from megatron.bridge.training.checkpointing import _checkpoint_dp_cp_group
+
+        pg_collection = Mock()
+        pg_collection.dp_cp = Mock(name="dp_cp_replicate")
+        pg_collection.dp_cp_gtp_remat = Mock(name="dp_cp_gtp_remat")
+
+        assert _checkpoint_dp_cp_group(pg_collection) is pg_collection.dp_cp_gtp_remat
+
+    @pytest.mark.parametrize("absent_value", [None, "missing"])
+    def test_falls_back_to_dp_cp(self, absent_value):
+        """Older Megatron-Core has no `dp_cp_gtp_remat`; the fallback must be a no-op."""
+        from megatron.bridge.training.checkpointing import _checkpoint_dp_cp_group
+
+        pg_collection = Mock(spec=["dp_cp"]) if absent_value == "missing" else Mock()
+        pg_collection.dp_cp = Mock(name="dp_cp_replicate")
+        if absent_value is None:
+            pg_collection.dp_cp_gtp_remat = None
+
+        assert _checkpoint_dp_cp_group(pg_collection) is pg_collection.dp_cp

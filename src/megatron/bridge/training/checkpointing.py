@@ -557,12 +557,6 @@ def get_save_and_finalize_callbacks(writer, save_state_dict_ret) -> NVRxAsyncReq
     return NVRxAsyncRequest(save_fn, save_args, [finalize_fn], async_fn_kwargs={}, preload_fn=preload_fn)
 
 
-def _get_checkpoint_dp_cp_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
-    """Include GTP peers when distributing checkpoint work and electing replicas."""
-    group = getattr(pg_collection, "dp_cp_gtp_remat", None)
-    return pg_collection.dp_cp if group is None else group
-
-
 def _checkpoint_has_gtp_remat(pg_collection: ProcessGroupCollection) -> bool:
     """Check both dense and expert weight-rematerialization axes."""
     for name in ("gtp_remat", "expt_gtp_remat"):
@@ -611,7 +605,7 @@ def get_rng_state(
         "rng_tracker_states": tensor_parallel.get_cuda_rng_tracker().get_states(),
     }
 
-    dp_cp_group = _get_checkpoint_dp_cp_group(pg_collection)
+    dp_cp_group = _checkpoint_dp_cp_group(pg_collection)
     rng_state_list = None
     if torch.distributed.is_initialized() and dp_cp_group.size() > 1 and data_parallel_random_init:
         rng_state_list = [None for i in range(dp_cp_group.size())]
@@ -656,7 +650,7 @@ def _select_rng_state(
     rng_state_list: list[dict[str, Any]], per_dp_rank: bool, pg_collection: ProcessGroupCollection
 ) -> dict[str, Any]:
     """Select the RNG state matching the saved checkpoint layout."""
-    return rng_state_list[_get_checkpoint_dp_cp_group(pg_collection).rank() if per_dp_rank else 0]
+    return rng_state_list[_checkpoint_dp_cp_group(pg_collection).rank() if per_dp_rank else 0]
 
 
 def _align_rng_state_sharded_metadata(rng_state: ShardedObject, checkpoint_name: str) -> ShardedObject | None:
@@ -1394,7 +1388,7 @@ def save_checkpoint(
 
     # Collect cfg, model, RNG.
     sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
-    sharded_sd_metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
+    sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
     if cfg.optimizer.use_distributed_optimizer:
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
@@ -1534,7 +1528,7 @@ def save_checkpoint(
                 if ckpt_cfg.fully_parallel_save:
                     save_strategy = FullyParallelSaveStrategyWrapper(
                         save_strategy,
-                        _get_checkpoint_dp_cp_group(pg_collection),
+                        _checkpoint_dp_cp_group(pg_collection),
                         ckpt_cfg.ckpt_assume_constant_structure,
                     )
             # MegatronMIMO + torch_dist can hit known access-pattern validation failures
@@ -1596,7 +1590,7 @@ def save_checkpoint(
                 state_dict,
                 algo=algo,
                 cached_metadata=cached_metadata,
-                parallelization_group=_get_checkpoint_dp_cp_group(pg_collection),
+                parallelization_group=_checkpoint_dp_cp_group(pg_collection),
             )
             async_save_request = checkpointing_context["local_checkpoint_manager"].save(
                 state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
@@ -2168,7 +2162,7 @@ def _generate_model_state_dict(
     if ckpt_format == "torch_dist" and pg_collection is not None:
         model_sd_kwargs = dict(model_sd_kwargs or {})
         metadata = dict(model_sd_kwargs.get("metadata") or {})
-        metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
+        metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
         model_sd_kwargs["metadata"] = metadata
 
     if len(model) == 1:
@@ -2448,7 +2442,7 @@ def _load_model_weights_from_checkpoint(
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
         pg_collection = get_pg_collection(model)
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _get_checkpoint_dp_cp_group(pg_collection))
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
     load_result = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )
@@ -3096,7 +3090,7 @@ def _load_checkpoint_from_path(
 
         if sharded_sd_metadata is None:
             sharded_sd_metadata = {}
-        sharded_sd_metadata["dp_cp_group"] = _get_checkpoint_dp_cp_group(pg_collection)
+        sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
@@ -3532,10 +3526,14 @@ def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str,
 
 
 def apply_peft_adapter_filter_to_state_dict(state_dict: dict[str, Any], peft_config: PEFT) -> dict[str, Any]:
-    """Filter state dict to contain only PEFT adapter parameters in model sections.
+    """Keep PEFT adapter parameters and persistent training buffers in model sections.
 
     This function takes a complete state dict (generated by generate_state_dict) and
-    filters it to retain only PEFT adapter parameters for checkpoint saving.
+    filters it to retain PEFT adapter parameters for checkpoint saving and loading.
+    MoE router expert biases must also survive: MCore updates these buffers during
+    gradient finalization even when every router parameter is frozen. Match their
+    state-dict names so inference/merge paths work without a trainable-parameter
+    list, and retain them independently of the PEFT method's adapter filter.
     Transformer Engine ``._extra_state`` entries are excluded even when they live
     under adapter modules because adapter checkpoint loading already tolerates
     missing extra-state keys and the objects can collide under expert-parallel
@@ -3547,16 +3545,21 @@ def apply_peft_adapter_filter_to_state_dict(state_dict: dict[str, Any], peft_con
         peft_config: PEFT configuration for filtering logic
 
     Returns:
-        Filtered state dict containing only adapter parameters in model weights,
+        Filtered state dict containing adapter parameters and router expert biases,
         while preserving all non-model metadata (checkpoint_version, iteration, etc.)
     """
     return {
         checkpoint_section_key: (
-            # Filter model parameters to only include adapter weights
+            # Retain learned router state as well as adapter weights.
             {
                 parameter_name: parameter_value
                 for parameter_name, parameter_value in checkpoint_section_value.items()
-                if peft_config.adapter_key_filter(parameter_name) and "_extra_state" not in parameter_name
+                if (
+                    peft_config.adapter_key_filter(parameter_name)
+                    or parameter_name == "router.expert_bias"
+                    or parameter_name.endswith(".router.expert_bias")
+                )
+                and "_extra_state" not in parameter_name
             }
             if _is_model_section(checkpoint_section_key)
             else checkpoint_section_value
@@ -3732,7 +3735,7 @@ def _load_non_persistent_base_checkpoint(
         state_dict = intermediate_state_dict.to_state_dict(
             sharded_state_dict,
             algo=ckpt_cfg.non_persistent_local_ckpt_algo,
-            parallelization_group=_get_checkpoint_dp_cp_group(pg_collection),
+            parallelization_group=_checkpoint_dp_cp_group(pg_collection),
         )
         return state_dict, checkpoint_name, False, CheckpointType.LOCAL
     else:
@@ -3800,7 +3803,7 @@ def _load_global_dist_base_checkpoint(
     )
     load_strategy = TorchDistLoadShardedStrategy()
     if ckpt_cfg.fully_parallel_load:
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _get_checkpoint_dp_cp_group(pg_collection))
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
     if checkpointing_context is not None:
         checkpointing_context["load_strategy"] = load_strategy
     validate_sharding_integrity = True
@@ -4143,6 +4146,30 @@ def _build_sharded_state_dict_metadata(use_distributed_optimizer: bool, cfg: Che
     metadata["singleton_local_shards"] = False
     metadata["chained_optim_avoid_prefix"] = True
     return metadata
+
+
+def _checkpoint_dp_cp_group(pg_collection: ProcessGroupCollection) -> torch.distributed.ProcessGroup:
+    """Return the DP x CP group that sharded-checkpoint ``replica_id`` must be derived from.
+
+    ``pg_collection.dp_cp`` deliberately EXCLUDES the GTP weight-rematerialization axis -- it is
+    the *replicate* group, used for gradient all-reduce and optimizer-state sharding. Checkpoint
+    ``replica_id`` needs the opposite: the gtp_remat-INCLUSIVE ``dp_cp_gtp_remat`` group. A tensor
+    that is not GTP-sharded (a norm weight, a bias, an ``_extra_state`` blob) is held identically
+    by every gtp_remat peer, and with the excluded group those peers all report the same DP rank,
+    so each of them claims to be the main replica of the same shard. Distributed checkpointing then
+    rejects the save/load with::
+
+        CheckpointingException: Invalid sharding pattern validation. Errors: Invalid access
+          pattern for ShardedTensor(key='decoder.final_layernorm.weight', ...)
+
+    Megatron-LM's own training loop applies exactly this override before building the sharded
+    state dict (see ``megatron/training/training.py``); Megatron-Bridge has its own checkpoint
+    entrypoints and needs it too.
+
+    ``dp_cp_gtp_remat`` is absent on older Megatron-Core revisions and is the same group as
+    ``dp_cp`` whenever GTP is inactive, so the fallback is a no-op in both cases.
+    """
+    return getattr(pg_collection, "dp_cp_gtp_remat", None) or pg_collection.dp_cp
 
 
 def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
