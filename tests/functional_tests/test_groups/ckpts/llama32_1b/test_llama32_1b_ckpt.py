@@ -158,6 +158,7 @@ class TestLlama32Ckpt:
                 "1",
                 "--log-throughput",
                 "--no-load-optim",
+                "--no-load-rng",
             ],
         )
 
