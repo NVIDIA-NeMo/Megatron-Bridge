@@ -22,6 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.distributed as dist
+import yaml
 from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -44,6 +45,7 @@ from megatron.bridge.training.model_load_save import (
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class TestNormalizeMoeDispatcherSmConfig:
@@ -501,6 +503,22 @@ class TestLoadMegatronModel:
 
         assert isinstance(loaded_model, GPTModelConfig)
         assert loaded_model.transformer.hidden_size == 128
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
+            "transformers.models.auto.AutoTokenizer.from_pretrained",
+            "transformers.dynamic_module_utils.get_class_in_module",
+        ],
+        ids=["dynamic-class", "auto-tokenizer-alias", "direct-module-class"],
+    )
+    def test_load_model_config_rejects_reported_unsafe_targets(self, tmp_path, target):
+        """The real checkpoint entrypoint rejects all three reported target paths."""
+        (tmp_path / "run_config.yaml").write_text(yaml.safe_dump({"model": {"_target_": target}}))
+
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            load_model_config(str(tmp_path))
 
     @pytest.mark.parametrize(
         "pipeline_layout",
