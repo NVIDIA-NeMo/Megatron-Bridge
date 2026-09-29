@@ -183,7 +183,7 @@ def gpt_oss_120b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.moe_router_fusion = True
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -220,7 +220,7 @@ def _build_gpt_oss_120b_gb300_fp8mx() -> ConfigContainer:
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.moe_router_fusion = True
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1

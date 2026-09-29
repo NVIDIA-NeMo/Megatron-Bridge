@@ -46,7 +46,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_router_fusion = True
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_router_load_balancing_type = "seq_aux_loss"
     cfg.model.moe_aux_loss_coeff = 1.0e-4
 

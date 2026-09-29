@@ -54,6 +54,7 @@ def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
+    cfg.model.moe_router_force_load_balancing = False
     return cfg
 
 
@@ -138,8 +139,8 @@ def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.virtual_pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
@@ -158,6 +159,7 @@ def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.moe_router_force_load_balancing = False
     return cfg
 
 
@@ -168,6 +170,11 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
+    # Establish an eager, dropless baseline before reintroducing graphs and paged stash.
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.moe_expert_rank_capacity_factor = None
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = False
+    cfg.model.moe_paged_stash = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -221,6 +228,7 @@ def _build_deepseek_v3_gb300_nvfp4() -> ConfigContainer:
     cfg.model.mla_down_proj_fusion = True
 
     cfg.model.recompute_modules = []
+    cfg.model.moe_router_force_load_balancing = False
 
     return cfg
 
@@ -402,6 +410,9 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContai
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.expert_model_parallel_size = 64
+    # Keep large-scale graph settings independent of the GB300 real-routing experiment.
+    _enable_deepseek_full_iteration(cfg)
+    _enable_ncclep(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

@@ -203,7 +203,7 @@ def _build_qwen3_30b_a3b_gb300_bf16() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -318,7 +318,6 @@ def _build_qwen3_30b_a3b_gb300_fp8mx() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -327,7 +326,7 @@ def _build_qwen3_30b_a3b_gb300_fp8mx() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 8
+    cfg.train.micro_batch_size = 4
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -335,6 +334,9 @@ def _build_qwen3_30b_a3b_gb300_fp8mx() -> ConfigContainer:
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
     cfg.model.recompute_modules = []
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_expert_rank_capacity_factor = 8
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
     return cfg
 
 
@@ -379,7 +381,7 @@ def _build_qwen3_235b_a22b_gb300_bf16() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -494,7 +496,7 @@ def _build_qwen3_235b_a22b_gb300_fp8mx() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -627,6 +629,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config() -> Config
 def _build_qwen3_235b_a22b_gb300_nvfp4() -> ConfigContainer:
     """Shared HybridEP NVFP4 base (full-iteration CG, A2A overlap) for the GB300 recipe and its VR200 alias."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
+    cfg.model.moe_router_force_load_balancing = False
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.model.virtual_pipeline_model_parallel_size = 12
