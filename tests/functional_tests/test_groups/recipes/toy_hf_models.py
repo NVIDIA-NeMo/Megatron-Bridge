@@ -14,7 +14,12 @@
 
 """Offline Hugging Face artifacts shared by recipe functional tests."""
 
+from copy import deepcopy
 from pathlib import Path
+
+
+GLM_45V_TOY_IMAGE_TOKEN_ID = 4
+GLM_45V_TOY_VIDEO_TOKEN_ID = 5
 
 
 GLM_45V_TOY_CHAT_TEMPLATE = """\
@@ -49,8 +54,8 @@ def _save_minimal_tokenizer(model_dir: Path, *, image_tokens: bool = False, chat
     if image_tokens:
         vocab.update(
             {
-                "<|image|>": 4,
-                "<|video|>": 5,
+                "<|image|>": GLM_45V_TOY_IMAGE_TOKEN_ID,
+                "<|video|>": GLM_45V_TOY_VIDEO_TOKEN_ID,
                 "<|system|>": 6,
                 "<|user|>": 7,
                 "<|assistant|>": 8,
@@ -112,7 +117,10 @@ def create_glm_45v_toy_artifacts(root: Path) -> str:
 
     model_dir = root / "glm_45v_toy"
     model_dir.mkdir(parents=True, exist_ok=True)
-    Glm4vConfig(**HF_GLM_45V_TOY_MODEL_CONFIG).save_pretrained(model_dir)
+    config = deepcopy(HF_GLM_45V_TOY_MODEL_CONFIG)
+    config["image_token_id"] = GLM_45V_TOY_IMAGE_TOKEN_ID
+    config["video_token_id"] = GLM_45V_TOY_VIDEO_TOKEN_ID
+    Glm4vConfig(**config).save_pretrained(model_dir)
     _save_minimal_tokenizer(model_dir, image_tokens=True, chat_template=GLM_45V_TOY_CHAT_TEMPLATE)
     Glm4vImageProcessor().save_pretrained(model_dir)
     return str(model_dir)
