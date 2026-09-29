@@ -107,6 +107,56 @@ class TestApplyPeftAdapterFilterToStateDict:
     to retain only adapter parameters in model sections while preserving metadata.
     """
 
+    @pytest.mark.parametrize("model_key", ["model", "model0", "model1"])
+    @pytest.mark.parametrize("prefix", ["", "decoder.layers.0.mlp.", "module.language_model.mtp.layers.0.mlp."])
+    def test_preserves_router_bias_without_trainable_parameter_list(self, model_key, prefix):
+        peft = LoRA()
+        assert not peft.params_to_save
+        bias_key = f"{prefix}router.expert_bias"
+        bias = torch.tensor([-0.001, 0.001])
+        state = {
+            model_key: {
+                bias_key: bias,
+                f"{prefix}router.weight": torch.ones(2, 4),
+                f"{prefix}router.local_tokens_per_expert": torch.tensor([2, 0]),
+                f"{prefix}not_router.expert_bias": torch.zeros(2),
+                f"{prefix}linear.adapter.weight": torch.ones(2, 4),
+            },
+            "iteration": 7,
+        }
+
+        filtered = apply_peft_adapter_filter_to_state_dict(state, peft)
+
+        assert set(filtered[model_key]) == {bias_key, f"{prefix}linear.adapter.weight"}
+        assert filtered[model_key][bias_key] is bias
+        assert filtered["iteration"] == 7
+
+    def test_router_bias_survives_adapter_save_and_inference_reload(self, tmp_path):
+        model = nn.Module()
+        model.router = nn.Module()
+        model.router.register_buffer("expert_bias", torch.tensor([-0.001, 0.001]))
+        model.router.weight = nn.Parameter(torch.ones(2, 4), requires_grad=False)
+        model.linear = nn.Module()
+        model.linear.adapter = nn.Linear(4, 2, bias=False)
+        peft = LoRA()
+        peft.set_params_to_save(model)
+        saved = apply_peft_adapter_filter_to_state_dict({"model": model.state_dict()}, peft)
+        path = tmp_path / "adapter.pt"
+        torch.save(saved, path)
+        expected_bias = model.router.expert_bias.clone()
+        model.router.expert_bias.zero_()
+
+        # Merge/export builds an eval-mode PEFT object with no trainable-key set.
+        inference_peft = LoRA()
+        requested = apply_peft_adapter_filter_to_state_dict({"model": model.state_dict()}, inference_peft)
+        loaded = torch.load(path, weights_only=True)
+        assert requested["model"].keys() == loaded["model"].keys()
+        incompatible = model.load_state_dict(loaded["model"], strict=False)
+
+        assert incompatible.missing_keys == ["router.weight"]
+        assert not incompatible.unexpected_keys
+        assert torch.equal(model.router.expert_bias, expected_bias)
+
     @pytest.fixture
     def mock_peft_config(self):
         """Create a mock PEFT configuration."""

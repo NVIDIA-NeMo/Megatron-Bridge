@@ -354,6 +354,98 @@ class TestGetOrInitializePgCollection:
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
+    @pytest.mark.parametrize("path", ["provider", "checkpoint"])
+    def test_dropless_inference_finalizes_saved_paged_stash(self, path):
+        from megatron.bridge.inference.text_generation import (
+            _apply_provider_parallelism,
+            _megatron_checkpoint_overrides,
+        )
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_use_grouped_tensor=True,
+            moe_grouped_gemm=True,
+            moe_expert_rank_capacity_factor=1.5,
+            moe_paged_stash=True,
+        )
+        provider.finalize()
+        kwargs = dict(
+            tp=1,
+            pp=1,
+            ep=2,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.bfloat16,
+            attention_backend=None,
+            inference_moe_token_dispatcher_type=None,
+        )
+        if path == "provider":
+            _apply_provider_parallelism(provider, cache_mla_latents=None, **kwargs)
+            provider.finalize()
+        else:
+            overrides = _megatron_checkpoint_overrides(provider, **kwargs)
+
+            def finalize_before_build(checkpoint_path, model_cfg, *args, **build_kwargs):
+                model_cfg.finalize()
+                return []
+
+            with (
+                patch.object(model_load_save, "load_model_config", return_value=(provider, None)),
+                patch.object(model_load_save, "build_and_load_model", side_effect=finalize_before_build),
+            ):
+                load_megatron_model("/checkpoint", mp_overrides=overrides)
+
+        assert provider.moe_expert_rank_capacity_factor is None
+        assert provider.moe_paged_stash is False
+        assert provider.moe_token_dispatcher_type == "flex"
+        assert provider.moe_flex_dispatcher_backend == "hybridep"
+
+    @pytest.mark.parametrize("dropless", [False, True])
+    @pytest.mark.parametrize("forced_bias", [None, 0.0, 0.5, -0.5])
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_explicit_dropless_load_preserves_hybridep(
+        self, mock_load_model_config, mock_build_and_load_model, dropless, forced_bias
+    ):
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        cfg.moe_token_dispatcher_type = "flex"
+        cfg.moe_flex_dispatcher_backend = "hybridep"
+        cfg.moe_expert_capacity_factor = 1.1
+        cfg.moe_expert_rank_capacity_factor = 1.5
+        cfg.moe_hybridep_pad_uneven_dispatch_inputs = False
+        cfg.moe_pad_expert_input_to_capacity = True
+        cfg.moe_router_force_load_balancing = True
+        assert hasattr(cfg, "moe_router_force_biased")
+        cfg.moe_router_force_biased = forced_bias
+        mock_load_model_config.return_value = (cfg, None)
+        overrides = {"expert_model_parallel_size": 8}
+        if dropless:
+            overrides.update(
+                moe_expert_capacity_factor=None,
+                moe_expert_rank_capacity_factor=None,
+                moe_hybridep_pad_uneven_dispatch_inputs=True,
+                moe_pad_expert_input_to_capacity=False,
+                moe_router_force_load_balancing=False,
+                moe_router_force_biased=None,
+            )
+
+        load_megatron_model("/ckpt", mp_overrides=overrides)
+
+        built_config = mock_build_and_load_model.call_args.args[1]
+        assert built_config.moe_token_dispatcher_type == "flex"
+        assert built_config.moe_flex_dispatcher_backend == "hybridep"
+        assert built_config.moe_expert_capacity_factor == (None if dropless else 1.1)
+        assert built_config.moe_expert_rank_capacity_factor == (None if dropless else 1.5)
+        assert built_config.moe_hybridep_pad_uneven_dispatch_inputs is dropless
+        assert built_config.moe_pad_expert_input_to_capacity is (not dropless)
+        assert built_config.moe_router_force_load_balancing is (not dropless)
+        assert built_config.moe_router_force_biased == (None if dropless else forced_bias)
+
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
         provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
