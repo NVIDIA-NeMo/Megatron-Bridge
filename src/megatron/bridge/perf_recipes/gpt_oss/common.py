@@ -147,6 +147,8 @@ def _apply_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.overlap_param_gather = False
     cfg.rng.te_rng_tracker = True
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
