@@ -44,8 +44,17 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
     """MLA-capable :class:`HybridModelProvider` for DeepSeek-V4.
 
     All configuration is supplied by :class:`DeepSeekV4Bridge.provider_bridge`;
-    this class only fixes the method-resolution order so a single provider is
-    both an MLA config carrier and a hybrid-model builder.
+    this class combines the MLA config and hybrid builder and keeps native
+    pipeline segments aligned with public runner topology overrides.
     """
 
-    pass
+    def _pipeline_model_parallel_layout_builder(
+        self, pipeline_model_parallel_size: int, virtual_pipeline_model_parallel_size: int | None
+    ) -> list[list[str]] | None:
+        """Keep the native layer pattern aligned with public runner PP/VPP overrides."""
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
+
+        self.pipeline_model_parallel_size = pipeline_model_parallel_size
+        self.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+        set_deepseek_v4_pipeline_model_parallel_layout(self)
+        return self.pipeline_model_parallel_layout

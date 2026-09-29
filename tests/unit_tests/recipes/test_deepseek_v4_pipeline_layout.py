@@ -14,6 +14,7 @@
 
 """Native pipeline allocation for DeepSeek V4 attention/MoE pairs."""
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -23,6 +24,7 @@ from megatron.core.transformer.pipeline_parallel_layer_layout import PipelinePar
 
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
 pytestmark = pytest.mark.unit
@@ -105,6 +107,41 @@ def test_reapplying_layout_is_idempotent():
     expected = cfg.hybrid_layer_pattern, cfg.pipeline_model_parallel_layout
     set_deepseek_v4_pipeline_model_parallel_layout(cfg)
     assert (cfg.hybrid_layer_pattern, cfg.pipeline_model_parallel_layout) == expected
+
+
+@pytest.mark.parametrize(
+    ("pp", "vp", "counts"), [(1, None, [43]), (4, None, [11, 11, 11, 10]), (4, 4, [3] * 11 + [2] * 5)]
+)
+def test_cli_topology_override_rebuilds_native_pattern_and_mtp(pp, vp, counts):
+    cfg = _provider(43, 8)
+    original_pattern = cfg.hybrid_layer_pattern
+    cfg.hybrid_layer_pattern += "/WE"
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    runner, _ = _load_recipe_runner_module()
+
+    runner.sync_model_pipeline_layout(
+        SimpleNamespace(model=cfg),
+        cli_overrides=[
+            f"model.pipeline_model_parallel_size={pp}",
+            f"model.virtual_pipeline_model_parallel_size={vp}",
+        ],
+    )
+
+    main_pattern, mtp_pattern = cfg.hybrid_layer_pattern.split("/")
+    segments = main_pattern.split("|")
+    assert "".join(segments) == original_pattern
+    assert [len(segment) for segment in segments] == [2 * count for count in counts]
+    assert mtp_pattern == "WE"
+    if pp == 1:
+        assert cfg.pipeline_model_parallel_layout is None
+    else:
+        assert cfg.pipeline_model_parallel_layout[0][0] == "embedding"
+        assert cfg.pipeline_model_parallel_layout[-1][-2:] == ["mtp", "loss"]
+        assert [stage.count("decoder") for stage in cfg.pipeline_model_parallel_layout] == [
+            2 * count for count in counts
+        ]
 
 
 @pytest.mark.parametrize("counts", [[4] * 16, [4] * 14 + [5], [4] * 15 + [-1]])
