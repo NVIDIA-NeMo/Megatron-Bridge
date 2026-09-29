@@ -34,18 +34,14 @@ from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config as deepseek_v4_flash_pretrain_mxfp8_gb200_config,
 )
-from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
-    DEEPSEEK_V4_PRO_HF_PATH,
-)
+from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import DEEPSEEK_V4_PRO_HF_PATH
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config as deepseek_v4_pro_pretrain_config,
 )
 from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config as deepseek_v4_pro_pretrain_mxfp8_config,
 )
-from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
-    DEEPSEEK_V4_FLASH_HF_PATH,
-)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import DEEPSEEK_V4_FLASH_HF_PATH
 from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
     deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config as deepseek_v4_flash_no_mtp_sft_config,
 )
@@ -121,16 +117,18 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
     CoT reasoning goes into the assistant thinking field and the final answer into the
     content field. Uses packed sequences for efficient training.
     Pre-pack data with ``prepare_gpt_sft_packed_data.py`` before running SFT.
-    When using CP>1, pass ``model.cp_partition_mode=contiguous`` (required for DSv4 CSA
-    attention) and ``pad_seq_to_mult=4`` to ensure divisibility by cp_size.
+    Native DSv4 uses contiguous attention and pipeline-boundary CP layouts.
+    When using CP>1, use ``--step-func dsv4_step`` and pre-pack with
+    ``pad_seq_to_mult=2*context_parallel_size`` for the selected topology.
 
     For GB200-optimized training with HybridEP dispatcher and DSA kernel fusion,
     use ``deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config`` instead.
     """
     cfg = deepseek_v4_flash_sft_config()
-    # DSv4 hybrid attention requires contiguous CP partition when CP > 1;
-    # setting it unconditionally is safe (no-op when context_parallel_size=1).
-    cfg.model.cp_partition_mode = "contiguous"
+    # dsv4_step supplies contiguous tokens at both the HybridModel boundary
+    # and each attention layer; no cp_batch layout conversion is needed.
+    cfg.model.attention_cp_layout = "contiguous"
+    cfg.model.linear_cp_layout = "contiguous"
     cfg.dataset = default_openmathinstruct2_thinking_config(
         seq_length=cfg.model.seq_length,
         enable_offline_packing=True,

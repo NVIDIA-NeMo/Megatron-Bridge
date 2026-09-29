@@ -19,9 +19,9 @@ exchanges boundary hidden states between adjacent CP ranks. This requires
 contiguous token assignment (each rank gets a consecutive slice), unlike the
 default zigzag interleaved assignment used by standard causal models.
 
-MCore enforces cp_partition_mode='contiguous' is only valid with dsv4_hybrid
-attention (see TransformerConfig validation). Use --step_func dsv4_step for
-DSv4 SFT/pretrain with CP > 1.
+Native DSv4 requires attention_cp_layout=linear_cp_layout='contiguous' for
+this step. Use --step-func dsv4_step with packed THD metadata for CP;
+MCore validates the supported model topology.
 """
 
 import logging
@@ -45,7 +45,6 @@ from megatron.bridge.training.gpt_step import (
     _forward_step_common,
     _has_packed_sequence_metadata,
     _middle_pp_stage_needs_batch,
-    _partition_packed_batch_for_cp,
     get_batch_from_iterator,
 )
 from megatron.bridge.training.state import GlobalState
@@ -53,9 +52,8 @@ from megatron.bridge.training.state import GlobalState
 
 logger = logging.getLogger(__name__)
 
-# DSv4 offline-packed SFT passes cp_partition_mode
-# through the batch dict so get_packed_seq_params can forward it to PackedSeqParams.
-# These fields are MCore-dev-only, so they live here rather than in generic gpt_step.py.
+# Keep global packed boundaries for every pipeline stage. CP layout is a model
+# configuration field on main, not a PackedSeqParams field.
 _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens_q",
     "cu_seqlens_kv",
@@ -63,8 +61,8 @@ _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens_kv_padded",
     "max_seqlen_q",
     "max_seqlen_kv",
+    "pad_between_seqs",
     "total_tokens",
-    "cp_partition_mode",
 )
 _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
     "cu_seqlens",
@@ -73,12 +71,11 @@ _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
     "max_seqlen",
     "cu_seqlens_unpadded_argmin",
     "total_tokens",
-    "cp_partition_mode",
 )
 
 
 def _packed_metadata_for_forward(batch: dict) -> dict | None:
-    """Extract packed-sequence metadata for DSv4, including CP partition fields."""
+    """Extract global packed-sequence boundaries for native DSv4 attention."""
     if batch.get("cu_seqlens_q") is not None:
         return {k: batch[k] for k in _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS if batch.get(k) is not None}
     if batch.get("cu_seqlens") is not None:
@@ -102,13 +99,15 @@ _SEQLEN_KEYS = frozenset(
         "max_seqlen_kv",
         "token_count",
         "attention_mask",
+        "total_tokens",
+        "pad_between_seqs",
+        "cp_partition_mode",
     }
 )
 
 
 def _partition_packed_batch_contiguous(
-    batch: dict[str, torch.Tensor],
-    cp_size: int,
+    batch: dict[str, torch.Tensor], cp_size: int, cp_rank: int | None = None
 ) -> dict[str, torch.Tensor]:
     """Slice a consecutive [start, end) token window for this CP rank.
 
@@ -121,12 +120,16 @@ def _partition_packed_batch_contiguous(
     The packed sequence length must be divisible by cp_size — ensure
     packed_sequence_size = N * cp_size when running pack_sft_data.
     """
-    cp_rank = parallel_state.get_context_parallel_rank()
+    cp_rank = parallel_state.get_context_parallel_rank() if cp_rank is None else cp_rank
+    if not 0 <= cp_rank < cp_size:
+        raise ValueError("CP rank must be within its explicit process group.")
 
     _data_val = next((v for k, v in batch.items() if v is not None and k not in _SEQLEN_KEYS), None)
     if _data_val is None:
         return batch  # middle PP stage with no data tensors — nothing to slice
 
+    if not isinstance(_data_val, torch.Tensor) or _data_val.ndim != 2 or _data_val.size(0) != 1:
+        raise ValueError("DSv4 packed CP requires micro-batch size 1 and [1, tokens] data tensors.")
     total_tokens = _data_val.size(1)
     if total_tokens % cp_size != 0:
         raise RuntimeError(
@@ -141,26 +144,27 @@ def _partition_packed_batch_contiguous(
     for key, val in batch.items():
         if val is None or key in _SEQLEN_KEYS:
             continue
+        if not isinstance(val, torch.Tensor) or val.ndim != 2 or val.shape != _data_val.shape:
+            raise ValueError(f"Packed data field {key!r} must match the global [1, tokens] shape.")
         batch[key] = val[:, start:end].contiguous()
 
     return batch
 
 
 def get_batch(  # pragma: no cover
-    data_iterator: Iterable,
-    cfg: ConfigContainer,
-    use_mtp: bool = False,
-    *,
-    pg_collection,
-    vp_stage: int | None = None,
+    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection, vp_stage: int | None = None
 ):
     """get_batch with DSv4 contiguous CP partition support.
 
-    Identical to gpt_step.get_batch but dispatches to contiguous partitioning
-    when cfg.model.cp_partition_mode == 'contiguous', and injects cp_partition_mode
-    into the batch so get_packed_seq_params can forward it to PackedSeqParams.
+    Native attention_cp_layout selects contiguous partitioning. Every CP
+    pipeline stage consumes the global packed metadata before token slicing.
     """
     model_cfg = getattr(cfg, "model", None)
+    cp_size = pg_collection.cp.size()
+    if cp_size > 1 and getattr(model_cfg, "attention_cp_layout", None) != "contiguous":
+        raise ValueError("DSv4 packed context parallelism requires attention_cp_layout='contiguous'.")
+    if cp_size > 1 and getattr(model_cfg, "linear_cp_layout", None) != "contiguous":
+        raise ValueError("DSv4 packed context parallelism requires linear_cp_layout='contiguous'.")
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
     is_first = is_pp_first_stage(pg_collection.pp) and (
         vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
@@ -169,7 +173,7 @@ def get_batch(  # pragma: no cover
         vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
     )
     is_middle = (not is_first) and (not is_last)
-    include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
+    include_full_batch_fields = is_middle and (cp_size > 1 or _middle_pp_stage_needs_batch(cfg))
     include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
         cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
     )
@@ -187,17 +191,12 @@ def get_batch(  # pragma: no cover
         include_full_batch_fields=include_full_batch_fields,
     )
 
-    cp_size = pg_collection.cp.size()
     has_packed = _has_packed_sequence_metadata(batch)
-    if has_packed and cp_size > 1:
-        cp_mode = getattr(cfg.model, "cp_partition_mode", "zigzag")
-        if cp_mode == "contiguous":
-            batch = _partition_packed_batch_contiguous(batch, cp_size)
-        else:
-            batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
-        # Inject cp_partition_mode so get_packed_seq_params forwards it to PackedSeqParams.
-        batch["cp_partition_mode"] = cp_mode
-    else:
+    if cp_size > 1:
+        if not has_packed:
+            raise ValueError("DSv4 context parallelism requires packed THD metadata; use a packed dataset.")
+        batch = _partition_packed_batch_contiguous(batch, cp_size, pg_collection.cp.rank())
+    elif not has_packed:
         batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
 
     return (
@@ -211,10 +210,7 @@ def get_batch(  # pragma: no cover
 
 
 def forward_step(  # pragma: no cover
-    state: GlobalState,
-    data_iterator: Iterable,
-    model: GPTModel,
-    return_schedule_plan: bool = False,
+    state: GlobalState, data_iterator: Iterable, model: GPTModel, return_schedule_plan: bool = False
 ):
     """Forward training step for DSv4 with contiguous CP partition support."""
     output, loss_mask = _forward_step_common(
