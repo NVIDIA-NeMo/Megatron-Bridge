@@ -293,6 +293,43 @@ class TestForwardStep:
     @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_nulls_attention_mask_before_model(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """The tokenizer padding mask is a data-path length source only; the model must get None."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 1)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": torch.ones(4, 4, dtype=torch.long),
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        assert mock_model.call_args.kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
     def test_forward_step_scalable_dp_skips_batch_slicing(self, mock_unwrap, mock_get_batch, mock_dp_info):
         """megatron_mimo_scalable_dp: the sampler already delivered this rank's shard, so the
         batch must reach the model unsliced."""

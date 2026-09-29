@@ -160,6 +160,11 @@ def test_dataset_config_enables_only_requested_or_known_validation_splits(
                 do_validation=do_validation,
                 pack_sequences_in_batch=False,
                 scalable_dp=False,
+                intra_microbatch_reorder=False,
+                reorder_encoder_cost_weight=1.0,
+                reorder_language_cost_weight=0.0,
+                no_overlap_intra_microbatch_reorder=False,
+                reorder_window_size=1,
             )
         )
         config.validate()
@@ -278,5 +283,46 @@ def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
 
         with pytest.raises(ValueError, match="truncates Qwen visual tokens"):
             module._adapt_qwen35_hf_batch(batch, spec, seq_length=4, pad_to_seq_length=True)
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_batch_spec_language_non_first_stage_ships_cheap_fields(monkeypatch):
+    # Non-first language stage: input_ids/position_ids always shipped (reorder cost, MRoPE); labels and
+    # loss_mask only on the last stage. forward_step decides what the model receives.
+    name = "qwen35_vl_mimo_finetune_batch_spec_under_test"
+    module = _load_example_module(name)
+    try:
+
+        class _PG:
+            def rank(self):
+                return 1  # stage 1 of 3: neither first nor last
+
+        grid = SimpleNamespace(dim_names=("pp",), shape=[3], get_pg=lambda dims: _PG())
+        monkeypatch.setattr(module, "_rank_grid_and_module", lambda grids: (grid, module.MIMO_LANGUAGE_MODULE_KEY))
+        cfg = SimpleNamespace(model=SimpleNamespace(_grids={module.MIMO_LANGUAGE_MODULE_KEY: grid}))
+        spec = module._batch_spec_for_rank(cfg)
+        assert spec.input_ids is True and spec.position_ids is True
+        assert spec.labels is False and spec.loss_mask is False
+        assert spec.modality_inputs is False
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_batch_spec_encoder_ships_inputs_and_pixels(monkeypatch):
+    name = "qwen35_vl_mimo_finetune_encoder_spec_under_test"
+    module = _load_example_module(name)
+    try:
+
+        class _PG:
+            def rank(self):
+                return 0
+
+        grid = SimpleNamespace(dim_names=("pp",), shape=[1], get_pg=lambda dims: _PG())
+        monkeypatch.setattr(module, "_rank_grid_and_module", lambda grids: (grid, "images"))
+        cfg = SimpleNamespace(model=SimpleNamespace(_grids={"images": grid}))
+        spec = module._batch_spec_for_rank(cfg)
+        assert spec.input_ids is True and spec.modality_inputs is True
+        assert spec.labels is False and spec.loss_mask is False and spec.position_ids is False
     finally:
         sys.modules.pop(name, None)

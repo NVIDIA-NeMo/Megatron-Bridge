@@ -11,8 +11,9 @@ own TP/PP/DP configuration.
 Conversation examples are built with the standard HF VLM provider, then the
 resulting Qwen batch is adapted into the MIMO forward shape:
 
-  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and
-    (when packing) the tokenizer's ``attention_mask``
+  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and the
+    tokenizer's ``attention_mask`` (a data-path length source; the forward step drops it
+    before the model)
   - image inputs: ``modality_inputs["images"]["qwen_visual"]``
 
 Example 2-GPU smoke:
@@ -29,6 +30,7 @@ Example 2-GPU smoke:
 from __future__ import annotations
 
 import argparse
+import functools
 import logging
 import math
 import os
@@ -58,8 +60,8 @@ from megatron.bridge.data.conversation_processing import (
     chat_template_kwargs_from_example,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.megatron_mimo.canonical_sampler import build_canonical_mimo_data_loader
-from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
+from megatron.bridge.data.megatron_mimo.canonical_sampler import build_canonical_mimo_data_loader, canonical_grid_size
+from megatron.bridge.data.megatron_mimo.dp_utils import _find_rank_module, get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.sources.hf import hf_dataset_supports_split
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
@@ -132,7 +134,6 @@ class MIMOBatchSpec:
     labels: bool = True
     loss_mask: bool = True
     modality_inputs: bool = True
-    attention_mask: bool = False
 
     def describe(self) -> str:
         enabled = [
@@ -143,7 +144,6 @@ class MIMOBatchSpec:
                 ("labels", self.labels),
                 ("loss_mask", self.loss_mask),
                 ("modality_inputs", self.modality_inputs),
-                ("attention_mask", self.attention_mask),
             )
             if value
         ]
@@ -279,31 +279,27 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
 
     pp_rank = _grid_dim_rank(grid, "pp", 0)
     pp_size = _grid_dim_size(grid, "pp", 1)
-    is_first_pp = pp_rank == 0
     is_last_pp = pp_rank == pp_size - 1
 
-    dataset_cfg = getattr(cfg, "dataset", None)
-    packing_active = bool(getattr(dataset_cfg, "enable_in_batch_packing", False))
-
+    # Cheap [B, S] fields (input_ids, position_ids, attention_mask) are always shipped: the data path
+    # (reorder cost, packing lengths, MRoPE) reads them on every stage, and forward_step alone decides
+    # what the model receives. Only the expensive or last-stage-only fields are gated here.
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
-            input_ids=is_first_pp,
-            # Qwen3.5-VL mRoPE needs position_ids on every language PP stage.
+            input_ids=True,
             position_ids=True,
             labels=is_last_pp,
             loss_mask=is_last_pp,
             modality_inputs=False,
-            # Packing length source; the packer nulls it again before the model.
-            attention_mask=packing_active,
         )
 
+    # Only an encoder's first PP stage loads data, so nothing is stage-gated here.
     return MIMOBatchSpec(
-        # Encoder first stages need input_ids to attach per-sample split metadata.
-        input_ids=is_first_pp,
+        input_ids=True,
         position_ids=False,
         labels=False,
         loss_mask=False,
-        modality_inputs=is_first_pp,
+        modality_inputs=True,
     )
 
 
@@ -321,8 +317,6 @@ def _project_adapted_batch(
         adapted["loss_mask"] = None
     if not batch_spec.modality_inputs:
         adapted["modality_inputs"] = None
-    if not batch_spec.attention_mask:
-        adapted["attention_mask"] = None
     return adapted
 
 
@@ -418,6 +412,11 @@ def _build_dataset_config(args: argparse.Namespace) -> DirectHFSFTDatasetConfig:
         enable_in_batch_packing=args.pack_sequences_in_batch,
         defer_in_batch_packing_to_step=True,
         megatron_mimo_scalable_dp=args.scalable_dp,
+        megatron_mimo_intra_microbatch_reorder=args.intra_microbatch_reorder,
+        megatron_mimo_reorder_encoder_cost_weight=args.reorder_encoder_cost_weight,
+        megatron_mimo_reorder_language_cost_weight=args.reorder_language_cost_weight,
+        megatron_mimo_reorder_overlap=not args.no_overlap_intra_microbatch_reorder,
+        megatron_mimo_reorder_window_size=args.reorder_window_size,
         do_validation=do_validation,
         do_test=False,
         trust_remote_code=args.trust_remote_code,
@@ -953,6 +952,62 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
         # `pretrain_megatron_mimo` calls `next(data_iterator)` per microbatch, so
         # return an iterator (DataLoader is iterable but not itself an iterator).
         loader_iter: Iterator[dict[str, Any]] = iter(train_loader)
+
+        # Gate on the canonical grid (same on every rank), not this rank's DP size: dp=1 modules must
+        # still join the world-collective PG creation below and reorder locally to stay paired.
+        reorder_on = (
+            scalable_dp
+            and bool(getattr(cfg.dataset, "megatron_mimo_intra_microbatch_reorder", False))
+            and canonical_grid_size(module_dps) > 1
+        )
+        if reorder_on:
+            from megatron.bridge.data.megatron_mimo.reorder_buffer import (
+                ReorderingBuffer,
+                build_module_dp_process_groups,
+                sample_cost,
+            )
+
+            for _name, _par in cfg.model.megatron_mimo_parallelism_config.module_parallelisms.items():
+                if _name != MIMO_LANGUAGE_MODULE_KEY and _par.pipeline_model_parallel_size > 1:
+                    raise NotImplementedError(
+                        "MegatronMIMO intra-microbatch reorder does not support encoder pipeline parallelism "
+                        f"(module {_name!r} has PP={_par.pipeline_model_parallel_size}): non-first encoder stages "
+                        "skip data loading, so the collective process-group creation below would hang."
+                    )
+            # n_groups is the canonical grid size (LCM of the module DP sizes), the geometry the canonical
+            # loader reads with, so vision and language ranks derive one identical per-sample assignment.
+            balance_n_groups = canonical_grid_size(module_dps)
+            _grid, _ = _find_rank_module(cfg.model._grids)
+            dp_rank, dp_size, dp_group_gloo, dp_group_nccl = build_module_dp_process_groups(
+                _grid.get_pg(["dp"]), overlap=cfg.dataset.megatron_mimo_reorder_overlap
+            )
+            # Cost = encoder_cost_weight * patches + language_cost_weight * real_tokens. The patch count comes from the
+            # image-placeholder token count in input_ids (present on every module and PP stage), not
+            # from grid_thw, which the metadata collate omits on language shards.
+            cost_of = functools.partial(
+                sample_cost,
+                encoder_cost_weight=cfg.dataset.megatron_mimo_reorder_encoder_cost_weight,
+                language_cost_weight=cfg.dataset.megatron_mimo_reorder_language_cost_weight,
+                image_token_id=spec.image_token_id,
+                square_merge_size=spec.square_merge_size,
+            )
+
+            def image_count_of(b: dict[str, Any]) -> torch.Tensor:
+                # One vision-start token precedes each image, so this counts images, not patches.
+                return (b["input_ids"] == spec.vision_start_token_id).sum(dim=1).to(torch.long)
+
+            loader_iter = ReorderingBuffer(
+                loader_iter,
+                dp_rank=dp_rank,
+                dp_size=dp_size,
+                n_groups=balance_n_groups,
+                cost_of=cost_of,
+                dp_group_gloo=dp_group_gloo,
+                dp_group_nccl=dp_group_nccl,
+                overlap=cfg.dataset.megatron_mimo_reorder_overlap,
+                image_count_of=image_count_of,
+                window_size=cfg.dataset.megatron_mimo_reorder_window_size,
+            )
         if args.log_batches:
             loader_iter = _wrap_iter_logging(loader_iter, spec)
         return loader_iter, None
@@ -1263,6 +1318,32 @@ def _parse_args() -> argparse.Namespace:
         "micro-batch instead of every rank reading the full batch and slicing locally (IO scales with "
         "DP). Each rank processes its natural, unbalanced shard. Uses the same DP loss reduction as "
         "non-scalable runs.",
+    )
+    parser.add_argument(
+        "--intra-microbatch-reorder",
+        action="store_true",
+        help="Intra-microbatch reordering (requires --scalable-dp): rebalance each micro-batch's per-sample "
+        "vision load across the module DP group by a per-sample all-to-all so no rank is the straggler.",
+    )
+    parser.add_argument(
+        "--reorder-encoder-cost-weight",
+        type=float,
+        default=1.0,
+        help="Reorder cost weight of the encoder term (per image patch).",
+    )
+    parser.add_argument(
+        "--reorder-language-cost-weight",
+        type=float,
+        default=0.0,
+        help="Reorder cost weight of the language term (per sequence token, image tokens included); 0 = encoder-only.",
+    )
+    parser.add_argument(
+        "--no-overlap-intra-microbatch-reorder",
+        action="store_true",
+        help="Run the reorder exchange synchronously instead of prefetching the next window on a side thread.",
+    )
+    parser.add_argument(
+        "--reorder-window-size", type=int, default=1, help="Micro-batches exchanged together as one window."
     )
     parser.add_argument("--profile", choices=("none", "nsys", "pytorch"), default="none")
     parser.add_argument("--profile-step-start", type=int, default=1)

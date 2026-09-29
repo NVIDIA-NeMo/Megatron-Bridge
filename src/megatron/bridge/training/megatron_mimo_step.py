@@ -280,6 +280,9 @@ def forward_step(
             data_batch, packing_kwargs = pack_language_shard(data_batch, lengths=pack_lengths)
             if packing_kwargs is not None:
                 data_batch["packing_kwargs"] = packing_kwargs
+        # The tokenizer padding mask is a data-path length source only (packing, reorder cost, MRoPE);
+        # the model runs causal attention and MimoModel rejects a dense mask under CP.
+        data_batch["attention_mask"] = None
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {
