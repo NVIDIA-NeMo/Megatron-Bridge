@@ -121,9 +121,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         # MoE-specific (only present in Omni configs)
         ("moe_latent_size", "moe_latent_size"),
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
+        ("moe_shared_expert_overlap", "moe_shared_expert_overlap"),
     ]
 
-    # Custom modeling/processing/audio files to copy during HF export.
+    # Custom modeling/processing/audio files and reasoning parsers for HF export.
     ADDITIONAL_FILE_PATTERNS = [
         "modeling*.py",
         "configuration*.py",
@@ -134,6 +135,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         "video_io.py",
         "audio_model.py",
         "evs.py",
+        "*reasoning_parser.py",
     ]
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
@@ -403,16 +405,15 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
         """Select the native Nemotron-H language checkpoint, excluding all media.
 
-        Standalone Nemotron-H configs express the runtime prediction depth in
-        num_nextn_predict_layers. Super VL instead stores a serialized-block
-        count there; normalize it without duplicating the shared MTP weights.
+        Preserve the HF count of one serialized shared MTP block. Super text
+        recipes explicitly set two training prediction depths, independently
+        of this checkpoint representation.
         """
         config = copy.deepcopy(hf_pretrained.config.llm_config)
         self._validate_shared_mtp_config(config)
         config.architectures = ["NemotronHForCausalLM"]
         if hasattr(config, "auto_map"):
             del config.auto_map
-        config.num_nextn_predict_layers = self._MCORE_MTP_PREDICTION_DEPTHS
         config.mtp_use_repeated_layer = True
         kwargs = dict(hf_pretrained.init_kwargs)
         if kwargs.get("subfolder"):

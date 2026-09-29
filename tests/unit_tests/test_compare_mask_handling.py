@@ -100,6 +100,37 @@ finally:
 class TestCompareMaskHandling:
     """Tests for attention_mask handling in compare.py Megatron and HF paths."""
 
+    def test_checkpoint_comparison_requests_dropless_natural_routing(self):
+        bridge = MagicMock()
+        bridge._model_bridge.USE_MODEL_CONFIG_FOR_CONVERSION = False
+        model = MagicMock()
+        bridge.load_megatron_model.return_value = [model]
+        args = SimpleNamespace(
+            hf_model_path="org/model",
+            hf_revision=None,
+            megatron_model_path="/checkpoint",
+            trust_remote_code=False,
+            tp=1,
+            pp=1,
+            ep=8,
+            etp=1,
+            enable_debug_hooks=False,
+        )
+        with patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge):
+            compare._load_megatron_model(args)
+
+        overrides = bridge.load_megatron_model.call_args.kwargs["mp_overrides"]
+        assert overrides["moe_expert_capacity_factor"] is None
+        assert overrides["moe_expert_rank_capacity_factor"] is None
+        assert overrides["moe_paged_stash"] is False
+        assert overrides["moe_ncclep_zero_copy"] is False
+        assert overrides["moe_pad_expert_input_to_capacity"] is False
+        assert overrides["moe_router_force_load_balancing"] is False
+        assert overrides["moe_router_force_biased"] is None
+        assert overrides["moe_hybridep_pad_uneven_dispatch_inputs"] is True
+        assert "moe_token_dispatcher_type" not in overrides
+        assert "moe_flex_dispatcher_backend" not in overrides
+
     def test_gemma3_config_is_detected_as_vision_language_model(self):
         """Structured vision and text configs identify Gemma 3 as a VLM."""
         config = SimpleNamespace(
@@ -314,6 +345,14 @@ class TestCompareMaskHandling:
                 "pipeline_model_parallel_size": 1,
                 "expert_model_parallel_size": 1,
                 "expert_tensor_parallel_size": 1,
+                "moe_expert_capacity_factor": None,
+                "moe_expert_rank_capacity_factor": None,
+                "moe_paged_stash": False,
+                "moe_ncclep_zero_copy": False,
+                "moe_pad_expert_input_to_capacity": False,
+                "moe_router_force_load_balancing": False,
+                "moe_router_force_biased": None,
+                "moe_hybridep_pad_uneven_dispatch_inputs": True,
             },
             wrap_with_ddp=False,
         )

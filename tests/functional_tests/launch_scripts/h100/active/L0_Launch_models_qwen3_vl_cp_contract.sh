@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,14 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -euo pipefail
+set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-cd "${REPO_ROOT}"
+REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
 
-UV_ARGS=(--no-project --with nemo-run==0.10.0)
-if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    UV_ARGS=(--active --no-sync)
-fi
-exec uv run "${UV_ARGS[@]}" python "${SCRIPT_DIR}/setup_inference.py" "$@"
+export CUDA_VISIBLE_DEVICES="0,1"
+
+# Two-rank context-parallel input contract for Qwen3-VL.
+uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest \
+  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
+  tests/unit_tests/models/qwen_vl/test_qwen3_vl_cp_contract_distributed.py
+coverage combine -q
