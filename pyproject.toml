@@ -73,11 +73,10 @@ classifiers = [
 dependencies = [
     "transformers>=5.15,<5.18",
     "mistral-common>=1.10.0",
-    "peft>=0.18.1",
+    "peft>=0.20.0,<=0.21.0",
     "datasets>=2.20.0",
     "accelerate",
     "diffusers>=0.36.0",
-    "peft>=0.18.0",
     "einops",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
