@@ -105,7 +105,7 @@ def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
     assert provider.dsa_indexer_qk_proj_disable_quantization
     assert provider.dsa_indexer_kpool_use_quantization
     assert not provider.dsa_indexer_weights_proj_use_quantization
-    assert provider.dsa_indexer_weights_proj_output_dtype == "bf16"
+    assert provider.dsa_indexer_weights_proj_output_dtype == "fp32"
     assert create_layer_config(provider, "D").dsa_indexer_kpool_use_quantization
     assert provider.dsa_indexer_kpool_always_select_tail
     assert provider.mhc_norm_eps_inside_sqrt
