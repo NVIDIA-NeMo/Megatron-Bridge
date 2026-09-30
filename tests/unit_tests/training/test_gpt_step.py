@@ -194,7 +194,7 @@ class TestGetBatch:
             "loss_mask": _as_nocuda(torch.ones(1, seq)),
             "attention_mask": None,
             "position_ids": _as_nocuda(torch.arange(seq).unsqueeze(0)),
-            "cu_seqlens_q": torch.tensor([[0, 4, 8]], dtype=torch.int32),
+            "cu_seqlens_q": _as_nocuda(torch.tensor([[0, 4, 8]], dtype=torch.int32)),
         }
 
         with pytest.raises(ValueError, match="Packed sequences with context parallelism"):
