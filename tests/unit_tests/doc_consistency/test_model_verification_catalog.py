@@ -14,6 +14,8 @@
 
 import html
 import importlib.util
+import re
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -23,6 +25,9 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 GENERATOR_PATH = REPO_ROOT / "scripts/docs/generate_model_verification_catalog.py"
+RECIPE_METADATA_PATH = REPO_ROOT / "scripts/training/recipe_metadata.py"
+# Items whose commands intentionally launch benchmark recipes.
+BENCHMARK_ITEMS = frozenset({"pretrain_performance", "pretrain_fsdp", "pretrain_weak_scaling"})
 
 
 def _load_generator() -> ModuleType:
@@ -407,3 +412,49 @@ def test_all_fern_model_outputs_use_mdx_markers(generator: ModuleType, catalog: 
     for path, page in outputs.items():
         if path.suffix == ".md":
             assert "{/*" not in page
+
+
+def _load_recipe_metadata() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("model_verification_recipe_metadata", RECIPE_METADATA_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {RECIPE_METADATA_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
+def _command_strings(node: object) -> list[str]:
+    if isinstance(node, dict):
+        commands = []
+        for key, value in node.items():
+            if key in {"command", "commands"} and isinstance(value, str):
+                commands.append(value)
+            elif key in {"command", "commands"} and isinstance(value, list):
+                commands.extend(item for item in value if isinstance(item, str))
+                commands.extend(_command_strings([item for item in value if not isinstance(item, str)]))
+            else:
+                commands.extend(_command_strings(value))
+        return commands
+    if isinstance(node, list):
+        return [command for item in node for command in _command_strings(item)]
+    return []
+
+
+def test_non_benchmark_card_commands_do_not_launch_benchmark_recipes() -> None:
+    recipe_metadata = _load_recipe_metadata()
+    offenders = []
+    for card_path in sorted(REPO_ROOT.glob("examples/model_verification_cards/*/card.yaml")):
+        card = yaml.safe_load(card_path.read_text(encoding="utf-8"))
+        for item_name, item in (card.get("items") or {}).items():
+            if item_name in BENCHMARK_ITEMS:
+                continue
+            for command in _command_strings(item):
+                for recipe_name in re.findall(r"--recipe[=\s]+(\S+)", command):
+                    if recipe_metadata.resolved_benchmark_recipe_metadata(recipe_name) is not None:
+                        offenders.append(f"{card_path.parent.name}/{item_name}: {recipe_name}")
+
+    assert offenders == []

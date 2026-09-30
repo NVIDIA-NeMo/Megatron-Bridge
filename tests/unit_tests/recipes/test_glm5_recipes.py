@@ -345,3 +345,18 @@ def test_glm52_platform_recipes_are_exported() -> None:
         assert getattr(h100, recipe_name) is getattr(glm5, recipe_name)
         assert getattr(recipes, recipe_name) is getattr(glm5, recipe_name)
         assert recipe_name in h100.__all__
+
+
+@pytest.mark.parametrize(
+    ("alias_name", "module", "target"),
+    [
+        ("glm52_h100_sft_config", glm5, glm5.glm52_sft_416gpu_h100_bf16_config),
+        ("glm52_gb200_sft_config", gb200_glm5, gb200_glm5.glm52_sft_192gpu_gb200_bf16_config),
+    ],
+)
+def test_glm52_sft_library_aliases_are_exported(alias_name, module, target) -> None:
+    import megatron.bridge.recipes as recipes
+
+    assert getattr(module, alias_name) is target
+    assert alias_name in module.__all__
+    assert getattr(recipes, alias_name) is target
