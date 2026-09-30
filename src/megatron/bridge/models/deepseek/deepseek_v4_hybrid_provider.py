@@ -51,7 +51,15 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
     def _pipeline_model_parallel_layout_builder(
         self, pipeline_model_parallel_size: int, virtual_pipeline_model_parallel_size: int | None
     ) -> list[list[str]] | None:
-        """Keep the native layer pattern aligned with public runner PP/VPP overrides."""
+        """Rebuild this provider's pattern and layout after runner PP/VPP overrides.
+
+        This hook mutates ``hybrid_layer_pattern`` as well as the PP/VP fields
+        and ``pipeline_model_parallel_layout``. Existing pipe separators,
+        including a recipe's uneven stage allocation, are replaced by an even
+        split of logical attention/MoE pairs; the MTP suffix is preserved.
+        The runner skips this hook when the CLI explicitly supplies a layout,
+        so that caller must also keep the native pattern segments consistent.
+        """
         from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
 
         self.pipeline_model_parallel_size = pipeline_model_parallel_size

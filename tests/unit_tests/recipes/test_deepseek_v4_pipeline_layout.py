@@ -116,7 +116,8 @@ def test_cli_topology_override_rebuilds_native_pattern_and_mtp(pp, vp, counts):
     cfg = _provider(43, 8)
     original_pattern = cfg.hybrid_layer_pattern
     cfg.hybrid_layer_pattern += "/WE"
-    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    # A topology override intentionally replaces recipe-specific uneven splits.
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=[1] * 7 + [36])
     cfg.pipeline_model_parallel_size = pp
     cfg.virtual_pipeline_model_parallel_size = vp
     runner, _ = _load_recipe_runner_module()
