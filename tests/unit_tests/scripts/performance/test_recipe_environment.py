@@ -738,7 +738,7 @@ def test_flat_deterministic_preserves_explicit_hydra_environment(monkeypatch):
     assert effective_recipe.env_vars["USER_SELECTED"] == "custom"
     assert "REMOVE_ME" not in effective_recipe.env_vars
     assert effective_recipe.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
-    assert effective_recipe.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+    assert effective_recipe.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
 
 
 def test_flat_environment_compatibility_preserves_explicit_hydra_values():
@@ -1222,7 +1222,9 @@ def test_runner_applies_determinism_before_environment_export():
         "RECIPE_ENV": 1,
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+        "MAMBA_DETERMINISTIC": "1",
+        "CAUSAL_CONV1D_DETERMINISTIC": "1",
     }
 
 
