@@ -237,7 +237,7 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
         start_time=0.0,
         tensorboard_logger=None,
         timers=Mock(return_value=timer),
-        train_state=SimpleNamespace(step=1),
+        train_state=SimpleNamespace(iteration=1),
         wandb_logger=None,
     )
     pg_collection = SimpleNamespace(dp=object())

@@ -93,7 +93,7 @@ class TestCheckpointManagerLifecycle:
         )
         state = SimpleNamespace(
             cfg=config,
-            train_state=SimpleNamespace(step=1, floating_point_operations_so_far=0.0),
+            train_state=SimpleNamespace(iteration=1, num_floating_point_operations_so_far=0.0),
             timers=Mock(return_value=Mock()),
             straggler_timer=Mock(),
             energy_monitor=None,
@@ -599,9 +599,9 @@ class TestSaveCheckpointAndTime:
                 checkpoint=SimpleNamespace(async_save=False),
             ),
             train_state=SimpleNamespace(
-                floating_point_operations_so_far=0,
+                num_floating_point_operations_so_far=0,
                 consumed_train_samples=0,
-                step=1,
+                iteration=1,
             ),
             start_time=0,
         )
@@ -683,7 +683,7 @@ class TestCheckpointAndDecideExit:
         mock_state.cfg.checkpoint.non_persistent_save_interval = None
 
         # Mock train state
-        mock_state.train_state.step = step
+        mock_state.train_state.iteration = step
 
         # Mock start_time
         mock_state.start_time = start_time if start_time is not None else time.time()
@@ -1273,7 +1273,7 @@ class TestIterationSkipping:
     def _create_mock_global_state(self, step=0, iterations_to_skip=None, micro_batch_size=4):
         """Helper method to create a mock global state."""
         mock_state = Mock()
-        mock_state.train_state.step = step
+        mock_state.train_state.iteration = step
         mock_state.train_state.consumed_train_samples = 0
         mock_state.train_state.skipped_train_samples = 0
 
@@ -1314,7 +1314,7 @@ class TestIterationSkipping:
         mock_dummy_step.assert_called_once_with(global_state, train_data_iterator, fake_pg)
 
         # Verify state updates
-        assert global_state.train_state.step == 5  # incremented
+        assert global_state.train_state.iteration == 5  # incremented
         expected_batch_size = 2 * 4 * 4  # dp_world_size * micro_batch_size * num_microbatches
         assert global_state.train_state.consumed_train_samples == expected_batch_size
         assert global_state.train_state.skipped_train_samples == expected_batch_size
@@ -1335,7 +1335,7 @@ class TestIterationSkipping:
         mock_dummy_step.assert_not_called()
 
         # Verify state not modified
-        assert global_state.train_state.step == 7  # unchanged
+        assert global_state.train_state.iteration == 7  # unchanged
         assert global_state.train_state.consumed_train_samples == 0  # unchanged
         assert global_state.train_state.skipped_train_samples == 0  # unchanged
 

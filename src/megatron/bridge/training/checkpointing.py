@@ -64,6 +64,7 @@ from megatron.core.utils import (
     unwrap_model,
 )
 from megatron.training.checkpointing import save_tokenizer_assets
+from megatron.training.utils.checkpoint_utils import get_checkpoint_train_state_filename, read_train_state
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -86,12 +87,10 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_name,
     get_checkpoint_run_config_filename,
     get_checkpoint_tracker_filename,
-    get_checkpoint_train_state_filename,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
     join_paths,
     read_run_config,
-    read_train_state,
 )
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
@@ -1286,7 +1285,7 @@ def save_checkpoint(
     # Determine checkpoint type and save directory
     save_dir = ckpt_cfg.save
     is_global_non_persistent_ckpt = non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "global"
-    checkpoint_step = train_state.step
+    checkpoint_step = train_state.iteration
     global_non_persistent_keep_count = 0
     if is_global_non_persistent_ckpt:
         # Global non-persistent saves must leave a durable resume point, even when retention is configured as zero.
@@ -1311,7 +1310,7 @@ def save_checkpoint(
         ckpt_type = CheckpointType.GLOBAL
 
     ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch"  # torch for local
-    print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
+    print_rank_0(f"saving checkpoint at iteration {train_state.iteration:7d} to {save_dir} in {ckpt_format} format")
 
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
@@ -1333,7 +1332,7 @@ def save_checkpoint(
     )
 
     # Checkpoint name.
-    checkpoint_name = get_checkpoint_name(save_dir, train_state.step, release=False)
+    checkpoint_name = get_checkpoint_name(save_dir, train_state.iteration, release=False)
 
     # Save LayerWiseDistributedOptimizer state - only for 'torch' (local) checkpoints.
     # For torch_dist/fsdp_dtensor formats, optimizer state is already included in the
@@ -1375,7 +1374,7 @@ def save_checkpoint(
             optimizer,
             opt_param_scheduler,
             rng_state,
-            iteration=train_state.step,
+            iteration=train_state.iteration,
             optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
             model_sd_kwargs=dict(metadata=sharded_sd_metadata),
             rerun_state=rerun_state,
@@ -1562,7 +1561,7 @@ def save_checkpoint(
                 parallelization_group=_checkpoint_dp_cp_group(pg_collection),
             )
             async_save_request = checkpointing_context["local_checkpoint_manager"].save(
-                state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
+                state_dict_for_save, train_state.iteration, is_async=bool(ckpt_cfg.async_save)
             )
             checkpointing_context["local_checkpoint_cache"] = cacheable_metadata
 
@@ -1579,7 +1578,7 @@ def save_checkpoint(
     maybe_save_dataloader_state(
         model,
         train_data_iterator,
-        train_state.step,
+        train_state.iteration,
         dataloader_save_path,
         pg_collection=pg_collection,
         data_parallel_group=(
@@ -1604,7 +1603,7 @@ def save_checkpoint(
         config_filename = get_checkpoint_run_config_filename(checkpoint_name)
         tracker_filename = get_checkpoint_tracker_filename(save_dir)
 
-        step = train_state.step
+        step = train_state.iteration
         if ckpt_type == CheckpointType.LOCAL:
 
             def train_state_finalize_fn():
@@ -1820,7 +1819,7 @@ def save_checkpoint(
 
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
-        print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
+        print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.iteration:7d} to {save_dir}")
         if pending_hf_save_dir is not None:
             _save_hf_weights(state, model, pending_hf_save_dir)
 
@@ -2794,7 +2793,7 @@ def _load_hf_pretrained_checkpoint(
         bridge = _build_auto_bridge_for_save(cfg, hf_source=hf_dir)
         bridge.load_hf_weights(model, hf_path=hf_dir)
 
-    state.train_state.step = 0
+    state.train_state.iteration = 0
 
     # HF checkpoints only initialize model weights. Full training resume should
     # load the complete Megatron checkpoint through ``checkpoint.load``.
@@ -3174,7 +3173,7 @@ def _load_checkpoint_from_path(
                 state.train_state.load_state_dict(state_dict["train_state_metadata"])
             else:
                 print_rank_0("WARNING: train_state_metadata not found in local checkpoint, counters reset")
-                state.train_state = TrainState(step=state_dict.get("iteration", 0))
+                state.train_state = TrainState(iteration=state_dict.get("iteration", 0))
         else:
             train_state_filename = get_checkpoint_train_state_filename(checkpoint_name)
             if file_exists(train_state_filename):
@@ -3184,7 +3183,7 @@ def _load_checkpoint_from_path(
                 state.train_state = _get_train_state_from_state_dict(state_dict)
 
     if cfg.checkpoint.finetune or release:
-        state.train_state.step = 0
+        state.train_state.iteration = 0
 
     # For local checkpoints, checkpoint_name is a CkptID tuple.
     # Normalize to string for downstream logging / wandb / mlflow.
@@ -3394,7 +3393,7 @@ def _load_checkpoint_from_path(
         f"  successfully loaded checkpoint from {load_dir} "
         f"[ t {pg_collection.tp.rank()}/{pg_collection.tp.size()}, "
         f"p {pg_collection.pp.rank()}/{pg_collection.pp.size()} ] "
-        f"at iteration {state.train_state.step}"
+        f"at iteration {state.train_state.iteration}"
     )
 
     if not torch.distributed.is_initialized() or is_last_rank():
@@ -3404,11 +3403,11 @@ def _load_checkpoint_from_path(
 
     torch.cuda.empty_cache()
 
-    if state.train_state.step > 0:
+    if state.train_state.iteration > 0:
         is_local_chkpt = ckpt_type == CheckpointType.LOCAL
         fault_tolerance.on_checkpoint_loaded(is_local_chkpt=is_local_chkpt, global_state=state)
 
-    return state.train_state.step, state.train_state.floating_point_operations_so_far
+    return state.train_state.iteration, state.train_state.num_floating_point_operations_so_far
 
 
 def init_checkpointing_context(checkpoint_config: CheckpointConfig) -> dict[str, Any]:
@@ -3571,7 +3570,7 @@ def _resolve_checkpoint_iteration(load_dir: str | None, ckpt_step_override: int 
     tracker_filename = get_checkpoint_train_state_filename(load_dir, prefix=TRACKER_PREFIX)
     if file_exists(tracker_filename):
         train_state = read_train_state(tracker_filename)
-        iteration = train_state.step
+        iteration = train_state.iteration
     else:
         # Fallback to legacy Megatron-LM format (latest_checkpointed_iteration.txt)
         legacy_tracker_filename = get_checkpoint_tracker_filename(load_dir)
@@ -3594,7 +3593,7 @@ def _get_non_persistent_iteration(
         train_state_filename = get_checkpoint_train_state_filename(non_persistent_global_dir, prefix=TRACKER_PREFIX)
         if file_exists(train_state_filename):
             train_state = read_train_state(train_state_filename)
-            iteration = train_state.step
+            iteration = train_state.iteration
             # if train_state.release:
             #     raise RuntimeError("Non-persistent checkpoint can't be a release checkpoint")
         else:
@@ -4109,7 +4108,7 @@ def _checkpoint_dp_cp_group(pg_collection: ProcessGroupCollection) -> torch.dist
 def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
     """Create a TrainState from the state dict from a Megatron-LM checkpoint."""
     legacy_train_state = TrainState()
-    legacy_train_state.step = state_dict.get("iteration", 0)
+    legacy_train_state.iteration = state_dict.get("iteration", 0)
 
     # Extract training progress from checkpoint args (like Megatron-LM does)
     checkpoint_args = state_dict.get("args", None)
@@ -4124,7 +4123,7 @@ def _get_train_state_from_state_dict(state_dict: dict[str, Any]) -> TrainState:
         legacy_train_state.consumed_valid_samples = 0
 
     # Extract floating point operations count from state_dict (like Megatron-LM does)
-    legacy_train_state.floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
+    legacy_train_state.num_floating_point_operations_so_far = state_dict.get("num_floating_point_operations_so_far", 0)
     legacy_train_state.do_train = False
     legacy_train_state.do_valid = False
     legacy_train_state.do_test = False

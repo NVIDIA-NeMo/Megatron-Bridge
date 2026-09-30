@@ -172,9 +172,7 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
-    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
-        cfg.checkpoint.load, cfg.checkpoint
-    )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
 
     if cfg.peft is not None:
         load_checkpoint_exists = cfg.checkpoint.load is not None and (
@@ -401,9 +399,7 @@ def setup(
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
                 ckpt_step = None
             else:
-                raise RuntimeError(
-                    "No checkpoint source is available for ModelOpt state restoration"
-                )
+                raise RuntimeError("No checkpoint source is available for ModelOpt state restoration")
 
             if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
                 raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
@@ -472,7 +468,7 @@ def setup(
         state.tensorboard_logger,
         state.wandb_logger,
         comet_logger=state.comet_logger,
-        current_training_step=state.train_state.step,
+        current_training_step=state.train_state.iteration,
     )
 
     _update_model_config_funcs(
@@ -523,18 +519,18 @@ def setup(
 
     # Resume the dataloader stream position so a resumed run continues over the same data (currently
     # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
-    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # state.train_state.iteration. The default source is resolved by load_checkpoint from the checkpoint
     # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
     # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
     # pretrained-init runs (step reset to 0) start the data stream from the beginning.
-    if state.train_state.step > 0:
+    if state.train_state.iteration > 0:
         dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
         if dataloader_load_path is None:
             ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
             dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
         maybe_load_dataloader_state(
             train_data_iterator,
-            state.train_state.step,
+            state.train_state.iteration,
             dataloader_load_path,
             pg_collection=pg_collection,
             data_parallel_group=get_data_distribution_group(pg_collection, cfg.model),
@@ -589,7 +585,9 @@ def _register_setup_pre_wrap_hook(
             ]
         else:
             model_cfg._pre_wrap_hooks[:] = [
-                registered_hook for registered_hook in model_cfg._pre_wrap_hooks if registered_hook is not previous_hook
+                registered_hook
+                for registered_hook in model_cfg._pre_wrap_hooks
+                if registered_hook is not previous_hook
             ]
 
     setup_hooks[setup_hook_name] = hook
@@ -660,8 +658,7 @@ def _update_model_config_funcs(
     # every backward finalizes the DP-outer axis and only the last microbatch's gradient
     # reaches the optimizer.
     if isinstance(model[0], FullyShardedDataParallelV2) or (
-        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1))
-        and ddp_config.overlap_grad_reduce
+        isinstance(model[0], (DistributedDataParallel, FullyShardedDataParallelV1)) and ddp_config.overlap_grad_reduce
     ):
         assert model_config.no_sync_func is None, (
             "config.no_sync_func must be None when the wrapper supplies its own no_sync "

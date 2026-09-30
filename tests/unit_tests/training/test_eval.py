@@ -30,7 +30,7 @@ def _make_state():
         wandb_logger=None,
         mlflow_logger=None,
         comet_logger=None,
-        train_state=SimpleNamespace(step=0, consumed_train_samples=0),
+        train_state=SimpleNamespace(iteration=0, consumed_train_samples=0),
         cfg=SimpleNamespace(logger=SimpleNamespace(log_validation_ppl_to_tensorboard=False)),
     )
 

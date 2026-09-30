@@ -55,7 +55,7 @@ def test_quantized_resume_requires_successful_main_parameter_restore(
     cfg.ddp.fp4_param_gather = precision == "fp4"
     if mode == "conversion":
         cfg.ddp = None
-    state.train_state = TrainState(step=3, consumed_train_samples=48)
+    state.train_state = TrainState(iteration=3, consumed_train_samples=48)
     optimizer, scheduler = fixtures["mock_optimizer"], fixtures["mock_scheduler"]
     optimizer.is_stub_optimizer = mode == "stub"
     optimizer.param_groups = [{"max_lr": 0.2, "min_lr": 0.1}]

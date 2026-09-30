@@ -245,7 +245,7 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None, valid_s
 
     Accepts an optional ``train_state`` so consumed-sample offsets from a restored
     checkpoint are honored during resume. ``setup_megatron_mimo`` introspects the
-    signature and passes ``train_state`` when ``train_state.step > 0``.
+    signature and passes ``train_state`` when ``train_state.iteration > 0``.
     """
     from megatron.bridge.data.megatron_mimo.loaders import build_megatron_mimo_data_loaders
     from megatron.bridge.training.state import TrainState
@@ -712,7 +712,7 @@ class TestMegatronMIMOTraining:
         ``dist_checkpointing.save`` raises during phase 1 because each MegatronMIMO
         module emits an identically-keyed RNG ShardedObject. Asserts:
 
-        * ``train_state.step`` goes 0 → SAVE_STEPS after phase 1, SAVE_STEPS → TOTAL_STEPS after phase 2
+        * ``train_state.iteration`` goes 0 → SAVE_STEPS after phase 1, SAVE_STEPS → TOTAL_STEPS after phase 2
         * ``train_state.consumed_train_samples`` is correctly restored
         * Phase-1 and phase-2 consumed indices are disjoint (the resumed loader
           skips samples already seen before the crash)
@@ -776,7 +776,7 @@ class TestMegatronMIMOTraining:
         )
         phase1_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
         phase1_consumed = state_save.train_state.consumed_train_samples
-        assert state_save.train_state.step == save_steps
+        assert state_save.train_state.iteration == save_steps
         assert phase1_consumed > 0
         dist.barrier()
 
@@ -805,8 +805,8 @@ class TestMegatronMIMOTraining:
         phase2_indices = sorted(set(_RESUME_TEST_CONSUMED_INDICES))
 
         # Step counter continues from the checkpoint.
-        assert state_resume.train_state.step == total_steps, (
-            f"Step continuity broken: phase 2 ended at step={state_resume.train_state.step}, expected {total_steps}"
+        assert state_resume.train_state.iteration == total_steps, (
+            f"Step continuity broken: phase 2 ended at step={state_resume.train_state.iteration}, expected {total_steps}"
         )
 
         # consumed_train_samples was restored and then incremented by the extra iters.

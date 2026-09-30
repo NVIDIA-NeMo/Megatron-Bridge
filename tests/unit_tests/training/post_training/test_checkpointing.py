@@ -397,7 +397,7 @@ class TestPostTrainingCheckpointUtilities:
         modelopt_state_path = iteration_path / "modelopt_state"
         iteration_path.mkdir(parents=True)
         newer_iteration_path.mkdir()
-        torch.save(TrainState(step=100).state_dict(), checkpoint_path / "latest_train_state.pt")
+        torch.save(TrainState(iteration=100).state_dict(), checkpoint_path / "latest_train_state.pt")
 
         # The torch_dist strategy synchronizes CUDA even though this fixture only stores objects.
         with (

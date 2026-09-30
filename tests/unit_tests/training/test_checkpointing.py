@@ -31,6 +31,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
     TorchDistSaveShardedStrategy,
 )
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.training.utils.checkpoint_utils import get_checkpoint_train_state_filename
 from nvidia_resiliency_ext.checkpointing.async_ckpt.core import AsyncRequest as NVRxAsyncRequest
 
 from megatron.bridge.training.checkpointing import (
@@ -69,7 +70,6 @@ from megatron.bridge.training.checkpointing import (
     get_checkpoint_name,
     get_checkpoint_run_config_filename,
     get_checkpoint_tracker_filename,
-    get_checkpoint_train_state_filename,
     get_rng_state,
     init_checkpointing_context,
     load_checkpoint,
@@ -163,18 +163,6 @@ class TestCheckpointUtilities:
         mock_dist_ckpt.check_is_distributed_checkpoint.return_value = True
         result = find_checkpoint_rank_0("/checkpoints", 1000, release=True)
         expected = "/checkpoints/release"
-        assert result == expected
-
-    @pytest.mark.parametrize(
-        "checkpoints_path,prefix,expected",
-        [
-            ("/checkpoints", None, "/checkpoints/train_state.pt"),
-            ("/checkpoints", "latest", "/checkpoints/latest_train_state.pt"),
-        ],
-    )
-    def test_get_checkpoint_train_state_filename(self, checkpoints_path, prefix, expected):
-        """Test train state filename generation."""
-        result = get_checkpoint_train_state_filename(checkpoints_path, prefix)
         assert result == expected
 
     def test_get_checkpoint_run_config_filename(self):
@@ -660,7 +648,7 @@ def save_checkpoint_fixtures():
     """Fixture for save checkpoint tests."""
     mock_state = Mock(spec=GlobalState)
     mock_state.train_state = Mock(spec=TrainState)
-    mock_state.train_state.step = 1000
+    mock_state.train_state.iteration = 1000
     # Make state_dict() return a real dictionary that supports item assignment
     mock_state.train_state.state_dict.return_value = {
         "step": torch.tensor(1000),
@@ -721,7 +709,7 @@ class TestSaveCheckpoint:
         state.cfg.checkpoint.most_recent_k = -1
         state.cfg.to_yaml.side_effect = OSError("metadata write failed")
 
-        previous_state = TrainState(step=500)
+        previous_state = TrainState(iteration=500)
         latest_train_state = tmp_path / "latest_train_state.pt"
         torch.save(previous_state.state_dict(), latest_train_state)
         legacy_tracker = tmp_path / "latest_checkpointed_iteration.txt"
@@ -1088,7 +1076,7 @@ class TestSaveCheckpoint:
         current_checkpoint = tmp_path / "iter_0000030"
 
         state = save_checkpoint_fixtures["mock_state"]
-        state.train_state.step = 30
+        state.train_state.iteration = 30
         state.train_state.state_dict.return_value = {"step": torch.tensor(30)}
         state.cfg.checkpoint.save = str(tmp_path)
         state.cfg.checkpoint.async_save = False
@@ -1154,7 +1142,7 @@ class TestSaveCheckpoint:
         current_checkpoint = tmp_path / "iter_0000030"
 
         state = save_checkpoint_fixtures["mock_state"]
-        state.train_state.step = 30
+        state.train_state.iteration = 30
         state.train_state.state_dict.return_value = {"step": torch.tensor(30)}
         state.cfg.checkpoint.save = str(tmp_path)
         state.cfg.checkpoint.async_save = True
@@ -1301,7 +1289,7 @@ class TestSaveCheckpoint:
                 pg_collection=pg_collection,
             )
 
-            state.train_state.step = 1001
+            state.train_state.iteration = 1001
             for finalize_fn in finalize_fns:
                 finalize_fn()
 
@@ -1334,7 +1322,7 @@ class TestSaveCheckpoint:
         torch.save({"step": torch.tensor(10)}, latest_train_state)
 
         state = save_checkpoint_fixtures["mock_state"]
-        state.train_state.step = 30
+        state.train_state.iteration = 30
         state.train_state.state_dict.return_value = {"step": torch.tensor(30)}
         state.cfg.checkpoint.save = str(save_dir)
         state.cfg.checkpoint.non_persistent_ckpt_type = "global"
@@ -1429,7 +1417,7 @@ class TestSaveCheckpoint:
         future_incomplete_checkpoint.mkdir()
 
         state = save_checkpoint_fixtures["mock_state"]
-        state.train_state.step = 60
+        state.train_state.iteration = 60
         state.train_state.state_dict.return_value = {"step": torch.tensor(60)}
         state.cfg.checkpoint.save = str(save_dir)
         state.cfg.checkpoint.non_persistent_ckpt_type = "global"
@@ -1964,7 +1952,7 @@ class TestLoadCheckpoint:
         mock_get_pg_collection.return_value = Mock()
         mock_check_dist_ckpt.return_value = False
         mock_file_exists.return_value = True
-        mock_read_train_state.return_value = Mock(step=1000)
+        mock_read_train_state.return_value = Mock(iteration=1000)
         mock_is_hf_checkpoint_dir.side_effect = lambda path: str(path).endswith("/hf")
         mock_load_base.return_value = (None, "", False, None)
 
@@ -2168,8 +2156,8 @@ class TestLoadCheckpoint:
         cfg.peft = None
 
         state = load_checkpoint_fixtures["mock_state"]
-        state.train_state.step = 0
-        state.train_state.floating_point_operations_so_far = 0
+        state.train_state.iteration = 0
+        state.train_state.num_floating_point_operations_so_far = 0
 
         optimizer = load_checkpoint_fixtures["mock_optimizer"]
         optimizer.is_stub_optimizer = False
@@ -2360,8 +2348,8 @@ class TestLoadCheckpoint:
         mock_exists_os.return_value = True  # train_state.pt exists (normal case)
 
         mock_train_state = Mock()
-        mock_train_state.step = 1000
-        mock_train_state.floating_point_operations_so_far = 500000
+        mock_train_state.iteration = 1000
+        mock_train_state.num_floating_point_operations_so_far = 500000
         mock_read_state.return_value = mock_train_state
 
         # Mock utility functions
@@ -2462,7 +2450,7 @@ class TestNonPersistentCheckpoints:
         mock_isfile.return_value = True
 
         mock_train_state = Mock()
-        mock_train_state.step = 1500
+        mock_train_state.iteration = 1500
         mock_read_state.return_value = mock_train_state
 
         result = _get_non_persistent_iteration("/np_dir", non_persistent_ckpt_type)
@@ -2786,7 +2774,7 @@ class TestLoadBaseCheckpoint:
         non_persistent_dir = save_dir / "non_persistent"
         non_persistent_dir.mkdir(parents=True)
         torch.save(
-            TrainState(step=200).state_dict(),
+            TrainState(iteration=200).state_dict(),
             get_checkpoint_train_state_filename(str(non_persistent_dir), prefix="latest"),
         )
 
@@ -2830,7 +2818,7 @@ class TestLoadBaseCheckpoint:
         non_persistent_dir = tmp_path / "recovery"
         non_persistent_dir.mkdir(parents=True)
         torch.save(
-            TrainState(step=200).state_dict(),
+            TrainState(iteration=200).state_dict(),
             get_checkpoint_train_state_filename(str(non_persistent_dir), prefix="latest"),
         )
 
@@ -2879,11 +2867,11 @@ class TestLoadBaseCheckpoint:
         load_non_persistent_dir.mkdir(parents=True)
         save_non_persistent_dir.mkdir(parents=True)
         torch.save(
-            TrainState(step=200).state_dict(),
+            TrainState(iteration=200).state_dict(),
             get_checkpoint_train_state_filename(str(load_non_persistent_dir), prefix="latest"),
         )
         torch.save(
-            TrainState(step=100).state_dict(),
+            TrainState(iteration=100).state_dict(),
             get_checkpoint_train_state_filename(str(save_non_persistent_dir), prefix="latest"),
         )
 
@@ -2944,7 +2932,7 @@ class TestLoadBaseCheckpoint:
         mock_file_exists.return_value = True  # train_state file exists
 
         mock_train_state = Mock()
-        mock_train_state.step = 1000
+        mock_train_state.iteration = 1000
         mock_read_state.return_value = mock_train_state
 
         mock_dist_ckpt.check_is_distributed_checkpoint.return_value = False
@@ -3997,11 +3985,11 @@ class TestMegatronLMCompatibility:
 
         # Verify that the legacy train state was created correctly
         train_state = mock_state.train_state
-        assert train_state.step == 2000
+        assert train_state.iteration == 2000
         assert train_state.consumed_train_samples == 100000
         assert train_state.skipped_train_samples == 50
         assert train_state.consumed_valid_samples == 10000
-        assert train_state.floating_point_operations_so_far == 5000000
+        assert train_state.num_floating_point_operations_so_far == 5000000
         assert train_state.do_train is False
         assert train_state.do_valid is False
         assert train_state.do_test is False
@@ -4037,7 +4025,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 150000
         assert result.skipped_train_samples == 250
         assert result.consumed_valid_samples == 12000
-        assert result.floating_point_operations_so_far == 7500000
+        assert result.num_floating_point_operations_so_far == 7500000
         assert result.do_train is False
         assert result.do_valid is False
         assert result.do_test is False
@@ -4064,7 +4052,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 100000
         assert result.skipped_train_samples == 50
         assert result.consumed_valid_samples == 8000
-        assert result.floating_point_operations_so_far == 5000000
+        assert result.num_floating_point_operations_so_far == 5000000
 
     def test_get_train_state_missing_args(self):
         """Test creating TrainState when args is missing."""
@@ -4083,7 +4071,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 0  # fallback
         assert result.skipped_train_samples == 0  # fallback
         assert result.consumed_valid_samples == 0  # fallback
-        assert result.floating_point_operations_so_far == 4000000
+        assert result.num_floating_point_operations_so_far == 4000000
 
     def test_get_train_state_missing_flops(self):
         """Test creating TrainState when floating point operations count is missing."""
@@ -4107,7 +4095,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 75000
         assert result.skipped_train_samples == 30
         assert result.consumed_valid_samples == 6000
-        assert result.floating_point_operations_so_far == 0  # default
+        assert result.num_floating_point_operations_so_far == 0  # default
 
     def test_get_train_state_partial_args(self):
         """Test creating TrainState when args has only some attributes."""
@@ -4136,7 +4124,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 200000  # from args
         assert result.skipped_train_samples == 0  # default from getattr
         assert result.consumed_valid_samples == 0  # default from getattr
-        assert result.floating_point_operations_so_far == 9000000
+        assert result.num_floating_point_operations_so_far == 9000000
 
     def test_get_train_state_empty_state_dict(self):
         """Test creating TrainState from an empty state_dict."""
@@ -4151,7 +4139,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 0
         assert result.skipped_train_samples == 0
         assert result.consumed_valid_samples == 0
-        assert result.floating_point_operations_so_far == 0
+        assert result.num_floating_point_operations_so_far == 0
         assert result.do_train is False
         assert result.do_valid is False
         assert result.do_test is False
@@ -4173,7 +4161,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 0  # fallback
         assert result.skipped_train_samples == 0  # fallback
         assert result.consumed_valid_samples == 0  # fallback
-        assert result.floating_point_operations_so_far == 1000000
+        assert result.num_floating_point_operations_so_far == 1000000
 
     def test_get_train_state_large_values(self):
         """Test creating TrainState with large numerical values."""
@@ -4197,7 +4185,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 999999999
         assert result.skipped_train_samples == 1000000
         assert result.consumed_valid_samples == 50000000
-        assert result.floating_point_operations_so_far == 999999999999
+        assert result.num_floating_point_operations_so_far == 999999999999
 
     def test_get_train_state_zero_values(self):
         """Test creating TrainState with zero values."""
@@ -4221,7 +4209,7 @@ class TestGetTrainStateFromStateDict:
         assert result.consumed_train_samples == 0
         assert result.skipped_train_samples == 0
         assert result.consumed_valid_samples == 0
-        assert result.floating_point_operations_so_far == 0
+        assert result.num_floating_point_operations_so_far == 0
         # Boolean flags should still be False
         assert result.do_train is False
         assert result.do_valid is False
@@ -4255,11 +4243,11 @@ class TestCheckpointIterationResolution:
         from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
 
         tracker = get_checkpoint_train_state_filename(str(tmp_path), prefix="latest")
-        first_state = TrainState(step=5)
+        first_state = TrainState(iteration=5)
         torch.save(first_state.state_dict(), tracker)
         assert _resolve_checkpoint_iteration(str(tmp_path), None) == (5, False)
 
-        latest_state = TrainState(step=10)
+        latest_state = TrainState(iteration=10)
         torch.save(latest_state.state_dict(), tracker)
         GlobalState().reset_for_restart()
 
@@ -4273,7 +4261,7 @@ class TestCheckpointIterationResolution:
 
         mock_file_exists.return_value = True
         train_state = TrainState()
-        train_state.step = 1000
+        train_state.iteration = 1000
         mock_read_train_state.return_value = train_state
 
         iteration, release = _resolve_checkpoint_iteration(
@@ -4390,7 +4378,7 @@ class TestCheckpointIterationResolution:
 
         mock_file_exists.return_value = True
         train_state = TrainState()
-        train_state.step = 9999  # Latest checkpoint
+        train_state.iteration = 9999  # Latest checkpoint
         mock_read_train_state.return_value = train_state
 
         # Pass None to _resolve_checkpoint_iteration (simulating ignore_ckpt_step=True)
@@ -5025,7 +5013,7 @@ class TestLoadCheckpointFromPathDirectIterDir:
         MultiStorageClientFeature.disable()
         mock_is_iter_dir.return_value = False
         mock_file_exists.side_effect = lambda path: path.endswith("latest_train_state.pt")
-        mock_read_train_state.return_value = TrainState(step=200)
+        mock_read_train_state.return_value = TrainState(iteration=200)
 
         mock_metadata = Mock()
         mock_metadata.state_dict_metadata = {}
@@ -5716,8 +5704,8 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_data_distribution_group.rank.return_value = 5
 
         mock_train_state = Mock()
-        mock_train_state.step = 500
-        mock_train_state.floating_point_operations_so_far = 0
+        mock_train_state.iteration = 500
+        mock_train_state.num_floating_point_operations_so_far = 0
         mock_read_state.return_value = mock_train_state
 
         mock_read_config.return_value = {
@@ -5837,8 +5825,8 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_get_pg_collection.return_value = mock_pg_collection
 
         mock_train_state = Mock()
-        mock_train_state.step = 1000
-        mock_train_state.floating_point_operations_so_far = 0
+        mock_train_state.iteration = 1000
+        mock_train_state.num_floating_point_operations_so_far = 0
         mock_read_state.return_value = mock_train_state
 
         mock_read_config.return_value = {

@@ -222,7 +222,7 @@ class TestFunctorWithPretrain:
         setup_output.state = MagicMock()
         setup_output.state.cfg = container
         setup_output.state.train_state.do_train = True
-        setup_output.state.train_state.step = 0
+        setup_output.state.train_state.iteration = 0
         setup_output.state.train_state.do_valid = False
         setup_output.state.train_state.do_test = False
 
@@ -278,7 +278,7 @@ class TestFunctorWithPretrain:
         setup_output.state = MagicMock()
         setup_output.state.cfg = container
         setup_output.state.train_state.do_train = True
-        setup_output.state.train_state.step = 0
+        setup_output.state.train_state.iteration = 0
         setup_output.state.train_state.do_valid = False
         setup_output.state.train_state.do_test = False
 

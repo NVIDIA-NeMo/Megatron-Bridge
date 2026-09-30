@@ -322,7 +322,7 @@ save_checkpoint(
     model=[model],
     optimizer=optimizer,
     opt_param_scheduler=scheduler,
-    num_floating_point_operations_so_far=state.train_state.floating_point_operations_so_far,
+    num_floating_point_operations_so_far=state.train_state.num_floating_point_operations_so_far,
     checkpointing_context=ckpt_ctx,
 )
 ```
@@ -503,7 +503,7 @@ class MegatronBridgeAdapter:
 
     def save_ckpt(self, path: str):
         save_checkpoint(self.state, [self.model], self.optimizer, self.scheduler,
-                        num_floating_point_operations_so_far=self.state.train_state.floating_point_operations_so_far,
+                        num_floating_point_operations_so_far=self.state.train_state.num_floating_point_operations_so_far,
                         checkpointing_context=self.ckpt_ctx)
 
     def export_hf(self, out_dir: str, trust_remote_code: bool = False):

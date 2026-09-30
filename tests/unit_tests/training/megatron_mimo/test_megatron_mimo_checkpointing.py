@@ -122,9 +122,9 @@ def _make_global_state(
             data_parallel_size=1,
         ),
         train_state=SimpleNamespace(
-            step=step,
+            iteration=step,
             consumed_train_samples=0,
-            floating_point_operations_so_far=0,
+            num_floating_point_operations_so_far=0,
         ),
         start_time=time.time(),
         signal_handler=Mock(),
@@ -707,7 +707,7 @@ class TestTrainMegatronMIMOCheckpointIntegration:
 
         # Should have exited after 1 iteration, not 100
         assert mock_train_step.call_count == 1
-        assert state.train_state.step == 1
+        assert state.train_state.iteration == 1
 
     @patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False)
     @patch("megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo")
@@ -786,7 +786,7 @@ class TestTrainMegatronMIMOCheckpointIntegration:
         checkpoint_manager = MagicMock()
         saved_steps = []
         checkpoint_manager.save.side_effect = lambda context, _callback_manager: saved_steps.append(
-            context.state.train_state.step
+            context.state.train_state.iteration
         )
 
         with (
@@ -840,9 +840,9 @@ def _make_setup_output_for_load(
         pg_collections = {"language": Mock()}
 
     train_state = SimpleNamespace(
-        step=train_state_step,
+        iteration=train_state_step,
         consumed_train_samples=consumed_train_samples,
-        floating_point_operations_so_far=floating_point_operations_so_far,
+        num_floating_point_operations_so_far=floating_point_operations_so_far,
     )
     timers_handle = Mock()
     timers = Mock(return_value=timers_handle)
@@ -1123,7 +1123,7 @@ class TestTrainStateRestorationSmoke:
             setup_output=setup_output,
         )
         _, kwargs = mocks["train_megatron_mimo"].call_args
-        assert kwargs["global_state"].train_state.floating_point_operations_so_far == 99999
+        assert kwargs["global_state"].train_state.num_floating_point_operations_so_far == 99999
 
 
 # ---------------------------------------------------------------------------
@@ -1309,7 +1309,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
         state = Mock()
         state.cfg = cfg
         state.start_time = time.time()
-        state.train_state = SimpleNamespace(step=0)
+        state.train_state = SimpleNamespace(iteration=0)
 
         mocks = {}
 
@@ -1429,7 +1429,7 @@ class TestSetupMegatronMIMOResumeIterators:
     """Verify setup_megatron_mimo builds iterators with train_state when resuming."""
 
     def test_train_state_passed_when_resuming(self):
-        """When train_state.step > 0, builder receives train_state kwarg."""
+        """When train_state.iteration > 0, builder receives train_state kwarg."""
         from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 
         build_fn = MagicMock(return_value=(iter([]), None))
@@ -1470,7 +1470,7 @@ class TestSetupMegatronMIMOResumeIterators:
         state.cfg = cfg
         state.start_time = time.time()
         # Simulate resumed training — step > 0
-        state.train_state = SimpleNamespace(step=10, consumed_train_samples=100)
+        state.train_state = SimpleNamespace(iteration=10, consumed_train_samples=100)
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
@@ -1517,7 +1517,7 @@ class TestSetupMegatronMIMOResumeIterators:
         assert kwargs["train_state"].step == 10
 
     def test_no_train_state_when_not_resuming(self):
-        """When train_state.step == 0, builder is called without train_state."""
+        """When train_state.iteration == 0, builder is called without train_state."""
         from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 
         build_fn = Mock(return_value=(iter([]), None))
@@ -1552,7 +1552,7 @@ class TestSetupMegatronMIMOResumeIterators:
         state = Mock()
         state.cfg = cfg
         state.start_time = time.time()
-        state.train_state = SimpleNamespace(step=0)
+        state.train_state = SimpleNamespace(iteration=0)
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
@@ -1637,7 +1637,7 @@ class TestSetupMegatronMIMOResumeIterators:
         state = Mock()
         state.cfg = cfg
         state.start_time = time.time()
-        state.train_state = SimpleNamespace(step=10)
+        state.train_state = SimpleNamespace(iteration=10)
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}

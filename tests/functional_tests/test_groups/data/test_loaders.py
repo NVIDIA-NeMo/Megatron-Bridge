@@ -528,7 +528,7 @@ class TestSampleBasedDataLoaders:
 
         # Normal training state (no backward compatibility needed)
         train_state = TrainState()
-        train_state.step = 0
+        train_state.iteration = 0
         train_state.consumed_train_samples = 0
         train_state.consumed_valid_samples = 0
 

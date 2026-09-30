@@ -15,70 +15,22 @@
 import os
 import threading
 import time
-from dataclasses import dataclass
-from typing import Any, Dict
 from unittest.mock import mock_open, patch
 
 import pytest
 import yaml
+from megatron.training.utils.checkpoint_utils import TRAIN_STATE_FILE
 
 from megatron.bridge.training.utils.checkpoint_utils import (
     CONFIG_FILE,
     TRACKER_PREFIX,
-    TRAIN_STATE_FILE,
     checkpoint_exists,
     get_checkpoint_run_config_filename,
-    get_checkpoint_train_state_filename,
     get_hf_model_id_from_checkpoint,
     is_checkpoint_iteration_directory,
     is_hf_checkpoint_dir,
     read_run_config,
-    read_train_state,
 )
-
-
-@dataclass
-class MockTrainState:
-    """Mock train state class for testing."""
-
-    iteration: int = 0
-    epoch: int = 0
-    step: int = 0
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Load state from dictionary."""
-        self.iteration = state_dict.get("iteration", 0)
-        self.epoch = state_dict.get("epoch", 0)
-        self.step = state_dict.get("step", 0)
-
-
-@dataclass
-class ComplexTrainState:
-    """More complex train state class for advanced testing."""
-
-    iteration: int = 0
-    epoch: int = 0
-    step: int = 0
-    learning_rate: float = 0.0
-    loss: float = 0.0
-    metrics: Dict[str, float] = None
-    optimizer_state: Dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.metrics is None:
-            self.metrics = {}
-        if self.optimizer_state is None:
-            self.optimizer_state = {}
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Load state from dictionary."""
-        self.iteration = state_dict.get("iteration", 0)
-        self.epoch = state_dict.get("epoch", 0)
-        self.step = state_dict.get("step", 0)
-        self.learning_rate = state_dict.get("learning_rate", 0.0)
-        self.loss = state_dict.get("loss", 0.0)
-        self.metrics = state_dict.get("metrics", {})
-        self.optimizer_state = state_dict.get("optimizer_state", {})
 
 
 class TestCheckpointUtils:
@@ -163,23 +115,6 @@ class TestCheckpointUtils:
         file_path.write_text("not a directory")
         with pytest.raises(NotADirectoryError):
             get_hf_model_id_from_checkpoint(file_path)
-
-    def test_get_checkpoint_train_state_filename_without_prefix(self, tmp_path):
-        """Test get_checkpoint_train_state_filename without prefix."""
-        checkpoint_dir = str(tmp_path / "checkpoints")
-        expected_path = os.path.join(checkpoint_dir, TRAIN_STATE_FILE)
-
-        result = get_checkpoint_train_state_filename(checkpoint_dir)
-        assert result == expected_path
-
-    def test_get_checkpoint_train_state_filename_with_prefix(self, tmp_path):
-        """Test get_checkpoint_train_state_filename with prefix."""
-        checkpoint_dir = str(tmp_path / "checkpoints")
-        prefix = "custom_prefix"
-        expected_path = os.path.join(checkpoint_dir, f"{prefix}_{TRAIN_STATE_FILE}")
-
-        result = get_checkpoint_train_state_filename(checkpoint_dir, prefix)
-        assert result == expected_path
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
     @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
@@ -276,73 +211,6 @@ class TestCheckpointUtils:
         assert result["model"]["keep"]["_target_"] == "some.other.Component"
         assert result["model"]["nested"][1]["other"]["_target_"] == "another.Component"
 
-    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
-    def test_read_train_state_rank_0_success(self, mock_torch_load, mock_is_initialized, mock_get_rank):
-        """Test read_train_state successful read on rank 0."""
-        # Setup mocks
-        mock_get_rank.return_value = 0
-        mock_is_initialized.return_value = False
-
-        # Mock train state data
-        state_dict = {"iteration": 100, "epoch": 5, "step": 1000}
-        mock_torch_load.return_value = state_dict
-
-        with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
-            result = read_train_state("train_state.pt")
-
-        assert isinstance(result, MockTrainState)
-        assert result.iteration == 100
-        assert result.epoch == 5
-        assert result.step == 1000
-        mock_torch_load.assert_called_once_with("train_state.pt", map_location="cpu", weights_only=True)
-
-    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list")
-    @patch("torch.distributed.get_rank")  # Mock the direct torch.distributed.get_rank call
-    def test_read_train_state_distributed_success(
-        self, mock_torch_get_rank, mock_broadcast, mock_is_initialized, mock_get_world_size, mock_get_rank
-    ):
-        """Test read_train_state with distributed broadcasting."""
-        # Setup mocks for distributed scenario
-        rank = 2  # Non-rank 0
-        mock_get_rank.return_value = rank
-        mock_torch_get_rank.return_value = rank  # Mock torch.distributed.get_rank as well
-        mock_get_world_size.return_value = 4
-        mock_is_initialized.return_value = True
-
-        # Mock the broadcast to simulate receiving train state from rank 0
-        train_state = MockTrainState()
-        train_state.iteration = 200
-        train_state.epoch = 10
-
-        def broadcast_side_effect(obj_list, src):
-            obj_list[0] = train_state
-
-        mock_broadcast.side_effect = broadcast_side_effect
-
-        result = read_train_state("train_state.pt")
-
-        assert result == train_state
-        assert result.iteration == 200
-        assert result.epoch == 10
-        mock_broadcast.assert_called_once()
-
-    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
-    def test_read_train_state_load_error(self, mock_torch_load, mock_is_initialized, mock_get_rank):
-        """Test read_train_state handles torch.load error."""
-        mock_get_rank.return_value = 0
-        mock_is_initialized.return_value = False
-        mock_torch_load.side_effect = RuntimeError("Corrupted file")
-
-        with pytest.raises(RuntimeError, match="Unable to load train state file"):
-            read_train_state("corrupted.pt")
-
     def test_caching_behavior_read_run_config(self):
         """Test that read_run_config uses caching properly."""
         with (
@@ -364,33 +232,8 @@ class TestCheckpointUtils:
                 # File should only be opened once due to caching
                 assert mock_file.call_count == 1
 
-    def test_caching_behavior_read_train_state(self):
-        """Test that read_train_state uses caching properly."""
-        with (
-            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch(
-                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
-            ),
-            patch("megatron.bridge.training.utils.checkpoint_utils.torch.load") as mock_load,
-        ):
-            state_dict = {"iteration": 100, "epoch": 5}
-            mock_load.return_value = state_dict
-
-            # First call
-            with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
-                result1 = read_train_state("train_state.pt")
-            # Second call should use cache
-            with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
-                result2 = read_train_state("train_state.pt")
-
-            assert result1 == result2
-            assert result1.iteration == 100
-            # torch.load should only be called once due to caching
-            assert mock_load.call_count == 1
-
     def test_constants_are_correct(self):
         """Test that module constants have expected values."""
-        assert TRAIN_STATE_FILE == "train_state.pt"
         assert TRACKER_PREFIX == "latest"
         assert CONFIG_FILE == "run_config.yaml"
 
@@ -509,39 +352,6 @@ class TestCheckpointUtils:
         assert len(results) == 10
         assert all(result == config_data for result in results)
 
-    def test_memory_usage_with_complex_train_state(self):
-        """Test memory efficiency with complex train state objects."""
-        # Create a complex state with large nested data
-        complex_state_dict = {
-            "iteration": 10000,
-            "epoch": 50,
-            "step": 100000,
-            "learning_rate": 0.0001,
-            "loss": 1.23,
-            "metrics": {f"metric_{i}": i * 0.1 for i in range(1000)},
-            "optimizer_state": {
-                "param_groups": [{"params": list(range(10000))} for _ in range(10)],
-                "state": {i: {"momentum": [0.1] * 100} for i in range(1000)},
-            },
-        }
-
-        with (
-            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
-            patch(
-                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
-            ),
-            patch("megatron.bridge.training.utils.checkpoint_utils.torch.load", return_value=complex_state_dict),
-            patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=ComplexTrainState()),
-        ):
-            result = read_train_state("complex_state.pt")
-
-            # Verify the complex state is loaded correctly
-            assert result.iteration == 10000
-            assert result.epoch == 50
-            assert len(result.metrics) == 1000
-            assert len(result.optimizer_state["param_groups"]) == 10
-            assert len(result.optimizer_state["state"]) == 1000
-
     def test_stress_test_many_different_files(self, tmp_path):
         """Stress test with many different config files to test cache behavior."""
         num_files = 50
@@ -589,19 +399,6 @@ class TestCheckpointUtils:
         with patch("builtins.open", side_effect=PermissionError("Permission denied")):
             with pytest.raises(RuntimeError, match="Unable to load config file"):
                 read_run_config("restricted_config.yaml")
-
-    @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")
-    @patch("megatron.bridge.training.utils.checkpoint_utils.torch.load")
-    def test_out_of_memory_error_handling(self, mock_torch_load, mock_is_initialized, mock_get_rank):
-        """Test handling of out-of-memory errors during torch.load."""
-        mock_get_rank.return_value = 0
-        mock_is_initialized.return_value = False
-        mock_torch_load.side_effect = RuntimeError("CUDA out of memory")
-
-        with patch("megatron.bridge.training.utils.checkpoint_utils.TrainState", return_value=MockTrainState()):
-            with pytest.raises(RuntimeError, match="Unable to load train state file"):
-                read_train_state("large_state.pt")
 
     def test_unicode_and_special_characters_in_config(self, tmp_path):
         """Test handling of Unicode and special characters in config files."""

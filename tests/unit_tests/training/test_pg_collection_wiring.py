@@ -70,7 +70,7 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     monkeypatch.setattr(train_module, "_dummy_train_step", lambda *args, **kwargs: None)
 
     # Pre-check counters
-    assert state.train_state.step == 0
+    assert state.train_state.iteration == 0
     assert state.train_state.consumed_train_samples == 0
     assert state.train_state.skipped_train_samples == 0
 
@@ -81,7 +81,7 @@ def test_should_skip_iteration_uses_passed_pg_collection(monkeypatch):
     assert did_skip is True
     assert group_calls == [(fake_pg, model_config)]
     # One iteration skipped
-    assert state.train_state.step == 1
+    assert state.train_state.iteration == 1
     # Batch size = dp.size * micro_batch_size * num_microbatches = 3 * 4 * 2 = 24
     expected_batch = 3 * 4 * 2
     assert state.train_state.consumed_train_samples == expected_batch
@@ -130,10 +130,10 @@ def test_train_stops_nsys_profiler_when_skipped_iteration_reaches_profile_end(mo
     state = SimpleNamespace(
         cfg=config,
         train_state=SimpleNamespace(
-            step=0,
+            iteration=0,
             consumed_train_samples=0,
             skipped_train_samples=0,
-            floating_point_operations_so_far=0,
+            num_floating_point_operations_so_far=0,
         ),
         timers=Mock(),
         straggler_timer=Mock(),
@@ -236,10 +236,10 @@ def test_train_stops_nsys_profiler_when_rerun_requests_exit(monkeypatch):
     state = SimpleNamespace(
         cfg=config,
         train_state=SimpleNamespace(
-            step=0,
+            iteration=0,
             consumed_train_samples=0,
             skipped_train_samples=0,
-            floating_point_operations_so_far=0,
+            num_floating_point_operations_so_far=0,
         ),
         timers=Mock(),
         straggler_timer=Mock(),
@@ -347,10 +347,10 @@ def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch
     state = SimpleNamespace(
         cfg=config,
         train_state=SimpleNamespace(
-            step=0,
+            iteration=0,
             consumed_train_samples=0,
             skipped_train_samples=0,
-            floating_point_operations_so_far=0,
+            num_floating_point_operations_so_far=0,
             do_valid=False,
         ),
         timers=Mock(),
@@ -451,6 +451,6 @@ def test_first_skipped_iteration_preserves_cuda_graph_hook_bootstrap(monkeypatch
         pg_collection=pg_collection,
     )
 
-    assert state.train_state.step == 3
+    assert state.train_state.iteration == 3
     assert graph_state["created"] is True
     helper.cuda_graph_set_manual_hooks.assert_called_once()

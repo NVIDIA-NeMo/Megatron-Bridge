@@ -24,7 +24,7 @@ def _make_cfg():
 
 def _make_setup_output(module_to_grid_map):
     global_state = MagicMock()
-    global_state.train_state.step = 0
+    global_state.train_state.iteration = 0
     mock_checkpoint_manager = MagicMock()
     mock_checkpoint_manager.checkpointing_context = None
     return SimpleNamespace(
