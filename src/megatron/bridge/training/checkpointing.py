@@ -2430,19 +2430,21 @@ def _load_model_weights_from_checkpoint(
 
     sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
     print_rank_0(f"sharded_state_dict metadata loaded from the checkpoint: {sharded_sd_metadata}")
-    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
     # [ModelOpt]: Restore state
     restore_modelopt_state(model, state_dict)
 
     model = unwrap_model(model)
     pg_collection = get_pg_collection(model)
+    checkpoint_data_group = _checkpoint_dp_cp_group(pg_collection)
+    sharded_sd_metadata = dict(sharded_sd_metadata or {})
+    sharded_sd_metadata["dp_cp_group"] = checkpoint_data_group
+    model_sd_kwargs = dict(metadata=sharded_sd_metadata)
     sharded_state_dict = _generate_model_state_dict(model, model_sd_kwargs, pg_collection=pg_collection)
 
     load_strategy = TorchDistLoadShardedStrategy()
     if fully_parallel_load:
-        pg_collection = get_pg_collection(model)
-        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, _checkpoint_dp_cp_group(pg_collection))
+        load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, checkpoint_data_group)
     load_result = dist_checkpointing.load(
         sharded_state_dict, checkpoint_path, load_strategy, strict=dist_ckpt_strictness
     )

@@ -3478,6 +3478,49 @@ class TestLoadModelWeightsFromCheckpoint:
         """Create mock metadata for testing."""
         return {"distrib_optim_sharding_type": "fully_sharded_model_space"}
 
+    @pytest.mark.parametrize("fully_parallel_load", [False, True])
+    @pytest.mark.parametrize("gtp_group_state", ["present", "none", "absent"])
+    @pytest.mark.parametrize("has_metadata", [False, True])
+    def test_load_model_weights_checkpoint_group_metadata(
+        self, fully_parallel_load, gtp_group_state, has_metadata, mock_model, mock_common_state_dict
+    ):
+        from megatron.bridge.training import checkpointing
+
+        pg_collection = SimpleNamespace(dp_cp=object())
+        if gtp_group_state != "absent":
+            pg_collection.dp_cp_gtp_remat = object() if gtp_group_state == "present" else None
+        expected_group = pg_collection.dp_cp_gtp_remat if gtp_group_state == "present" else pg_collection.dp_cp
+        metadata = (
+            {"distrib_optim_sharding_type": "fully_sharded_model_space", "dp_cp_group": object()}
+            if has_metadata
+            else None
+        )
+        original_metadata = dict(metadata) if metadata is not None else None
+        expected_metadata = dict(metadata or {}, dp_cp_group=expected_group)
+
+        with (
+            patch.object(checkpointing, "dist_checkpointing") as mock_dist_ckpt,
+            patch.object(checkpointing, "restore_modelopt_state"),
+            patch.object(checkpointing, "unwrap_model", return_value=mock_model),
+            patch.object(checkpointing, "get_pg_collection", return_value=pg_collection),
+            patch.object(checkpointing, "_generate_model_state_dict") as mock_generate,
+            patch.object(checkpointing, "TorchDistLoadShardedStrategy") as mock_strategy,
+            patch.object(checkpointing, "FullyParallelLoadStrategyWrapper") as mock_wrapper,
+            patch.object(checkpointing, "delete_extra_state"),
+        ):
+            mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
+            mock_dist_ckpt.load_content_metadata.return_value = metadata
+            checkpointing._load_model_weights_from_checkpoint(
+                "/test/checkpoint", mock_model, fully_parallel_load=fully_parallel_load, return_state_dict=True
+            )
+
+        mock_generate.assert_called_once_with(mock_model, {"metadata": expected_metadata}, pg_collection=pg_collection)
+        assert metadata == original_metadata
+        if fully_parallel_load:
+            mock_wrapper.assert_called_once_with(mock_strategy.return_value, expected_group)
+        else:
+            mock_wrapper.assert_not_called()
+
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
@@ -3537,7 +3580,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_unwrap_model.assert_called_once_with(mock_model)
         mock_generate_state_dict.assert_called_once()
         call_args = mock_generate_state_dict.call_args
-        assert call_args[0][1] == {"metadata": mock_metadata}
+        assert call_args[0][1] == {"metadata": dict(mock_metadata, dp_cp_group=mock_pg_collection.dp_cp_gtp_remat)}
         mock_strategy_cls.assert_called_once_with()
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
         mock_gc_collect.assert_called_once_with()

@@ -22,9 +22,13 @@ from megatron.bridge.training.distill import _check_step_handles_context_paralle
 from megatron.bridge.training.gpt_step import forward_step_modelopt
 
 
-def _config(*, position_embedding_type: str, context_parallel_size: int) -> SimpleNamespace:
+def _config(
+    *, position_embedding_type: str, context_parallel_size: int, distill_submodule: str | None = None
+) -> SimpleNamespace:
     model = SimpleNamespace(
-        position_embedding_type=position_embedding_type, context_parallel_size=context_parallel_size
+        position_embedding_type=position_embedding_type,
+        context_parallel_size=context_parallel_size,
+        distill_submodule=distill_submodule,
     )
     return SimpleNamespace(model=model)
 
@@ -33,8 +37,8 @@ def _other_step(*args, **kwargs):
     raise AssertionError("never called")
 
 
-def test_gpt_step_rejected_for_mrope_under_context_parallelism():
-    with pytest.raises(ValueError, match="double-shards"):
+def test_gpt_step_rejected_for_a_whole_mrope_vlm_under_context_parallelism():
+    with pytest.raises(ValueError, match="already-sharded batch"):
         _check_step_handles_context_parallelism(
             _config(position_embedding_type="mrope", context_parallel_size=2), forward_step_modelopt
         )
@@ -52,4 +56,12 @@ def test_allowed_combinations(position_embedding_type, context_parallel_size, fo
     _check_step_handles_context_parallelism(
         _config(position_embedding_type=position_embedding_type, context_parallel_size=context_parallel_size),
         forward_step_func,
+    )
+
+
+def test_language_submodule_distillation_keeps_the_gpt_step():
+    """QAD on a VLM distills only the language model, whose forward never re-shards the sequence."""
+    _check_step_handles_context_parallelism(
+        _config(position_embedding_type="mrope", context_parallel_size=2, distill_submodule="language_model"),
+        forward_step_modelopt,
     )
