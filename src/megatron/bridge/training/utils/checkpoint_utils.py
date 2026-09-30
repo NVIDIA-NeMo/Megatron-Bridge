@@ -24,7 +24,6 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.training.utils.checkpoint_utils import (
     CONFIG_FILE,
     get_checkpoint_run_config_filename,
-    join_paths,
     read_run_config,
 )
 
@@ -41,6 +40,36 @@ __all__ = [
 
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
+
+
+def join_paths(*paths: str) -> str:
+    """Join paths, using MultiStorageClient when needed.
+
+    MSC's ``os.path`` shim has no ``join``, so ``msc.Path`` is used to keep ``msc://`` prefixes intact.
+
+    Args:
+        *paths: Path components to join. Must contain at least one component.
+
+    Returns:
+        The joined path as a string.
+
+    Raises:
+        ValueError: If no path components are given.
+    """
+    if not paths:
+        raise ValueError("Empty paths")
+
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_cls = msc.Path
+    else:
+        path_cls = Path
+
+    path = path_cls(paths[0])
+    for part in paths[1:]:
+        path = path / part
+
+    return str(path)
 
 
 def file_exists(path: str) -> bool:
