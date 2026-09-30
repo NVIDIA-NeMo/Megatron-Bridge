@@ -451,6 +451,14 @@ def get_batch(
     cp_size = pg_collection.cp.size()
     has_packed = _has_packed_sequence_metadata(batch)
     if has_packed and cp_size > 1:
+        if _keep_full_position_ids_for_cp(model_cfg, cp_size):
+            # The THD partition shards position_ids, and only Qwen3VLModel.forward sets
+            # ``is_thd_format`` to stop the rotary embedding sharding them again -- that forward is
+            # not in the loop for the GPT step, so the embedding would land at T/cp**2.
+            raise ValueError(
+                "Packed sequences with context parallelism are not supported for mrope models through "
+                "the GPT step. Use unpacked data, or cp_size=1."
+            )
         batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
     else:
         full_position_ids = batch.get("position_ids") if _keep_full_position_ids_for_cp(model_cfg, cp_size) else None
