@@ -36,8 +36,7 @@ def llama2_70b_peft_4gpu_gb300_fp8ds_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
     cfg.model.cuda_graph_impl = "local"
     cfg.model.cuda_graph_scope = "full_iteration"
-    cfg.model.cpu_offloading_num_layers = 20
-    cfg.model.cpu_offloading = True
+    cfg.model.cpu_offloading = False
     cfg.validation.eval_global_batch_size = 4
     cfg.validation.eval_interval = 48
     cfg.validation.eval_iters = 44
@@ -80,8 +79,7 @@ def llama2_70b_peft_8gpu_gb300_fp8ds_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
     cfg.model.cuda_graph_impl = "local"
     cfg.model.cuda_graph_scope = "full_iteration"
-    cfg.model.cpu_offloading_num_layers = 11
-    cfg.model.cpu_offloading = True
+    cfg.model.cpu_offloading = False
     cfg.validation.eval_global_batch_size = 8
     cfg.validation.eval_interval = 48
     cfg.validation.eval_iters = 22
