@@ -18,7 +18,11 @@ from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_256gpu_vr200_nvfp4_config
+from megatron.bridge.perf_recipes.deepseek import (
+    deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config,
+    deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config,
+    deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
+)
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
@@ -117,6 +121,27 @@ def test_deepseek_v3_256gpu_vr200_nvfp4_uses_full_iteration_stack() -> None:
         cfg.model.virtual_pipeline_model_parallel_size,
         cfg.model.expert_model_parallel_size,
     ) == (1, 2, 8, 32)
+
+
+@pytest.mark.parametrize(
+    "recipe", [deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config, deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config]
+)
+def test_deepseek_v3_4gpu_vr200_proxies_use_full_iteration_stack(recipe: Callable[[], ConfigContainer]) -> None:
+    cfg = recipe()
+
+    _assert_full_iteration_hybridep(cfg)
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.comm_overlap is not None
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size == 4
+    assert (
+        cfg.model.tensor_model_parallel_size,
+        cfg.model.pipeline_model_parallel_size,
+        cfg.model.virtual_pipeline_model_parallel_size,
+        cfg.model.expert_model_parallel_size,
+    ) == (1, 1, None, 4)
 
 
 @pytest.mark.parametrize(

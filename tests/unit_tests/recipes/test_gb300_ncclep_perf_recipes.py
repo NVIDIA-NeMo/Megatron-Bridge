@@ -69,6 +69,8 @@ _VR200_ALIASES = (
     ("nemotronh.vr200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config"),
     ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config"),
     ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config"),
+    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config"),
+    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config"),
     ("qwen.vr200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config"),
     ("qwen.vr200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config"),
     ("qwen.vr200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config"),

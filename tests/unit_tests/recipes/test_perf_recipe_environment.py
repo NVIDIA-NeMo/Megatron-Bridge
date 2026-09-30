@@ -47,6 +47,8 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "TORCHINDUCTOR_WORKER_START",
 }
 _VR200_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config",
     "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
     "deepseek_v3_pretrain_128gpu_vr200_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
@@ -223,10 +225,12 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
                 assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
             else:
-                # These VR200 MXFP8 recipes explicitly opt into this path.
+                # These VR200 MXFP8 recipes, and the NVFP4 proxy matched to one, explicitly opt into this path.
                 expected_nondeterminism = int(
                     function_name
                     in {
+                        "deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config",
+                        "deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config",
                         "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
                         "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
                         "deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config",
