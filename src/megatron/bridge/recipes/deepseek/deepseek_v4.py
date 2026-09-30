@@ -118,8 +118,10 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
     content field. Uses packed sequences for efficient training.
     Pre-pack data with ``prepare_gpt_sft_packed_data.py`` before running SFT.
     Native DSv4 uses contiguous attention and pipeline-boundary CP layouts.
-    When using CP>1, use ``--step-func dsv4_step`` and pre-pack with
-    ``pad_seq_to_mult=2*context_parallel_size`` for the selected topology.
+    When using CP>1, use ``--step-func dsv4_step`` and choose a total packed
+    sequence length divisible by ``context_parallel_size``. Contiguous token
+    slicing does not require individual documents to be padded to ``2*CP``;
+    the existing offline-packer padding default below is unchanged.
 
     For GB200-optimized training with HybridEP dispatcher and DSA kernel fusion,
     use ``deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config`` instead.

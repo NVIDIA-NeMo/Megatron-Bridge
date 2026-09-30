@@ -971,7 +971,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "07c5cc30d0510d437bfbbe7b12d9d98387295d89",
           "command_topologies": [
             {
               "context_parallel": "2",
@@ -984,7 +984,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/sft-long-context-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 'model.pipeline_model_parallel_layout=Et*11|t*11|t*11|t*10mL' model.context_parallel_size=2 model.cp_partition_mode=contiguous model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 4 --recipe deepseek_v4_flash_sft_openmath_thinking_packed_config --step-func dsv4_step --pretrained_checkpoint work/models/deepseek-v4-flash-megatron --save_dir work/model-verification/dsv4-flash/sft-long-context-ref --save_interval 100 --max_steps 100 model.pipeline_model_parallel_size=4 model.context_parallel_size=2 model.attention_cp_layout=contiguous model.linear_cp_layout=contiguous model.expert_model_parallel_size=8 model.moe_grouped_gemm=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 dataset.seq_length=1024 scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=100 validation.eval_interval=0 validation.eval_iters=0 rng.seed=5678 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true checkpoint.exit_on_missing_checkpoint=false checkpoint.load=null ddp.overlap_grad_reduce=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=180"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -992,19 +992,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "deepseek-v4-flash-sft-long-context-gb200",
-          "expected_result": "CP=2 with contiguous partitioning and offline-packed OpenMathInstruct-2 at seq_length=1024 demonstrates sequence packing and context parallelism working together over 100 training steps with finite loss and no skipped or NaN iterations.\n",
+          "expected_result": "Pending verification on the native main API with Megatron-Core PR #7469 and the Bridge PR #6248 pipeline-override hook. CP=2 requires packed THD metadata and both attention_cp_layout and linear_cp_layout set to contiguous. The packed token count must be divisible by CP size. This command omits an explicit pipeline layout so the hook can regenerate native attention/MoE segments for PP4. Require 100 finite steps with no skipped or NaN iterations. Historical dev-API metrics do not verify this migrated command and remain available in the card's git history.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-07",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 0.2837,
-            "initial_loss": 0.94383,
-            "last_10_steps_model_tflops_per_gpu_avg": 13.62,
-            "last_10_steps_step_time_ms_avg": 13806.5,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 148.336
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -1159,7 +1159,7 @@
       "min_transformers_version": "5.12.0",
       "slug": "deepseek-v4-flash",
       "source_card": "examples/model_verification_cards/deepseek-v4-flash/card.yaml",
-      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nThe Megatron-backed DeepSeek V4 workflows in this card require the Megatron-Core dev branch; the default MCore submodule revision in Megatron Bridge r0.6.0 is insufficient. Follow the public setup instructions in examples/models/deepseek_v4/README.md.\nDeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision. The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused cross entropy, and selective recompute without activation offload. It completed 100 finite steps with full-state checkpoints at steps 50 and 100. A direct step-50 continuation restored optimizer, scheduler, data-order, and RNG state, completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5 performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert assignments and 64.23% of routing probability mass; that result is benchmark-only and is excluded from the natural-routing library recipe and verification metrics. CPU conversion remains unverified because the available nodes lacked sufficient RAM. Standard Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses the HF-native path after export.\nThe GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes, selective whole-MoE recompute, and attention activation offload while preserving the base SFT objective. Its final objective-preserving configuration completed 100 finite steps and a fresh-process checkpoint reload. GPU export of both the imported model and the step-100 SFT checkpoint produced exact BF16 inventories and passed independent strict GPU-only HF reloads. The public post-SFT workflow also produced identical bounded greedy completions from two independent reloads. A separate 100-step CP2 run verifies offline packing with contiguous context parallelism.\nThe GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections and to separate routed/shared expert FC1/FC2 projections. Its execution path uses scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed 100 finite steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh process for finite step 101.\n",
+      "summary": "Performance scope: pretrain_performance.GB200 and pretrain_performance.GB300 use their tuned canonical 128-GPU MXFP8 recipes. Timing and throughput metrics from functional training items are sanity checks rather than optimized performance results.\nHistorical verified Megatron-backed workflows below use their item-pinned Bridge revisions and the Megatron-Core dev branch. The migrated native-main long-context command is unverified and requires native DSv4 packed-CP support from Megatron-Core PR #7469 plus the pipeline-override hook from Bridge PR #6248. Follow examples/models/deepseek_v4/README.md for model setup.\nDeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision. The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with imported model weights, natural routing, grouped GEMM, TE fused cross entropy, and selective recompute without activation offload. It completed 100 finite steps with full-state checkpoints at steps 50 and 100. A direct step-50 continuation restored optimizer, scheduler, data-order, and RNG state, completed steps 51-100, and passed both loss-sentinel comparisons. A capacity-1.5 performance screen averaged 206.56 TFLOP/s/GPU over steps 2-8, but dropped 66.16% of expert assignments and 64.23% of routing probability mass; that result is benchmark-only and is excluded from the natural-routing library recipe and verification metrics. CPU conversion remains unverified because the available nodes lacked sufficient RAM. Standard Megatron KV-cache inference is unsupported for DSV4 hybrid attention; inference uses the HF-native path after export.\nThe GB200 packed SFT recipe uses grouped GEMM, static packed-sequence shapes, selective whole-MoE recompute, and attention activation offload while preserving the base SFT objective. Its final objective-preserving configuration completed 100 finite steps and a fresh-process checkpoint reload. GPU export of both the imported model and the step-100 SFT checkpoint produced exact BF16 inventories and passed independent strict GPU-only HF reloads. The public post-SFT workflow also produced identical bounded greedy completions from two independent reloads. A historical 100-step CP2 run used the older dev API; it does not verify the migrated native-main long-context command below.\nThe GB200 packed PEFT recipe applies rank-32 LoRA to the DeepSeek MLA projections and to separate routed/shared expert FC1/FC2 projections. Its execution path uses scoped Transformer Engine CUDA graphs and tuned HybridEP dispatch. It completed 100 finite steps, saved an adapter-only checkpoint, and reloaded that checkpoint in a fresh process for finite step 101.\n",
       "title": "deepseek_v4_flash"
     },
     {

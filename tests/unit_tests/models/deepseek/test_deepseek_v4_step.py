@@ -84,6 +84,34 @@ class TestPartitionPackedBatchContiguous:
         result = self._run(monkeypatch, batch, cp_size=2)
         assert result is batch
 
+    def test_slices_padding_mask_and_preserves_attention_mask(self, monkeypatch):
+        tokens = torch.arange(6).view(1, 6)
+        padding_mask = torch.tensor([[False, False, True, False, True, True]])
+        attention_mask = torch.zeros(1, 1, 6, 6, dtype=torch.bool)
+        batch = _make_batch(
+            tokens=tokens,
+            cu_seqlens=torch.tensor([[0, 3, 6]], dtype=torch.int32),
+            padding_mask=padding_mask,
+            attention_mask=attention_mask,
+        )
+        result = self._run(monkeypatch, batch, cp_rank=1)
+        assert torch.equal(result["padding_mask"], padding_mask[:, 3:])
+        assert result["attention_mask"] is attention_mask
+        # Total length 6 is divisible by CP2, but not by 2*CP: no zigzag rule.
+        assert torch.equal(result["tokens"], tokens[:, 3:])
+
+    def test_rejects_malformed_token_fields(self, monkeypatch):
+        for key in ("tokens", "labels", "loss_mask", "position_ids", "padding_mask"):
+            batch = _make_batch(tokens=torch.arange(8).view(1, 8))
+            batch[key] = torch.zeros(2, 4)
+            with pytest.raises(ValueError, match=r"\[1, tokens\]"):
+                self._run(monkeypatch, batch)
+
+    def test_rejects_unknown_populated_fields(self, monkeypatch):
+        batch = _make_batch(tokens=torch.arange(8).view(1, 8), unknown_scalar=123)
+        with pytest.raises(ValueError, match="Unsupported populated packed batch fields"):
+            self._run(monkeypatch, batch)
+
 
 class TestPackedMetadataForForward:
     """Tests for _packed_metadata_for_forward."""

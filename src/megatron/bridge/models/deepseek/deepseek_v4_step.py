@@ -19,9 +19,12 @@ exchanges boundary hidden states between adjacent CP ranks. This requires
 contiguous token assignment (each rank gets a consecutive slice), unlike the
 default zigzag interleaved assignment used by standard causal models.
 
-Native DSv4 requires attention_cp_layout=linear_cp_layout='contiguous' for
-this step. Use --step-func dsv4_step with packed THD metadata for CP;
-MCore validates the supported model topology.
+At CP>1, this step requires packed THD metadata and both native model fields
+attention_cp_layout=linear_cp_layout='contiguous'. Non-packed batches and
+zigzag layouts are rejected; there is no fallback to the standard zigzag CP
+partitioner. A legacy dev-only cp_partition_mode setting is not sufficient.
+Use --step-func dsv4_step with a packed dataset. MCore's native DSv4 packed-CP
+support validates the supported model topology.
 """
 
 import logging
@@ -105,13 +108,17 @@ _SEQLEN_KEYS = frozenset(
     }
 )
 
+# These are the sequence-shaped fields selected by get_batch_from_iterator.
+# padding_mask follows tokens; attention_mask is retained as global metadata.
+_TOKEN_KEYS = ("tokens", "labels", "loss_mask", "position_ids", "padding_mask")
+
 
 def _partition_packed_batch_contiguous(
     batch: dict[str, torch.Tensor], cp_size: int, cp_rank: int | None = None
 ) -> dict[str, torch.Tensor]:
     """Slice a consecutive [start, end) token window for this CP rank.
 
-    Only data tensors (tokens, labels, loss_mask, position_ids, etc.) are sliced.
+    Only tokens, labels, loss_mask, position_ids, and padding_mask are sliced.
     Sequence-length metadata (cu_seqlens, max_seqlen, ...) is intentionally kept
     at global values — the DSv4 CSA compressor needs global sequence boundaries to
     correctly exchange boundary hidden states between adjacent CP ranks.
@@ -124,7 +131,10 @@ def _partition_packed_batch_contiguous(
     if not 0 <= cp_rank < cp_size:
         raise ValueError("CP rank must be within its explicit process group.")
 
-    _data_val = next((v for k, v in batch.items() if v is not None and k not in _SEQLEN_KEYS), None)
+    unexpected = [k for k, v in batch.items() if v is not None and k not in _SEQLEN_KEYS and k not in _TOKEN_KEYS]
+    if unexpected:
+        raise ValueError(f"Unsupported populated packed batch fields: {unexpected}.")
+    _data_val = next((batch[k] for k in _TOKEN_KEYS if batch.get(k) is not None), None)
     if _data_val is None:
         return batch  # middle PP stage with no data tensors — nothing to slice
 
@@ -141,8 +151,9 @@ def _partition_packed_batch_contiguous(
     start = cp_rank * local_len
     end = start + local_len
 
-    for key, val in batch.items():
-        if val is None or key in _SEQLEN_KEYS:
+    for key in _TOKEN_KEYS:
+        val = batch.get(key)
+        if val is None:
             continue
         if not isinstance(val, torch.Tensor) or val.ndim != 2 or val.shape != _data_val.shape:
             raise ValueError(f"Packed data field {key!r} must match the global [1, tokens] shape.")
@@ -173,6 +184,8 @@ def get_batch(  # pragma: no cover
         vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
     )
     is_middle = (not is_first) and (not is_last)
+    # Packed datasets already request full fields. With CP>1, also read a
+    # non-packed batch on middle stages so every stage rejects it consistently.
     include_full_batch_fields = is_middle and (cp_size > 1 or _middle_pp_stage_needs_batch(cfg))
     include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
         cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
