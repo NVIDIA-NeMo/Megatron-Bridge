@@ -17,6 +17,12 @@
 - Tiny and Tiny Base use low-rank-Q MLA. Tiny Base includes one low-rank-Q MLA MTP layer; the post-trained Tiny checkpoint does not include MTP weights. Flash uses direct-Q MLA and one MTP layer.
 - Custom Hugging Face model code is required, so conversion commands use `--trust-remote-code`.
 
+## Megatron-Core Requirements
+
+Ling 3.0 requires native `HybridModel` KDA support and head-wise MLA output gating. Use the MCore dev pin selected by `bash scripts/switch_mcore.sh dev`, with the repository's normal dependency setup. The default main pin does not yet provide both capabilities; the bridge reports an actionable error before constructing a Ling provider when either is missing. This requirement applies to both checkpoint conversion and SFT, not to Ling 2.0.
+
+Ling uses MCore's native layers rather than Bridge's Kimi K3 attention implementation: its direct KDA forget-gate projection, RoPE-enabled MLA, and head-wise output gate have different parameter layouts and semantics. Megatron KDA text generation is not currently supported. See the verification card for the exact revisions and completed checks; support on dev does not imply a verified SFT run on the default main pin.
+
 ## Examples
 
 For checkpoint import/export and round-trip validation, see the [Bailing examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/bailing/README.md).

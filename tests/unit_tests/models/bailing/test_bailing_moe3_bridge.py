@@ -10,6 +10,7 @@ from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.multi_latent_attention import MLASelfAttention
 from torch import nn
 
+from megatron.bridge.models.bailing import bailing_moe3_spec as ling_spec
 from megatron.bridge.models.bailing.bailing_moe3_bridge import (
     _LING3_MTP_PATTERN,
     BailingMoeV3Bridge,
@@ -22,6 +23,7 @@ from megatron.bridge.models.bailing.bailing_moe3_mappings import (
 )
 from megatron.bridge.models.bailing.bailing_moe3_provider import BailingMoe3HybridProvider
 from megatron.bridge.models.bailing.bailing_moe3_spec import (
+    _missing_mcore_features,
     bailing_moe3_hybrid_stack_spec,
 )
 from megatron.bridge.models.conversion.model_bridge import ModelConfigNotSupportedError, get_model_bridge
@@ -31,6 +33,56 @@ from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 
 pytestmark = pytest.mark.unit
+requires_ling_mcore = pytest.mark.skipif(
+    bool(_missing_mcore_features()),
+    reason="Requires native MCore HybridModel KDA and MLA output gating (switch_mcore.sh dev)",
+)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "symbol",
+        "kda_layer",
+        "kda_safe_gate",
+        "kda_lower_bound",
+        "linear_gate",
+        "attention_output_gate",
+        "gated_attention_proj_granularity",
+        None,
+    ],
+)
+def test_mcore_capability_detection(monkeypatch, missing) -> None:
+    fields = dict.fromkeys(
+        ("kda_safe_gate", "kda_lower_bound", "attention_output_gate", "gated_attention_proj_granularity")
+    )
+    if missing in fields:
+        del fields[missing]
+    mla = SimpleNamespace(linear_gate=None if missing == "linear_gate" else object())
+    stack = SimpleNamespace(
+        kda_layer=None if missing == "kda_layer" else object(),
+        mla_layer=SimpleNamespace(submodules=SimpleNamespace(self_attention=SimpleNamespace(submodules=mla))),
+    )
+    monkeypatch.setattr(ling_spec, "Symbols", SimpleNamespace() if missing == "symbol" else SimpleNamespace(KDA="K"))
+    monkeypatch.setattr(ling_spec, "hybrid_stack_spec", SimpleNamespace(submodules=stack))
+    monkeypatch.setattr(ling_spec, "MLATransformerConfig", SimpleNamespace(__dataclass_fields__=fields))
+    if missing is None:
+        assert _missing_mcore_features() == ()
+    elif missing in ("symbol", "kda_layer", "kda_safe_gate", "kda_lower_bound"):
+        assert _missing_mcore_features() == ("native HybridModel KDA",)
+    else:
+        assert _missing_mcore_features() == ("MLA output gating",)
+
+
+@pytest.mark.parametrize("missing", [("native HybridModel KDA",), ("MLA output gating",)])
+def test_provider_rejects_missing_mcore_capability_before_config_mapping(monkeypatch, missing) -> None:
+    monkeypatch.setattr(ling_spec, "_missing_mcore_features", lambda: missing)
+    with pytest.raises(RuntimeError, match="switch_mcore.sh dev") as error:
+        BailingMoeV3Bridge().provider_bridge(SimpleNamespace(config=_tiny_config()))
+    assert missing[0] in str(error.value)
+    with pytest.raises(RuntimeError, match="switch_mcore.sh dev"):
+        bailing_moe3_hybrid_stack_spec(_tiny_config())
+
 
 _TINY_GOLDEN_PATTERN = "K-KEKE+EKEKEKE+EKEKEKE+EKEKEKE+EKEKEKE+EKEKEKE+E"
 _FLASH_GOLDEN_PATTERN = "K-K-KEKEKE+EKEKEKEKEKE+EKEKEKEKEKE+EKEKEKEKEKE+EKEKEKEKEKE+EKEKEKEKEKE+EKEKEKEKEKE+E"
@@ -220,6 +272,7 @@ def test_bailing_moe3_disables_incompatible_default_gpt_builder_config() -> None
         bridge.hf_config_to_model_config(_tiny_config())
 
 
+@requires_ling_mcore
 def test_tiny_provider_maps_supported_config_variations() -> None:
     config = _tiny_config(
         hidden_act="gelu",
@@ -263,6 +316,7 @@ def test_tiny_provider_maps_supported_config_variations() -> None:
     assert provider.mtp_loss_scaling_factor == 0.25
 
 
+@requires_ling_mcore
 def test_tiny_provider_defaults_linear_heads_when_hf_field_is_absent() -> None:
     config = _tiny_config()
     del config.num_kv_heads_for_linear_attn
@@ -312,6 +366,7 @@ def test_flash_validation_fails_closed(override) -> None:
         BailingMoeV3Bridge._validate_config(_flash_config(**override))
 
 
+@requires_ling_mcore
 def test_tiny_provider_contains_serializable_mla_fields() -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=_tiny_config()))
@@ -353,6 +408,7 @@ def test_bailing_provider_combines_hybrid_construction_and_mla_config() -> None:
     assert {"q_lora_rank", "hybrid_layer_pattern", "linear_conv_kernel_dim"} <= set(provider.__dataclass_fields__)
 
 
+@requires_ling_mcore
 def test_bailing_provider_finalize_runs_hybrid_and_mla_validation() -> None:
     provider = BailingMoe3HybridProvider(
         hidden_size=256,
@@ -368,6 +424,7 @@ def test_bailing_provider_finalize_runs_hybrid_and_mla_validation() -> None:
     assert provider.num_layers == 1
 
 
+@requires_ling_mcore
 def test_flash_provider_uses_direct_q_and_one_mtp_layer() -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=_flash_config()))
@@ -387,6 +444,7 @@ def test_flash_provider_uses_direct_q_and_one_mtp_layer() -> None:
     assert set(vars(provider)) <= set(provider.__dataclass_fields__)
 
 
+@requires_ling_mcore
 def test_flash_spec_uses_mcore_native_direct_q_and_standalone_kv_norm() -> None:
     spec = bailing_moe3_hybrid_stack_spec(_flash_config())
     mla = spec.submodules.mla_layer.submodules.self_attention
@@ -396,6 +454,7 @@ def test_flash_spec_uses_mcore_native_direct_q_and_standalone_kv_norm() -> None:
     assert mla.submodules.kv_layernorm is TENorm
 
 
+@requires_ling_mcore
 def test_tiny_provider_uses_low_rank_q_and_one_mtp_layer() -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(
@@ -431,6 +490,7 @@ def test_tiny_mapping_registry_covers_low_rank_q_mtp() -> None:
     )
 
 
+@requires_ling_mcore
 def test_spec_reuses_mcore_projection_builders_and_overrides_only_ling_norms() -> None:
     spec = bailing_moe3_hybrid_stack_spec(_tiny_config())
 
@@ -457,6 +517,7 @@ def test_spec_reuses_mcore_projection_builders_and_overrides_only_ling_norms() -
         (_flash_config, 42, 6, 2, 1),
     ],
 )
+@requires_ling_mcore
 def test_megatron_to_hf_config_restores_logical_architecture(
     config_factory,
     expected_layers: int,
@@ -497,6 +558,7 @@ def test_megatron_to_hf_config_restores_logical_architecture(
         (_flash_config, 0),
     ],
 )
+@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_non_public_mtp_layout(config_factory, invalid_mtp_layers: int) -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=config_factory()))
@@ -506,6 +568,7 @@ def test_megatron_to_hf_config_rejects_non_public_mtp_layout(config_factory, inv
         bridge.megatron_to_hf_config(provider)
 
 
+@requires_ling_mcore
 def test_megatron_to_hf_config_does_not_infer_norm_topk_prob_from_pre_softmax() -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=_tiny_config()))
@@ -525,6 +588,7 @@ def test_megatron_to_hf_config_does_not_infer_norm_topk_prob_from_pre_softmax() 
         ("moe_router_enable_expert_bias", False),
     ],
 )
+@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_incompatible_router_semantics(name: str, value: object) -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=_tiny_config()))
@@ -553,6 +617,7 @@ def test_megatron_to_hf_config_rejects_incompatible_router_semantics(name: str, 
         (_tiny_config, "moe_shared_expert_intermediate_size", 0, "shared expert"),
     ],
 )
+@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_incompatible_structure(
     config_factory,
     name: str,
@@ -569,6 +634,7 @@ def test_megatron_to_hf_config_rejects_incompatible_structure(
         bridge.megatron_to_hf_config(provider)
 
 
+@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_incompatible_mtp_pattern() -> None:
     bridge = BailingMoeV3Bridge()
     provider = bridge.provider_bridge(SimpleNamespace(config=_flash_config()))

@@ -18,8 +18,41 @@ from __future__ import annotations
 import copy
 
 from megatron.core.extensions.transformer_engine import TENorm
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.transformer_config import MLATransformerConfig
+
+
+def _missing_mcore_features() -> tuple[str, ...]:
+    """Inspect native Ling capabilities without requiring a particular MCore SHA."""
+    missing = []
+    stack = hybrid_stack_spec.submodules
+    fields = MLATransformerConfig.__dataclass_fields__
+    if (
+        getattr(Symbols, "KDA", None) != "K"
+        or getattr(stack, "kda_layer", None) is None
+        or not {"kda_safe_gate", "kda_lower_bound"} <= fields.keys()
+    ):
+        missing.append("native HybridModel KDA")
+    mla = stack.mla_layer.submodules.self_attention.submodules
+    if (
+        getattr(mla, "linear_gate", None) is None
+        or not {"attention_output_gate", "gated_attention_proj_granularity"} <= fields.keys()
+    ):
+        missing.append("MLA output gating")
+    return tuple(missing)
+
+
+def _validate_mcore_support() -> None:
+    """Fail before model construction when MCore cannot represent Ling weights."""
+    missing = _missing_mcore_features()
+    if missing:
+        raise RuntimeError(
+            f"Ling 3.0 requires Megatron-Core support for {', '.join(missing)}. "
+            "Use `bash scripts/switch_mcore.sh dev` and install the selected MCore "
+            "with both native HybridModel KDA and head-wise MLA output gating."
+        )
 
 
 def bailing_moe3_hybrid_stack_spec(config: object) -> ModuleSpec:
@@ -36,6 +69,7 @@ def bailing_moe3_hybrid_stack_spec(config: object) -> ModuleSpec:
     Returns:
         A fresh, serializable module spec for the Ling 3.0 HybridModel.
     """
+    _validate_mcore_support()
     spec = copy.deepcopy(hybrid_stack_spec)
     mla_attention = spec.submodules.mla_layer.submodules.self_attention.submodules
     if getattr(config, "q_lora_rank", None) is not None:

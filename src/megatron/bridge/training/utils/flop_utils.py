@@ -758,6 +758,8 @@ def num_floating_point_operations(
         hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
         if hybrid_pattern:
             layer_counts = get_hybrid_layer_counts(hybrid_pattern)
+            # MCore main may not yet define KDA; other hybrid models must still work.
+            kda_symbol = getattr(Symbols, "KDA", None)
             return (
                 layer_counts[Symbols.ATTENTION],
                 layer_counts[Symbols.MLA],
@@ -765,7 +767,7 @@ def num_floating_point_operations(
                 layer_counts[Symbols.MLP],
                 layer_counts[Symbols.MOE],
                 layer_counts[Symbols.GDN],
-                layer_counts[Symbols.KDA],
+                layer_counts.get(kda_symbol, 0) if kda_symbol is not None else 0,
             )
 
         num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))

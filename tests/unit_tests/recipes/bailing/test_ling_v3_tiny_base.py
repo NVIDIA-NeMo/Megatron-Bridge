@@ -17,7 +17,7 @@ import importlib
 import pytest
 
 from megatron.bridge.models.bailing.bailing_moe3_provider import BailingMoe3HybridProvider
-from megatron.bridge.models.bailing.bailing_moe3_spec import bailing_moe3_hybrid_stack_spec
+from megatron.bridge.models.bailing.bailing_moe3_spec import _missing_mcore_features, bailing_moe3_hybrid_stack_spec
 from megatron.bridge.recipes.bailing.h100.ling_v3_tiny_base import (
     LING_V3_TINY_BASE_HF_MODEL,
     LING_V3_TINY_BASE_HF_REVISION,
@@ -91,6 +91,8 @@ class _FakeAutoBridge:
 
     def to_megatron_provider(self, *args: object, **kwargs: object) -> BailingMoe3HybridProvider:
         del args, kwargs
+        if _missing_mcore_features():
+            pytest.skip("Recipe provider requires native MCore KDA and MLA output gating (switch_mcore.sh dev)")
         return BailingMoe3HybridProvider(
             hybrid_layer_pattern=_TINY_MAIN_PATTERN,
             num_layers=len(_TINY_MAIN_PATTERN),

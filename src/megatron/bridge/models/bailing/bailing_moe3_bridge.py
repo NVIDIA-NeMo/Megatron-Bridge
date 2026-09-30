@@ -23,7 +23,10 @@ from megatron.bridge.models.bailing.bailing_moe3_mappings import (
     _BailingMoe3KDAInProjMapping,
 )
 from megatron.bridge.models.bailing.bailing_moe3_provider import BailingMoe3HybridProvider
-from megatron.bridge.models.bailing.bailing_moe3_spec import bailing_moe3_hybrid_stack_spec
+from megatron.bridge.models.bailing.bailing_moe3_spec import (
+    _validate_mcore_support,
+    bailing_moe3_hybrid_stack_spec,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -396,6 +399,9 @@ class BailingMoeV3Bridge(MegatronModelBridge):
         """Translate a public Ling 3.0 config into a native HybridModel provider."""
         hf_config = hf_pretrained.config
         self._validate_config(hf_config)
+        # Keep pure HF validation/mapping usable on main, but reject unsupported
+        # runtimes before the generic bridge can discard missing config fields.
+        _validate_mcore_support()
         provider = super().provider_bridge(hf_pretrained)
 
         pattern = _hybrid_layer_pattern(hf_config)
