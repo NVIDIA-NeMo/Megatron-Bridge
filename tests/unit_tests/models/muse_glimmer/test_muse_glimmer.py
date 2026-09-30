@@ -624,7 +624,7 @@ def test_final_norm_mapping_round_trips_bf16_exactly(tiny_hybrid_model: MuseGlim
     final_norm = tiny_hybrid_model.decoder.final_norm
     mapping = MuseGlimmerBridge().mapping_registry().megatron_to_hf_lookup("decoder.final_norm.weight")
     hidden_size = final_norm.weight.numel()
-    # Muse final-norm gains sit in [-5, -3); a bf16 ``w - 1`` round trip loses a bit in this range.
+    # Most released gains that drifted lie in [-4, -3), where bf16 ``w - 1`` rounds to a coarser step.
     hf_weight = torch.linspace(-5.0, -3.0, hidden_size).to(torch.bfloat16)
 
     megatron_weight = mapping.hf_to_megatron(hf_weight, final_norm)
