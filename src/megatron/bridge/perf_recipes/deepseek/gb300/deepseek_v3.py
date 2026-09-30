@@ -332,8 +332,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
 
-    cfg.optimizer.lr = 3e-6
-    cfg.optimizer.min_lr = 1e-6
+    cfg.optimizer.lr = 3e-7
+    cfg.optimizer.min_lr = 1e-7
 
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
@@ -355,6 +355,25 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    # Run the attention activations neither recomputed nor offloaded, to establish whether the
+    # model fits without either. recompute_granularity/recompute_modules are set explicitly
+    # rather than left out: deepseek/common.py sets "selective" recompute, so omitting these
+    # would silently re-enable it. offload_modules is cleared for the same reason.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = []
+    cfg.model.offload_modules = []
+    # cfg.model.fine_grained_activation_offloading = True
+    # cfg.model.cpu_offloading_num_layers = 95
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.fused_residual_rmsnorm = True
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    # These three are owned by comm_overlap, not model/ddp: _apply_cfgs() copies the
+    # comm_overlap values onto the model and DDP configs after the recipe runs, so setting
+    # them anywhere else is silently overwritten by the defaults at comm_overlap.py:438.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.align_param_gather = True
 
     # CuTeDSL fused grouped MLP (moe_a2a_overlap disabled).
     cfg.model.use_transformer_engine_op_fuser = True
