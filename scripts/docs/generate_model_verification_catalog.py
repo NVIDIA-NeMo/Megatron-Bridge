@@ -552,8 +552,10 @@ def _model_directory(catalog: dict[str, object], repo_root: Path, *, fern: bool)
             status = _directory_status(entries)
             allowlist_suffix = ""
             if model_name in DETECT_SECRETS_ALLOWLIST_MODEL_NAMES:
+                # detect-secrets requires the comment terminator at end of line.
+                # Keep the MDX closing brace on the next line; Sphinx is unchanged.
                 allowlist_suffix = (
-                    " {/* pragma: allowlist secret */}" if fern else " <!-- pragma: allowlist secret -->"
+                    " {/* pragma: allowlist secret */\n        }" if fern else " <!-- pragma: allowlist secret -->"
                 )
             lines.extend(
                 [

@@ -360,7 +360,7 @@ def test_generated_comments_match_output_format(generator: ModuleType, catalog: 
     section = generator.render_model_section([_models(catalog)["qwen3-30b-a3b"]], fern=fern)
     if fern:
         assert directory.startswith(generator.FERN_GENERATED_NOTICE)
-        assert "{/* pragma: allowlist secret */}" in directory
+        assert "{/* pragma: allowlist secret */\n        }" in directory
         assert section.startswith(generator.FERN_MODEL_SECTION_START)
         assert section.rstrip().endswith(generator.FERN_MODEL_SECTION_END)
         assert "<!--" not in directory + section
