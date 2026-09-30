@@ -27,8 +27,9 @@ All tools live under `examples/conversion/`.
 
 ### Level 1: State Dict Round-Trip (exact match)
 
-The fastest and most fundamental check. If mappings can't perfectly
-round-trip weights, nothing else will work.
+Check tensor coverage and mapping behavior before interpreting forward results.
+Pure layout transformations must round-trip weights exactly. Investigate
+arithmetic parameter transformations separately from missing or misplaced weights.
 
 ```bash
 # Single-GPU round-trip
@@ -46,11 +47,14 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
     --hf-model-id <org>/<model> --pp 2
 ```
 
-**Expected:** Every weight shows "Matches Original: checkmark". Any "X"
-means the param mapping has an error.
+**Expected:** Every weight mapped by pure layout transformations shows
+"Matches Original: checkmark". Investigate every "X" before assigning a cause.
 
-**Tolerance:** Exact match (`max_diff == 0.0`). Round-trip conversions are
-pure tensor reshaping — no floating-point arithmetic is involved.
+**Tolerance:** Exact match (`max_diff == 0.0`) for pure reshaping, permutation,
+and sharding. If a mapping performs arithmetic or changes dtype, report that
+transformation and its measured effect explicitly. Use the controlled
+module-swap procedure below before classifying differences as numerical;
+do not silently relax the exact-match check.
 
 For programmatic verification inside scripts, use the built-in verifier:
 
@@ -104,7 +108,7 @@ with 2 layers and small dimensions. See the functional test pattern in the
 
 | Test Level | Dtype | Device | Required Gate | Report Only |
 |---|---|---|---|---|
-| Round-trip | float32 | CPU | `max_diff == 0.0` and cosine `== 1.0` | None |
+| Round-trip, pure layout mappings | float32 | CPU | `max_diff == 0.0` | cosine similarity |
 | Forward pass | bfloat16 | GPU | next token matches and cosine `>= 0.99` | max/mean absolute logit difference |
 | Forward pass | float16 | GPU | next token matches and cosine `>= 0.99` | max/mean absolute logit difference |
 
@@ -116,8 +120,9 @@ a model-support card after the correlation gate passes.
 
 Using Transformer Engine LayerNorm/RMSNorm can change floating-point operation ordering relative to
 the HF or PyTorch reference. Treat that as a forward-correlation question, not a weight-conversion
-failure: state-dict round-trip must remain exact, while forward parity uses the cosine and next-token
-gates above. Do not replace an available TE affine norm solely to reduce a report-only absolute logit
+failure: unchanged parameter representations must still round-trip exactly;
+investigate arithmetic parameter transformations as described above. Forward
+parity uses the cosine and next-token gates above. Do not replace an available TE affine norm solely to reduce a report-only absolute logit
 difference. Conversely, do not add affine parameters to weightless reference norms just to use TE;
 that changes the architecture and invalidates exact mapping coverage.
 
@@ -165,17 +170,27 @@ def compare_state_dicts(sd_a, sd_b, prefix=""):
 
 When a parity test fails, follow this sequence:
 
-1. **Run single-GPU round-trip** — if this fails, the mapping itself is
-   wrong. Check the `mapping_registry()` in the bridge file.
+Before classifying any discrepancy as numerical, follow the controlled
+module-swap procedure in `skills/adding-model-support/SKILL.md`. Magnitude,
+BF16 precision, or a suspected normalization kernel is not sufficient evidence.
+Fix confirmed bugs; preserve reusable production blocks for confirmed numerical
+differences and retain the diagnostic evidence.
 
-2. **If single-GPU passes but multi-GPU fails** — the TP/PP scatter/gather
-   is wrong. Compare the TP=1 result against each TP shard. See the
+1. **Run single-GPU round-trip** — inspect the `mapping_registry()`, layouts,
+   dtypes, and arithmetic parameter transformations. Missing tensors or wrong
+   shapes indicate conversion defects; investigate value differences before
+   assigning a cause.
+
+2. **If single-GPU passes but multi-GPU fails** — inspect TP/PP/EP distribution,
+   gathering, and checkpoint metadata. Compare the TP=1 result against each TP shard. See the
    `nccl-contiguous-tensors` skill for NCCL-specific issues.
 
-3. **If round-trip passes but forward correlation fails** — the weights loaded
-   correctly, but the runtime architectures may differ. A failure means the
-   next token differs or cosine similarity is below 0.99; a large absolute
-   difference alone is diagnostic, not a failure. Check `provider_bridge()`
+3. **If round-trip passes but forward correlation fails** — the tested roundtrip
+   recovered the source tensors. Verify runtime parameter placement and effective
+   values; inverse mapping errors can cancel in a roundtrip. Record cosine
+   similarity, absolute differences, token decisions, and continuations; use
+   task-specific acceptance criteria. A high cosine alone does not explain a
+   changed token or establish numerical equivalence. Check `provider_bridge()`
    config mapping (normalization, activation, RoPE, etc.).
 
 4. **Use the debugging script template** from the `add-model-support` skill
