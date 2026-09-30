@@ -1214,7 +1214,7 @@ def training_log(
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
             cuda_graphs_enabled = (
-                config.model.cuda_graph_impl != "none"
+                getattr(config.model, "cuda_graph_impl", "none") != "none"
                 or config.optimizer.optimizer_cuda_graph
                 or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
             )
