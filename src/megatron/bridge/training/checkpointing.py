@@ -51,7 +51,7 @@ from megatron.core.dist_checkpointing.strategies.torch import (
 from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
-from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer
+from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer, distrib_optimizer
 from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOptimizer
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
@@ -103,6 +103,11 @@ from megatron.bridge.utils.common_utils import (
 from megatron.bridge.utils.import_utils import safe_import
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 from megatron.bridge.utils.safe_pickle import energon_torch_load
+
+
+# MCore main uses FQN-safe optimizer keys; the supported dev pin still uses tuple keys.
+_get_legacy_grad_dtypes = getattr(distrib_optimizer, "get_legacy_grad_dtypes", None)
+_CHECKPOINT_FORMAT_VERSION = 3.1 if _get_legacy_grad_dtypes is not None else 3.0
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -263,7 +268,8 @@ def set_checkpoint_version(value: float) -> None:
     """
     global _CHECKPOINT_VERSION
     if _CHECKPOINT_VERSION is not None:
-        assert _CHECKPOINT_VERSION == value, "checkpoint versions do not match"
+        # Minor versions change optimizer keys, not the QKV layout controlled by this global.
+        assert value is not None and int(_CHECKPOINT_VERSION) == int(value), "checkpoint versions do not match"
     _CHECKPOINT_VERSION = value
 
 
@@ -2171,7 +2177,7 @@ def generate_state_dict(
     """
     # Arguments, iteration, and model.
     state_dict = {}
-    state_dict["checkpoint_version"] = 3.0
+    state_dict["checkpoint_version"] = _CHECKPOINT_FORMAT_VERSION
     if iteration is not None:
         state_dict["iteration"] = iteration
 
@@ -2894,6 +2900,12 @@ def _load_checkpoint_from_path(
             return 0, 0
 
         if ckpt_type == CheckpointType.LOCAL:
+            # The initial metadata-only pass cannot reveal the saved optimizer schema.
+            # Load once and retain the tensor-aware object for the reconstruction pass.
+            checkpointing_context = dict(checkpointing_context or {})
+            local_checkpoint = checkpointing_context["local_checkpoint_manager"].load()
+            checkpointing_context["_preloaded_local_checkpoint"] = local_checkpoint
+            state_dict = dict(local_checkpoint[0].common_state_dict)
             # Local checkpoints don't contain run_config.yaml and checkpoint_name
             # is a CkptID tuple, not a string path.  Use current config — local
             # checkpoints always resume with the same parallelism.
@@ -3029,6 +3041,21 @@ def _load_checkpoint_from_path(
         if sharded_sd_metadata is None:
             sharded_sd_metadata = {}
         sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
+        sharded_sd_metadata["checkpoint_version"] = state_dict.get("checkpoint_version") or 0
+        if (
+            _get_legacy_grad_dtypes is not None
+            and gen_sd_optim is not None
+            and sharded_sd_metadata["checkpoint_version"] < 3.1
+            and sharded_sd_metadata.get("distrib_optim_sharding_type") == "dp_reshardable"
+        ):
+            # Legacy FQNs include the saving run's gradient dtype, which can differ on resume.
+            if ckpt_type == CheckpointType.LOCAL:
+                assert checkpointing_context is not None
+                saved_shards = checkpointing_context["_preloaded_local_checkpoint"][0].sharded_state_dict
+                saved_keys = [value.key for value in nested_values(saved_shards) if isinstance(value, ShardedTensor)]
+            else:
+                saved_keys = dist_checkpointing.load_tensors_metadata(checkpoint_name).keys()
+            sharded_sd_metadata["legacy_grad_dtypes"] = _get_legacy_grad_dtypes(saved_keys)
         optim_sd_kwargs = dict(metadata=sharded_sd_metadata, is_loading=True)
         model_sd_kwargs = dict(metadata=sharded_sd_metadata)
 
@@ -3110,6 +3137,8 @@ def _load_checkpoint_from_path(
             metadata=_build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, cfg.checkpoint),
             is_loading=True,
         )
+        # DTensor optimizer state does not contain dtype-keyed FQNs.
+        optim_sd_kwargs["metadata"]["checkpoint_version"] = state_dict.get("checkpoint_version") or 0
 
         state_dict = generate_state_dict(
             cfg.checkpoint,
@@ -3647,12 +3676,14 @@ def _load_non_persistent_base_checkpoint(
         )
     elif ckpt_cfg.non_persistent_ckpt_type == "local":
         if rank0:
-            # The rank0 pass only needs metadata to make loading decisions
-            # (TP/PP checks, optimizer sharding type, etc.).
-            # For local checkpoints all of that is derived from the running config,
-            # so skip the expensive full load + to_state_dict conversion.
+            # Source selection defers tensor loading. The caller preloads the saved
+            # optimizer schema before building a template, then reuses it below.
             return {}, non_persistent_iteration, False, CheckpointType.LOCAL
-        intermediate_state_dict, checkpoint_name = checkpointing_context["local_checkpoint_manager"].load()
+        assert checkpointing_context is not None
+        local_checkpoint = checkpointing_context.pop("_preloaded_local_checkpoint", None)
+        if local_checkpoint is None:
+            local_checkpoint = checkpointing_context["local_checkpoint_manager"].load()
+        intermediate_state_dict, checkpoint_name = local_checkpoint
         if sharded_state_dict is None:
             raise RuntimeError("Local checkpoint loading requires a sharded state dictionary.")
         rng_state = sharded_state_dict.get("rng_state")
