@@ -19,14 +19,36 @@ the requested Megatron training dtype.
 
 ## Runtime Requirements
 
-DeepSeek V4 training requires a compatible Megatron-LM `dev` revision; the
-Megatron-LM revision pinned for the Megatron Bridge `main` branch is not a
-supported training runtime. Switch the submodule before syncing the environment:
+DeepSeek V4 training uses the native HybridModel, hash routing, and compressed
+sparse attention support in Megatron-LM `main`. These features are included in
+the repository's main-branch MCore pin for eager PP=1 training and checkpoint
+conversion. Select that pin and sync the environment:
 
 ```bash
-./scripts/switch_mcore.sh dev
+./scripts/switch_mcore.sh main
 uv sync
 ```
+
+Pipeline recipes also require the native mHC PP/VPP support in
+[Megatron-LM #7336](https://github.com/NVIDIA/Megatron-LM/pull/7336).
+Recipes using Transformer Engine or full-iteration CUDA graphs require
+[Megatron-LM #7337](https://github.com/NVIDIA/Megatron-LM/pull/7337).
+These capabilities are not included in the current main-branch pin. Use a
+compatible MCore revision containing the required changes for those recipes;
+the older `dev` revision uses different mHC configuration names and is not a
+direct replacement for this native-main bridge.
+
+Packed THD support, including packed SFT and LoRA, is still a work in progress
+and is **not supported on Megatron-LM `main` or the current main-branch MCore
+pin**. The packed recipes and commands below are development references.
+Historical results in the verification card apply to their recorded revisions
+and do not establish THD support for the native main-branch HybridModel.
+
+Pipeline layouts split complete attention/MoE pairs in `hybrid_layer_pattern`,
+with matching physical-layer metadata for embedding and MTP/loss placement.
+The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
+The Pro benchmark also combines mHC CUDA graphs with recompute and activation
+offload, which remains unsupported by the main-based runtime above.
 
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
@@ -124,21 +146,23 @@ performance references, not substitutes for the library recipes.
 
 ## Supervised Fine-Tuning
 
-DeepSeek-V4-Flash provides BF16 Adam full-parameter SFT recipes:
+DeepSeek-V4-Flash provides BF16 Adam full-parameter SFT recipes. Packed THD
+support remains a work in progress and is not supported on `main`:
 
 | Recipe | Sequence format | MTP | Target |
 |--------|-----------------|-----|--------|
 | `deepseek_v4_flash_sft_config` | Unpacked SBHD | On | Hopper or Blackwell |
 | `deepseek_v4_flash_no_mtp_sft_config` | Unpacked SBHD | Off | Hopper or Blackwell |
-| `deepseek_v4_flash_sft_openmath_thinking_packed_config` | Offline-packed THD | On | Portable base |
-| `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD | On | 32-GPU GB200 |
+| `deepseek_v4_flash_sft_openmath_thinking_packed_config` | Offline-packed THD (WIP) | On | Portable base |
+| `deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config` | Offline-packed THD (WIP) | On | 32-GPU GB200 |
 
 The recipes select fused mHC only when the runtime supports the Blackwell
 kernel; Hopper uses the unfused fallback. The GB200 packed recipe additionally
 enables HybridEP, uneven-dispatch padding, DSA fusion, grouped GEMM, selective
 recompute, and attention activation offload.
 
-Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
+The following packed SFT command is a development reference using an imported
+BF16 checkpoint. It requires THD support outside the current main-branch path:
 
 ```bash
 ./scripts/training/train.sh --nodes 8 --gpus-per-node 4 \
@@ -150,17 +174,19 @@ Launch the verified GB200 packed recipe from an imported BF16 checkpoint:
   dist.distributed_timeout_minutes=180
 ```
 
-The card records 100 finite steps, a fresh-process checkpoint reload, and
+The card records historical runs with 100 finite steps, a fresh-process checkpoint reload, and
 post-SFT GPU export with deterministic HF inference for this configuration at
 CP=1. It also records a separate 100-step CP=2 packed-SFT validation at
-sequence length 1024; longer sequence lengths remain unverified. MXFP8 and
-Muon SFT recipes are intentionally not shipped because full-model tests did
+sequence length 1024. These results apply to the revisions listed in the card;
+they do not establish THD support on `main`. Longer sequence lengths remain
+unverified. MXFP8 and Muon SFT recipes are intentionally not shipped because full-model tests did
 not establish a stable supported configuration.
 
 ## Parameter-Efficient Fine-Tuning
 
-DeepSeek-V4-Flash provides packed OpenMath LoRA recipes that preserve the SFT
-data and objective contract:
+Packed OpenMath LoRA recipes preserve the SFT data and objective contract.
+They use THD, which is still a work in progress and is not supported on `main`.
+These recipes are retained as development references:
 
 | Recipe | Target |
 |--------|--------|
@@ -172,8 +198,8 @@ and output projections plus shared and routed expert FC1/FC2 projections.
 Routed experts use separate adapters (`share_expert_adapters=False`) rather
 than sharing one adapter across the experts local to an EP rank.
 
-Launch the GB200 recipe from the same imported BF16 checkpoint and packed data
-used by SFT:
+The following development example uses the same imported BF16 checkpoint and
+packed data as SFT. It requires THD support outside the current main-branch path:
 
 ```bash
 ./scripts/training/train.sh --nodes 8 --gpus-per-node 4 \
@@ -185,8 +211,9 @@ used by SFT:
   dist.distributed_timeout_minutes=180
 ```
 
-The verification card records the current loss, checkpoint, and performance
-status for this exact recipe.
+The verification card records loss, checkpoint, and performance results for
+this recipe at the listed revisions. Those historical results do not establish
+THD support on `main`.
 
 ## Legacy Slurm Templates
 

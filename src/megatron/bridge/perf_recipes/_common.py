@@ -95,6 +95,17 @@ def _benchmark_common(
         cfg.model.moe_hybridep_num_sms = 32
 
 
+def _enable_ncclep(cfg: ConfigContainer) -> None:
+    """Switch a flex-dispatcher recipe to the NCCL EP backend (GB300 MoE default).
+
+    Call after ``_benchmark_common``. Only the dispatch stack changes; parallelism, precision,
+    recompute and the CUDA graph mode stay as the recipe set them. The calling recipe still declares
+    its own ``cfg.env_vars`` inline and adds ``"NCCL_EP_HT_EM_PULL_PUSH": 1`` there.
+    """
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "ncclep"
+
+
 def _perf_precision(compute_dtype: str):
     """Return mixed-precision config tuned for perf benchmarks.
 
