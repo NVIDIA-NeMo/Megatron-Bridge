@@ -52,6 +52,8 @@ bash examples/models/bailing/inference.sh
 
 ## Ling 3.0
 
+Conversion and SFT require native MCore `HybridModel` KDA and head-wise MLA output gating. Select the dev pin with `bash scripts/switch_mcore.sh dev` and follow the repository's dependency setup before running these examples. The default main pin does not yet provide both features; unsupported runtimes fail before Ling provider construction. Ling 2.0 does not have this requirement. See `examples/model_verification_cards/ling-3.0-tiny-base/card.yaml` for the revisions used in completed validation; SFT remains unverified.
+
 | Variant | Hugging Face ID | Architecture notes |
 |---------|-----------------|--------------------|
 | Ling-3.0-tiny-base | `inclusionAI/Ling-3.0-tiny-base` | Hybrid KDA/MLA, 128 routed experts, one low-rank-Q MLA MTP layer |

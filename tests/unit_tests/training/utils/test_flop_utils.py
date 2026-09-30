@@ -343,6 +343,15 @@ class TestHybridMoEFlops:
 class TestHybridLayerCounting:
     """Tests to verify layer counting with different hybrid patterns."""
 
+    @pytest.mark.parametrize("pattern", ["M-*E", "+E", "GG--"])
+    def test_non_kda_flops_without_kda_symbol(self, monkeypatch, pattern):
+        """An MCore without KDA must retain identical FLOPs for existing models."""
+        cfg = MockConfigContainer(model=MockModelConfig(hybrid_layer_pattern=pattern, num_layers=len(pattern)))
+        expected = num_floating_point_operations(cfg, batch_size=1)
+        symbols = SimpleNamespace(**{name: value for name, value in vars(flop_utils.Symbols).items() if name != "KDA"})
+        monkeypatch.setattr(flop_utils, "Symbols", symbols)
+        assert num_floating_point_operations(cfg, batch_size=1) == expected
+
     @pytest.mark.parametrize(
         "pattern,expected_attn,expected_mamba,expected_mlp,expected_moe",
         [
@@ -1557,6 +1566,7 @@ class TestHybridGDNFlops:
 
 
 @pytest.mark.unit
+@pytest.mark.skipif(not hasattr(flop_utils.Symbols, "KDA"), reason="Requires MCore native KDA pattern support")
 class TestHybridKDAFlops:
     """Tests for KDA ('K') layer support in the hybrid FLOPs path."""
 

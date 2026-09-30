@@ -3,17 +3,22 @@
 
 title: ling_3_0_tiny_base
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. Ling 3.0 Tiny Base verification covers lossless CPU and 8-GPU
+  Performance disclaimer: this card does not record a canonical pretrain performance result;
+  reported timing and throughput metrics are functional verification observations,
+  not standalone optimized performance results. Ling 3.0 Tiny Base verification covers lossless CPU and 8-GPU
   checkpoint round trips of the pinned public checkpoint. Each export contains
   all 9,686 source tensors with identical keys, shapes, dtypes, and values, and
   reloads the complete Hugging Face model with the public remote code under its
   compatible Transformers runtime. Megatron inference is unsupported because
   the current MCore KDA implementation does not provide the inference path. The
-  8-GPU SFT validation reached the first completed forward/backward pass but is
-  blocked in the current upstream Bridge/MCore combination by an unrelated MoE
-  metrics API mismatch, so SFT remains unverified.
+  conversion runs and the attempted 8-GPU SFT validation used Megatron-Core dev
+  commit 4d197408bfd8513289cc69a9112f37798e6fdd4c, not the default main pin.
+  Ling requires native HybridModel KDA and head-wise MLA output gating; select
+  the dev pin with bash scripts/switch_mcore.sh dev before conversion or SFT.
+  The historical SFT attempt reached forward/backward but stopped in MoE metrics
+  logging because that MCore dev revision lacked the num_moe_layers argument
+  passed by Bridge. SFT remains unverified; this is not a claim that the same
+  interface mismatch exists on MCore main or on later dev revisions.
 verification_index:
   model_level:
     verified:
@@ -163,9 +168,11 @@ items:
         10,000 pinned public SQuAD rows into 898 sequence-length-2048 packs at
         99.12 percent efficiency, built TP1/PP1/CP1/EP8/ETP1 with the MTP layer,
         and completed the first forward/backward pass. It then stopped before a
-        complete optimizer step because Bridge main passes num_moe_layers to
-        the pinned MCore track_moe_metrics API, which does not accept that
-        argument. Verified status requires an unpatched 100-step run with finite
+        complete optimizer step: Bridge training_log() passed num_moe_layers to
+        megatron.core.transformer.moe.moe_utils.track_moe_metrics(), but the
+        tested MCore dev commit 4d197408bfd8513289cc69a9112f37798e6fdd4c did
+        not accept that keyword. This describes the historical dev validation,
+        not the default main pin. Verified status requires an unpatched 100-step run with finite
         loss, all five metrics, and a reloadable final checkpoint.
 
   sft_export_inference:
