@@ -570,6 +570,7 @@ class GLM53FlashBridge(MegatronModelBridge):
         provider.dsa_indexer_rotate_activation = False
         provider.dsa_indexer_qk_proj_disable_quantization = True
         provider.dsa_indexer_kpool_use_quantization = True
+        provider.dsa_indexer_k_norm_fp32 = True
         # vLLM computes this projection in FP32 because BF16 rounding can change
         # near-tie KPool rankings on long-context inputs.
         provider.dsa_indexer_weights_proj_use_quantization = False
