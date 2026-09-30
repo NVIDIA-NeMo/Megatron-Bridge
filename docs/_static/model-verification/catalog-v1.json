@@ -11334,7 +11334,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "e79f756196e0b97ee3ad94263a896c120b32c1e5",
+          "bridge_commit": "6c219485815bf8afee4c22db721156a9176351c6",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11345,20 +11345,20 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.pretrained_checkpoint=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --save_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-pretrain-gb200",
-          "expected_result": "The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100 RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch. The RP2 Llama SentencePiece tokenizer is used while retaining GLM-5.2's configured vocabulary size, so this is support verification rather than a cross-tokenizer convergence claim. Loss remained finite from 13.168150 to 6.523522, final grad norm was 2.775, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state.\n",
+          "expected_result": "The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run warm-starts from a Bridge GPU import of the GLM-5.2 weights that includes the MTP layer (published GLM-5.2 revisions ship byte-identical weight files) and completes exactly 20 bounded steps at GBS/MBS 1024/1 and sequence length 4096 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, all-to-all expert dispatch, and natural routing, without deterministic mode. Data is the WikiText-103 raw train split grouped into 29,444 articles and tokenized with the pinned GLM-5.2 tokenizer (120,372,951 tokens). The learning rate warms up to 3e-6 at step 10 and decays to 3e-7 at step 20; the random-initialization peak of 3e-4 destabilizes the pretrained weights. Loss decreases from 1.044214 to 0.8769335 with a maximum grad norm of 9.586, a final grad norm of 1.243, and zero skipped or NaN iterations. Steps 11-20 average 34,262.350 ms, 194.130 model TFLOP/s/GPU, and 637.590 token slots/s/GPU. This bounded run saves no checkpoint.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-04",
+          "last_verified": "2026-09-29",
           "metrics": {
-            "final_loss": 6.523522,
-            "initial_loss": 13.16815,
-            "last_10_steps_model_tflops_per_gpu_avg": 102.52,
-            "last_10_steps_step_time_ms_avg": 64786.54,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 337.189
+            "final_loss": 0.8769335,
+            "initial_loss": 1.044214,
+            "last_10_steps_model_tflops_per_gpu_avg": 194.13,
+            "last_10_steps_step_time_ms_avg": 34262.35,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 637.59
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.GB200",
@@ -11666,35 +11666,25 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "e79f756196e0b97ee3ad94263a896c120b32c1e5",
-          "command_topologies": [
-            {
-              "gpus_per_node": "4",
-              "nodes": "48",
-              "recipe": "glm52_pretrain_192gpu_gb200_bf16_config",
-              "sequence_length": "4096",
-              "total_gpus": 192
-            }
-          ],
-          "commands": [
-            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false checkpoint.ckpt_step=50 checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --load_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints --save_dir work/model-verification/glm5-2/pretrain-rp2-resume-gb200/checkpoints --save_interval 0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
-          ],
+          "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
+          "command_topologies": [],
+          "commands": [],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-checkpoint-resume-gb200",
-          "expected_result": "The run reloads the RP2 reference's step-50 model, optimizer, scheduler, data-order, and RNG state and completes steps 51-100 with zero skipped or NaN iterations. Step 51 is 7.233636 versus 7.233639 in the uninterrupted reference, a relative difference of 4.1e-7. Step 100 is 6.503141 versus 6.523522, a relative difference of 0.003124; both satisfy the 1e-6 absolute plus 1% relative tolerance. Final grad norm is 1.690; the last 10 steps average 60,079.390 ms and 110.552 TFLOPS/GPU.\n",
+          "expected_result": "Pending against the current warm-start pretrain reference, which saves no checkpoint because each full GLM-5.2 checkpoint with FP32 optimizer state is about 10.5 TB. Verification requires rerunning that reference with a step-10 save and resuming steps 11-20 into a new root. The previous random-initialization RP2 reference resumed from step 50 with both sentinels inside the declared tolerance.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-04",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 6.503141,
-            "initial_loss": 7.233636,
-            "last_10_steps_model_tflops_per_gpu_avg": 110.552,
-            "last_10_steps_step_time_ms_avg": 60079.39,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 363.608
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.GB200",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "checkpoint_resume"
         }
@@ -11704,7 +11694,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "glm5-2",
       "source_card": "examples/model_verification_cards/glm5-2/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. GLM-5.2 H100 support verification currently covers exact GPU checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence, bounded full SFT with export/reload inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with a reloadable middle checkpoint and verified continuation. GB200 support verification currently covers bounded pretraining, bounded full SFT, 128K packed long-context SFT, bounded PEFT, bounded checkpoint resume, and deterministic legacy Megatron inference; post-SFT export/reload inference remains pending.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. GLM-5.2 H100 support verification currently covers exact GPU checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence, bounded full SFT with export/reload inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with a reloadable middle checkpoint and verified continuation. GB200 support verification currently covers bounded warm-start pretraining, bounded full SFT, 128K packed long-context SFT, bounded PEFT, and deterministic legacy Megatron inference; post-SFT export/reload inference and checkpoint resume against the warm-start pretrain reference remain pending.\n",
       "title": "glm5_2"
     }
   ],
