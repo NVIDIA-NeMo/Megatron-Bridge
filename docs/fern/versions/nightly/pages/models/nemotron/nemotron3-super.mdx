@@ -7,7 +7,7 @@ NeMo Megatron Bridge supports pretraining, full parameters finetuning, and LoRA 
 Run all commands from `/opt/Megatron-Bridge` (e.g. `docker run -w /opt/Megatron-Bridge ...`)
 ```
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -176,8 +176,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned CPU import must exit successfully, create iter_0000000, and preserve the complete source checkpoint. A subsequent CPU export from that CPU-imported checkpoint must audit every supported tensor for exact keys, shapes, dtypes, and values; the currently verified CPU export uses the independently verified GPU-imported checkpoint instead.
-</p>
+        <p>The pinned CPU import must exit successfully, create iter_0000000, and preserve the complete source checkpoint. A subsequent CPU export from that CPU-imported checkpoint must audit every supported tensor for exact keys, shapes, dtypes, and values; the currently verified CPU export uses the independently verified GPU-imported checkpoint instead.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-hf-to-megatron-gpu" tabindex="-1">
@@ -202,8 +201,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned eight-GPU BF16 import exits successfully and creates a reloadable TP1/PP1/EP8/ETP1 iter_0000000 checkpoint. Its paired export exactly reproduces all 42,683 source tensors and 123,611,033,088 elements, including the 41 FP32 router correction-bias tensors.
-</p>
+        <p>The pinned eight-GPU BF16 import exits successfully and creates a reloadable TP1/PP1/EP8/ETP1 iter_0000000 checkpoint. Its paired export exactly reproduces all 42,683 source tensors and 123,611,033,088 elements, including the 41 FP32 router correction-bias tensors.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-megatron-to-hf-cpu" tabindex="-1">
@@ -228,8 +226,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The single-process CPU export exits successfully and writes 247,222,108,160 bytes across 42,683 tensors and 123,611,033,088 values. Every exported key, shape, dtype, and value is bitwise identical to the pinned Hugging Face BF16 source, with no dtype conversions, and Transformers strictly reloads all 763 state tensors natively as NemotronHForCausalLM.
-</p>
+        <p>The single-process CPU export exits successfully and writes 247,222,108,160 bytes across 42,683 tensors and 123,611,033,088 values. Every exported key, shape, dtype, and value is bitwise identical to the pinned Hugging Face BF16 source, with no dtype conversions, and Transformers strictly reloads all 763 state tensors natively as NemotronHForCausalLM.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-megatron-to-hf-gpu" tabindex="-1">
@@ -254,8 +251,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Strict distributed export exits successfully and writes 247,222,108,160 bytes across all 42,683 tensors. Keys, shapes, dtypes, values, and critical configuration match the pinned source with zero mismatches, including 41 FP32 router correction-bias tensors, and Transformers reloads the result natively as NemotronHForCausalLM with 88 layers.
-</p>
+        <p>Strict distributed export exits successfully and writes 247,222,108,160 bytes across all 42,683 tensors. Keys, shapes, dtypes, values, and critical configuration match the pinned source with zero mismatches, including 41 FP32 router correction-bias tensors, and Transformers reloads the result natively as NemotronHForCausalLM with 88 layers.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-h100" tabindex="-1">
@@ -305,8 +301,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19922 to 5.706429 with zero skipped or NaN iterations. The final ten steps average 29368.690 ms and 236.330 TFLOP/s/GPU. Peak device memory is 58.079 GiB allocated and 70.336 GiB reserved. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state.
-</p>
+        <p>On exactly 64 H100s, the BF16 support run completes 100 bounded RP2 optimizer steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, natural routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. Loss remains finite from 12.19922 to 5.706429 with zero skipped or NaN iterations. The final ten steps average 29368.690 ms and 236.330 TFLOP/s/GPU. Peak device memory is 58.079 GiB allocated and 70.336 GiB reserved. The resolved configuration persists, and complete iter_0000050 and iter_0000100 checkpoints each contain 64 distributed rank shards plus checkpoint metadata and training state.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-gb200" tabindex="-1">
@@ -356,8 +351,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 16 GB200s, the BF16 support run must complete exactly 100 bounded RP2 optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe&#x27;s cohort GBS/MBS 1024/1. Full activation recompute, 40% optimizer CPU offload, and eager execution keep the model and optimizer checkpoint within memory. Loss must stay finite with no skipped or NaN iteration, and complete iter_0000050 and iter_0000100 checkpoints must save. The recipe moved from GBS 16 to the cohort GBS 1024, so the earlier metrics no longer describe this command and it needs a rerun.
-</p>
+        <p>On 16 GB200s, the BF16 support run must complete exactly 100 bounded RP2 optimizer steps at TP8/PP1/CP1/EP16/ETP1 and the recipe&#x27;s cohort GBS/MBS 1024/1. Full activation recompute, 40% optimizer CPU offload, and eager execution keep the model and optimizer checkpoint within memory. Loss must stay finite with no skipped or NaN iteration, and complete iter_0000050 and iter_0000100 checkpoints must save. The recipe moved from GBS 16 to the cohort GBS 1024, so the earlier metrics no longer describe this command and it needs a rerun.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-h100" tabindex="-1">
@@ -402,13 +396,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:8192,pad_seq_to_mult:8}&#x27; model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=0.75 optimizer.overlap_cpu_optimizer_d2h_h2d=true checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-sft --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs=&#123;packed_sequence_size:8192,pad_seq_to_mult:8&#125;&#x27; model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=0.75 optimizer.overlap_cpu_optimizer_d2h_h2d=true checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-sft --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps on 16 H100s at sequence length 8192, TP8/EP16, the recipe&#x27;s cohort GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no skipped or NaN iteration, and the step-100 checkpoint must save completely for export. The recipe moved from GBS 16 to the cohort GBS 32, so the earlier metrics no longer describe this command and it needs a rerun.
-</p>
+        <p>The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps on 16 H100s at sequence length 8192, TP8/EP16, the recipe&#x27;s cohort GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no skipped or NaN iteration, and the step-100 checkpoint must save completely for export. The recipe moved from GBS 16 to the cohort GBS 32, so the earlier metrics no longer describe this command and it needs a rerun.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-gb200" tabindex="-1">
@@ -453,13 +446,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:8192,pad_seq_to_mult:8}&#x27; model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=0.75 optimizer.overlap_cpu_optimizer_d2h_h2d=true checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-sft --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs=&#123;packed_sequence_size:8192,pad_seq_to_mult:8&#125;&#x27; model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=0.75 optimizer.overlap_cpu_optimizer_d2h_h2d=true checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-sft --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps on 16 GB200s at sequence length 8192, TP8/EP16, the recipe&#x27;s cohort GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no skipped or NaN iteration, and the step-100 checkpoint must save completely. The recipe moved from GBS 16 to the cohort GBS 32, so the earlier metrics no longer describe this command and it needs a rerun.
-</p>
+        <p>The immutable-revision Tulu3 run must complete exactly 100 full-SFT steps on 16 GB200s at sequence length 8192, TP8/EP16, the recipe&#x27;s cohort GBS/MBS 32/1, and pad-8 offline packing. Loss must stay finite with no skipped or NaN iteration, and the step-100 checkpoint must save completely. The recipe moved from GBS 16 to the cohort GBS 32, so the earlier metrics no longer describe this command and it needs a rerun.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-long-context-h100" tabindex="-1">
@@ -504,13 +496,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 10 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-long dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; model.attention_backend=auto model.cross_entropy_loss_fusion=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=1.0 optimizer.overlap_cpu_optimizer_d2h_h2d=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-long-sft --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 10 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-long dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs=&#123;packed_sequence_size:32768,pad_seq_to_mult:4&#125;&#x27; model.attention_backend=auto model.cross_entropy_loss_fusion=false model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1 optimizer.optimizer_cpu_offload=true optimizer.optimizer_offload_fraction=1.0 optimizer.overlap_cpu_optimizer_d2h_h2d=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-long-sft --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly ten packed 32K SFT steps with pad-4 alignment, full recompute, and full optimizer CPU offload. Loss is finite from 1.168852 to 1.008992 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, the resolved configuration is persisted, and the final model-only checkpoint saves successfully.
-</p>
+        <p>On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly ten packed 32K SFT steps with pad-4 alignment, full recompute, and full optimizer CPU offload. Loss is finite from 1.168852 to 1.008992 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, the resolved configuration is persisted, and the final model-only checkpoint saves successfully.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-long-context-gb200" tabindex="-1">
@@ -555,13 +546,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 10 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}&#x27; checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-long-sft --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_32k_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 10 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs=&#123;packed_sequence_size:32768,pad_seq_to_mult:4&#125;&#x27; checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-long-sft --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A dedicated GB200 run must complete at least ten packed 32K SFT steps with CP2, finite loss, no skipped or NaN iterations, all five metrics, a persisted resolved configuration, and a reloadable final checkpoint.
-</p>
+        <p>A dedicated GB200 run must complete at least ten packed 32K SFT steps with CP2, finite loss, no skipped or NaN iterations, all five metrics, a persisted resolved configuration, and a reloadable final checkpoint.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-peft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-peft-h100" tabindex="-1">
@@ -606,13 +596,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-peft-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:8192,pad_seq_to_mult:8}&#x27; model.recompute_granularity=selective &#x27;model.recompute_modules=[core_attn]&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-peft --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-peft-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs=&#123;packed_sequence_size:8192,pad_seq_to_mult:8&#125;&#x27; model.recompute_granularity=selective &#x27;model.recompute_modules=[core_attn]&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-peft --save_interval 100 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>H100 training has completed 100 finite LoRA steps and saved an adapter, but this leaf remains unverified until the exported adapter reloads natively over the pinned Hugging Face base and produces a nonzero, finite logits effect.
-</p>
+        <p>H100 training has completed 100 finite LoRA steps and saved an adapter, but this leaf remains unverified until the exported adapter reloads natively over the pinned Hugging Face base and produces a nonzero, finite logits effect.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-peft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-peft-gb200" tabindex="-1">
@@ -657,13 +646,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-peft-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs={packed_sequence_size:8192,pad_seq_to_mult:8}&#x27; model.recompute_granularity=selective &#x27;model.recompute_modules=[core_attn]&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-peft --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/nemotron-3-super-120b-a12b/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;2d59de1cbd51c0adf384eb906b766d1aee0e0517&quot;&#x27; dataset.hf_output_root=work/data/tulu3/nemotron-3-super-120b-a12b-peft-pad8 dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true &#x27;dataset.offline_packing_specs=&#123;packed_sequence_size:8192,pad_seq_to_mult:8&#125;&#x27; model.recompute_granularity=selective &#x27;model.recompute_modules=[core_attn]&#x27; scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false checkpoint.load=null --save_dir work/model-verification/nemotron-3-super-120b-a12b/gb200-peft --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 16 GB200s, the immutable-revision Tulu3 run completes exactly 100 pad-8 packed LoRA steps with finite loss from 1.23861 to 0.8878498, no skipped or NaN iterations, all five metrics, and a final adapter checkpoint. The adapter contains only 82,304 LoRA tensors targeting linear_qkv, linear_proj, linear_fc1, linear_fc2, in_proj, and out_proj. Native PEFT reload over the pinned base succeeds; all logits are finite and the adapter changes them by maximum absolute 3.1875 and mean absolute 0.472428.
-</p>
+        <p>On 16 GB200s, the immutable-revision Tulu3 run completes exactly 100 pad-8 packed LoRA steps with finite loss from 1.23861 to 0.8878498, no skipped or NaN iterations, all five metrics, and a final adapter checkpoint. The adapter contains only 82,304 LoRA tensors targeting linear_qkv, linear_proj, linear_fc1, linear_fc2, in_proj, and out_proj. Native PEFT reload over the pinned base succeeds; all logits are finite and the adapter changes them by maximum absolute 3.1875 and mean absolute 0.472428.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-pretrain-performance-h100" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-performance-h100" tabindex="-1">
@@ -713,8 +701,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 H100s, the canonical BF16 performance recipe must complete 50 mock-data steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, forced routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. All keyed rows have finite loss and throughput with zero skipped or NaN iterations. The final ten steps average 27588.580 ms and 248.610 TFLOP/s/GPU, passing gates of at most 28000 ms and at least 240 TFLOP/s/GPU. Peak device memory is 59.000 GiB allocated and 69.344 GiB reserved, and the resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.
-</p>
+        <p>On exactly 64 H100s, the canonical BF16 performance recipe must complete 50 mock-data steps at TP1/PP2/CP1/EP32/ETP1, GBS/MBS 1280/1, forced routing, HybridEP flex dispatch with 1.10x fixed expert capacity, eager execution, selective recompute of layernorm, moe_act, moe, and core_attn, no optimizer-state CPU offload, and ordered gradient reduction. All keyed rows have finite loss and throughput with zero skipped or NaN iterations. The final ten steps average 27588.580 ms and 248.610 TFLOP/s/GPU, passing gates of at most 28000 ms and at least 240 TFLOP/s/GPU. Peak device memory is 59.000 GiB allocated and 69.344 GiB reserved, and the resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-pretrain-performance-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-performance-gb200" tabindex="-1">
@@ -764,8 +751,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 GB200s, the canonical BF16 performance recipe completes 50 mock-data steps at TP2/PP1/CP1/EP64, GBS/MBS 512/1, HybridEP flex dispatch, and Transformer Engine CUDA graph scopes attn, mamba, moe_router, and moe_preprocess. All 50 keyed rows have finite loss and throughput with zero skipped or NaN iterations. The final ten steps average 9926.350 ms and 559.390 TFLOP/s/GPU, passing gates of at most 11000 ms and at least 500 TFLOP/s/GPU, and the resolved configuration is persisted. Mock data and forced routing make the loss a finiteness check rather than convergence evidence. These numbers are GB200-only evidence.
-</p>
+        <p>On exactly 64 GB200s, the canonical BF16 performance recipe completes 50 mock-data steps at TP2/PP1/CP1/EP64, GBS/MBS 512/1, HybridEP flex dispatch, and Transformer Engine CUDA graph scopes attn, mamba, moe_router, and moe_preprocess. All 50 keyed rows have finite loss and throughput with zero skipped or NaN iterations. The final ten steps average 9926.350 ms and 559.390 TFLOP/s/GPU, passing gates of at most 11000 ms and at least 500 TFLOP/s/GPU, and the resolved configuration is persisted. Mock data and forced routing make the loss a finiteness check rather than convergence evidence. These numbers are GB200-only evidence.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-pretrain-performance-gb300" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-pretrain-performance-gb300" tabindex="-1">
@@ -815,11 +801,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 64 GB300s, the canonical NVFP4 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.17656 to 0.01398012; the final ten steps average 6357.940 ms, 873.330 TFLOP/s/GPU, and 10307.741 tokens/s/GPU. The resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.
-</p>
+        <p>On exactly 64 GB300s, the canonical NVFP4 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.17656 to 0.01398012; the final ten steps average 6357.940 ms, 873.330 TFLOP/s/GPU, and 10307.741 tokens/s/GPU. The resolved configuration persists. Mock data and forced routing make the loss a finiteness check rather than convergence evidence.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

@@ -14,7 +14,7 @@ For the full setup, conversion, inference, training, and LoRA merge /
 adapter export workflows, see
 [`examples/models/gemma/gemma4_vl/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma4_vl/README.md).
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -132,8 +132,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command completed all 8,548 conversion mappings and saved iter_0000000. All 383 tensor entries in the distributed-checkpoint metadata were torch.bfloat16. The run configuration recorded bf16=true, fp16=false, and BF16 parameter and autocast dtypes. The artifact reloaded successfully for CPU export.
-</p>
+        <p>The command completed all 8,548 conversion mappings and saved iter_0000000. All 383 tensor entries in the distributed-checkpoint metadata were torch.bfloat16. The run configuration recorded bf16=true, fp16=false, and BF16 parameter and autocast dtypes. The artifact reloaded successfully for CPU export.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-hf-to-megatron-gpu" tabindex="-1">
@@ -158,8 +157,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command completed successfully at TP4/PP2/EP1. It loaded 8,548 conversion mappings from the immutable Hugging Face revision and saved the full multimodal checkpoint as iter_0000000. All 383 tensor entries in the distributed-checkpoint metadata were torch.bfloat16. The artifact then reloaded successfully for distributed export and direct-model inference.
-</p>
+        <p>The command completed successfully at TP4/PP2/EP1. It loaded 8,548 conversion mappings from the immutable Hugging Face revision and saved the full multimodal checkpoint as iter_0000000. All 383 tensor entries in the distributed-checkpoint metadata were torch.bfloat16. The artifact then reloaded successfully for distributed export and direct-model inference.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-megatron-to-hf-cpu" tabindex="-1">
@@ -184,8 +182,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command completed all 8,548 conversion mappings and wrote 11 BF16 shards. All 1,013 exported tensor entries matched the immutable source exactly in key, shape, dtype, and value. Native Gemma4ForConditionalGeneration reload reported model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or error keys.
-</p>
+        <p>The command completed all 8,548 conversion mappings and wrote 11 BF16 shards. All 1,013 exported tensor entries matched the immutable source exactly in key, shape, dtype, and value. Native Gemma4ForConditionalGeneration reload reported model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or error keys.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-megatron-to-hf-gpu" tabindex="-1">
@@ -210,8 +207,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed TP2/PP1/EP4 export completed all 2,788 conversion mappings. The exported config preserved sliding-attention rope_theta 10000 and full-attention rope_theta 1000000. All 1,013 exported tensor entries were BF16 and matched the immutable source exactly in key, shape, dtype, and value. Native Gemma4ForConditionalGeneration reload reported model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or error keys.
-</p>
+        <p>Distributed TP2/PP1/EP4 export completed all 2,788 conversion mappings. The exported config preserved sliding-attention rope_theta 10000 and full-attention rope_theta 1000000. All 1,013 exported tensor entries were BF16 and matched the immutable source exactly in key, shape, dtype, and value. Native Gemma4ForConditionalGeneration reload reported model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or error keys.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-pretrain-all" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-pretrain-all" tabindex="-1">
@@ -255,8 +251,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Megatron Bridge does not publish a pretraining recipe for this Gemma 4 conditional-generation variant; the current model package provides SFT and PEFT recipes only.
-</p>
+        <p>Megatron Bridge does not publish a pretraining recipe for this Gemma 4 conditional-generation variant; the current model package provides SFT and PEFT recipes only.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-sft-h100" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-sft-h100" tabindex="-1">
@@ -309,13 +304,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/sft-post-setup.yaml</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs=&#123;revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;&#125;&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/sft-post-setup.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 2026-08-11 the single-node TP4/PP1/EP8/ETP1 run loaded the immutable BF16 checkpoint and real CORD-v2 revision, then completed exactly 10 optimizer steps at MBS1 and GBS32. The persisted post-setup config confirmed a frozen vision encoder, trainable projection and language model, expandable CUDA allocator segments, and full-layer uniform recompute with one layer per recompute unit directly from the recipe defaults, while CUDA graphs and CPU offload remained disabled. Loss moved from 1.282612 to 0.09127883, final grad norm was 3.090, and all 10 steps reported zero skipped and zero NaN iterations. After iteration 2, logger-reported ranks returned to 62.134-62.145 GiB allocated, while cumulative peak allocated and reserved memory remained at or below 65.223 and 72.356 GiB. The run saved a complete iter_0000010 torch_dist checkpoint with eight rank shards, finalized metadata, run config, training state, and a latest-checkpoint tracker containing iteration 10.
-</p>
+        <p>On 2026-08-11 the single-node TP4/PP1/EP8/ETP1 run loaded the immutable BF16 checkpoint and real CORD-v2 revision, then completed exactly 10 optimizer steps at MBS1 and GBS32. The persisted post-setup config confirmed a frozen vision encoder, trainable projection and language model, expandable CUDA allocator segments, and full-layer uniform recompute with one layer per recompute unit directly from the recipe defaults, while CUDA graphs and CPU offload remained disabled. Loss moved from 1.282612 to 0.09127883, final grad norm was 3.090, and all 10 steps reported zero skipped and zero NaN iterations. After iteration 2, logger-reported ranks returned to 62.134-62.145 GiB allocated, while cumulative peak allocated and reserved memory remained at or below 65.223 and 72.356 GiB. The run saved a complete iter_0000010 torch_dist checkpoint with eight rank shards, finalized metadata, run config, training state, and a latest-checkpoint tracker containing iteration 10.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-sft-long-context-h100" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-sft-long-context-h100" tabindex="-1">
@@ -359,8 +353,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No Gemma 4 VL long-context recipe or run was verified. A future workload must establish sequence-packing and context-parallel settings, complete at least 10 optimizer steps with finite loss and no skipped or NaN iterations, report all five required metrics, and save a reloadable final checkpoint.
-</p>
+        <p>No Gemma 4 VL long-context recipe or run was verified. A future workload must establish sequence-packing and context-parallel settings, complete at least 10 optimizer steps with finite loss and no skipped or NaN iterations, report all five required metrics, and save a reloadable final checkpoint.</p>
       </section>
     </article>
     <article id="gemma-4-26b-a4b-it-peft-h100" class="verification-model-detail" data-entry-detail="gemma-4-26b-a4b-it-peft-h100" tabindex="-1">
@@ -413,16 +406,15 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --recipe gemma4_vl_26b_peft_config --mode lora --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-4-26b-a4b-it/peft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/peft-post-setup.yaml</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --recipe gemma4_vl_26b_peft_config --mode lora --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs=&#123;revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;&#125;&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-4-26b-a4b-it/peft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/gemma-4-26b-a4b-it/peft-post-setup.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 2026-08-04 the 4-GPU TP2/PP1/EP4/ETP1 LoRA run loaded the immutable BF16 checkpoint and real CORD-v2 revision, then completed exactly 10 optimizer steps at MBS1 and GBS32. The persisted post-setup config recorded rank-32 adapters with alpha 32 and zero dropout on linear_qkv, linear_proj, linear_fc1, and linear_fc2. Runtime transformation froze the base model and reported 22,272,000 trainable adapter parameters, 0.30% of the local model shard. Loss moved from 1.288328 to 0.1072377, final grad norm was 22.994, and every step reported zero skipped and zero NaN iterations. Across all four ranks, allocated memory returned to 14.582 GiB after each step, while cumulative peak allocated and reserved memory remained at or below 44.252 and 45.637 GiB. The run saved a complete iter_0000010 adapter checkpoint with four rank shards, finalized metadata, training state, and a latest-checkpoint tracker containing iteration 10.
-</p>
+        <p>On 2026-08-04 the 4-GPU TP2/PP1/EP4/ETP1 LoRA run loaded the immutable BF16 checkpoint and real CORD-v2 revision, then completed exactly 10 optimizer steps at MBS1 and GBS32. The persisted post-setup config recorded rank-32 adapters with alpha 32 and zero dropout on linear_qkv, linear_proj, linear_fc1, and linear_fc2. Runtime transformation froze the base model and reported 22,272,000 trainable adapter parameters, 0.30% of the local model shard. Loss moved from 1.288328 to 0.1072377, final grad norm was 22.994, and every step reported zero skipped and zero NaN iterations. Across all four ranks, allocated memory returned to 14.582 GiB after each step, while cumulative peak allocated and reserved memory remained at or below 44.252 and 45.637 GiB. The run saved a complete iter_0000010 adapter checkpoint with four rank shards, finalized metadata, training state, and a latest-checkpoint tracker containing iteration 10.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}
