@@ -525,15 +525,6 @@ def parse_cli_args():
         default=None,
     )
     slurm_args.add_argument(
-        "--segment",
-        type=int,
-        help="Slurm --segment size in nodes, overriding the value derived for 4-GPU nodes "
-        "(all nodes when <=18, else the largest divisor <=18). Must divide the node count; 0 omits --segment. "
-        "Segments are not guaranteed to land in different NVLink domains.",
-        required=False,
-        default=None,
-    )
-    slurm_args.add_argument(
         "--additional_slurm_params",
         type=parse_additional_slurm_params,
         help="Additional SLURM parameters as key=value pairs. "

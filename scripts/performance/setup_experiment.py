@@ -78,7 +78,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     parser, but some args are meaningful only to the launcher and must not
     reach the rank-local scripts:
 
-    * ``--additional_slurm_params`` / ``--segment`` — Slurm orchestration only.
+    * ``--additional_slurm_params`` — Slurm orchestration only.
     * ``--enable_vboost`` / ``--lock_gpu_freq`` / ``--peak_mem_clk`` — applied
       directly to the Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
@@ -98,7 +98,6 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
             "-lmc",
             "-vb",
             "--additional_slurm_params",
-            "--segment",
             "--csp",
             "--enable_vboost",
             "--lock_gpu_freq",
@@ -545,7 +544,6 @@ def main(
     config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
-    segment: Optional[int] = None,
 ):
     """Sets up the experiment and runs it."""
     if (
@@ -693,7 +691,6 @@ def main(
             wandb_key=wandb_key,
             packager=packager,
             enable_pct_binding=enable_pct_binding,
-            segment=segment,
         )
         configure_slurm_gpu_tuning(
             executor,
@@ -1076,5 +1073,4 @@ if __name__ == "__main__":
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,
-        segment=args.segment,
     )

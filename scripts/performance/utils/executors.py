@@ -91,33 +91,6 @@ OFFLINE_BENCHMARK_ENV_VARS = {
 }
 
 
-def default_segment(nodes: int, num_gpus_per_node: int) -> Optional[int]:
-    """Return the Slurm ``--segment`` size derived for 4-GPU (NVL72-style, 18-node block) nodes."""
-    if num_gpus_per_node != 4:
-        return None
-    if nodes <= 18:
-        return nodes
-    for segment_candidate in range(18, 0, -1):
-        if nodes % segment_candidate == 0:
-            return segment_candidate
-    return None
-
-
-def resolve_segment(nodes: int, num_gpus_per_node: int, segment: Optional[int] = None) -> Optional[int]:
-    """Apply an explicit ``--segment`` override, or fall back to ``default_segment``.
-
-    Slurm requires the job's node count to be a multiple of the segment size. Segments are not
-    guaranteed to land in different topology blocks.
-    """
-    if segment is None:
-        return default_segment(nodes, num_gpus_per_node)
-    if segment == 0:
-        return None
-    if segment < 0 or segment > nodes or nodes % segment != 0:
-        raise ValueError(f"--segment={segment} must be a positive divisor of the node count ({nodes}), or 0.")
-    return segment
-
-
 def slurm_executor(
     gpu: str,
     account: str,
@@ -140,7 +113,6 @@ def slurm_executor(
     gres: Optional[str] = None,
     packager: str = "git",
     enable_pct_binding: bool = True,
-    segment: Optional[int] = None,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -152,9 +124,6 @@ def slurm_executor(
             Example: {"nodelist": "node001,node002", "constraint": "gpu"} will generate:
                 #SBATCH --nodelist=node001,node002
                 #SBATCH --constraint=gpu
-        segment: Optional[int], optional
-            Slurm ``--segment`` size in nodes. ``None`` keeps the value derived for 4-GPU nodes
-            (see ``default_segment``); ``0`` omits ``--segment``.
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
     mounts = []
@@ -196,7 +165,16 @@ def slurm_executor(
     perf_env.update(custom_env_vars)
     mounts.extend(custom_mounts)
 
-    segment = resolve_segment(nodes, num_gpus_per_node, segment)
+    # add --segment flag to sbatch if job uses GB200.
+    segment = None
+    if num_gpus_per_node == 4:
+        if nodes <= 18:
+            segment = nodes
+        else:  # nodes > 18
+            for segment_candidate in range(18, 0, -1):
+                if nodes % segment_candidate == 0:
+                    segment = segment_candidate
+                    break
 
     log_repo_status_cmd = "bash /opt/Megatron-Bridge/docker/common/print_sha.sh /nemo_run/configs/repo_status.json"
     custom_bash_cmds.append(log_repo_status_cmd)

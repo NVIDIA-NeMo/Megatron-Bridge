@@ -88,12 +88,6 @@ def test_recipe_arguments_are_forwarded_unchanged() -> None:
     ]
 
 
-def test_segment_override_is_not_forwarded_to_rank_local_scripts() -> None:
-    argv = ["--segment", "4", "--global_batch_size", "64", "--segment=2"]
-
-    assert setup_experiment._filter_run_script_args(argv) == ["--global_batch_size", "64"]
-
-
 def test_submission_dry_run_does_not_import_bridge_or_mcore(tmp_path: Path) -> None:
     blocker_dir = tmp_path / "login_node"
     blocker_dir.mkdir()

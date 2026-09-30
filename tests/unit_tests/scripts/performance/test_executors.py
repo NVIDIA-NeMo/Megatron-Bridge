@@ -43,7 +43,6 @@ if HAS_NEMO_RUN:
         _kubeflow_numa_binding_enabled,
         _kubeflow_numa_binding_script,
         kubeflow_executor,
-        resolve_segment,
         slurm_executor,
     )
 
@@ -203,38 +202,6 @@ def test_vr200_slurm_executor_uses_two_gpus_per_numa_node(tmp_path):
     )
 
     assert "SLURM_LOCALID/2" in executor.launcher.template_vars["pre_cmds"]
-
-
-@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-@pytest.mark.parametrize(
-    ("nodes", "gpus_per_node", "override", "expected"),
-    [
-        (16, 4, None, 16),  # <=18 nodes: one segment
-        (64, 4, None, 16),  # >18 nodes: largest divisor <=18
-        (16, 8, None, None),  # not a 4-GPU node
-        (16, 4, 4, 4),  # explicit override
-        (16, 4, 0, None),  # 0 omits --segment
-    ],
-)
-def test_slurm_executor_segment(tmp_path, nodes, gpus_per_node, override, expected):
-    executor = slurm_executor(
-        gpu="vr200",
-        account="test",
-        partition="test",
-        log_dir=str(tmp_path),
-        nodes=nodes,
-        num_gpus_per_node=gpus_per_node,
-        segment=override,
-    )
-
-    assert executor.segment == expected
-
-
-@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-@pytest.mark.parametrize("segment", [5, 32, -4])
-def test_resolve_segment_rejects_non_divisors(segment):
-    with pytest.raises(ValueError, match="must be a positive divisor"):
-        resolve_segment(nodes=16, num_gpus_per_node=4, segment=segment)
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
