@@ -475,40 +475,40 @@ def evaluate_and_print_results(
         ppl = math.exp(min(20, total_loss_dict[key].item()))
         string += "{} PPL: {:.6E} | ".format(key, ppl)
         if writer:
-            writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
+            writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.iteration)
             writer.add_scalar(
                 "{} validation vs samples".format(key),
                 total_loss_dict[key].item(),
                 state.train_state.consumed_train_samples,
             )
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.step)
+                writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.iteration)
                 writer.add_scalar(
                     "{} validation ppl vs samples".format(key), ppl, state.train_state.consumed_train_samples
                 )
 
         if wandb_writer and is_last_rank():
-            wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
+            wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.iteration)
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+                wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.iteration)
 
         if mlflow_writer and is_last_rank():
             mlflow_writer.log_metrics(
-                _sanitize_mlflow_metrics({f"val/{key}": total_loss_dict[key].item()}), step=state.train_state.step
+                _sanitize_mlflow_metrics({f"val/{key}": total_loss_dict[key].item()}), step=state.train_state.iteration
             )
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
                 mlflow_writer.log_metrics(
-                    _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.step
+                    _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.iteration
                 )
         if comet_logger and is_last_rank():
             comet_logger.log_metrics(
-                {"{} validation".format(key): total_loss_dict[key].item()}, step=state.train_state.step
+                {"{} validation".format(key): total_loss_dict[key].item()}, step=state.train_state.iteration
             )
             if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                comet_logger.log_metrics({"{} validation ppl".format(key): ppl}, step=state.train_state.step)
+                comet_logger.log_metrics({"{} validation ppl".format(key): ppl}, step=state.train_state.iteration)
 
     if process_non_loss_data_func is not None and writer and is_last_rank():
-        process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
+        process_non_loss_data_func(collected_non_loss_data, state.train_state.iteration, writer)
 
     length = len(string) + 1
     print_rank_last("-" * length)

@@ -92,14 +92,14 @@ class TrainStateAssertCallback(Callback):
         self.steps_executed: int = 0
 
     def on_train_start(self, context: CallbackContext) -> None:
-        self.start_step = context.state.train_state.step
+        self.start_step = context.state.train_state.iteration
         self.start_consumed_samples = context.state.train_state.consumed_train_samples
 
     def on_train_step_end(self, context: CallbackContext) -> None:
         self.steps_executed += 1
 
     def on_train_end(self, context: CallbackContext) -> None:
-        self.end_step = context.state.train_state.step
+        self.end_step = context.state.train_state.iteration
         self.end_consumed_samples = context.state.train_state.consumed_train_samples
 
 

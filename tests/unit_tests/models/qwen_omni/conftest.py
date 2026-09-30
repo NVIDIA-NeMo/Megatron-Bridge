@@ -25,15 +25,13 @@ def clear_lru_cache():
     behavior for isolation.
     """
     try:
-        from megatron.bridge.training.utils.checkpoint_utils import read_run_config, read_train_state
+        from megatron.bridge.training.utils.checkpoint_utils import read_run_config
     except (ImportError, ModuleNotFoundError):
         yield
         return
 
     read_run_config.cache_clear()
-    read_train_state.cache_clear()
 
     yield
 
     read_run_config.cache_clear()
-    read_train_state.cache_clear()

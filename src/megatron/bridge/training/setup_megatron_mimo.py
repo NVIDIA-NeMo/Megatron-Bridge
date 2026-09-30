@@ -337,7 +337,7 @@ def setup_megatron_mimo(
     if build_data_iterators_fn is not None:
         logger.info(f"Rank {dist.get_rank()}: Building data iterators")
         train_state = global_state.train_state
-        is_resuming = train_state.step > 0
+        is_resuming = train_state.iteration > 0
 
         if is_resuming:
             import inspect

@@ -65,7 +65,7 @@ def _record_loss(output: Path, context: CallbackContext) -> None:
     if learning_rate is None:
         raise RuntimeError("BAGEL optimizer has no canonical learning rate")
     row = {
-        "step": context.state.train_state.step,
+        "step": context.state.train_state.iteration,
         "grad_norm": context.grad_norm,
         "lr": float(learning_rate),
         "losses": {name: value.detach().float().cpu().tolist() for name, value in sorted(context.loss_dict.items())},

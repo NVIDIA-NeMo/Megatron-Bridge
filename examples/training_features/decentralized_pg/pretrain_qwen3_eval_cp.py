@@ -738,9 +738,9 @@ def main() -> None:
             forward_backward_func=forward_backward_func,
             p2p_communicator=p2p_train,
         )
-        # Bridge's train_step bumps state.train_state.step internally; record it
+        # Bridge's train_step bumps state.train_state.iteration internally; record it
         # so the next train_step uses a fresh micro-batch counter.
-        state.train_state.step = iteration
+        state.train_state.iteration = iteration
 
         # --- Eval step inside eval_cp_context (cp_eval) ---
         with eval_cp_context(model, eval_pgs, train_pgs):

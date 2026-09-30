@@ -304,7 +304,7 @@ def train_megatron_mimo(
     # Main training loop
     timers("interval-time", log_level=0).start(barrier=True)
 
-    while train_state.step < train_config.train_iters:
+    while train_state.iteration < train_config.train_iters:
         # Finalize any pending async saves (non-blocking). Placed at the top
         # of the loop so async saves get a full iteration to complete.
         checkpoint_manager.finalize_async_saves(
@@ -315,7 +315,7 @@ def train_megatron_mimo(
         # Handle profiling
         nsys_ctx = handle_profiling_step(
             prof_config,
-            train_state.step,
+            train_state.iteration,
             dist.get_rank(),
             prof,
         )
@@ -348,7 +348,7 @@ def train_megatron_mimo(
         history_wct.append(iteration_time)
 
         # Update training state
-        train_state.step += 1
+        train_state.iteration += 1
         train_state.consumed_train_samples += micro_batch_size * num_microbatches * cfg.data_parallel_size
 
         # Get learning rate from first scheduler
@@ -389,15 +389,17 @@ def train_megatron_mimo(
         # Evaluation at specified intervals
         if (
             eval_interval
-            and (cfg.validation.start_eval_at_iter is None or train_state.step >= cfg.validation.start_eval_at_iter)
-            and train_state.step % eval_interval == 0
+            and (
+                cfg.validation.start_eval_at_iter is None or train_state.iteration >= cfg.validation.start_eval_at_iter
+            )
+            and train_state.iteration % eval_interval == 0
             and valid_data_iterator is not None
         ):
             if train_config.manual_gc and train_config.manual_gc_eval:
                 gc.collect()
             evaluate_and_print_results(
                 state=global_state,
-                prefix=f"iteration {train_state.step}",
+                prefix=f"iteration {train_state.iteration}",
                 forward_step_func=forward_step_func,
                 data_iterator=valid_data_iterator,
                 model=[model],
@@ -414,7 +416,7 @@ def train_megatron_mimo(
         maybe_run_manual_gc(
             train_config.manual_gc,
             train_config.manual_gc_interval,
-            train_state.step,
+            train_state.iteration,
         )
 
         # Checkpointing (interval, signal, duration, exit-interval) and exit decision.
@@ -433,12 +435,12 @@ def train_megatron_mimo(
         if not profiling_stopped:
             handle_profiling_stop(
                 prof_config,
-                train_state.step,
+                train_state.iteration,
                 dist.get_rank(),
                 prof,
                 nsys_nvtx_context,
             )
-            profiling_stopped = prof_config is not None and train_state.step == prof_config.profile_step_end
+            profiling_stopped = prof_config is not None and train_state.iteration == prof_config.profile_step_end
         if should_exit:
             break
 
@@ -449,9 +451,9 @@ def train_megatron_mimo(
         ckpt_config = cfg.checkpoint
         if (
             ckpt_config.save
-            and train_state.step != 0
+            and train_state.iteration != 0
             and ckpt_config.save_interval != 0
-            and (ckpt_config.save_interval is None or train_state.step % ckpt_config.save_interval != 0)
+            and (ckpt_config.save_interval is None or train_state.iteration % ckpt_config.save_interval != 0)
         ):
             save_checkpoint_and_time(
                 state=global_state,
@@ -468,7 +470,7 @@ def train_megatron_mimo(
     if not profiling_stopped:
         handle_profiling_stop(
             prof_config,
-            train_state.step,
+            train_state.iteration,
             dist.get_rank(),
             prof,
             nsys_nvtx_context,

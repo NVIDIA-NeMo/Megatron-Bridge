@@ -139,7 +139,7 @@ class BagelForwardStep:
             )
             _initialize_scheduler(self.scheduler)
         if config.reset_reference_training_rng and not self.reference_rng_seeded:
-            if state.train_state.step == 0:
+            if state.train_state.iteration == 0:
                 world_size = torch.distributed.get_world_size()
                 if config.reference_training_world_size != world_size:
                     raise RuntimeError("BAGEL reference world size differs from the training world size")

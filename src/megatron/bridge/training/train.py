@@ -175,7 +175,7 @@ def train(
     #
     # Note on reference semantics:
     # - functools.partial stores a reference to global_state, not a copy
-    # - When global_state.train_state.step changes, the partial sees the updated value
+    # - When global_state.train_state.iteration changes, the partial sees the updated value
     # - This is safe because GlobalState is a mutable object passed by reference
     #
     # For functors (classes with __call__ defined):
@@ -192,11 +192,11 @@ def train(
 
     # Make sure rerun_state_machine has the right iteration loaded from checkpoint.
     rerun_state_machine = get_rerun_state_machine()
-    if rerun_state_machine.current_iteration != global_state.train_state.step:
-        print_rank_0(f"Setting rerun_state_machine.current_iteration to {global_state.train_state.step}...")
-        rerun_state_machine.current_iteration = global_state.train_state.step
+    if rerun_state_machine.current_iteration != global_state.train_state.iteration:
+        print_rank_0(f"Setting rerun_state_machine.current_iteration to {global_state.train_state.iteration}...")
+        rerun_state_machine.current_iteration = global_state.train_state.iteration
 
-    num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
+    num_floating_point_operations_so_far = global_state.train_state.num_floating_point_operations_so_far
     num_floating_point_operations_since_last_log_event = 0.0
 
     if energy_monitor is not None:
@@ -267,7 +267,7 @@ def train(
             "Parameter hashes not matching across DP replicas"
         )
         torch.distributed.barrier()
-        print_rank_0(f">>> Weight hashes match after {global_state.train_state.step} iterations...")
+        print_rank_0(f">>> Weight hashes match after {global_state.train_state.iteration} iterations...")
 
     # Capture CUDA Graphs.
     cuda_graph_helper = None
@@ -337,16 +337,16 @@ def train(
             model_config, copy_main_params, model, optimizer, forward_backward_func
         )
 
-    start_iteration = global_state.train_state.step
+    start_iteration = global_state.train_state.iteration
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     data_distribution_group = get_data_distribution_group(pg_collection, config.model)
     dp_size = data_distribution_group.size()
     # Anchor for interval-average throughput logging: training_log reports the FLOPS
     # performed over each logging interval as the delta of
-    # floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
+    # num_floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
     # or the checkpoint value on resume) so the first interval's delta is correct.
-    global_state._flops_at_last_log = global_state.train_state.floating_point_operations_so_far
+    global_state._flops_at_last_log = global_state.train_state.num_floating_point_operations_so_far
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
         forward_backward_func = forward_backward_pipelining_without_interleaving
         p2p_communicator = config.model._p2p_communicator
@@ -379,18 +379,18 @@ def train(
             pre_hook_enabled = True
 
     # Run training iterations till done.
-    while global_state.train_state.step < train_config.train_iters:
+    while global_state.train_state.iteration < train_config.train_iters:
         # Handle profiling for this step
         nvtx_ctx = handle_profiling_step(
             prof_config,
-            global_state.train_state.step,
+            global_state.train_state.iteration,
             torch.distributed.get_rank(),
             prof,
         )
         if nvtx_ctx is not None:
             nsys_nvtx_context = nvtx_ctx
 
-        nvtx_step = global_state.train_state.step
+        nvtx_step = global_state.train_state.iteration
         nvtx_range_push(suffix=f"training_step_{nvtx_step}")
 
         fault_tolerance.on_checkpointing_start(global_state)
@@ -400,7 +400,7 @@ def train(
         # Update the timeout for all process groups after initialization
         # We update the timeout after the first successful iteration,
         # which takes longer than others usually
-        if global_state.train_state.step == start_iteration + 1:
+        if global_state.train_state.iteration == start_iteration + 1:
             distributed_timeout_seconds_after_init = global_state.cfg.dist.distributed_timeout_seconds_after_init
             if distributed_timeout_seconds_after_init is not None:
                 update_pg_timeout(timedelta(seconds=distributed_timeout_seconds_after_init))
@@ -410,7 +410,7 @@ def train(
         # from the previous iteration, save a checkpoint. Then run consistency check
         # to make sure training configuration is still valid.
         update_num_microbatches(global_state.train_state.consumed_train_samples, consistency_check=False, verbose=True)
-        if get_num_microbatches() != num_microbatches and global_state.train_state.step != 0:
+        if get_num_microbatches() != num_microbatches and global_state.train_state.iteration != 0:
             assert get_num_microbatches() > num_microbatches, (
                 f"Number of microbatches should be increasing due to batch size rampup; "
                 f"instead going from {num_microbatches} to {get_num_microbatches()}"
@@ -432,12 +432,12 @@ def train(
 
         # Completely skip iteration if needed.
         if _should_skip_and_handle_iteration(global_state, train_data_iterator, pg_collection):
-            if global_state.train_state.step == start_iteration + 1:
-                start_iteration = global_state.train_state.step
+            if global_state.train_state.iteration == start_iteration + 1:
+                start_iteration = global_state.train_state.iteration
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             handle_profiling_stop(
                 config.profiling,
-                global_state.train_state.step,
+                global_state.train_state.iteration,
                 torch.distributed.get_rank(),
                 prof,
                 nsys_nvtx_context,
@@ -449,7 +449,7 @@ def train(
             model_config.cuda_graph_impl == "transformer_engine"
             and cuda_graph_helper is not None
             and not cuda_graph_helper.graphs_created()
-            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+            and global_state.train_state.iteration - start_iteration == model_config.cuda_graph_warmup_steps
         ):
             if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model, param_sync=False)
@@ -461,7 +461,7 @@ def train(
         if (
             vision_cuda_graph_helper is not None
             and not vision_cuda_graph_helper.graphs_created()
-            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+            and global_state.train_state.iteration - start_iteration == model_config.cuda_graph_warmup_steps
         ):
             vision_cuda_graph_helper.create_cudagraphs()
             vision_cuda_graph_helper.cuda_graph_set_manual_hooks()
@@ -552,7 +552,7 @@ def train(
             nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
             if (
                 prof_config is not None
-                and global_state.train_state.step < prof_config.profile_step_end
+                and global_state.train_state.iteration < prof_config.profile_step_end
                 and (prof is not None or nsys_nvtx_context is not None)
             ):
                 handle_profiling_stop(
@@ -567,12 +567,12 @@ def train(
         # Enable forward pre-hooks after first set of forward and backward passes.
         # When running in fp16, skip all NaN iterations until steady-state loss scaling value
         # is reached.
-        if global_state.train_state.step == start_iteration:
+        if global_state.train_state.iteration == start_iteration:
             if skipped_iter:
                 # Only enable forward pre-hook after a training step has successfully run. Relevant
                 # for fp16 codepath where first XX iterations are skipped until steady-state loss
                 # scale value is reached.
-                start_iteration = global_state.train_state.step + 1
+                start_iteration = global_state.train_state.iteration + 1
             else:
                 # Enable forward pre-hook after training step has successfully run. All subsequent
                 # forward passes will use the forward pre-hook / `param_sync_func` in
@@ -595,10 +595,10 @@ def train(
                         and vision_cuda_graph_helper.graphs_created()
                     ):
                         vision_cuda_graph_helper.cuda_graph_set_manual_hooks()
-        global_state.train_state.step += 1
+        global_state.train_state.iteration += 1
 
         # If fsdp_manual_registration is enabled, manually register FSDP communication buffers after one training step.
-        if global_state.train_state.step == start_iteration + 1 and config.ddp.use_megatron_fsdp:
+        if global_state.train_state.iteration == start_iteration + 1 and config.ddp.use_megatron_fsdp:
             _maybe_register_fsdp_buffers(config, model)
 
         batch_size = dp_size * train_config.micro_batch_size * get_num_microbatches()
@@ -641,8 +641,8 @@ def train(
                 patch_squared_sum=flops_stats.vision_patch_squared_sum,
                 merged_token_sum=flops_stats.vision_merged_token_sum,
             )
-        global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
-        num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
+        global_state.train_state.num_floating_point_operations_so_far += num_floating_point_operations_in_batch
+        num_floating_point_operations_so_far = global_state.train_state.num_floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
@@ -694,9 +694,10 @@ def train(
             global_state.train_state.do_valid
             and val_config.eval_interval
             and (
-                val_config.start_eval_at_iter is None or global_state.train_state.step >= val_config.start_eval_at_iter
+                val_config.start_eval_at_iter is None
+                or global_state.train_state.iteration >= val_config.start_eval_at_iter
             )
-            and global_state.train_state.step % val_config.eval_interval == 0
+            and global_state.train_state.iteration % val_config.eval_interval == 0
         ):
             if energy_monitor is not None:
                 energy_monitor.pause()
@@ -707,7 +708,7 @@ def train(
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect all objects.
                 gc.collect()
-            prefix = f"iteration {global_state.train_state.step}"
+            prefix = f"iteration {global_state.train_state.iteration}"
             timers("eval-time", log_level=0).start(barrier=True)
             evaluate_and_print_results(
                 global_state,
@@ -736,25 +737,25 @@ def train(
 
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
-        maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
+        maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.iteration)
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
             bool(getattr(config.straggler, "log_straggler", False)),
             straggler_timer,
-            global_state.train_state.step,
+            global_state.train_state.iteration,
             num_floating_point_operations_since_last_log_event,
         )
         maybe_check_weight_hash_across_dp_replicas(
             model,
             optimizer,
             config.train.check_weight_hash_across_dp_replicas_interval,
-            global_state.train_state.step,
+            global_state.train_state.iteration,
             should_toggle_forward_pre_hook,
         )
         nvtx_range_pop(suffix=f"training_step_{nvtx_step}")
         handle_profiling_stop(
             config.profiling,
-            global_state.train_state.step,
+            global_state.train_state.iteration,
             torch.distributed.get_rank(),
             prof,
             nsys_nvtx_context,
@@ -762,7 +763,7 @@ def train(
         maybe_run_manual_gc(
             config.train.manual_gc,
             config.train.manual_gc_interval,
-            global_state.train_state.step,
+            global_state.train_state.iteration,
         )
 
         # Checkpoint and decide whether to exit.
@@ -787,9 +788,12 @@ def train(
         ckpt_config = config.checkpoint
         if (
             ckpt_config.save
-            and global_state.train_state.step != 0
+            and global_state.train_state.iteration != 0
             and ckpt_config.save_interval != 0
-            and (ckpt_config.save_interval is None or global_state.train_state.step % ckpt_config.save_interval != 0)
+            and (
+                ckpt_config.save_interval is None
+                or global_state.train_state.iteration % ckpt_config.save_interval != 0
+            )
         ):
             save_checkpoint_and_time(
                 global_state,
@@ -1275,9 +1279,9 @@ def compute_throughputs_and_append_to_progress_log(
     # Compute job throughput.
     # num_floating_point_operations_so_far keeps track of floating-point operations
     # completed at the start of job.
-    job_throughput = (num_floating_point_operations_so_far - state.train_state.floating_point_operations_so_far) / (
-        (time.time() - state.start_time) * 10**12 * get_world_size_safe()
-    )
+    job_throughput = (
+        num_floating_point_operations_so_far - state.train_state.num_floating_point_operations_so_far
+    ) / ((time.time() - state.start_time) * 10**12 * get_world_size_safe())
 
     # Compute cumulative throughput since jobs of this world size were launched.
     # `get_start_time_from_progress_log` returns start time and number of floating-point
@@ -1292,7 +1296,7 @@ def compute_throughputs_and_append_to_progress_log(
     saved_ckpt_prefix = "Saving async checkpoint" if state.cfg.checkpoint.async_save else "Saved checkpoint"
     append_to_progress_log(
         state.cfg.checkpoint.save,
-        f"{saved_ckpt_prefix}\tIteration: {state.train_state.step}\t"
+        f"{saved_ckpt_prefix}\tIteration: {state.train_state.iteration}\t"
         f"Job throughput: {job_throughput:.1f} MODEL_TFLOP/s/GPU\t"
         f"Cumulative throughput: {cumulative_throughput:.1f} MODEL_TFLOP/s/GPU\t"
         f"Floating-point operations: {num_floating_point_operations_so_far:.2e}\t"
@@ -1453,7 +1457,7 @@ def checkpoint_and_decide_exit(
     if (
         state.cfg.checkpoint.save
         and state.cfg.checkpoint.save_interval
-        and state.train_state.step % state.cfg.checkpoint.save_interval == 0
+        and state.train_state.iteration % state.cfg.checkpoint.save_interval == 0
     ):
         save_checkpoint_and_time(
             state,
@@ -1472,7 +1476,7 @@ def checkpoint_and_decide_exit(
     elif (
         state.cfg.checkpoint.save
         and state.cfg.checkpoint.non_persistent_save_interval
-        and state.train_state.step % state.cfg.checkpoint.non_persistent_save_interval == 0
+        and state.train_state.iteration % state.cfg.checkpoint.non_persistent_save_interval == 0
     ):
         save_checkpoint_and_time(
             state,
@@ -1514,7 +1518,7 @@ def checkpoint_and_decide_exit(
             return True
 
     # Exit based on iterations.
-    if state.cfg.train.exit_interval and state.train_state.step % state.cfg.train.exit_interval == 0:
+    if state.cfg.train.exit_interval and state.train_state.iteration % state.cfg.train.exit_interval == 0:
         if state.cfg.checkpoint.save and not saved_checkpoint:
             save_checkpoint_and_time(
                 state,
@@ -1528,7 +1532,7 @@ def checkpoint_and_decide_exit(
                 callback_manager=callback_manager,
                 module_name=module_name,
             )
-        barrier_and_log(f"exiting program at iteration {state.train_state.step}")
+        barrier_and_log(f"exiting program at iteration {state.train_state.iteration}")
 
         return True
 
@@ -1599,14 +1603,14 @@ def _should_skip_and_handle_iteration(
         bool: True if the iteration was skipped, False otherwise
     """
     cfg = global_state.cfg
-    if (global_state.train_state.step + 1) not in cfg.train.iterations_to_skip:
+    if (global_state.train_state.iteration + 1) not in cfg.train.iterations_to_skip:
         return False
 
     # Perform dummy train step to fast forward train_data_iterator
     _dummy_train_step(global_state, train_data_iterator, pg_collection)
 
     # Update step and sample counters
-    global_state.train_state.step += 1
+    global_state.train_state.iteration += 1
     dp_size = get_data_distribution_group(pg_collection, cfg.model).size()
     batch_size = dp_size * cfg.train.micro_batch_size * get_num_microbatches()
     global_state.train_state.consumed_train_samples += batch_size

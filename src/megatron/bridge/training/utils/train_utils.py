@@ -706,7 +706,7 @@ def training_log(
     """
     timers = global_state.timers
     train_state = global_state.train_state
-    iteration = train_state.step
+    iteration = train_state.iteration
     writer = global_state.tensorboard_logger
     wandb_writer = global_state.wandb_logger
     mlflow_logger = global_state.mlflow_logger
@@ -1086,7 +1086,7 @@ def training_log(
         #
         # The main training loop folds each step's DP-exact FLOPS (Σ tokens for the
         # linear terms, Σᵢ sᵢ² for THD attention) into
-        # ``train_state.floating_point_operations_so_far`` every step, so the FLOPS
+        # ``train_state.num_floating_point_operations_so_far`` every step, so the FLOPS
         # performed over this logging interval is exactly the delta since the last
         # log. Dividing that interval total by the *interval* elapsed time (not the
         # per-iteration average) keeps numerator and denominator over the same window.
@@ -1094,13 +1094,13 @@ def training_log(
         # log-boundary step alone) divided by an interval-averaged time would over- or
         # under-report whenever that step is heavier/lighter than the interval mean.
         # Using the cumulative delta is also the single source of truth — it cannot
-        # disagree with ``floating_point_operations_so_far`` and needs no extra reduce.
+        # disagree with ``num_floating_point_operations_so_far`` and needs no extra reduce.
         num_flops = None
         if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
-            # Coerce to float — floating_point_operations_so_far is a float in
+            # Coerce to float — num_floating_point_operations_so_far is a float in
             # production, but getattr on a MagicMock test double (and an unset anchor)
             # returns a MagicMock; treat non-numerics as 0 so the math stays valid.
-            flops_so_far = train_state.floating_point_operations_so_far
+            flops_so_far = train_state.num_floating_point_operations_so_far
             if not isinstance(flops_so_far, (int, float)):
                 flops_so_far = 0.0
             prev_flops = getattr(global_state, "_flops_at_last_log", 0.0)
@@ -1385,7 +1385,7 @@ def report_runtime(
         time_unit (str, optional): Time unit to use for `time` logging. Can be one of
             'seconds', 'minutes', 'hours', or 'days'. Defaults to 'hours'.
     """
-    elapsed_dur = train_state.step / train_iters
+    elapsed_dur = train_state.iteration / train_iters
 
     divider = 1
     if time_unit == "seconds":
@@ -1409,7 +1409,7 @@ def report_runtime(
 
     time_metrics["time/tokens"] = train_state.consumed_train_samples * seq_length
     time_metrics["time/samples"] = train_state.consumed_train_samples
-    time_metrics["time/batches"] = train_state.step
+    time_metrics["time/batches"] = train_state.iteration
     time_metrics["time/total"] = (time.time() - start_time) / divider
 
     return time_metrics
@@ -1509,7 +1509,7 @@ def prepare_forward_step_func(forward_step_func: ForwardStepCallable, state: Glo
 
     Wrapping once is safe since:
     - functools.partial stores a reference to the state object, not a copy
-    - When state.train_state.step or other fields change, the partial sees those changes
+    - When state.train_state.iteration or other fields change, the partial sees those changes
     - No staleness issues because GlobalState is mutable and passed by reference
 
     Functor support:

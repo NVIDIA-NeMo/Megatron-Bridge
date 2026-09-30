@@ -17,12 +17,12 @@ import shutil
 from pathlib import Path
 
 import torch
+from megatron.training.utils.checkpoint_utils import get_checkpoint_train_state_filename
 
 from megatron.bridge.training.utils.checkpoint_utils import (
     TRACKER_PREFIX,
     get_checkpoint_name,
     get_checkpoint_tracker_filename,
-    get_checkpoint_train_state_filename,
 )
 
 

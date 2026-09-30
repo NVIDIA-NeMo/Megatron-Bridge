@@ -540,8 +540,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_train_samples = 0
         mock_state.train_state.skipped_train_samples = 0
         mock_state.train_state.consumed_valid_samples = 0
-        mock_state.train_state.step = 1000  # Set to integer for comparisons
-        mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_state.train_state.iteration = 1000  # Set to integer for comparisons
+        mock_state.train_state.num_floating_point_operations_so_far = 50000
         mock_cfg.ddp = Mock()
         mock_cfg.ddp.use_megatron_fsdp = False
 
@@ -666,8 +666,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_train_samples = 0
         mock_state.train_state.skipped_train_samples = 0
         mock_state.train_state.consumed_valid_samples = 0
-        mock_state.train_state.step = 1000  # Set to integer for comparisons
-        mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_state.train_state.iteration = 1000  # Set to integer for comparisons
+        mock_state.train_state.num_floating_point_operations_so_far = 50000
         mock_cfg.ddp = Mock()
         mock_cfg.ddp.use_megatron_fsdp = False
 
@@ -807,8 +807,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_train_samples = 0
         mock_state.train_state.skipped_train_samples = 0
         mock_state.train_state.consumed_valid_samples = 0
-        mock_state.train_state.step = 1000  # Set to integer for comparisons
-        mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_state.train_state.iteration = 1000  # Set to integer for comparisons
+        mock_state.train_state.num_floating_point_operations_so_far = 50000
         mock_cfg.ddp = Mock()
         mock_cfg.ddp.use_megatron_fsdp = False
 

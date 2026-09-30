@@ -239,7 +239,7 @@ class TestTrainingLog:
         global_state = mock.MagicMock()
 
         # Mock train state
-        global_state.train_state.step = 100
+        global_state.train_state.iteration = 100
         global_state.train_state.consumed_train_samples = 12800
         global_state.train_state.skipped_train_samples = 0
 
@@ -291,7 +291,7 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
 
         # Override iteration to avoid log interval reset (101 % 5 != 0)
-        mock_global_state.train_state.step = 101
+        mock_global_state.train_state.iteration = 101
 
         # Call the function
         result = training_log(
@@ -351,7 +351,7 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
 
         # Override iteration to avoid log interval reset (101 % 5 != 0)
-        mock_global_state.train_state.step = 101
+        mock_global_state.train_state.iteration = 101
 
         # Call the function with skipped iteration
         result = training_log(
@@ -407,7 +407,7 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
 
         # Override iteration to avoid log interval reset (101 % 5 != 0)
-        mock_global_state.train_state.step = 101
+        mock_global_state.train_state.iteration = 101
 
         # Create loss dict with NaN values
         nan_loss_dict = {
@@ -468,7 +468,7 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
 
         # Set iteration to match tensorboard logging interval
-        mock_global_state.train_state.step = 100  # Should trigger tensorboard logging (100 % 10 == 0)
+        mock_global_state.train_state.iteration = 100  # Should trigger tensorboard logging (100 % 10 == 0)
         mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
@@ -515,7 +515,7 @@ class TestTrainingLog:
         mock_config.logger.log_loss_scale_to_tensorboard = False
         mock_config.logger.log_world_size_to_tensorboard = False
 
-        mock_global_state.train_state.step = 1
+        mock_global_state.train_state.iteration = 1
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
         mock_global_state.mlflow_logger = None
@@ -589,7 +589,7 @@ class TestTrainingLog:
         mock_config.logger.log_loss_scale_to_tensorboard = False
         mock_config.logger.log_world_size_to_tensorboard = False
 
-        mock_global_state.train_state.step = 1
+        mock_global_state.train_state.iteration = 1
         mock_global_state.timers = timers
         mock_global_state.tensorboard_logger = None
         mock_global_state.wandb_logger = None
@@ -649,7 +649,7 @@ class TestTrainingLog:
         mock_reduce_lr.return_value = 1e-4
         mock_get_world_size.return_value = 32
 
-        mock_global_state.train_state.step = 100
+        mock_global_state.train_state.iteration = 100
         mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
@@ -709,7 +709,7 @@ class TestTrainingLog:
         """Logged TFLOP/s is the interval FLOPs delta ÷ interval time ÷ world size.
 
         Regression guard for the THD logging fix: ``training_log`` must derive
-        throughput from the cumulative ``floating_point_operations_so_far`` delta
+        throughput from the cumulative ``num_floating_point_operations_so_far`` delta
         since the last log (over the full interval elapsed time), not from a single
         step's FLOPs over the per-iteration average. It must also advance the
         ``_flops_at_last_log`` anchor.
@@ -723,12 +723,12 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 8
 
         # Log boundary (10 % 5 == 0). interval-time mock returns 0.5s (see fixture).
-        mock_global_state.train_state.step = 10
+        mock_global_state.train_state.iteration = 10
         mock_config.logger.log_throughput_to_tensorboard = True
         # Interval FLOPs = so_far - anchor = 8e12; per_gpu_tf = 8e12 / 0.5 / 8 / 1e12 = 2.0
         prev_flops = 100.0e12
         mock_global_state._flops_at_last_log = prev_flops
-        mock_global_state.train_state.floating_point_operations_so_far = prev_flops + 8.0e12
+        mock_global_state.train_state.num_floating_point_operations_so_far = prev_flops + 8.0e12
         expected_per_gpu_tf = 8.0e12 / 0.5 / 8 / 1e12  # == 2.0
 
         training_log(
@@ -791,7 +791,7 @@ class TestTrainingLog:
 
         # Set timing_log_level to 1
         mock_config.logger.timing_log_level = 1
-        mock_global_state.train_state.step = 100
+        mock_global_state.train_state.iteration = 100
         mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
@@ -859,7 +859,7 @@ class TestTrainingLog:
 
         # Set timing_log_level to 2
         mock_config.logger.timing_log_level = 2
-        mock_global_state.train_state.step = 100
+        mock_global_state.train_state.iteration = 100
         mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
@@ -927,7 +927,7 @@ class TestTrainingLog:
         mock_get_rank.return_value = 0
 
         # Set iteration to match log interval for memory reporting
-        mock_global_state.train_state.step = 5
+        mock_global_state.train_state.iteration = 5
         mock_config.logger.log_interval = 5
 
         # Call the function with memory reporting enabled
@@ -1012,7 +1012,7 @@ class TestTrainingLog:
         mock_config.model.cuda_graph_impl = cuda_graph_impl
         mock_config.model.vision_cuda_graph_impl = vision_cuda_graph_impl
         mock_config.optimizer.optimizer_cuda_graph = optimizer_cuda_graph
-        mock_global_state.train_state.step = iteration
+        mock_global_state.train_state.iteration = iteration
         mock_config.logger.log_interval = 1
 
         result = training_log(
@@ -1065,7 +1065,7 @@ class TestTrainingLog:
         mock_get_rank.return_value = 0
 
         # First iteration after resume from checkpoint at iteration 100
-        mock_global_state.train_state.step = 101
+        mock_global_state.train_state.iteration = 101
         mock_config.logger.log_interval = 1
 
         result = training_log(
@@ -1620,7 +1620,7 @@ class TestTrainingLog:
         mock_global_state.energy_monitor = mock_energy_monitor
 
         # Set iteration to match log interval
-        mock_global_state.train_state.step = 5
+        mock_global_state.train_state.iteration = 5
         mock_config.logger.log_interval = 5
 
         training_log(
@@ -1651,10 +1651,10 @@ class TestTrainingLog:
 
         # Verify tensorboard logging for energy metrics
         mock_global_state.tensorboard_logger.add_scalar.assert_any_call(
-            "iter-energy/gpu", mock.ANY, mock_global_state.train_state.step
+            "iter-energy/gpu", mock.ANY, mock_global_state.train_state.iteration
         )
         mock_global_state.tensorboard_logger.add_scalar.assert_any_call(
-            "power/gpu", mock.ANY, mock_global_state.train_state.step
+            "power/gpu", mock.ANY, mock_global_state.train_state.iteration
         )
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
@@ -1715,7 +1715,7 @@ class TestTrainingLog:
         mock_config.logger.tensorboard_dir = "/tmp/tb"
 
         # Set iteration to the configured snapshot dump step.
-        mock_global_state.train_state.step = 10
+        mock_global_state.train_state.iteration = 10
 
         training_log(
             loss_dict=loss_dict,
@@ -1788,7 +1788,7 @@ class TestTrainingLog:
         mock_profiling_config.profile_step_end = 10
         mock_config.profiling = mock_profiling_config
         mock_config.logger.tensorboard_dir = "/tmp/tb"
-        mock_global_state.train_state.step = 9
+        mock_global_state.train_state.iteration = 9
 
         training_log(
             loss_dict=loss_dict,
@@ -1846,7 +1846,7 @@ class TestTrainingLog:
         mock_get_world_size.return_value = 32
 
         # Set iteration to match tensorboard logging interval
-        mock_global_state.train_state.step = 10
+        mock_global_state.train_state.iteration = 10
         mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
@@ -1908,7 +1908,7 @@ class TestTrainingLog:
         mock_global_state.comet_logger = None
 
         # Set iteration to match logging intervals
-        mock_global_state.train_state.step = 10
+        mock_global_state.train_state.iteration = 10
         mock_config.logger.tensorboard_log_interval = 10
         mock_config.logger.log_interval = 5
 
@@ -1981,7 +1981,7 @@ class TestTrainingLog:
         mock_config.logger.log_memory_to_tensorboard = True
 
         # Set iteration to match tensorboard logging interval
-        mock_global_state.train_state.step = 10
+        mock_global_state.train_state.iteration = 10
         mock_config.logger.tensorboard_log_interval = 10
 
         training_log(
@@ -2043,7 +2043,7 @@ class TestTrainingLog:
         seq_length = 2048
         train_iters = 1000
 
-        train_state = MockTrainState(step=step, consumed_train_samples=consumed_train_samples)
+        train_state = MockTrainState(iteration=step, consumed_train_samples=consumed_train_samples)
         runtime_report = report_runtime(
             train_state=train_state,
             start_time=start_time,
@@ -2598,10 +2598,10 @@ class TestPrepareForwardStepFunc:
         """Test prepare_forward_step_func with function that needs state injection."""
 
         def forward_with_state(state: GlobalState, data_iterator, model):
-            return state.train_state.step
+            return state.train_state.iteration
 
         mock_state = mock.MagicMock()
-        mock_state.train_state.step = 42
+        mock_state.train_state.iteration = 42
 
         result = prepare_forward_step_func(forward_with_state, mock_state)
 
@@ -2633,11 +2633,11 @@ class TestPrepareForwardStepFunc:
 
             def __call__(self, state: GlobalState, data_iterator, model):
                 self.call_count += 1
-                return state.train_state.step + self.call_count
+                return state.train_state.iteration + self.call_count
 
         functor = ForwardFunctor()
         mock_state = mock.MagicMock()
-        mock_state.train_state.step = 10
+        mock_state.train_state.iteration = 10
 
         result = prepare_forward_step_func(functor, mock_state)
 
@@ -2677,10 +2677,10 @@ class TestPrepareForwardStepFunc:
         """Test that prepared function sees mutations to GlobalState."""
 
         def forward_with_state(state: GlobalState, data_iterator, model):
-            return state.train_state.step
+            return state.train_state.iteration
 
         mock_state = mock.MagicMock()
-        mock_state.train_state.step = 10
+        mock_state.train_state.iteration = 10
 
         # Prepare once
         wrapped = prepare_forward_step_func(forward_with_state, mock_state)
@@ -2689,13 +2689,13 @@ class TestPrepareForwardStepFunc:
         assert wrapped(None, None) == 10
 
         # Mutate state (simulates training loop incrementing step)
-        mock_state.train_state.step = 20
+        mock_state.train_state.iteration = 20
 
         # Call again - should see mutated value
         assert wrapped(None, None) == 20
 
         # Further mutation
-        mock_state.train_state.step = 100
+        mock_state.train_state.iteration = 100
 
         # Still sees current value
         assert wrapped(None, None) == 100

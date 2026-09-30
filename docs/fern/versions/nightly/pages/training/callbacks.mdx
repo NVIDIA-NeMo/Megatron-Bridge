@@ -19,11 +19,11 @@ from megatron.bridge.recipes.qwen import qwen25_500m_pretrain_config
 class MyCallback(Callback):
     def on_train_start(self, context):
         context.user_state['start_time'] = time.time()
-        print(f"Training started at step {context.state.train_state.step}")
+        print(f"Training started at step {context.state.train_state.iteration}")
 
     def on_train_step_end(self, context):
         if context.loss_dict:
-            print(f"Step {context.state.train_state.step}: loss={context.loss_dict}")
+            print(f"Step {context.state.train_state.iteration}: loss={context.loss_dict}")
 
     def on_train_end(self, context):
         elapsed = time.time() - context.user_state['start_time']
@@ -47,7 +47,7 @@ from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.recipes.qwen import qwen25_500m_pretrain_config
 
 def log_step(context):
-    step = context.state.train_state.step
+    step = context.state.train_state.iteration
     if context.loss_dict:
         print(f"Step {step}: {context.loss_dict}")
 
@@ -163,7 +163,7 @@ import torch.distributed as dist
 class RankZeroCallback(Callback):
     def on_train_step_end(self, context):
         if dist.get_rank() == 0:
-            print(f"Step {context.state.train_state.step} complete")
+            print(f"Step {context.state.train_state.iteration} complete")
 ```
 
 ## Exception Handling
@@ -232,7 +232,7 @@ class ProprietaryMetricsCallback(Callback):
     def on_train_step_end(self, context):
         if context.loss_dict:
             self.client.send({
-                "step": context.state.train_state.step,
+                "step": context.state.train_state.iteration,
                 "loss": context.loss_dict.get("lm loss"),
                 "grad_norm": context.grad_norm,
                 "cluster_id": os.environ.get("CLUSTER_ID"),

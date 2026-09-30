@@ -106,7 +106,7 @@ def _run_setup(
         start_time=0.0,
         tensorboard_logger=None,
         timers=Mock(return_value=timer),
-        train_state=SimpleNamespace(step=1),
+        train_state=SimpleNamespace(iteration=1),
         wandb_logger=None,
     )
     pg_collection = SimpleNamespace(

@@ -180,7 +180,7 @@ scope is `attn`, not `mamba`.
             model_config.cuda_graph_impl == "transformer_engine"
             and cuda_graph_helper is not None
             and not cuda_graph_helper.graphs_created()
-            and global_state.train_state.step - start_iteration == model_config.cuda_graph_warmup_steps
+            and global_state.train_state.iteration - start_iteration == model_config.cuda_graph_warmup_steps
         ):
             if model_config.cuda_graph_warmup_steps > 0 and should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model, param_sync=False)

@@ -166,7 +166,7 @@ def _pretrain(
         else:
             print_rank_0("skipping training ...")
 
-        iteration = state.train_state.step
+        iteration = state.train_state.iteration
 
         # VALIDATION
         if state.train_state.do_valid:

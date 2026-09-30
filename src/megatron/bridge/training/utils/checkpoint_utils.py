@@ -23,13 +23,12 @@ from typing import Any, Optional
 import torch
 import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.training.utils.checkpoint_utils import TRAIN_STATE_FILE
 
-from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
 
 
-TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
 CONFIG_FILE = "run_config.yaml"
 
@@ -108,24 +107,6 @@ def get_checkpoint_name(checkpoints_path: str, iteration: int, release: bool = F
 
     common_path = join_paths(checkpoints_path, directory)
     return common_path
-
-
-def get_checkpoint_train_state_filename(checkpoints_path: str, prefix: Optional[str] = None) -> str:
-    """Get the filename for the train state tracker file.
-
-    This file typically stores metadata about the latest checkpoint, like the iteration number.
-
-    Args:
-        checkpoints_path: Base directory where checkpoints are stored.
-        prefix: Optional prefix (e.g., 'latest') to prepend to the filename.
-
-    Returns:
-        The full path to the train state tracker file.
-    """
-    if prefix is None:
-        return join_paths(checkpoints_path, TRAIN_STATE_FILE)
-    else:
-        return join_paths(checkpoints_path, f"{prefix}_{TRAIN_STATE_FILE}")
 
 
 def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
@@ -444,57 +425,6 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
         config_dict = _sanitize_run_config_object(config_dict)
         config_dict = apply_run_config_backward_compat(config_dict)
         return config_dict
-
-
-@lru_cache()
-def read_train_state(train_state_filename: str) -> TrainState:
-    """Read the train state metadata from a YAML file (rank 0 only).
-
-    Reads the file on rank 0 and broadcasts the result to other ranks if
-    torch.distributed is initialized. Otherwise, loads the file locally.
-
-    Args:
-        train_state_filename: Path to the train state YAML file.
-
-    Returns:
-        An initialized TrainState object.
-    """
-    if torch.distributed.is_initialized():
-        state_obj = [None]
-        if get_rank_safe() == 0:
-            try:
-                if MultiStorageClientFeature.is_enabled():
-                    msc = MultiStorageClientFeature.import_package()
-                    state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
-                else:
-                    state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
-                ts = TrainState()
-                ts.load_state_dict(state_dict)
-                state_obj[0] = ts
-            except Exception as e:
-                error_msg = f"ERROR: Unable to load train state file {train_state_filename}: {e}"
-                sys.stderr.write(error_msg + "\n")
-                state_obj[0] = {"error": True, "msg": error_msg}
-
-        print_rank_0(f"Broadcasting TrainState from rank 0 to all {get_world_size_safe()} ranks")
-        torch.distributed.broadcast_object_list(state_obj, src=0)
-
-        if isinstance(state_obj[0], dict) and state_obj[0].get("error", False):
-            raise RuntimeError(state_obj[0]["msg"])
-
-        return state_obj[0]
-
-    try:
-        if MultiStorageClientFeature.is_enabled():
-            msc = MultiStorageClientFeature.import_package()
-            state_dict = msc.torch.load(train_state_filename, map_location="cpu", weights_only=True)
-        else:
-            state_dict = torch.load(train_state_filename, map_location="cpu", weights_only=True)
-        ts = TrainState()
-        ts.load_state_dict(state_dict)
-        return ts
-    except Exception as e:
-        raise RuntimeError(f"Unable to load train state file {train_state_filename}: {e}") from e
 
 
 def _sanitize_run_config_object(obj: Any) -> Any:
