@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import modelopt.torch.distill as mtd
@@ -20,6 +21,7 @@ import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
@@ -740,6 +742,43 @@ class TestGetBatch:
         get_batch_mock.assert_called_once_with(
             data_iterator, state.cfg, mtp_num_layers > 0, pg_collection=pg_collection, vp_stage=None
         )
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    @pytest.mark.parametrize("full_seq_length", [16, 32])
+    @pytest.mark.parametrize("has_input_ids", [False, True])
+    @pytest.mark.parametrize("vp_stage", [None, 1])
+    def test_forward_common_counts_dense_flops_with_nested_model_config(
+        self, monkeypatch, cp_size, full_seq_length, has_input_ids, vp_stage
+    ):
+        """Builder configs omit seq_length; count actual dense CP shards, including shorter batches."""
+        tokens = torch.arange(full_seq_length // cp_size).repeat(2, 1)
+        labels = tokens + 1
+        loss_mask = torch.ones_like(tokens, dtype=torch.float32)
+        model = _RecordingModel(vp_stage=vp_stage)
+        model.config = TransformerConfig(num_layers=2, hidden_size=32, num_attention_heads=4)
+        assert not hasattr(model.config, "seq_length")
+        state = SimpleNamespace(
+            cfg=SimpleNamespace(model=SimpleNamespace(seq_length=128)),
+            timers=_NoopTimer(),
+            straggler_timer=_NoopTimer(),
+            _flops_seqlen_sum=0,
+            _flops_seqlen_sq_sum=0,
+            _flops_requires_global_reduce=False,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
+        )
+        get_batch_mock = Mock(return_value=(tokens if has_input_ids else None, labels, loss_mask, None, None, None))
+
+        _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
+
+        expected_batches = 2 if vp_stage is None else 0
+        assert state._flops_seqlen_sum == expected_batches * full_seq_length
+        assert state._flops_seqlen_sq_sum == expected_batches * full_seq_length**2
+        assert not state._flops_requires_global_reduce
+        assert model.forward_kwargs["input_ids"] is (tokens if has_input_ids else None)
+        assert model.forward_kwargs["labels"] is labels
 
     @pytest.mark.unit
     @pytest.mark.parametrize("cp_size", [1, 2, 8])
