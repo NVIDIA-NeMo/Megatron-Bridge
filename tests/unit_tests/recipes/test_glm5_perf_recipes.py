@@ -20,12 +20,14 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
+import torch
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.perf_recipes.glm_moe_dsa import (
     glm51_sft_192gpu_gb200_bf16_config,
     glm51_sft_416gpu_h100_bf16_config,
+    glm52_pretrain_192gpu_gb200_fp8mx_config,
     glm52_sft_192gpu_gb200_bf16_config,
     glm52_sft_416gpu_h100_bf16_config,
 )
@@ -36,6 +38,7 @@ pytestmark = pytest.mark.unit
 
 _RECIPES = [
     glm51_sft_192gpu_gb200_bf16_config,
+    glm52_pretrain_192gpu_gb200_fp8mx_config,
     glm52_sft_192gpu_gb200_bf16_config,
     glm51_sft_416gpu_h100_bf16_config,
     glm52_sft_416gpu_h100_bf16_config,
@@ -63,7 +66,9 @@ class _FakeAutoBridge:
         self.model_id = model_id
 
     @classmethod
-    def from_hf_pretrained(cls, model_id: str) -> "_FakeAutoBridge":
+    def from_hf_pretrained(cls, model_id: str, revision: str | None = None) -> "_FakeAutoBridge":
+        if revision is not None:
+            assert len(revision) == 40
         return cls(model_id)
 
     def to_megatron_provider(self, load_weights: bool = False) -> SimpleNamespace:
@@ -121,8 +126,74 @@ def test_glm5_perf_recipes_are_flat_and_preserve_bridge_dsa_fields(
     else:
         assert cfg.model.dsa_indexer_topk_freq == 1
         assert cfg.model.dsa_indexer_skip_topk_offset == 0
+    perf_demo_dsa_overrides = {
+        "dsa_indexer_topk": 2048,
+        "dsa_indexer_loss_coeff": 0.0,
+        "dsa_indexer_use_sparse_loss": False,
+    }
     for field, expected in _BRIDGE_DSA_VALUES.items():
+        if recipe_func is glm52_pretrain_192gpu_gb200_fp8mx_config:
+            expected = perf_demo_dsa_overrides.get(field, expected)
         assert getattr(cfg.model, field) == expected
+
+
+def test_glm52_gb200_pretrain_perf_demo_matches_measured_topology(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The full-model perf demo preserves the measured 192-GPU configuration."""
+    cfg = _build_recipe(glm52_pretrain_192gpu_gb200_fp8mx_config, monkeypatch)
+
+    assert cfg.model.num_layers == 78
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.model.seq_length == 4096
+    assert cfg.model.qk_pos_emb_head_dim == 64
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.train.global_batch_size == 3072
+    assert cfg.train.micro_batch_size == 1
+
+    layout = PipelineParallelLayerLayout(
+        cfg.model.pipeline_model_parallel_layout,
+        cfg.model.pipeline_model_parallel_size,
+    )
+    layout.validate_layer_layout(cfg.model.num_layers, cfg.model.mtp_num_layers)
+    decoder_counts = [
+        sum(chunk.count(LayerType.decoder) for chunk in physical_stage) for physical_stage in layout.layout
+    ]
+    assert decoder_counts == [10, 12, 12, 12, 16, 16]
+
+    assert cfg.mixed_precision.fp8 == "e4m3"
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+    assert cfg.model.moe_router_force_load_balancing is True
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
+    assert cfg.model.dsa_indexer_topk == 2048
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
+
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.high_priority_a2a_comm_stream is False
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.comm_overlap.overlap_p2p_comm is False
+    assert cfg.comm_overlap.batch_p2p_comm is True
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
 @pytest.mark.parametrize("recipe_func", _H100_RECIPES, ids=lambda recipe: recipe.__name__)

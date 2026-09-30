@@ -16,6 +16,7 @@
 
 from megatron.bridge.perf_recipes.glm_moe_dsa.gb200.glm5 import (
     glm51_sft_192gpu_gb200_bf16_config,
+    glm52_pretrain_192gpu_gb200_fp8mx_config,
     glm52_sft_192gpu_gb200_bf16_config,
 )
 from megatron.bridge.perf_recipes.glm_moe_dsa.h100.glm5 import (
