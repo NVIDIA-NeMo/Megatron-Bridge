@@ -23,7 +23,7 @@ from transformer_engine.pytorch import RMSNorm as TERMSNorm
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.param_mapping import (
-    RMSNorm2ZeroCenteredRMSNormMapping,
+    ReplicatedMapping,
     merge_qkv_weights,
     split_qkv_weights,
 )
@@ -338,10 +338,7 @@ def test_affine_norms_use_transformer_engine_directly() -> None:
     assert set(vision_model.ln_pre.state_dict()) == {"weight", "bias", "_extra_state"}
 
     registry = MuseGlimmerBridge().mapping_registry()
-    assert isinstance(
-        registry.megatron_to_hf_lookup("decoder.final_norm.weight"),
-        RMSNorm2ZeroCenteredRMSNormMapping,
-    )
+    assert isinstance(registry.megatron_to_hf_lookup("decoder.final_norm.weight"), ReplicatedMapping)
     for name, _ in vision_model.named_parameters():
         assert registry.megatron_to_hf_lookup(f"vision_tower.{name}") is not None
 
@@ -493,7 +490,7 @@ def test_builder_constructs_native_hybrid_model_on_cpu(tiny_hybrid_model: MuseGl
     assert dict(model.decoder.layers[0].self_attention.q_layernorm.named_parameters()) == {}
     assert dict(model.decoder.layers[0].self_attention.k_layernorm.named_parameters()) == {}
     assert isinstance(model.decoder.final_norm, TERMSNorm)
-    assert model.decoder.final_norm.zero_centered_gamma is True
+    assert model.decoder.final_norm.zero_centered_gamma is False
     assert isinstance(model.vision_tower.ln_pre, TELayerNorm)
     assert isinstance(model.vision_tower.layers[0].norm1, TELayerNorm)
     assert names["vision_tower.patch_embedder.patch_embedding.weight"].dtype == torch.float32
@@ -621,3 +618,17 @@ def test_qkvg_mapping_executes_against_hybrid_qkv_module(tiny_hybrid_model: Muse
     torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.k_proj.weight"], key)
     torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.v_proj.weight"], value)
     torch.testing.assert_close(exported["model.language_model.layers.0.self_attn.gate_proj.weight"], gate)
+
+
+def test_final_norm_mapping_round_trips_bf16_exactly(tiny_hybrid_model: MuseGlimmerModel) -> None:
+    final_norm = tiny_hybrid_model.decoder.final_norm
+    mapping = MuseGlimmerBridge().mapping_registry().megatron_to_hf_lookup("decoder.final_norm.weight")
+    hidden_size = final_norm.weight.numel()
+    # Muse final-norm gains sit in [-5, -3); a bf16 ``w - 1`` round trip loses a bit in this range.
+    hf_weight = torch.linspace(-5.0, -3.0, hidden_size).to(torch.bfloat16)
+
+    megatron_weight = mapping.hf_to_megatron(hf_weight, final_norm)
+    exported = mapping.megatron_to_hf(megatron_weight, final_norm)
+
+    assert torch.equal(megatron_weight, hf_weight)
+    assert torch.equal(exported["model.language_model.norm.weight"], hf_weight)
