@@ -27,7 +27,7 @@ Contents, bottom-up:
 
    - :func:`balanced_assignment` — the per-sample plan: for each global sample in a
      micro-batch, the module-local DP rank that should own it and its canonical position.
-     Built on :func:`megatron.bridge.data.datasets.packing_utils.balanced_index_order`,
+     Built on :func:`balanced_index_order` (same module),
      with het-DP handled via canonical ``n_groups = canonical_grid_size(module dp_sizes)`` (their LCM) (so the vision
      and language modules, which may have different DP sizes, derive an identical
      assignment and the ``BridgeCommunicator`` keeps vision replica *r* paired with
@@ -210,9 +210,9 @@ def balanced_assignment(costs: List[float], n_groups: int, dp_size: int) -> List
 
 
 def intra_route(assignment: List[Tuple[int, int]], *, src_slot: int = 0) -> List[Tuple[int, int, int]]:
-    """Lift a single-slot 2D balanced assignment to the vehicle's 3D route.
+    """Lift a single-slot 2D balanced assignment to the 3D window route.
 
-    The inter-ready vehicle routes every sample by **three** coordinates
+    The window transport routes every sample by **three** coordinates
     ``route[g] = (dst_slot, owner_rank, canonical_pos)`` (the destination micro-batch slot, the
     module-local DP rank that owns it, and its canonical intra-slot position). The **intra**
     balancer never moves a sample across micro-batch slots, so ``dst_slot == src_slot`` for every
@@ -257,18 +257,18 @@ def build_window_route(costs_per_slot: List[List[float]], n_groups: int, dp_size
     route: List[Tuple[int, int, int]] = []
     for slot, costs in enumerate(costs_per_slot):
         route.extend(intra_route(balanced_assignment(costs, n_groups, dp_size), src_slot=slot))
-    # §10.0 safety net: the intra balancer must never move a sample across slots. Cheap, always-on.
+    # Safety net: the intra balancer must never move a sample across slots. Cheap, always-on.
     assert_intra_no_cross_slot(route, len(costs_per_slot[0]) if costs_per_slot else 0)
     return route
 
 
 def assert_intra_no_cross_slot(route: List[Tuple[int, int, int]], b_global: int) -> None:
-    """§10.0 "no cross-slot leak" guard: every sample's ``dst_slot`` equals its source slot.
+    """Guard against cross-slot leaks: every sample's ``dst_slot`` equals its source slot.
 
     For the slot-major window layout (``g = src_slot · b_global + j``) the source slot of global
     index ``g`` is ``g // b_global``. The **intra** balancer keeps every sample in its own slot, so
-    a mismatch means slot plumbing (route build / binning) corrupted the slot dimension — the §12
-    "primary safety net while W>1 plumbing is new". A future inter (cross-slot) balancer would route
+    a mismatch means slot plumbing (route build / binning) corrupted the slot dimension. A future
+    inter (cross-slot) balancer would route
     across slots by design and must **not** run this guard.
 
     Args:
@@ -292,13 +292,13 @@ def assert_intra_no_cross_slot(route: List[Tuple[int, int, int]], b_global: int)
 def window_cost_spread(
     costs_per_slot: List[List[float]], route: List[Tuple[int, int, int]], dp_size: int
 ) -> List[Dict[str, float]]:
-    """Per-slot pre/post-balance per-rank cost spread + remote-sample count (the §10.5 balance probe).
+    """Per-slot pre/post-balance per-rank cost spread + remote-sample count (the balance probe).
 
     For each slot, totals the per-rank cost **before** balancing (the natural contiguous shard: rank
     ``r`` holds slot-local positions ``[r·local, (r+1)·local)``) and **after** balancing (each sample
     credited to its routed ``owner_rank``), plus how many samples change rank. Pure and cheap — used
     only to log how much the reorder tightens the per-rank load (``after`` max/min should narrow
-    toward 1.0), the quantitative balance evidence the design's §10.3 validation looks for.
+    toward 1.0).
 
     Args:
         costs_per_slot: ``costs_per_slot[s]`` = slot ``s``'s per-sample costs by slot-local position.
@@ -475,7 +475,7 @@ def prepare_sample_exchange(
 
     Each sample carries its destination micro-batch slot (``dst_slot``) end-to-end so the receiver
     can bin it into the right slot bucket on reassembly (:func:`reassemble_window`); this is the
-    only genuinely new plumbing vs. the single-slot path (§4a of the inter-ready design). Sender
+    only genuinely new plumbing vs. the single-slot path. Sender
     and receiver order the moves identically by ``(dst_slot, canonical_pos, src_local_idx)`` so the
     packed bytes line up.
 
@@ -593,7 +593,7 @@ def prepare_sample_exchange(
 #    grid_thw: [n_img,3]}}}}
 #
 # ``split_microbatch`` turns it into B per-sample **flat** dicts (nesting flattened to
-# dotted keys) so the Phase-0 serializer/all-to-all can move individual samples; after the
+# dotted keys) so the serializer/all-to-all can move individual samples; after the
 # exchange ``merge_samples`` rebuilds the (rebalanced) micro-batch. Sample slicing/vision
 # attribution uses :func:`_apply_sample_dispatch` (LM by batch dim, vision by image via
 # ``image_counts``).
@@ -686,7 +686,7 @@ def _reorder_vision_by_images(
         # (avoids ``torch.cat([])`` and preserves dtype/device/requires_grad).
         return hidden_states[:0], grid_thw[:0]
     patches = patches_per_image(grid_thw)  # [n_images]
-    # Single host copy of the cumulative offsets (F14): materialize the cumsum once with one
+    # Single host copy of the cumulative offsets: materialize the cumsum once with one
     # .tolist(), then index with plain Python ints — no per-image .item() D2H sync in the loop.
     cu = torch.cat([patches.new_zeros(1), patches.cumsum(0)]).tolist()
     blocks = [hidden_states[cu[i] : cu[i + 1]] for i in image_perm]
@@ -710,15 +710,15 @@ def _gather_vision_subdict(
     :func:`_reorder_vision_by_images` (which keeps ``hidden_states`` patch-dim and ``grid_thw``
     image-dim aligned). A text-only sample contributes an empty ``[0, d]`` / ``[0, 3]`` block.
 
-    When ``cu_img`` is ``None`` the legacy one-image-per-sample mapping (image ``i`` ↔ sample ``i``)
+    When ``cu_img`` is ``None`` the one-image-per-sample fallback (image ``i`` ↔ sample ``i``)
     is used and requires ``n_images == n_samples``.
 
     Args:
         value: A sub-dict carrying ``hidden_states`` and ``grid_thw``.
         sample_indices: Per-sample permutation/selection (global sample ids).
         n_samples: Global batch sample count ``B``.
-        cu_img: Cumulative per-sample image offsets (length ``B + 1``), or ``None`` for the legacy
-            one-image-per-sample path.
+        cu_img: Cumulative per-sample image offsets (length ``B + 1``), or ``None`` for the
+            one-image-per-sample fallback.
 
     Returns:
         A new sub-dict with permuted ``hidden_states`` / ``grid_thw`` (other keys carried).
@@ -763,7 +763,7 @@ def _apply_sample_dispatch(
     Used by :func:`split_microbatch` (per-sample local-shard selection); ``n_samples`` is the
     canonical global batch size ``B`` so list/vision per-sample detection is consistent. ``cu_img``
     (cumulative per-sample image offsets) is forwarded to :func:`_gather_vision_subdict` for the
-    variable-images-per-sample reorder; ``None`` keeps the legacy one-image-per-sample path.
+    variable-images-per-sample reorder; ``None`` selects the one-image-per-sample fallback.
     """
     idx = torch.as_tensor(sample_indices, dtype=torch.long)
     out: Dict[str, Any] = {}
@@ -795,8 +795,8 @@ def split_microbatch(batch: Dict[str, Any], *, cu_img: "List[int] | None" = None
     so :func:`merge_samples` is a plain concat.
 
     ``cu_img`` (cumulative per-sample image offsets, length ``B + 1``) lets the vision gather support
-    a variable number of images per sample (0 = text-only, 1, or N). When ``None``, the legacy
-    one-image-per-sample path is used.
+    a variable number of images per sample (0 = text-only, 1, or N). When ``None``, the
+    one-image-per-sample fallback is used.
     """
     b = _batch_size(batch)
     return [_flatten_nested(_apply_sample_dispatch(batch, [i], n_samples=b, cu_img=cu_img)) for i in range(b)]
@@ -922,10 +922,10 @@ def sample_cost(
       reorder is active, so vision and language derive the same cost. This is the correct source:
       the rank-aware metadata collate (#4442) nulls ``modality_inputs``/``grid_thw`` on language
       shards, so reading ``grid_thw`` there yields ``p = 0`` and mispairs the vision↔language fan-out.
-    - Otherwise ``p = Σ prod(grid_thw)`` (the legacy patch-only path, used by mock/tests where no
+    - Otherwise ``p = Σ prod(grid_thw)`` (the ``grid_thw`` fallback, used by mock/tests where no
       ``image_token_id`` is wired and ``grid_thw`` is present on the sample).
 
-    With the default ``language_cost_weight=0.0`` the cost is patch-only (the historical behavior).
+    With the default ``language_cost_weight=0.0`` the cost is patch-only.
 
     Args:
         flat: One per-sample flat (dotted-key) dict.
@@ -977,7 +977,7 @@ def reassemble_window(
     window_size: int,
     local: int,
 ) -> List[Dict[str, Any]]:
-    """Rebuild this rank's ``W`` micro-batches from kept-local + received samples (§4a).
+    """Rebuild this rank's ``W`` micro-batches from kept-local + received samples.
 
     Generalizes the single-micro-batch reassembler to ``W`` slot-buckets: kept-local samples and
     deserialized received samples are binned by ``dst_slot``, sorted **within each slot** by
@@ -985,7 +985,7 @@ def reassemble_window(
     via :func:`merge_samples`. ``deserialize_sample`` / ``merge_samples`` are reused verbatim — the
     only new step is the per-slot binning.
 
-    The §10.0 invariant asserts are baked in (cheap, always on): they turn a silent slot mispair or
+    The slot invariant asserts are baked in (cheap, always on): they turn a silent slot mispair or
     a dropped/duplicated sample into a loud failure at the exact rank.
 
     Args:
@@ -1045,7 +1045,7 @@ def exchange_by_route(
 ) -> List[Dict[str, Any]]:
     """Transport-only per-sample exchange: route -> one ``all_to_all_single`` -> ``W`` micro-batches.
 
-    The inter-ready seam (§3.2): given a 3D ``route`` and the all-gathered layout/metadata, build the
+    Given a 3D ``route`` and the all-gathered layout/metadata, build the
     plan (:func:`prepare_sample_exchange`), run **one** ragged ``all_to_all_single``, and reassemble
     ``W`` micro-batches per slot (:func:`reassemble_window`). Knows nothing about the balancer — an
     intra route (``dst_slot == src_slot``, see :func:`intra_route`) and a future inter route flow
@@ -1140,9 +1140,9 @@ def exchange_window(
         nccl_stream: Optional CUDA stream to run the all-to-all on (cross-step overlap).
         image_count_of: Optional ``callable(batch) -> LongTensor[local]`` giving a shard's per-sample
             image count, enabling a variable number of images per sample (0/1/N). When ``None``, the
-            legacy one-image-per-sample path is used.
+            one-image-per-sample fallback is used.
         probe: When ``True``, log a one-line per-slot cost-spread digest (:func:`window_cost_spread`)
-            on ``dp_rank == 0`` — the §10.5 balance probe. Off by default (the caller throttles it).
+            on ``dp_rank == 0`` (the balance probe). Off by default (the caller throttles it).
 
     Returns:
         ``W`` rebalanced micro-batches for this rank, slot ``s`` at index ``s``.
@@ -1291,8 +1291,8 @@ class ReorderingBuffer:
 
     **Window buffering** (``window_size = W``): collect ``W`` micro-batches, cost-balance them in one
     exchange over the window (:func:`exchange_window`), and serve the ``W`` rebalanced micro-batches
-    one at a time from a cursor. ``W = 1`` (default) is the historical per-micro-batch behavior,
-    byte-for-byte. ``W == GA`` (the gradient-accumulation count) is the desired setting — the single
+    one at a time from a cursor. ``W = 1`` (default) exchanges every micro-batch on its own.
+    ``W == GA`` (the gradient-accumulation count) is the desired setting — the single
     window collective then lands once per optimizer step.
 
     **Cross-window prefetch overlap** (``overlap=True``): a background thread runs the *entire next
@@ -1306,8 +1306,8 @@ class ReorderingBuffer:
     ahead, so all ranks' Gloo/NCCL collectives stay in lockstep — re-synced each window by the
     optimizer/DDP all-reduce barrier between consumptions. The worker uses the (separate)
     ``dp_group_nccl`` exclusively, so its all-to-all never races the main thread's bridge/DDP
-    collectives on their own PGs (requires ``CUDA_DEVICE_MAX_CONNECTIONS != 1``). Two windows stay
-    resident (consuming + prefetched) ≈ ``2·W`` micro-batches — the headline memory cost.
+    collectives on their own PGs (requires ``CUDA_DEVICE_MAX_CONNECTIONS != 1``). Up to three windows
+    stay resident (consuming + queued + being exchanged) ≈ ``3·W`` micro-batches — the headline memory cost.
 
     With ``overlap=False`` the window exchange runs synchronously in ``__next__`` (no thread).
     """
@@ -1344,7 +1344,7 @@ class ReorderingBuffer:
         # rebalanced micro-batches and the cursor serving them one at a time.
         self._active: List[Dict[str, Any]] = []
         self._cursor = 0
-        # Count of window exchanges run, for throttling the §10.5 balance probe (first few + every 50th).
+        # Count of window exchanges run, for throttling the balance probe (first few + every 50th).
         self._exchanges = 0
         # Cross-window prefetch: a thread exchanges window t+1 while the main thread computes
         # window t. Started for any window_size (W == 1 is the one-step-ahead per-micro-batch case).
@@ -1385,7 +1385,7 @@ class ReorderingBuffer:
             logger.debug("Ignoring exception while shutting down ReorderingBuffer.", exc_info=True)
 
     def _exchange_window(self, batches: List[Dict[str, Any]], stream: "Any") -> List[Dict[str, Any]]:
-        # Throttle the §10.5 balance probe: log the first few windows, then every 50th.
+        # Throttle the balance probe: log the first few windows, then every 50th.
         self._exchanges += 1
         probe = self._exchanges <= 3 or self._exchanges % 50 == 0
         return exchange_window(

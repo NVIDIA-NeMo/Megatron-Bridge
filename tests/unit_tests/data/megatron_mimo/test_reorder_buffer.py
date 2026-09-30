@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the per-sample reorder-buffer building blocks (Phase 0, no process group).
+"""Unit tests for the per-sample reorder-buffer building blocks (no process group).
 
 The all-to-all is emulated on CPU: each rank's ``send_buf`` is split by ``send_splits`` into
 per-destination chunks, and each destination's ``recv_buf`` is the concatenation of the chunks
@@ -421,7 +421,7 @@ def test_split_merge_roundtrip_identity():
 
 
 # ---------------------------------------------------------------------------
-# merge_samples robustness to per-sample-varying vision (PR-A)
+# merge_samples robustness to per-sample-varying vision
 # ---------------------------------------------------------------------------
 
 _VKEY = "modality_inputs.images.enc"
@@ -430,7 +430,7 @@ _VKEY = "modality_inputs.images.enc"
 def _flat_vision_sample(idx: int, n_tokens: int, n_patches: int, *, none_vision: bool = False) -> dict:
     """Per-sample flat dict as ``split_microbatch`` produces: ``[1, T]`` input_ids and one image's
     ``[p, 4]`` hidden_states + ``[1, 3]`` grid_thw. ``n_patches==0`` is text-only: empty ``[0, 4]`` /
-    ``[0, 3]`` (or ``None`` when ``none_vision`` to exercise the legacy/None merge path)."""
+    ``[0, 3]`` (or ``None`` when ``none_vision`` to exercise the None-vision merge path)."""
     input_ids = torch.arange(idx * 100, idx * 100 + n_tokens, dtype=torch.int64).reshape(1, -1)
     if n_patches == 0:
         if none_vision:
@@ -481,7 +481,7 @@ def test_serialize_empty_vision_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# Variable images per sample: split / merge / exchange (PR-B)
+# Variable images per sample: split / merge / exchange
 # ---------------------------------------------------------------------------
 
 
@@ -564,8 +564,8 @@ def test_soft_validation_mismatch():
         split_microbatch(batch, cu_img=[0, 1, 5])  # sums to 5 != 2 images
 
 
-def test_split_legacy_no_cu_img():
-    # one-image-per-sample works with cu_img=None (legacy path)
+def test_split_one_image_per_sample_no_cu_img():
+    # one-image-per-sample works with cu_img=None (fallback path)
     batch = _make_mimo_batch([2, 5, 1, 3])
     _assert_batch_equal(merge_samples(split_microbatch(batch)), batch)
     # multi-image without cu_img raises a clear error
@@ -631,7 +631,7 @@ def test_exchange_var_images_dp2():
 
 
 # ---------------------------------------------------------------------------
-# 3D routing seam + per-slot reassembly (reassemble_window): Phase-1 gates §10.1.1 / §10.1.2
+# 3D routing + per-slot reassembly (reassemble_window)
 # ---------------------------------------------------------------------------
 
 
@@ -667,7 +667,7 @@ def _emulate_window_exchange(rank_flats, rank_global_indices, all_tensor_meta, r
 
 
 def test_reassemble_window_w1_matches_canonical_merge():
-    """§10.1.1: with the intra route and W=1, ``reassemble_window`` rebuilds exactly the canonically
+    """With the intra route and W=1, ``reassemble_window`` rebuilds exactly the canonically
     ordered balanced micro-batch — byte-identical to merging the globally-balanced samples directly."""
     images_per_sample = [2, 0, 1, 0, 3, 1, 0, 2]
     dp_size, n_groups = 2, 2
@@ -697,7 +697,7 @@ def test_reassemble_window_w1_matches_canonical_merge():
 
 
 def test_reassemble_window_w2_3d_route():
-    """§10.1.2: a hand-built W=2 3D route (no balancer) routes samples into specific slots; assert each
+    """A hand-built W=2 3D route (no balancer) routes samples into specific slots; assert each
     slot reassembles its sample, a text-only sample lands as an empty-vision slot, vision is intact."""
     # 4 samples, dp=2, W=2 slots, local=1 per (slot, rank). Layout: rank0 holds globals [0,1],
     # rank1 holds [2,3]. g2 is text-only (0 patches); others carry distinct image patch counts.
@@ -736,7 +736,7 @@ def test_reassemble_window_w2_3d_route():
 
 
 def test_reassemble_window_slot_shape_guard():
-    """The §10.0 slot-shape invariant fires loudly when a slot ends up with the wrong sample count."""
+    """The slot-shape invariant fires loudly when a slot ends up with the wrong sample count."""
     # Route both rank0's samples into the same slot of rank0 -> slot0 has 2, slot1 has 0 (expected 1).
     dp_size, window_size, local = 2, 2, 1
     originals = [_flat_vision_sample(i, n_tokens=4, n_patches=1) for i in range(4)]
@@ -758,7 +758,7 @@ def test_reassemble_window_slot_shape_guard():
 
 
 # ---------------------------------------------------------------------------
-# Window route (build_window_route) + multi-slot window exchange: Phase-2 gates
+# Window route (build_window_route) + multi-slot window exchange
 # ---------------------------------------------------------------------------
 
 
@@ -823,7 +823,7 @@ def test_window_exchange_two_slots_dp2():
 
 
 def test_window_exchange_w3_dp2_text_only_and_multi():
-    # W=3 window with text-only + multi-image samples; proves §4a vision attribution per slot at W>1.
+    # W=3 window with text-only + multi-image samples; vision attribution per slot at W>1.
     _run_window_exchange([[0, 2, 1, 0], [3, 0, 0, 1], [1, 1, 1, 1]], dp_size=2, n_groups=2)
 
 
@@ -835,8 +835,8 @@ def test_window_exchange_het_dp_paired_slots():
 
 
 def test_window_cost_spread_tightens_after_balance():
-    """§10.5 balance probe: the per-rank cost spread must tighten (and never widen) after balancing —
-    the quantitative evidence that reordering evens the per-rank load (§10.3)."""
+    """Balance probe: the per-rank cost spread must tighten (and never widen) after balancing —
+    the quantitative evidence that reordering evens the per-rank load."""
     dp_size, n_groups = 4, 4
     # Heavily skewed costs: the natural contiguous shards are very imbalanced (rank0 holds the big
     # samples, rank3 the small), so balancing should shrink the per-rank max/min spread.
@@ -859,7 +859,7 @@ def test_window_cost_spread_tightens_after_balance():
 
 
 def test_assert_intra_no_cross_slot_passes_for_window_route():
-    # §10.0 guard: build_window_route output (intra) always satisfies dst_slot == src_slot.
+    # build_window_route output (intra) always satisfies dst_slot == src_slot.
     dp_size, n_groups = 2, 2
     costs_per_slot = [[4.0, 1.0, 3.0, 2.0], [1.0, 2.0, 3.0, 4.0]]
     route = build_window_route(costs_per_slot, n_groups, dp_size)  # calls the guard internally
@@ -1090,7 +1090,7 @@ def test_sample_cost_image_token_id_recovers_patches_from_input_ids():
 
 
 def test_sample_cost_image_token_id_matches_across_modules():
-    """Bug #1: vision (has grid_thw) and language (grid_thw nulled) must derive the SAME cost.
+    """Vision (has grid_thw) and language (grid_thw nulled) must derive the SAME cost.
 
     With image_token_id wired, the patch cost comes from the module-independent input_ids image-token
     count, so a vision-style flat and a language-style flat with identical input_ids cost the same even
@@ -1100,7 +1100,7 @@ def test_sample_cost_image_token_id_matches_across_modules():
 
     img = 99
     input_ids = torch.tensor([[1, img, img, 2, 0, 0]], dtype=torch.int64)  # 2 image tokens
-    # Vision-style flat: carries grid_thw (would dominate the legacy path).
+    # Vision-style flat: carries grid_thw (would dominate the grid_thw fallback).
     vision_flat = {
         "input_ids": input_ids,
         f"{_VKEY}.grid_thw": torch.tensor([[1, 4, 2]], dtype=torch.int64),  # prod = 8 patches
@@ -1117,7 +1117,7 @@ def test_sample_cost_image_token_id_matches_across_modules():
 
 
 # ---------------------------------------------------------------------------
-# F14 — single D2H on the vision reorder path (Task 4.3)
+# Single D2H on the vision reorder path
 # ---------------------------------------------------------------------------
 
 

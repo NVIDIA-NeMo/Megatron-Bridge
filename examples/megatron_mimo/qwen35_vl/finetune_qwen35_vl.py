@@ -334,6 +334,12 @@ def _validate_mimo_batch_sizes(
             f"--micro-batch-size ({args.micro_batch_size})."
         )
 
+    if args.intra_microbatch_reorder and not args.pad_to_seq_length:
+        raise ValueError(
+            "--intra-microbatch-reorder requires --pad-to-seq-length true: exchanged samples are concatenated "
+            "back into a micro-batch, so every rank must pad to the same sequence length."
+        )
+
     summaries = []
     for name, parallelism in parallelism_config.module_parallelisms.items():
         dp = parallelism.data_parallel_size
