@@ -186,7 +186,7 @@ class PLENGramEmbeddingMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         export loop iterates to it, so all TP ranks must consume the shards in the same order --
         which the export does, and which a ``dict(...)`` / ``.items()`` traversal preserves.
         """
-        if os.environ.get("QWEN48_PLE_CPU_OFFLOAD") == "1":
+        if os.environ.get("QWEN38_PLE_CPU_OFFLOAD") == "1":
             return _PLEHostShardExport(self, megatron_weights)
         megatron_weights = self.broadcast_from_pp_rank(megatron_weights, cache_key=str(self.megatron_param))
         if megatron_weights is None:
