@@ -79,12 +79,12 @@ logger = logging.getLogger(__name__)
 # All sample tensors are serialized into uint8 byte buffers padded to this alignment, so
 # the receiver can view-cast any dtype back from the received bytes without alignment
 # errors and compute exact offsets from metadata alone.
-_ALIGN = 8
+_SERIALIZED_TENSOR_BYTE_ALIGNMENT = 8
 
 
-def _pad_to_align(nbytes: int) -> int:
-    """Zero-padding bytes to round ``nbytes`` up to the next :data:`_ALIGN` multiple."""
-    return (-nbytes) % _ALIGN
+def _alignment_padding_bytes(nbytes: int) -> int:
+    """Zero-padding bytes to round ``nbytes`` up to the next :data:`_SERIALIZED_TENSOR_BYTE_ALIGNMENT` multiple."""
+    return (-nbytes) % _SERIALIZED_TENSOR_BYTE_ALIGNMENT
 
 
 # String -> (torch.dtype, byte width), for reconstructing tensors from metadata shared via
@@ -381,7 +381,7 @@ def serialize_sample(flat: Dict[str, Any], keys: List[str]) -> torch.Tensor:
 
     Returns:
         1D uint8 CPU tensor with each tensor's raw bytes concatenated in ``keys`` order,
-        each padded to :data:`_ALIGN`.
+        each padded to :data:`_SERIALIZED_TENSOR_BYTE_ALIGNMENT`.
     """
     parts = []
     for key in keys:
@@ -389,7 +389,7 @@ def serialize_sample(flat: Dict[str, Any], keys: List[str]) -> torch.Tensor:
         if t is None:
             continue
         raw = t.contiguous().view(torch.uint8).reshape(-1)
-        pad = _pad_to_align(raw.numel())
+        pad = _alignment_padding_bytes(raw.numel())
         if pad:
             raw = torch.cat([raw, torch.zeros(pad, dtype=torch.uint8, device=raw.device)])
         parts.append(raw)
@@ -405,7 +405,7 @@ def sample_byte_size(meta: Dict[str, Any], keys: List[str]) -> int:
             continue
         _, elem = _dtype_info(info["dtype"])
         nbytes = math.prod(info["shape"]) * elem
-        nbytes += _pad_to_align(nbytes)
+        nbytes += _alignment_padding_bytes(nbytes)
         total += nbytes
     return total
 
@@ -437,7 +437,7 @@ def deserialize_sample(
         dtype, elem = _dtype_info(info["dtype"])
         nbytes = math.prod(info["shape"]) * elem
         flat[key] = buf[cursor : cursor + nbytes].view(dtype).reshape(info["shape"]).clone()
-        cursor += nbytes + _pad_to_align(nbytes)
+        cursor += nbytes + _alignment_padding_bytes(nbytes)
     for key, info in meta.items():
         if key not in flat:
             flat[key] = info.get("non_tensor") if isinstance(info, dict) and "non_tensor" in info else None
@@ -900,13 +900,12 @@ def sample_cost(
 ) -> float:
     """Joint per-sample cost: ``encoder_cost_weight·p + language_cost_weight·t``.
 
-    Only the ratio of the two weights matters (the balancer is scale-invariant). Each term is
-    linear in an intrinsic per-sample workload count:
+    Only the ratio of the two weights matters. Each term is linear in a per-sample count:
 
     - ``p`` is the vision patch count (mirrors vision-encoder FLOPs).
     - ``t`` is the **real (non-pad) token count** of ``input_ids`` (mirrors LM FLOPs), counted
-      via :func:`real_token_lengths` (from the batch's ``attention_mask``). Image placeholder
-      tokens are part of the language sequence and are included.
+      via :func:`real_token_lengths` (from the batch's ``attention_mask``), image placeholder
+      tokens included.
 
     Both terms must be **collation-independent** so vision and language derive an identical
     assignment with no cross-module communication: the patch count is intrinsic to the image,
@@ -929,9 +928,8 @@ def sample_cost(
 
     Args:
         flat: One per-sample flat (dotted-key) dict.
-        encoder_cost_weight: Weight of the encoder term (per patch here; patch-grid encoders only,
-            other encoders need their own ``cost_of``).
-        language_cost_weight: Weight of the language term (per sequence token). ``0.0`` disables it.
+        encoder_cost_weight: Weight per vision patch.
+        language_cost_weight: Weight per real token; ``0.0`` disables the term.
         image_token_id: Placeholder token id whose count in ``input_ids`` is the module-independent
             patch proxy. ``None`` falls back to the ``grid_thw`` patch sum.
         square_merge_size: ``spatial_merge_size²`` — patches represented by one placeholder token.
@@ -1232,8 +1230,7 @@ def reorder_window_local(
 ) -> List[Dict[str, Any]]:
     """Reorder a window into canonical order on a ``dp_size == 1`` module (no exchange needed).
 
-    Same costs + ``n_groups`` as the paired dp>1 module, so the result equals that module's
-    post-exchange order (rank 0's samples, then rank 1's, ...), keeping the batch-dim pairing.
+    Uses the same costs and ``n_groups`` as the paired dp>1 module, so both end in the same order.
 
     Args:
         batches: This rank's ``W`` whole micro-batches.
@@ -1421,7 +1418,7 @@ class ReorderingBuffer:
         if not batches:
             self._active = []
         elif self._dp_size <= 1:
-            # Nothing to exchange, but the paired dp>1 module is reordered: match its order locally.
+            # dp_size == 1: nothing to exchange, apply the canonical order locally.
             self._active = reorder_window_local(
                 batches, n_groups=self._n_groups, cost_of=self._cost_of, image_count_of=self._image_count_of
             )

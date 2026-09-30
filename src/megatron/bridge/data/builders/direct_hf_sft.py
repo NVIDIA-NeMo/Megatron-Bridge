@@ -95,8 +95,7 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     in_batch_packing_pad_to_multiple_of: int = 1
     megatron_mimo_scalable_dp: bool = False
     megatron_mimo_intra_microbatch_reorder: bool = False
-    # Reorder cost = encoder_weight * encoder work (image patches) + language_weight * sequence tokens
-    # (image placeholder tokens included); only the ratio matters.
+    # Reorder cost = encoder_weight * image patches + language_weight * real tokens; only the ratio matters.
     megatron_mimo_reorder_encoder_cost_weight: float = 1.0
     megatron_mimo_reorder_language_cost_weight: float = 0.0
     megatron_mimo_reorder_overlap: bool = True

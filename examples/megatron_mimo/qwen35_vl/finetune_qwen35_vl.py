@@ -12,8 +12,7 @@ Conversation examples are built with the standard HF VLM provider, then the
 resulting Qwen batch is adapted into the MIMO forward shape:
 
   - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and the
-    tokenizer's ``attention_mask`` (a data-path length source; the forward step drops it
-    before the model)
+    tokenizer's ``attention_mask``
   - image inputs: ``modality_inputs["images"]["qwen_visual"]``
 
 Example 2-GPU smoke:
@@ -281,9 +280,7 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     pp_size = _grid_dim_size(grid, "pp", 1)
     is_last_pp = pp_rank == pp_size - 1
 
-    # Cheap [B, S] fields (input_ids, position_ids, attention_mask) are always shipped: the data path
-    # (reorder cost, packing lengths, MRoPE) reads them on every stage, and forward_step alone decides
-    # what the model receives. Only the expensive or last-stage-only fields are gated here.
+    # Cheap [B, S] fields are always shipped; forward_step decides what reaches the model.
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
             input_ids=True,
@@ -293,7 +290,6 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
             modality_inputs=False,
         )
 
-    # Only an encoder's first PP stage loads data, so nothing is stage-gated here.
     return MIMOBatchSpec(
         input_ids=True,
         position_ids=False,
@@ -336,8 +332,8 @@ def _validate_mimo_batch_sizes(
 
     if args.intra_microbatch_reorder and not args.pad_to_seq_length:
         raise ValueError(
-            "--intra-microbatch-reorder requires --pad-to-seq-length true: exchanged samples are concatenated "
-            "back into a micro-batch, so every rank must pad to the same sequence length."
+            "--intra-microbatch-reorder requires --pad-to-seq-length true (exchanged samples must share one "
+            "sequence length)."
         )
 
     summaries = []
@@ -959,8 +955,7 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
         # return an iterator (DataLoader is iterable but not itself an iterator).
         loader_iter: Iterator[dict[str, Any]] = iter(train_loader)
 
-        # Gate on the canonical grid (same on every rank), not this rank's DP size: dp=1 modules must
-        # still join the world-collective PG creation below and reorder locally to stay paired.
+        # Gate on the canonical grid so every rank (dp=1 included) takes the same branch.
         reorder_on = (
             scalable_dp
             and bool(getattr(cfg.dataset, "megatron_mimo_intra_microbatch_reorder", False))
@@ -1335,13 +1330,13 @@ def _parse_args() -> argparse.Namespace:
         "--reorder-encoder-cost-weight",
         type=float,
         default=1.0,
-        help="Reorder cost weight of the encoder term (per image patch).",
+        help="Reorder cost weight per image patch.",
     )
     parser.add_argument(
         "--reorder-language-cost-weight",
         type=float,
         default=0.0,
-        help="Reorder cost weight of the language term (per sequence token, image tokens included); 0 = encoder-only.",
+        help="Reorder cost weight per real token (image tokens included); 0 = encoder-only.",
     )
     parser.add_argument(
         "--no-overlap-intra-microbatch-reorder",
