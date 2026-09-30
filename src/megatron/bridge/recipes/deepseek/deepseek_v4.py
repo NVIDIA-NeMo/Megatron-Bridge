@@ -121,7 +121,8 @@ def deepseek_v4_flash_sft_openmath_thinking_packed_config() -> ConfigContainer:
     When using CP>1, use ``--step-func dsv4_step`` and choose a total packed
     sequence length divisible by ``context_parallel_size``. Contiguous token
     slicing does not require individual documents to be padded to ``2*CP``;
-    the existing offline-packer padding default below is unchanged.
+    the ``pad_seq_to_mult`` value below is an offline-packer default, not a
+    contiguous-CP requirement.
 
     For GB200-optimized training with HybridEP dispatcher and DSA kernel fusion,
     use ``deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config`` instead.
