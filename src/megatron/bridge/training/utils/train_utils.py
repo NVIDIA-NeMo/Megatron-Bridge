@@ -114,7 +114,7 @@ def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
     """
     if profiling is None or not profiling.record_memory_history:
         return
-    if get_rank_safe() not in profiling.profile_ranks:
+    if profiling.profile_ranks and get_rank_safe() not in profiling.profile_ranks:
         return
 
     torch.cuda.memory._record_memory_history(
@@ -626,7 +626,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
 
-    if getattr(model_config, "is_hybrid_model", False):
+    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
         pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
         main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
         mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
@@ -809,7 +809,7 @@ def training_log(
 
     if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
         rank = get_rank_safe()
-        if rank in config.profiling.profile_ranks:
+        if not config.profiling.profile_ranks or rank in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 

@@ -1669,6 +1669,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @pytest.mark.parametrize("profile_ranks", [[7], []])
     def test_profiling_memory_snapshot(
         self,
         mock_report_runtime,
@@ -1686,6 +1687,7 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        profile_ranks,
     ):
         """Test memory snapshot functionality when profiling is enabled."""
         # Get fresh total_loss_dict for this test
@@ -1707,7 +1709,7 @@ class TestTrainingLog:
         mock_profiling_config = mock.MagicMock()
         mock_profiling_config.record_memory_history = True
         mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
-        mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_ranks = profile_ranks
         mock_profiling_config.profile_step_end = 10
         mock_config.profiling = mock_profiling_config
         mock_config.logger.tensorboard_dir = "/tmp/tb"
@@ -3666,7 +3668,7 @@ class TestCalcParamsL2Norm:
         expected_norm = 5.0  # sqrt(25 * 1.0^2)
         assert result == pytest.approx(expected_norm, rel=1e-3)
 
-    # ==================== MoE BF16 main_param tests ====================
+    # ==================== MoE BF16 main_param tests =============
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -4406,3 +4408,32 @@ def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
     assert router.bias.requires_grad is False
     assert shared_experts.gate_weight.requires_grad is False
     assert shared_experts.gate_bias.requires_grad is False
+
+
+@pytest.mark.parametrize("repeated, expected", [(False, 4), (True, 3)])
+def test_hybrid_provider_moe_count_without_legacy_flag(repeated, expected):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    provider = HybridModelProvider(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=2,
+        hybrid_layer_pattern="MEME/*E/*E",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated,
+    )
+    assert not provider.is_hybrid_model
+    assert _get_num_moe_layers(provider) == expected
+
+
+@pytest.mark.parametrize("rank", [0, 7])
+def test_empty_profile_ranks_records_on_every_rank(rank):
+    profiling = SimpleNamespace(record_memory_history=True, profile_ranks=[], memory_snapshot_path="snapshot.pkl")
+    with (
+        mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=rank),
+        mock.patch("torch.cuda.memory._record_memory_history") as record,
+        mock.patch("torch._C._cuda_attach_out_of_memory_observer") as attach,
+    ):
+        start_memory_history_recording(profiling)
+    record.assert_called_once()
+    attach.assert_called_once()

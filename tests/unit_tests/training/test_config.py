@@ -15,7 +15,7 @@
 import json
 import os
 import warnings
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from types import SimpleNamespace
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
@@ -1609,6 +1609,78 @@ class TestConfigContainerValidation:
             assert model_cfg.mtp_num_layers == 1
             assert dataset_cfg.packing_buffer_size is not None
             assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 1
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("ep_size", "cp_size", "tp_size", "initial_padding", "expected_error"),
+        [
+            (2, 1, 1, 1, None),
+            (2, 2, 2, 1, None),
+            (2, 2, 2, 0, "in_batch_packing_pad_to_multiple_of must be greater than 0"),
+            (1, 1, 1, 1, "Custom encoder requires fixed-width padding"),
+        ],
+    )
+    def test_custom_energon_validation_uses_training_derived_padding(
+        self, monkeypatch, ep_size, cp_size, tp_size, initial_padding, expected_error
+    ):
+        @dataclass(kw_only=True)
+        class FixedWidthEncoderConfig(QwenVLEnergonTaskEncoderConfig):
+            required_padding_multiple: int
+            resolved_padding_multiple: int | None = None
+
+            def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+                if not dataset_config.pad_to_max_length:
+                    raise ValueError("Custom encoder requires fixed-width padding.")
+                if dataset_config.in_batch_packing_pad_to_multiple_of != self.required_padding_multiple:
+                    raise ValueError("Custom encoder requires resolved CP/SP alignment.")
+                self.resolved_padding_multiple = dataset_config.in_batch_packing_pad_to_multiple_of
+
+        expected_padding = cp_size * tp_size if cp_size > 1 else 1
+        encoder_config = FixedWidthEncoderConfig(
+            hf_processor_path="Qwen/model", required_padding_multiple=expected_padding
+        )
+        validate_encoder = MagicMock(wraps=encoder_config.validate_dataset)
+        build_encoder = MagicMock(side_effect=AssertionError("Validation must not construct runtime encoders."))
+        monkeypatch.setattr(encoder_config, "validate_dataset", validate_encoder)
+        monkeypatch.setattr(encoder_config, "build_task_encoder", build_encoder)
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=ep_size,
+            context_parallel_size=cp_size,
+            tensor_model_parallel_size=tp_size,
+            sequence_parallel=tp_size > 1,
+            moe_token_dispatcher_type="alltoall",
+        )
+        world_size = ep_size * cp_size * tp_size
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=world_size)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        dataset_cfg.task_encoder = encoder_config
+        dataset_cfg.in_batch_packing_pad_to_multiple_of = initial_padding
+        assert dataset_cfg.pad_to_max_length is False
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=world_size,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            if expected_error is not None:
+                with pytest.raises(ValueError, match=expected_error):
+                    container.validate()
+                if initial_padding == 0:
+                    validate_encoder.assert_not_called()
+            else:
+                container.validate()
+                assert dataset_cfg.pad_to_max_length is True
+                assert encoder_config.resolved_padding_multiple == expected_padding
+                validate_encoder.assert_called_once_with(dataset_cfg)
+            build_encoder.assert_not_called()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -5134,3 +5206,100 @@ class TestTokenizerConfig:
                 metadata_path=metadata_path,
                 random_arg=True,
             )
+
+
+@pytest.mark.parametrize("backend", ["torch", "megatron_dist", "megatron_ddp"])
+def test_shortcut_moe_rejects_fsdp(backend):
+    cfg, original, module = create_test_config_container(
+        1, create_test_gpt_config(moe_shortcut_connection=True, num_moe_experts=4)
+    )
+    try:
+        cfg.dist.use_torch_fsdp2 = backend == "torch"
+        cfg.dist.use_megatron_fsdp = backend == "megatron_dist"
+        cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
+        with pytest.raises(ValueError, match="moe_shortcut_connection"):
+            cfg.validate()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize("use_recipe", [False, True])
+def test_layerwise_optimizer_rejects_single_grouped_weight(use_recipe):
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config(moe_single_grouped_weight=True))
+    try:
+        if use_recipe:
+            from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
+
+            cfg.optimizer, cfg.scheduler = distributed_muon_with_cosine_annealing()
+            assert not cfg.optimizer.use_layer_wise_distributed_optimizer
+        else:
+            cfg.optimizer.use_layer_wise_distributed_optimizer = True
+        with pytest.raises(ValueError, match="moe_single_grouped_weight"):
+            cfg.validate()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+def test_mtp_freeze_requires_mtp_layers():
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config(freeze_base_model_for_mtp=True))
+    try:
+        with pytest.raises(ValueError, match="requires mtp_num_layers"):
+            cfg.validate()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize(
+    "dense,expert",
+    [
+        ("no_shard", "optim_grads"),
+        ("optim", "optim_grads_params"),
+        ("optim_grads", "no_shard"),
+        ("optim_grads_params", None),
+        ("optim", "no_shard"),
+        ("no_shard", None),
+    ],
+)
+@pytest.mark.parametrize("fusion", [False, True])
+def test_fsdp_v1_considers_both_sharding_strategies(dense, expert, fusion, monkeypatch):
+    monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.data_parallel_sharding_strategy = dense
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        cfg.model.gradient_accumulation_fusion = fusion
+        with patch("megatron.bridge.training.config.warn_rank_0") as warn:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        assert cfg.model.gradient_accumulation_fusion is fusion
+        if fusion and {dense, expert} & {"optim_grads", "optim_grads_params"}:
+            warn.assert_called_once_with(
+                "Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP."
+            )
+        else:
+            warn.assert_not_called()
+        cfg.train.check_weight_hash_across_dp_replicas_interval = 10
+        if "optim_grads_params" in {dense, expert}:
+            with pytest.raises(AssertionError, match="check_weight_hash"):
+                cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        else:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize("expert", [None, "no_shard", "optim"])
+def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
+    monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config(init_model_with_meta_device=True))
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        if expert in (None, "no_shard"):
+            with pytest.raises(ValueError, match="Meta device"):
+                cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        else:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)
