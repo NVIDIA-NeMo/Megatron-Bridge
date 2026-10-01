@@ -436,7 +436,9 @@ def main() -> None:
                     diagnostics["sliding_mask_mismatched_elements"] = int(
                         (masks["sliding_attention"].bool() != sliding_blocked).sum()
                     )
-                    if name == "text_unpadded_batch":
+                    # The layer-0 trace compares unsharded activations; skip it when sequence parallel
+                    # shards Megatron's hidden states. Loss/logit/gradient parity still covers this mesh.
+                    if name == "text_unpadded_batch" and not megatron.config.sequence_parallel:
                         clean_inputs.update(clean_kwargs)
                         diagnostics["clean_layer0_trace"] = compare_layer0(
                             hf_layer0_trace(hf, clean_inputs), megatron_layer0_trace(megatron, clean_inputs)
