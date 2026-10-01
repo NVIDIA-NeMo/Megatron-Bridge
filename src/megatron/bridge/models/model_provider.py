@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import inspect
 import os
 import warnings
 from pathlib import Path
@@ -213,6 +214,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
+        *,
+        use_layer_wise_distributed_optimizer: bool = False,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -243,6 +246,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             pg_collection: Optional pre-initialized ProcessGroupCollection. If provided, skips
                 model parallel initialization and uses the provided collection directly.
                 This is used when `use_decentralized_pg=True` in the distributed config.
+            use_layer_wise_distributed_optimizer: Build DDP parameter buffers using the
+                layer-wise optimizer layout, including Muon's matrix/scalar split.
 
         Returns:
             A list containing the wrapped model instance.
@@ -303,6 +308,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
             pg_collection=pg_collection,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
         )
 
         if final_post_wrap_hook:
@@ -528,6 +534,7 @@ class GetModelKwargs(TypedDict, total=False):
     ddp_config: DistributedDataParallelConfig | None
     model_type: ModelType
     overlap_param_gather_with_optimizer_step: bool
+    use_layer_wise_distributed_optimizer: bool
     fp16: bool | None
     bf16: bool | None
     use_megatron_fsdp: bool
@@ -597,6 +604,7 @@ def get_model(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -629,6 +637,8 @@ def get_model(
             hooks will be executed in order.
         mixed_precision_wrapper: Wrapper class/function applied when fp16/bf16 is enabled. Defaults
             to Megatron-Core's `Float16Module`. If None, the wrapper is not applied.
+        use_layer_wise_distributed_optimizer: Use MCore's layer-wise optimizer DDP
+            parameter routing and buffer layout.
 
     Returns:
         list[MegatronModule]: List of model modules. Contains multiple modules
@@ -636,6 +646,12 @@ def get_model(
     """
     if fp16 is True and bf16 is True:
         raise ValueError("Only one of fp16 and bf16 can be enabled.")
+
+    layer_wise_ddp_kwargs = {}
+    if wrap_with_ddp and use_layer_wise_distributed_optimizer:
+        if "use_layer_wise_distributed_optimizer" not in inspect.signature(_ddp_wrap).parameters:
+            raise RuntimeError("The installed MCore DDP wrapper does not support layer-wise optimizer layouts.")
+        layer_wise_ddp_kwargs["use_layer_wise_distributed_optimizer"] = True
 
     if fp16 is not None:
         model_provider.fp16 = fp16
@@ -724,6 +740,7 @@ def get_model(
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
             pg_collection=pg_collection,
+            **layer_wise_ddp_kwargs,
         )
 
     return model

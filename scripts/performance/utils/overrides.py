@@ -541,15 +541,21 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     # Create dataset configuration based on type
     if args.data == "mock":
         if args.domain == "llm":
+            from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import FixedTHDMockDatasetConfig
+
             # Override the dataset configuration for LLM models.
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
-            recipe.dataset = create_mock_dataset_config(
-                seq_length=recipe.model.seq_length,
-                num_workers=recipe.dataset.num_workers,
-                pin_memory=recipe.dataset.pin_memory,
-                persistent_workers=recipe.dataset.persistent_workers,
-            )
+            if isinstance(recipe.dataset, FixedTHDMockDatasetConfig):
+                # DSv4's benchmark owns its THD padding and contiguous-CP contract.
+                recipe.dataset.seq_length = recipe.model.seq_length
+            else:
+                recipe.dataset = create_mock_dataset_config(
+                    seq_length=recipe.model.seq_length,
+                    num_workers=recipe.dataset.num_workers,
+                    pin_memory=recipe.dataset.pin_memory,
+                    persistent_workers=recipe.dataset.persistent_workers,
+                )
     elif args.data == "rp2":
         if not args.dataset_paths or not args.index_mapping_dir:
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")

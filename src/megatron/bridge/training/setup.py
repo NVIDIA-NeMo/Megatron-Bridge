@@ -611,6 +611,12 @@ def _freeze_base_model_for_mtp(model: list[MegatronModule]) -> list[MegatronModu
 def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCollection) -> list[MegatronModule]:
     """Build distributed model from either ModelConfig or ModelProviderMixin."""
     model_config = cfg.model
+    layer_wise_kwargs = {}
+    optimizer_name = getattr(cfg.optimizer, "optimizer", "")
+    if getattr(cfg.optimizer, "use_layer_wise_distributed_optimizer", False) is True or (
+        isinstance(optimizer_name, str) and optimizer_name.startswith("dist_")
+    ):
+        layer_wise_kwargs["use_layer_wise_distributed_optimizer"] = True
     if not isinstance(model_config, ModelConfig):
         model_config.finalize()
     configure_gtp_remat(model_config)
@@ -621,6 +627,12 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
+        if layer_wise_kwargs:
+            parameters = inspect.signature(builder.build_distributed_models).parameters
+            if "use_layer_wise_distributed_optimizer" not in parameters and not any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+            ):
+                raise RuntimeError("This model builder does not support layer-wise optimizer DDP layouts.")
         model = builder.build_distributed_models(
             pg_collection=pg_collection,
             ddp_config=cfg.ddp,
@@ -628,6 +640,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            **layer_wise_kwargs,
         )
     else:
         model = model_config.provide_distributed_model(
@@ -637,6 +650,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
             pg_collection=pg_collection,
+            **layer_wise_kwargs,
         )
     classify_gtp_remat_chains(model, model_config)
     return model
