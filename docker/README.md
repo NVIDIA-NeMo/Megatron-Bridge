@@ -186,7 +186,7 @@ docker build \
 | `CUBLAS_VER` | cuBLAS version for the TRT-LLM install scripts |
 | `NVRTC_VER` | NVRTC version for the TRT-LLM install scripts |
 | `REINSTALL_NSYS` | Set to `True` to reinstall Nsight Systems from the NVIDIA apt repo |
-| `NSYS_VERSION` | Nsight Systems version (e.g. `2026.1.0.1085`) |
+| `NSYS_VERSION` | Nsight Systems CLI version (default: `2026.5.1.161-265138896106v0`) |
 | `REINSTALL_CUDNN` | Set to `True` to reinstall cuDNN from the NVIDIA apt repo |
 | `CUDNN_VERSION` | cuDNN apt version (e.g. `9.18.1.3-1`) |
 | `REINSTALL_NCCL` | Set to `True` to reinstall NCCL from the NVIDIA apt repo |
