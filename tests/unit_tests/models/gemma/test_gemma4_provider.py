@@ -282,6 +282,7 @@ class TestGemma4DenseDistributedCheckpoint:
                     "megatron.bridge.models.gemma.gemma4_provider.Gemma4DenseRotaryEmbedding",
                     return_value=None,
                 ),
+                patch("torch.cuda.is_available", return_value=False),
                 patch("torch.cuda.current_device", return_value="cpu"),
                 patch("torch.cuda.synchronize"),
             ):

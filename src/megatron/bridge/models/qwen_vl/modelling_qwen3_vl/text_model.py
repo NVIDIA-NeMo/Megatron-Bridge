@@ -28,6 +28,7 @@ from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.quantization.utils import get_quant_config_or_none
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
@@ -127,6 +128,10 @@ class Qwen3VLGPTModel(GPTModel):
             vp_stage=vp_stage,
             pg_collection=pg_collection,
         )
+        for name, module in self.decoder.named_modules(prefix="decoder"):
+            if hasattr(module, "finish_init"):
+                quant_config = get_quant_config_or_none(name, self.config.quant_recipe)
+                module.finish_init(quant_config)
 
     def tie_embeddings_and_output_weights_state_dict(
         self,

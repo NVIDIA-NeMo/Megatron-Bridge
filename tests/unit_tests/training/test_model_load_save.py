@@ -28,6 +28,7 @@ from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import save_megatron_mimo_model
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training import model_load_save
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
@@ -352,6 +353,98 @@ class TestGetOrInitializePgCollection:
 
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
+
+    @pytest.mark.parametrize("path", ["provider", "checkpoint"])
+    def test_dropless_inference_finalizes_saved_paged_stash(self, path):
+        from megatron.bridge.inference.text_generation import (
+            _apply_provider_parallelism,
+            _megatron_checkpoint_overrides,
+        )
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_use_grouped_tensor=True,
+            moe_grouped_gemm=True,
+            moe_expert_rank_capacity_factor=1.5,
+            moe_paged_stash=True,
+        )
+        provider.finalize()
+        kwargs = dict(
+            tp=1,
+            pp=1,
+            ep=2,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.bfloat16,
+            attention_backend=None,
+            inference_moe_token_dispatcher_type=None,
+        )
+        if path == "provider":
+            _apply_provider_parallelism(provider, cache_mla_latents=None, **kwargs)
+            provider.finalize()
+        else:
+            overrides = _megatron_checkpoint_overrides(provider, **kwargs)
+
+            def finalize_before_build(checkpoint_path, model_cfg, *args, **build_kwargs):
+                model_cfg.finalize()
+                return []
+
+            with (
+                patch.object(model_load_save, "load_model_config", return_value=(provider, None)),
+                patch.object(model_load_save, "build_and_load_model", side_effect=finalize_before_build),
+            ):
+                load_megatron_model("/checkpoint", mp_overrides=overrides)
+
+        assert provider.moe_expert_rank_capacity_factor is None
+        assert provider.moe_paged_stash is False
+        assert provider.moe_token_dispatcher_type == "flex"
+        assert provider.moe_flex_dispatcher_backend == "hybridep"
+
+    @pytest.mark.parametrize("dropless", [False, True])
+    @pytest.mark.parametrize("forced_bias", [None, 0.0, 0.5, -0.5])
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_explicit_dropless_load_preserves_hybridep(
+        self, mock_load_model_config, mock_build_and_load_model, dropless, forced_bias
+    ):
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        cfg.moe_token_dispatcher_type = "flex"
+        cfg.moe_flex_dispatcher_backend = "hybridep"
+        cfg.moe_expert_capacity_factor = 1.1
+        cfg.moe_expert_rank_capacity_factor = 1.5
+        cfg.moe_hybridep_pad_uneven_dispatch_inputs = False
+        cfg.moe_pad_expert_input_to_capacity = True
+        cfg.moe_router_force_load_balancing = True
+        assert hasattr(cfg, "moe_router_force_biased")
+        cfg.moe_router_force_biased = forced_bias
+        mock_load_model_config.return_value = (cfg, None)
+        overrides = {"expert_model_parallel_size": 8}
+        if dropless:
+            overrides.update(
+                moe_expert_capacity_factor=None,
+                moe_expert_rank_capacity_factor=None,
+                moe_hybridep_pad_uneven_dispatch_inputs=True,
+                moe_pad_expert_input_to_capacity=False,
+                moe_router_force_load_balancing=False,
+                moe_router_force_biased=None,
+            )
+
+        load_megatron_model("/ckpt", mp_overrides=overrides)
+
+        built_config = mock_build_and_load_model.call_args.args[1]
+        assert built_config.moe_token_dispatcher_type == "flex"
+        assert built_config.moe_flex_dispatcher_backend == "hybridep"
+        assert built_config.moe_expert_capacity_factor == (None if dropless else 1.1)
+        assert built_config.moe_expert_rank_capacity_factor == (None if dropless else 1.5)
+        assert built_config.moe_hybridep_pad_uneven_dispatch_inputs is dropless
+        assert built_config.moe_pad_expert_input_to_capacity is (not dropless)
+        assert built_config.moe_router_force_load_balancing is (not dropless)
+        assert built_config.moe_router_force_biased == (None if dropless else forced_bias)
 
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
@@ -1163,6 +1256,7 @@ class TestSaveMegatronModel:
             callback_manager=None,
         )
 
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
@@ -1179,6 +1273,7 @@ class TestSaveMegatronModel:
         mock_global_state,
         mock_get_model_config,
         mock_save_checkpoint,
+        mock_save_tokenizer_assets,
     ):
         """Builder-backed checkpoints serialize the complete outer model config."""
         mock_model = Mock()
@@ -1200,7 +1295,7 @@ class TestSaveMegatronModel:
             model_load_save._CpuTorchDistSaveShardedStrategy,
         )
 
-    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
@@ -1291,6 +1386,95 @@ class TestSaveMegatronModel:
             "/fake/checkpoint/iter_0000000",
             raise_on_error=True,
         )
+
+    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_tokenizer")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.maybe_finalize_async_save")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.save_checkpoint")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.get_active_module_pg")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.GlobalState")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.ConfigContainer")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.OptimizerConfig")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.LoggerConfig")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.CheckpointConfig")
+    def test_save_megatron_mimo_model_with_tokenizer(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_active_module_pg,
+        mock_save_checkpoint,
+        mock_maybe_finalize_async_save,
+        mock_build_tokenizer,
+        mock_get_checkpoint_name,
+        mock_save_tokenizer_assets,
+    ):
+        """Test saving a MegatronMIMO model with tokenizer configuration."""
+        # Setup mocks
+        mock_model = Mock()
+        mock_infra = Mock()
+        mock_provider = Mock()
+        mock_provider.language_model_spec = Mock()
+        mock_provider.modality_submodules_spec = {"images": Mock()}
+        mock_provider.special_token_ids = {"image": 1}
+        mock_provider._grids = {"images": (2, 2)}
+
+        mock_get_active_module_pg.return_value = ("language", Mock())
+
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        # Mock the ConfigContainer to capture tokenizer config
+        mock_container_instance = Mock()
+        mock_config_container.return_value = mock_container_instance
+
+        # Mock tokenizer building
+        mock_tokenizer = Mock()
+        mock_build_tokenizer.return_value = mock_tokenizer
+        mock_get_checkpoint_name.return_value = "/fake/checkpoint/iter_0000000"
+
+        # Test with tokenizer path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_mimo_model(
+                mock_model,
+                mock_infra,
+                mock_provider,
+                temp_dir,
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                hf_tokenizer_kwargs={"trust_remote_code": True},
+                ckpt_format="torch_dist",
+            )
+
+            # Assertions
+            mock_get_active_module_pg.assert_called_once_with(mock_infra)
+            mock_global_state.assert_called_once()
+
+            # Check that ConfigContainer was called with a tokenizer config
+            mock_config_container.assert_called_once()
+            call_kwargs = mock_config_container.call_args[1]
+            assert "tokenizer" in call_kwargs
+            tokenizer_config = call_kwargs["tokenizer"]
+            assert tokenizer_config.tokenizer_type == "HuggingFaceTokenizer"
+            assert tokenizer_config.tokenizer_model == "meta-llama/Meta-Llama-3-8B"
+            assert tokenizer_config.hf_tokenizer_kwargs == {"trust_remote_code": True}
+
+            mock_save_checkpoint.assert_called_once_with(
+                state=mock_state,
+                model=[mock_model],
+                optimizer=None,
+                opt_param_scheduler=None,
+                num_floating_point_operations_so_far=0,
+                callback_manager=None,
+                pg_collection=mock_get_active_module_pg.return_value[1],
+                module_name="language",
+            )
+
+            # Verify tokenizer was built and saved
+            mock_build_tokenizer.assert_called_once_with(tokenizer_config)
+            mock_get_checkpoint_name.assert_called_once()
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
