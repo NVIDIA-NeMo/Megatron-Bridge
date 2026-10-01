@@ -23,7 +23,6 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.training.utils.checkpoint_utils import (
     CONFIG_FILE,
-    get_checkpoint_run_config_filename,
     read_run_config,
 )
 
@@ -70,6 +69,21 @@ def join_paths(*paths: str) -> str:
         path = path / part
 
     return str(path)
+
+
+def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
+    """Get the filename for the run configuration file within a checkpoint directory.
+
+    Defined here rather than re-exported from Megatron-LM so that ``join_paths`` above
+    (which supports ``msc://`` paths) is used.
+
+    Args:
+        checkpoints_path: Base directory where checkpoints are stored.
+
+    Returns:
+        The full path to the run configuration file (e.g., run_config.yaml).
+    """
+    return join_paths(checkpoints_path, CONFIG_FILE)
 
 
 def file_exists(path: str) -> bool:
