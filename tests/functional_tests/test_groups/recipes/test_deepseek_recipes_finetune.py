@@ -62,17 +62,16 @@ def _deepseek_v4_toy_model_path(tmp_path: Path) -> str:
     return create_deepseek_v4_toy_artifacts(tmp_path)
 
 
-# Shrink the Flash architecture to a 2-layer toy. Keep the validated SFT path
-# (unfused mHC/rope); MTP off and recompute off for a fast smoke.
+# HybridModel derives its physical layer count, compression ratios, and MoE
+# placement from the toy HF config's hybrid pattern. Do not override those fields
+# independently: every logical DSv4 block expands to an attention + MoE pair.
+# Keep the validated SFT path unfused and disable recompute for a fast smoke.
 DEEPSEEK_V4_SFT_MODEL_OVERRIDES = {
-    "num_layers": 2,
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
     "num_moe_experts": 8,
     "moe_router_topk": 1,
-    "moe_layer_freq": [0, 1],
-    "csa_compress_ratios": [0, 0],
-    "csa_backend": "unfused",
+    "dsa_kernel_backend": "none",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
     "dsa_indexer_loss_coeff": 0.0,
