@@ -141,6 +141,25 @@ class TestLoRALinear:
         expected = base_output + adapter_output
         assert torch.allclose(lora_output, expected, atol=1e-6)
 
+    def test_lora_linear_casts_fp32_adapter_delta_to_bf16_base_output(self):
+        class FP32Adapter(MockLoRAAdapter):
+            def forward(self, x):
+                return super().forward(x.float())
+
+        base = MockLinearWithTupleReturn().bfloat16()
+        adapter = FP32Adapter().float()
+        wrapped = LoRALinear(base, adapter)
+        inputs = torch.randn(3, 10, dtype=torch.bfloat16, requires_grad=True)
+
+        output, _ = wrapped(inputs)
+        output.float().sum().backward()
+
+        assert output.dtype is torch.bfloat16
+        assert adapter.linear_in.weight.dtype is torch.float32
+        assert adapter.linear_out.weight.dtype is torch.float32
+        assert torch.isfinite(adapter.linear_in.weight.grad).all()
+        assert torch.isfinite(adapter.linear_out.weight.grad).all()
+
     def test_lora_linear_weight_returns_effective_weight(self):
         """Test that LoRALinear.weight includes the active LoRA delta."""
         base = MockLinearWithTupleReturn(in_features=3, out_features=2)
