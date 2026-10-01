@@ -17,6 +17,7 @@ aliases built on the shared HybridEP bases stay on HybridEP."""
 import importlib
 
 import pytest
+from megatron.training.determinism import DETERMINISM_ENV_VAR_DEFAULTS
 
 from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
@@ -25,6 +26,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 pytestmark = pytest.mark.unit
 
 _NCCL_EP_ENV = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
+_SSM_DETERMINISM_ENV = {"MAMBA_DETERMINISTIC": "1", "CAUSAL_CONV1D_DETERMINISTIC": "1"}
 
 # (module under megatron.bridge.perf_recipes, recipe factory) for the GB300 recipes defaulted to NCCL EP.
 _GB300_NCCLEP_RECIPES = (
@@ -121,3 +123,22 @@ def test_vr200_aliases_do_not_inherit_nccl_ep(module_name: str, factory_name: st
         assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
     else:
         assert cfg.model.moe_token_dispatcher_type == "alltoall"
+
+
+def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_overrides() -> None:
+    module = "deepseek.gb300.deepseek_v3"
+    base = _build(module, "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config")
+    cfg = _build(module, "deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config")
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.model.moe_router_fusion == base.model.moe_router_fusion
+    # HybridEP with the legacy grouped MLP until the NCCL EP path is deterministic.
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_use_grouped_tensor is False
+    assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
+    expected_env = {name: value for name, value in base.env_vars.items() if name not in _NCCL_EP_ENV}
+    expected_env.update({name: cfg.env_vars[name] for name in HYBRID_EP_ENV_NAMES})
+    assert cfg.env_vars == {**expected_env, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
