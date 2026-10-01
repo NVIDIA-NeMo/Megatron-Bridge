@@ -641,6 +641,23 @@ class TestMegatronCommOverlapConfig:
             result = comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
             assert result.delay_wgrad_compute is True
 
+    def test_delay_megamoe_wgrad_enables_ddp_delayed_hooks_only(self):
+        comm_cfg = CommOverlapConfig(tp_comm_overlap=False, data_parallel_size=1)
+        comm_cfg.finalize()
+        model_cfg = create_gpt_config(
+            pipeline_model_parallel_size=2,
+            virtual_pipeline_model_parallel_size=2,
+            delay_megamoe_wgrad=True,
+        )
+        optimizer_cfg = OptimizerConfig()
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=True)
+
+        comm_cfg.setup(model_cfg, optimizer_cfg, ddp_cfg)
+
+        assert model_cfg.delay_megamoe_wgrad is True
+        assert model_cfg.delay_wgrad_compute is False
+        assert ddp_cfg.delay_wgrad_compute is True
+
     def test_delay_wgrad_config_validation_with_overlap_grad_reduce(self):
         """delay_wgrad_compute passes when TE and EP overlap conditions are met."""
         comm_cfg = CommOverlapConfig(
