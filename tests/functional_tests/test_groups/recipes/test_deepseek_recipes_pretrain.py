@@ -22,6 +22,7 @@ import pytest
 import torch
 
 from megatron.bridge.recipes.deepseek import (
+    deepseek_v4_flash_pretrain_config,
     deepseek_v4_flash_pretrain_muon_config,
     deepseek_v4_flash_pretrain_mxfp8_config,
 )
@@ -36,15 +37,22 @@ DEEPSEEK_V4_TEST_MODEL_PATH = Path("/home/TestData/megatron_bridge/models/deepse
 
 def _has_dsv4_in_mcore() -> bool:
     try:
-        return all(
+        if not all(
             importlib.util.find_spec(mod) is not None
             for mod in (
                 "megatron.core.transformer.hyper_connection",
                 "megatron.core.transformer.experimental_attention_variant.csa",
                 "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
             )
-        )
-    except ModuleNotFoundError:
+        ):
+            return False
+        # The DSv4 HybridModel stack spec ships in the "Enable DeepSeek-v4 hybrid_model"
+        # megatron-core series; older cores have the attention modules above but not this,
+        # so the DSv4 hybrid model cannot be built. Skip rather than fail on such cores.
+        from megatron.core.models.hybrid import hybrid_layer_specs
+
+        return hasattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec")
+    except (ImportError, ValueError):
         return False
 
 
@@ -55,14 +63,15 @@ def _deepseek_v4_toy_model_path(tmp_path: Path) -> str:
     return create_deepseek_v4_toy_artifacts(tmp_path)
 
 
+# On HybridModel, DeepSeek-V4's layer count, per-layer compression ratios, and MoE
+# placement are all derived from the toy HF config via the hybrid layer pattern, so we
+# must NOT override num_layers / csa_compress_ratios / moe_layer_freq here (they would
+# conflict with the pattern-derived values and trip finalize()'s consistency check).
+# We only disable the Blackwell-only fused kernels and any explicit pipeline layout so
+# the smoke test runs unfused on a single rank.
 DEEPSEEK_V4_MODEL_OVERRIDES = {
-    "num_layers": 2,
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
-    "num_moe_experts": 8,
-    "moe_router_topk": 1,
-    "moe_layer_freq": [0, 1],
-    "csa_compress_ratios": [0, 0],
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
     "dsa_indexer_loss_coeff": 0.0,
@@ -71,19 +80,30 @@ DEEPSEEK_V4_MODEL_OVERRIDES = {
     "recompute_modules": None,
 }
 
+# The reduced two-rank smoke layout can leave optimizer buckets empty on one rank.
+# Checkpoint model weights, which is the recipe contract exercised here, without
+# asking MCore's distributed optimizer to serialize that artificial empty bucket.
+_DSV4_CHECKPOINT_OVERRIDES = {"save_optim": False, "load_optim": False}
+
 DEEPSEEK_V4_PRETRAIN_RECIPES = [
     # (config_func, name, requires_blackwell, checkpoint_overrides)
+    (
+        deepseek_v4_flash_pretrain_config,
+        "deepseek_v4_flash_adam_bf16",
+        False,
+        _DSV4_CHECKPOINT_OVERRIDES,
+    ),
     (
         deepseek_v4_flash_pretrain_muon_config,
         "deepseek_v4_flash_muon_bf16",
         False,
-        None,
+        _DSV4_CHECKPOINT_OVERRIDES,
     ),
     (
         deepseek_v4_flash_pretrain_mxfp8_config,
         "deepseek_v4_flash_adam_mxfp8",
         True,
-        {"save_optim": False, "load_optim": False},
+        _DSV4_CHECKPOINT_OVERRIDES,
     ),
 ]
 
