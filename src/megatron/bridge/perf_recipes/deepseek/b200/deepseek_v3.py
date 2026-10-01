@@ -133,12 +133,12 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
@@ -148,6 +148,8 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _enable_deepseek_transformer_engine_graph(cfg)
     _enable_ncclep(cfg)
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
@@ -181,7 +183,10 @@ def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.mixed_precision.fp4_param_gather = False
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.recompute_modules = ["mla_up_proj", "layernorm", "moe_act"]
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
