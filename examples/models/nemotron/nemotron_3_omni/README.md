@@ -312,7 +312,7 @@ document-image parsing dataset (restaurant receipts → structured JSON). The
 vision path uses one embedding per frame (`temporal_patch_dim=1`, no
 temporal video embedder). Nemotron Omni always uses its dynamic-resolution
 RADIO input contract. Recipe base: `nemotron_omni_cord_v2_*_config` in
-`src/megatron/bridge/recipes/nemotron_omni/nemotron_omni.py`.
+`src/megatron/bridge/recipes/nemotronh_multimodal/nemotron_omni.py`.
 
 | Mode | Script | Recipe |
 |---|---|---|

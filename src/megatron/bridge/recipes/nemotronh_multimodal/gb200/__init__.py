@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.nemotron_omni.gb200.nemotron_35_super_vl import *  # noqa: F403
+from megatron.bridge.recipes.nemotronh_multimodal.gb200.nemotron_35_super_vl import *  # noqa: F403
 
 
 __all__ = [
