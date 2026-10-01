@@ -44,6 +44,7 @@ models/gemma/index.md
 models/glm/index.md
 models/gpt_oss/index.md
 models/hy_v3/hy-v3.md
+models/inkling/inkling.md
 models/kimi/index.md
 models/llama/index.md
 models/minimax/index.md
