@@ -23,6 +23,12 @@ from nemo_run.config import get_nemorun_home, set_nemorun_home
 from nemo_run.core.execution.launcher import SlurmTemplate
 
 
+try:
+    from nemo_run.core.execution.nvcre import NvcreExecutor
+except ImportError:
+    NvcreExecutor = None  # type: ignore[assignment,misc]
+
+
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
@@ -402,7 +408,11 @@ def nvcre_executor(
     Returns:
         A configured NvcreExecutor instance.
     """
-    from nemo_run.core.execution.nvcre import NvcreExecutor
+    if NvcreExecutor is None:
+        raise ImportError(
+            "NvcreExecutor is unavailable: the installed nemo_run does not provide nemo_run.core.execution.nvcre"
+        )
+
     return NvcreExecutor(
         namespace=namespace,
         container_image=container_image,
@@ -416,7 +426,6 @@ def nvcre_executor(
         volumes=volumes or [],
         volume_mounts=volume_mounts or [],
         timeout_per_job=timeout_per_job,
-
         kubeconfig=kubeconfig,
         kube_context=kube_context,
         gang_scheduler_name=gang_scheduler_name,

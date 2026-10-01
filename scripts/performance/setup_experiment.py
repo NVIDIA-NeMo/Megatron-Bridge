@@ -97,16 +97,21 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun", "-d"}
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag in (
-            "-lgc",
-            "-lmc",
-            "-vb",
-            "--additional_slurm_params",
-            "--csp",
-            "--enable_vboost",
-            "--lock_gpu_freq",
-            "--peak_mem_clk",
-        ) or flag.startswith("--kubeflow_") or flag.startswith("--nvcre_")
+        return (
+            flag
+            in (
+                "-lgc",
+                "-lmc",
+                "-vb",
+                "--additional_slurm_params",
+                "--csp",
+                "--enable_vboost",
+                "--lock_gpu_freq",
+                "--peak_mem_clk",
+            )
+            or flag.startswith("--kubeflow_")
+            or flag.startswith("--nvcre_")
+        )
 
     filtered_args = []
     skip_next = False
@@ -573,7 +578,6 @@ def main(
     nvcre_volumes_json: Optional[str] = None,
     nvcre_volume_mounts_json: Optional[str] = None,
     nvcre_timeout_per_job: str = "24h",
-
     nvcre_kubeconfig: Optional[str] = None,
     nvcre_kube_context: Optional[str] = None,
     nvcre_gang_scheduler_name: Optional[str] = None,
@@ -728,7 +732,6 @@ def main(
             volumes=json.loads(nvcre_volumes_json) if nvcre_volumes_json else None,
             volume_mounts=json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else None,
             timeout_per_job=nvcre_timeout_per_job,
-
             kubeconfig=nvcre_kubeconfig,
             kube_context=nvcre_kube_context,
             gang_scheduler_name=nvcre_gang_scheduler_name,
@@ -1060,7 +1063,7 @@ if __name__ == "__main__":
         task=args.task,
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
-        hf_token=args.hf_token or os.environ.get('HF_TOKEN'),
+        hf_token=args.hf_token or os.environ.get("HF_TOKEN"),
         offline=args.offline,
         # Force detach for Nvcre — llmb-run polls for completion via nvcrectl
         detach=True if args.nvcre_namespace else args.detach,
@@ -1149,7 +1152,6 @@ if __name__ == "__main__":
         nvcre_volumes_json=args.nvcre_volumes_json,
         nvcre_volume_mounts_json=args.nvcre_volume_mounts_json,
         nvcre_timeout_per_job=args.nvcre_timeout_per_job,
-
         nvcre_kubeconfig=args.nvcre_kubeconfig,
         nvcre_kube_context=args.nvcre_kube_context,
         nvcre_gang_scheduler_name=args.nvcre_gang_scheduler_name,
