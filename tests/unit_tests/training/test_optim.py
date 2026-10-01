@@ -731,6 +731,8 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
             # Exercise Core's real restore protocol without allocating a model
             # or distributed gradient buffers, which these methods do not need.
             wrapped = object.__new__(DistributedOptimizer)
+            # Match Core's constructor state before a checkpoint loading template is built.
+            wrapped._checkpoint_version_for_load = None
             wrapped.optimizer = inner
             wrapped.ddp_config = SimpleNamespace(use_megatron_fsdp=False)
             wrapped.config = SimpleNamespace(
