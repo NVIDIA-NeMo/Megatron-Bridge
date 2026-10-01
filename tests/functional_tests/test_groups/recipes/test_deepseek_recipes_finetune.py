@@ -17,8 +17,8 @@
 Mirrors ``test_deepseek_recipes_pretrain.py`` (toy HF model + DSv4-in-mcore guard) but
 exercises the *finetune* path: build the SFT recipe on a 2-layer toy model, swap in a
 mock dataset, and run 5 finetune iterations. Like the pretrain functional test, this
-builds its synthetic DSv4 config and tokenizer offline when managed test data is absent,
-and skips only when mcore does not ship the DSv4 prerequisites.
+skips unless the synthetic DSv4 toy model is available and mcore ships the DSv4
+prerequisites.
 """
 
 import importlib.util
@@ -59,7 +59,7 @@ def _deepseek_v4_toy_model_path(tmp_path: Path) -> str:
     model_path = Path(os.environ.get(DEEPSEEK_V4_TEST_MODEL_ENV, DEEPSEEK_V4_TEST_MODEL_PATH))
     if model_path.exists():
         return str(model_path)
-    return create_deepseek_v4_toy_artifacts(tmp_path)
+    return create_deepseek_v4_toy_artifacts(tmp_path, with_weights=True)
 
 
 # HybridModel derives its physical layer count, compression ratios, and MoE
@@ -70,7 +70,6 @@ DEEPSEEK_V4_SFT_MODEL_OVERRIDES = {
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
     "num_moe_experts": 8,
-    "moe_router_topk": 1,
     "dsa_kernel_backend": "none",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
@@ -136,10 +135,12 @@ class TestDeepSeekV4FinetuneRecipes:
         config.scheduler.lr_warmup_iters = 1
         config.logger.dir = str(tmp_path)
         config.logger.name = recipe_name
-        # Smoke test: train from the toy model's init (no pretrained checkpoint, no save).
-        config.checkpoint.pretrained_checkpoint = None
+        # Exercise the actual finetune path from the offline toy HF checkpoint.
+        config.checkpoint.pretrained_checkpoint = hf_path
         config.checkpoint.load = None
         config.checkpoint.save = None
+        config.checkpoint.load_optim = False
+        config.checkpoint.load_rng = False
 
         # Minimal dataset splits sized to the iteration counts above.
         train_samples = config.train.train_iters * config.train.global_batch_size
@@ -148,12 +149,12 @@ class TestDeepSeekV4FinetuneRecipes:
         total = train_samples + eval_samples + test_samples
         config.dataset.split = [train_samples / total, eval_samples / total, test_samples / total]
 
+        from megatron.bridge.training.finetune import finetune
         from megatron.bridge.training.gpt_step import forward_step
-        from megatron.bridge.training.pretrain import pretrain
         from tests.functional_tests.utils import clear_directories, initialize_distributed
 
         initialize_distributed()
         try:
-            pretrain(config, forward_step)
+            finetune(config, forward_step)
         finally:
             clear_directories(tmp_path)

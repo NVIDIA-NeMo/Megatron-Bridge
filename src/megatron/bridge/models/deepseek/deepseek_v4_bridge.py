@@ -493,7 +493,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     DeepSeek-V4 is built on Megatron-Core's :class:`HybridModel`: each logical
     DSv4 block is expressed as an attention-only hybrid layer (``W``/``C``/``H``)
     followed by a MoE-only hybrid layer (``E``), driven by ``hybrid_layer_pattern``
-    and :func:`transformer_engine_hybrid_stack_spec`. See the module docstring for the checkpoint
+    and :func:`deepseek_v4_hybrid_stack_spec`. See the module docstring for the checkpoint
     naming implications of this split.
     """
 
@@ -640,8 +640,16 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_kernel_backend = "cudnn" if use_dsa_kernel_fusion else "none"
 
         # ---- Hyper-Connections (mHC) ----
-        provider.enable_mhc_connections = True
-        provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
+        # MCore renamed these fields after the frozen dev pin. Select the names that
+        # the active provider dataclass actually consumes so both pins build the same
+        # wrapped HybridStack parameter layout.
+        provider_fields = getattr(type(provider), "__dataclass_fields__", None)
+        if provider_fields is None or "enable_mhc_connections" in provider_fields:
+            provider.enable_mhc_connections = True
+            provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
+        else:
+            provider.enable_hyper_connections = True
+            provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.use_fused_mhc = use_blackwell_fused_kernels
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
 
@@ -809,50 +817,43 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             for every attention layer and tolerated-absent (``_ReplicatedOptional``) on
             window-only layers.
             """
-            def _parameter_mappings(inner: str) -> list:
-                core = f"{inner}.self_attention.core_attention"
-                return [
-                    AutoMapping(f"{inner}.input_layernorm.weight", f"{ck}.attn_norm.weight"),
-                    # Q down / Q norm / Q up (MLA)
-                    AutoMapping(f"{inner}.self_attention.linear_q_down_proj.weight", f"{ck}.attn.wq_a.weight"),
-                    AutoMapping(f"{inner}.self_attention.q_layernorm.weight", f"{ck}.attn.q_norm.weight"),
-                    AutoMapping(f"{inner}.self_attention.linear_q_up_proj.weight", f"{ck}.attn.wq_b.weight"),
-                    # KV (single projection) / KV norm
-                    AutoMapping(f"{inner}.self_attention.linear_kv_proj.weight", f"{ck}.attn.wkv.weight"),
-                    AutoMapping(f"{inner}.self_attention.kv_layernorm.weight", f"{ck}.attn.kv_norm.weight"),
-                    # Factored output projection: wo_a (group param) + wo_b (row-parallel linear)
-                    ReplicatedMapping(f"{inner}.self_attention.linear_o_group_proj", f"{ck}.attn.wo_a.weight"),
-                    AutoMapping(f"{inner}.self_attention.linear_proj.weight", f"{ck}.attn.wo_b.weight"),
-                    # Attention sink: split by TP (size = num_heads // TP on each rank)
-                    ColumnParallelMapping(f"{core}.attn_sink", f"{ck}.attn.attn_sink"),
-                    # Compressor (CSA/HCA layers only). All compressor linears are duplicated -> replicated.
-                    _ReplicatedOptional(f"{core}.compressor.linear_wkv.weight", f"{ck}.attn.compressor.wkv.weight"),
-                    _ReplicatedOptional(f"{core}.compressor.linear_wgate.weight", f"{ck}.attn.compressor.wgate.weight"),
-                    _ReplicatedOptional(f"{core}.compressor.ape", f"{ck}.attn.compressor.ape"),
-                    _ReplicatedOptional(f"{core}.compressor.norm.weight", f"{ck}.attn.compressor.norm.weight"),
-                    # Indexer (CSA layers only) and its own sub-compressor.
-                    _ReplicatedOptional(f"{core}.indexer.linear_wq_b.weight", f"{ck}.attn.indexer.wq_b.weight"),
-                    _ReplicatedOptional(
-                        f"{core}.indexer.linear_weights_proj.weight", f"{ck}.attn.indexer.scorer.weights_proj.weight"
-                    ),
-                    _ReplicatedOptional(
-                        f"{core}.indexer.compressor.linear_wkv.weight", f"{ck}.attn.indexer.compressor.wkv.weight"
-                    ),
-                    _ReplicatedOptional(
-                        f"{core}.indexer.compressor.linear_wgate.weight", f"{ck}.attn.indexer.compressor.wgate.weight"
-                    ),
-                    _ReplicatedOptional(f"{core}.indexer.compressor.ape", f"{ck}.attn.indexer.compressor.ape"),
-                    _ReplicatedOptional(
-                        f"{core}.indexer.compressor.norm.weight", f"{ck}.attn.indexer.compressor.norm.weight"
-                    ),
-                ]
-
-            # MCore dev flattens the hybrid wrapper from expert-parallel global
-            # attention parameter names, just as it does for MoE parameters.
+            inner = f"{layer_prefix}.inner_layer"
+            core = f"{inner}.self_attention.core_attention"
             hc = f"{layer_prefix}.hyper_connection"
-            out = _parameter_mappings(f"{layer_prefix}.inner_layer")
-            out += _parameter_mappings(layer_prefix)
-            out += [
+            out = [
+                AutoMapping(f"{inner}.input_layernorm.weight", f"{ck}.attn_norm.weight"),
+                # Q down / Q norm / Q up (MLA)
+                AutoMapping(f"{inner}.self_attention.linear_q_down_proj.weight", f"{ck}.attn.wq_a.weight"),
+                AutoMapping(f"{inner}.self_attention.q_layernorm.weight", f"{ck}.attn.q_norm.weight"),
+                AutoMapping(f"{inner}.self_attention.linear_q_up_proj.weight", f"{ck}.attn.wq_b.weight"),
+                # KV (single projection) / KV norm
+                AutoMapping(f"{inner}.self_attention.linear_kv_proj.weight", f"{ck}.attn.wkv.weight"),
+                AutoMapping(f"{inner}.self_attention.kv_layernorm.weight", f"{ck}.attn.kv_norm.weight"),
+                # Factored output projection: wo_a (group param) + wo_b (row-parallel linear)
+                ReplicatedMapping(f"{inner}.self_attention.linear_o_group_proj", f"{ck}.attn.wo_a.weight"),
+                AutoMapping(f"{inner}.self_attention.linear_proj.weight", f"{ck}.attn.wo_b.weight"),
+                # Attention sink: split by TP (size = num_heads // TP on each rank)
+                ColumnParallelMapping(f"{core}.attn_sink", f"{ck}.attn.attn_sink"),
+                # Compressor (CSA/HCA layers only). All compressor linears are duplicated -> replicated.
+                _ReplicatedOptional(f"{core}.compressor.linear_wkv.weight", f"{ck}.attn.compressor.wkv.weight"),
+                _ReplicatedOptional(f"{core}.compressor.linear_wgate.weight", f"{ck}.attn.compressor.wgate.weight"),
+                _ReplicatedOptional(f"{core}.compressor.ape", f"{ck}.attn.compressor.ape"),
+                _ReplicatedOptional(f"{core}.compressor.norm.weight", f"{ck}.attn.compressor.norm.weight"),
+                # Indexer (CSA layers only) and its own sub-compressor.
+                _ReplicatedOptional(f"{core}.indexer.linear_wq_b.weight", f"{ck}.attn.indexer.wq_b.weight"),
+                _ReplicatedOptional(
+                    f"{core}.indexer.linear_weights_proj.weight", f"{ck}.attn.indexer.scorer.weights_proj.weight"
+                ),
+                _ReplicatedOptional(
+                    f"{core}.indexer.compressor.linear_wkv.weight", f"{ck}.attn.indexer.compressor.wkv.weight"
+                ),
+                _ReplicatedOptional(
+                    f"{core}.indexer.compressor.linear_wgate.weight", f"{ck}.attn.indexer.compressor.wgate.weight"
+                ),
+                _ReplicatedOptional(f"{core}.indexer.compressor.ape", f"{ck}.attn.indexer.compressor.ape"),
+                _ReplicatedOptional(
+                    f"{core}.indexer.compressor.norm.weight", f"{ck}.attn.indexer.compressor.norm.weight"
+                ),
                 # Hyper-connection wrapping the attention residual (mHC not in AutoMapping registry).
                 ReplicatedMapping(f"{hc}.mapping_proj.weight", f"{ck}.hc_attn_fn"),
                 ReplicatedMapping(f"{hc}.bias", f"{ck}.hc_attn_base"),
@@ -864,57 +865,46 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             """Mappings for one MoE hybrid layer (wrapper prefix ``layer_prefix``).
 
             ``sequential_experts`` also emits the per-local-expert (non-grouped) form used
-            by ModelOpt pruning; MTP layers ship grouped experts only. MCore ``dev`` flattens
-            the hybrid wrapper from expert-parallel global parameter names, so register the
-            same MoE parameters with and without ``inner_layer``.
+            by ModelOpt pruning; MTP layers ship grouped experts only.
             """
-
-            def _parameter_mappings(inner: str) -> list:
-                mappings = [
-                    AutoMapping(f"{inner}.pre_mlp_layernorm.weight", f"{ck}.ffn_norm.weight"),
-                    # MoE router weight, expert bias, and hash-routing lookup table (buffer).
-                    AutoMapping(f"{inner}.mlp.router.weight", f"{ck}.ffn.gate.weight"),
-                    _AutoOptional(f"{inner}.mlp.router.expert_bias", f"{ck}.ffn.gate.bias"),
-                    AutoMapping(f"{inner}.mlp.router.tid2eid", f"{ck}.ffn.gate.tid2eid"),
-                    # Routed expert MLP (w1=gate, w3=up, w2=down in V4 naming).
-                    GatedMLPMapping(
-                        megatron_param=f"{inner}.mlp.experts.linear_fc1.weight*",
-                        gate=f"{ck}.ffn.experts.*.w1.weight",
-                        up=f"{ck}.ffn.experts.*.w3.weight",
-                    ),
-                    AutoMapping(f"{inner}.mlp.experts.linear_fc2.weight*", f"{ck}.ffn.experts.*.w2.weight"),
-                    # Shared expert MLP.
-                    GatedMLPMapping(
-                        megatron_param=f"{inner}.mlp.shared_experts.linear_fc1.weight",
-                        gate=f"{ck}.ffn.shared_experts.w1.weight",
-                        up=f"{ck}.ffn.shared_experts.w3.weight",
-                    ),
-                    AutoMapping(
-                        f"{inner}.mlp.shared_experts.linear_fc2.weight", f"{ck}.ffn.shared_experts.w2.weight"
-                    ),
-                ]
-                if sequential_experts:
-                    mappings += [
-                        GatedMLPMapping(
-                            megatron_param=f"{inner}.mlp.experts.local_experts.*.linear_fc1.weight",
-                            gate=f"{ck}.ffn.experts.*.w1.weight",
-                            up=f"{ck}.ffn.experts.*.w3.weight",
-                        ),
-                        AutoMapping(
-                            f"{inner}.mlp.experts.local_experts.*.linear_fc2.weight",
-                            f"{ck}.ffn.experts.*.w2.weight",
-                        ),
-                    ]
-                return mappings
-
+            inner = f"{layer_prefix}.inner_layer"
             hc = f"{layer_prefix}.hyper_connection"
-            out = _parameter_mappings(f"{layer_prefix}.inner_layer")
-            out += _parameter_mappings(layer_prefix)
-            out += [
+            out = [
+                AutoMapping(f"{inner}.pre_mlp_layernorm.weight", f"{ck}.ffn_norm.weight"),
+                # MoE router weight, expert bias, and hash-routing lookup table (buffer).
+                AutoMapping(f"{inner}.mlp.router.weight", f"{ck}.ffn.gate.weight"),
+                _AutoOptional(f"{inner}.mlp.router.expert_bias", f"{ck}.ffn.gate.bias"),
+                AutoMapping(f"{inner}.mlp.router.tid2eid", f"{ck}.ffn.gate.tid2eid"),
+                # Routed expert MLP (w1=gate, w3=up, w2=down in V4 naming).
+                GatedMLPMapping(
+                    megatron_param=f"{inner}.mlp.experts.linear_fc1.weight*",
+                    gate=f"{ck}.ffn.experts.*.w1.weight",
+                    up=f"{ck}.ffn.experts.*.w3.weight",
+                ),
+                AutoMapping(f"{inner}.mlp.experts.linear_fc2.weight*", f"{ck}.ffn.experts.*.w2.weight"),
+                # Shared expert MLP.
+                GatedMLPMapping(
+                    megatron_param=f"{inner}.mlp.shared_experts.linear_fc1.weight",
+                    gate=f"{ck}.ffn.shared_experts.w1.weight",
+                    up=f"{ck}.ffn.shared_experts.w3.weight",
+                ),
+                AutoMapping(f"{inner}.mlp.shared_experts.linear_fc2.weight", f"{ck}.ffn.shared_experts.w2.weight"),
                 # Hyper-connection wrapping the MoE residual.
                 ReplicatedMapping(f"{hc}.mapping_proj.weight", f"{ck}.hc_ffn_fn"),
                 ReplicatedMapping(f"{hc}.bias", f"{ck}.hc_ffn_base"),
             ]
+            if sequential_experts:
+                out += [
+                    GatedMLPMapping(
+                        megatron_param=f"{inner}.mlp.experts.local_experts.*.linear_fc1.weight",
+                        gate=f"{ck}.ffn.experts.*.w1.weight",
+                        up=f"{ck}.ffn.experts.*.w3.weight",
+                    ),
+                    AutoMapping(
+                        f"{inner}.mlp.experts.local_experts.*.linear_fc2.weight",
+                        f"{ck}.ffn.experts.*.w2.weight",
+                    ),
+                ]
             out += _hc_alpha_mappings(hc, f"{ck}.hc_ffn_scale")
             return out
 
