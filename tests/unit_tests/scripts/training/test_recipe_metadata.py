@@ -238,6 +238,14 @@ def test_known_cross_package_collisions_have_explicit_benchmark_precedence():
         assert module.resolved_benchmark_recipe_metadata(recipe_name) is None
 
 
+@pytest.mark.parametrize("recipe_name", ["glm52_h100_sft_config", "glm52_gb200_sft_config"])
+def test_glm52_sft_library_aliases_do_not_resolve_to_benchmark_recipes(recipe_name):
+    module = _load_module()
+
+    assert module.resolved_benchmark_recipe_metadata(recipe_name) is None
+    assert module.selected_benchmark_recipe(["--recipe", recipe_name]) is None
+
+
 def test_qwen3_30b_gb200_mxfp8_collision_selects_library_recipe():
     module = _load_module()
     recipe_name = "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"
