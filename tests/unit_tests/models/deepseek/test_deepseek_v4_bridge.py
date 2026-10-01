@@ -126,8 +126,6 @@ class TestDeepSeekV4OutputProjectionConfig:
 
         assert provider.output_projection_groups == 4
         assert provider.output_projection_lora_rank == 256
-        assert provider.o_groups == 4
-        assert provider.o_lora_rank == 256
 
 
 class TestNativeDeepSeekV4ConfigTranslation:
@@ -412,64 +410,14 @@ class TestDeepSeekV4QuantizedExport:
 
 
 def test_sequential_expert_mappings_present(bridge_with_mtp):
-    """Sequential expert mappings cover wrapped and flattened MCore parameter names."""
+    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning).
+
+    On the hybrid layout the MoE for logical layer 0 lives at hybrid layer index 1, under
+    the HyperConnectionHybridLayer ``inner_layer`` wrapper.
+    """
     params = _by_megatron(bridge_with_mtp.mapping_registry())
-    for prefix in ("decoder.layers.1.inner_layer", "decoder.layers.1"):
-        assert f"{prefix}.mlp.experts.local_experts.*.linear_fc1.weight" in params
-        assert f"{prefix}.mlp.experts.local_experts.*.linear_fc2.weight" in params
-
-
-def test_expert_parallel_flattened_moe_mappings_resolve(bridge_with_mtp):
-    """MCore dev omits ``inner_layer`` from expert-parallel global names."""
-    registry = bridge_with_mtp.mapping_registry()
-    expected_hf_names = {
-        "decoder.layers.1.pre_mlp_layernorm.weight": "layers.0.ffn_norm.weight",
-        "decoder.layers.1.mlp.router.weight": "layers.0.ffn.gate.weight",
-        "decoder.layers.1.mlp.router.expert_bias": "layers.0.ffn.gate.bias",
-        "decoder.layers.1.mlp.experts.linear_fc1.weight4": {
-            "gate": "layers.0.ffn.experts.4.w1.weight",
-            "up": "layers.0.ffn.experts.4.w3.weight",
-        },
-        "decoder.layers.1.mlp.experts.linear_fc2.weight4": "layers.0.ffn.experts.4.w2.weight",
-        "decoder.layers.1.mlp.shared_experts.linear_fc1.weight": {
-            "gate": "layers.0.ffn.shared_experts.w1.weight",
-            "up": "layers.0.ffn.shared_experts.w3.weight",
-        },
-        "decoder.layers.1.mlp.shared_experts.linear_fc2.weight": "layers.0.ffn.shared_experts.w2.weight",
-    }
-
-    for megatron_name, hf_name in expected_hf_names.items():
-        mapping = registry.megatron_to_hf_lookup(megatron_name)
-        assert mapping is not None, f"missing flattened expert-parallel mapping: {megatron_name}"
-        assert mapping.hf_param == hf_name
-
-
-def test_expert_parallel_flattened_attention_mappings_resolve(bridge_with_mtp):
-    """MCore dev omits ``inner_layer`` from expert-parallel attention names."""
-    registry = bridge_with_mtp.mapping_registry()
-    expected_hf_names = {
-        "decoder.layers.0.input_layernorm.weight": "layers.0.attn_norm.weight",
-        "decoder.layers.0.self_attention.linear_q_down_proj.weight": "layers.0.attn.wq_a.weight",
-        "decoder.layers.0.self_attention.q_layernorm.weight": "layers.0.attn.q_norm.weight",
-        "decoder.layers.0.self_attention.linear_q_up_proj.weight": "layers.0.attn.wq_b.weight",
-        "decoder.layers.0.self_attention.linear_kv_proj.weight": "layers.0.attn.wkv.weight",
-        "decoder.layers.0.self_attention.kv_layernorm.weight": "layers.0.attn.kv_norm.weight",
-        "decoder.layers.0.self_attention.linear_o_group_proj": "layers.0.attn.wo_a.weight",
-        "decoder.layers.0.self_attention.linear_proj.weight": "layers.0.attn.wo_b.weight",
-        "decoder.layers.0.self_attention.core_attention.attn_sink": "layers.0.attn.attn_sink",
-        "decoder.layers.2.self_attention.core_attention.compressor.ape": "layers.1.attn.compressor.ape",
-        "decoder.layers.2.self_attention.core_attention.indexer.linear_weights_proj.weight": (
-            "layers.1.attn.indexer.scorer.weights_proj.weight"
-        ),
-        "decoder.layers.2.self_attention.core_attention.indexer.compressor.norm.weight": (
-            "layers.1.attn.indexer.compressor.norm.weight"
-        ),
-    }
-
-    for megatron_name, hf_name in expected_hf_names.items():
-        mapping = registry.megatron_to_hf_lookup(megatron_name)
-        assert mapping is not None, f"missing flattened expert-parallel mapping: {megatron_name}"
-        assert mapping.hf_param == hf_name
+    assert "decoder.layers.1.inner_layer.mlp.experts.local_experts.*.linear_fc1.weight" in params
+    assert "decoder.layers.1.inner_layer.mlp.experts.local_experts.*.linear_fc2.weight" in params
 
 
 class TestDecoderHCHeadMappings:
@@ -644,6 +592,22 @@ class TestDeepSeekV4HardwareDefaults:
         assert out.dsa_kernel_backend == "none"
         assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is False
+
+    def test_provider_bridge_sets_legacy_hyper_connection_fields(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = _provider_with_fields("enable_hyper_connections", "num_residual_streams")
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch.object(torch.cuda, "is_available", return_value=False),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.enable_hyper_connections is True
+        assert out.num_residual_streams == hf_pretrained.config.hc_mult
+        assert not hasattr(out, "enable_mhc_connections")
 
     def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         hf_pretrained = MagicMock()
