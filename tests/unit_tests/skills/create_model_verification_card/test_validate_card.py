@@ -41,6 +41,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("glm5-2", "peft", "H100"): (2048, 32, 208),
     ("glm5-2", "peft", "GB200"): (2048, 32, 192),
     ("glm5-2", "checkpoint_resume", "H100"): (2048, 1024, 352),
+    ("glm5-2", "checkpoint_resume", "GB200"): (4096, 1024, 192),
     ("gpt-oss-120b", "pretrain", "H100"): (4096, 512, 64),
     ("gpt-oss-120b", "sft", "H100"): (2048, 128, 32),
     ("gpt-oss-120b", "sft_long_context", "H100"): (32768, 4, 48),

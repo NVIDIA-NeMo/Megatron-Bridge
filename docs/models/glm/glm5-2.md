@@ -321,30 +321,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-29</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-30</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>1.044214</dd>
+            <dd>1.044211</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.8769335</dd>
+            <dd>0.8772652</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>34,262.350 ms</dd>
+            <dd>34,334.290 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>194.130 TFLOP/s/GPU</dd>
+            <dd>196.950 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>637.590 tokens/s/GPU</dd>
+            <dd>636.254 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -355,12 +355,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_glm52_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_glm52_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --save_dir work/model-verification/glm5-2/pretrain-wikitext-gb200/checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-gb200/resolved-config.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run warm-starts from a Bridge GPU import of the GLM-5.2 weights that includes the MTP layer (published GLM-5.2 revisions ship byte-identical weight files) and completes exactly 20 bounded steps at GBS/MBS 1024/1 and sequence length 4096 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, all-to-all expert dispatch, and natural routing, without deterministic mode. Data is the WikiText-103 raw train split grouped into 29,444 articles and tokenized with the pinned GLM-5.2 tokenizer (120,372,951 tokens). The learning rate warms up to 3e-6 at step 10 and decays to 3e-7 at step 20; the random-initialization peak of 3e-4 destabilizes the pretrained weights. Loss decreases from 1.044214 to 0.8769335 with a maximum grad norm of 9.586, a final grad norm of 1.243, and zero skipped or NaN iterations. Steps 11-20 average 34,262.350 ms, 194.130 model TFLOP/s/GPU, and 637.590 token slots/s/GPU. This bounded run saves no checkpoint.
+        <p>The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run uses the recipe&#x27;s [14, 16, 12, 12, 12, 12] decoder-layer pipeline layout, with the MTP layer and loss on the last stage. It warm-starts from a Bridge GPU import of the GLM-5.2 weights that includes the MTP layer (published GLM-5.2 revisions ship byte-identical weight files) and completes exactly 20 bounded steps at GBS/MBS 1024/1 and sequence length 4096 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, all-to-all expert dispatch, and natural routing, without deterministic mode. Data is the WikiText-103 raw train split grouped into 29,444 articles and tokenized with the pinned GLM-5.2 tokenizer (120,372,951 tokens). The learning rate warms up to 3e-6 at step 10 and decays to 3e-7 at step 20; the random-initialization peak of 3e-4 destabilizes the pretrained weights. Loss decreases from 1.044211 to 0.8772652 with a maximum grad norm of 4.567, a final grad norm of 0.711, and zero skipped or NaN iterations. Steps 11-20 average 34,334.290 ms, 196.950 model TFLOP/s/GPU, and 636.254 token slots/s/GPU. The step-10 checkpoint contains model, optimizer, scheduler, data-order, and RNG state in 199 files (about 10.56 TB).
 </p>
       </section>
     </article>
