@@ -59,6 +59,7 @@ exclude_patterns = [
     ".DS_Store",
     "skills/linting-and-formatting/SKILL.md",
     "skills/parity-testing/SKILL.md",
+    "skills/pr-review/SKILL.md",
     "skills/**/BENCHMARK.md",
     "skills/**/skill-card.md",
 ]
