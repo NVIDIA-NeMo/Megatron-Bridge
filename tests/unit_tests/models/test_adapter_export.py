@@ -1081,6 +1081,8 @@ class TestExportAdapterCkpt:
         mock.export_adapter_ckpt = AutoBridge.export_adapter_ckpt.__get__(mock, AutoBridge)
         mock.hf_pretrained = SimpleNamespace(model_name_or_path="test-org/test-model")
 
+        mock._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=False)
+
         fake_provider = MagicMock()
         fake_provider.provide_distributed_model.return_value = [MagicMock()]
         mock.to_megatron_provider.return_value = fake_provider
@@ -1205,6 +1207,25 @@ class TestExportAdapterCkpt:
         assert peft_config.dim == 8
         assert peft_config.alpha == 16
         assert not hasattr(peft_config, "freeze_language_model")
+
+    def test_builder_backed_family_uses_model_config(self, bridge, ckpt_dir, tmp_path):
+        """Builder-backed bridges build through get_model() with fp32 params, never the provider."""
+        bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=True)
+        model_config = SimpleNamespace(transformer=SimpleNamespace(), pre_wrap_hooks=[])
+        bridge.get_model_config.return_value = model_config
+        bridge.get_model.return_value = [MagicMock()]
+
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out", show_progress=False)
+
+        bridge.to_megatron_provider.assert_not_called()
+        bridge.get_model.assert_called_once()
+        assert bridge.get_model.call_args.args[0] is model_config
+        assert bridge.get_model.call_args.kwargs["wrap_with_ddp"] is False
+        assert model_config.transformer.params_dtype == torch.float32
+        assert model_config.transformer.pipeline_dtype == torch.float32
+        assert model_config.transformer.use_cpu_initialization is True
+        assert len(model_config.pre_wrap_hooks) == 1  # the LoRA hook
+        bridge.save_hf_adapter.assert_called_once()
 
     def test_missing_checkpoint_raises(self, bridge, tmp_path):
         with pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"):

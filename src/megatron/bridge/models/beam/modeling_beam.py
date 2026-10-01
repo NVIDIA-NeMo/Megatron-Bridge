@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Beam modules on top of an unmodified Megatron-Core ``GPTModel``.
+"""Beam modules on top of an unmodified Megatron-Core ``HybridModel``.
 
-Megatron-Core's GPT stack covers Beam except for:
+Each Beam decoder layer becomes two ``HybridStack`` layers: an attention-only layer
+(``*``) followed by a dense MLP (``-``) or MoE (``E``) layer. Megatron-Core's layers
+cover Beam except for:
 
 * SSMax query scaling on NoPE layers,
 * a learnable per-head bias on the attention output gate,
@@ -10,12 +12,13 @@ Megatron-Core's GPT stack covers Beam except for:
 * fp32 router parameters (and two router-GEMM fixes they need),
 * fp32 final-logit soft-capping.
 
-Everything except the last item is swapped into the layer spec by
-:func:`beam_decoder_block_spec`, which rewrites Megatron-Core's GPT decoder block spec
-with the subclasses below. Megatron-Core offers no hook for one piece: the distributed
-optimizer's parameter-group index map, which assumes a group holds a single parameter
-dtype. :func:`patch_distributed_optimizer_group_index_map` monkey patches it once the
-first fp32 Beam router is built.
+Everything except the last item is swapped into the stack spec by
+:func:`beam_hybrid_stack_spec`, which builds the hybrid layers from Megatron-Core's
+Transformer Engine GPT layer submodules with the subclasses below. Megatron-Core offers
+no hook for one piece: the distributed optimizer's parameter-group index map, which
+assumes a group holds a single parameter dtype.
+:func:`patch_distributed_optimizer_group_index_map` monkey patches it once the first
+fp32 Beam router is built.
 """
 
 import dataclasses
@@ -27,18 +30,23 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.extensions.transformer_engine import TEDotProductAttention, TENorm
 from megatron.core.jit import jit_fuser
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_submodules
+from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
+from megatron.core.ssm.mlp_layer import MLPLayer
 from megatron.core.tensor_parallel import ColumnParallelLinear
 from megatron.core.tensor_parallel.layers import set_tensor_model_parallel_attributes
 from megatron.core.transformer.attention import SelfAttention
-from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
 from megatron.core.transformer.moe import moe_utils
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
+from megatron.core.transformer.transformer_layer import (
+    MoETransformerLayer,
+    TransformerLayer,
+    TransformerLayerSubmodules,
+)
 from megatron.core.transformer.utils import ensure_metadata_has_dp_cp_group, make_sharded_tensors_for_checkpoint
 from megatron.core.utils import divide, get_tensor_model_parallel_group_if_none
 
@@ -61,7 +69,7 @@ def beam_logit_softcapping(logits: torch.Tensor, cap: Optional[float]) -> torch.
 class BeamOutputLayer(ColumnParallelLinear):
     """``ColumnParallelLinear`` whose output is soft-capped in fp32.
 
-    Applied to the output layer by BeamModelBuilder and BeamModelProvider.
+    Applied to the output layer by BeamModelBuilder.
     """
 
     def forward(self, *args, **kwargs):
@@ -71,7 +79,7 @@ class BeamOutputLayer(ColumnParallelLinear):
 
 
 # ---------------------------------------------------------------------------
-# Config validation for the Beam fields (declared on BeamTransformerConfig / BeamModelProvider)
+# Config validation for the Beam fields (declared on BeamTransformerConfig)
 # ---------------------------------------------------------------------------
 
 BEAM_FEATURE_FIELDS = (
@@ -303,10 +311,6 @@ class _BeamSSMaxCoreAttentionMixin:
         return apply_ssmax_to_query(query, position_offset, cp_rank=cp_rank, cp_size=cp_size, cu_seqlens=cu_seqlens)
 
 
-class BeamDotProductAttention(_BeamSSMaxCoreAttentionMixin, DotProductAttention):
-    """Megatron-Core ``DotProductAttention`` with SSMax on NoPE layers."""
-
-
 class BeamTEDotProductAttention(_BeamSSMaxCoreAttentionMixin, TEDotProductAttention):
     """Transformer Engine ``TEDotProductAttention`` with SSMax on NoPE layers."""
 
@@ -424,13 +428,15 @@ class BeamSelfAttention(SelfAttention):
 # ---------------------------------------------------------------------------
 
 
-def depth_scaled_residual_coefs(layer_number: int, is_attention: bool) -> Tuple[float, float]:
-    """``(sublayer_scale, residual_scale)`` for one residual add; the squares sum to one.
+def depth_scaled_residual_coefs(layer_number: int) -> Tuple[float, float]:
+    """``(sublayer_scale, residual_scale)`` for the residual add of one hybrid layer; the squares sum to one.
 
-    ``residual_add_idx = 2 * layer_number + (0 | 1)`` for the attention / MLP add, with
-    Megatron's 1-based ``layer_number``.
+    ``residual_add_idx = layer_number + 1`` with ``HybridStack``'s 1-based ``layer_number``,
+    which counts attention and MLP layers separately: the embedding is the first term of the
+    residual stream, so Beam layer ``i`` (0-based) adds at ``2i + 2`` (attention) and
+    ``2i + 3`` (MLP).
     """
-    residual_add_idx = 2 * layer_number + (0 if is_attention else 1)
+    residual_add_idx = layer_number + 1
     return 1.0 / math.sqrt(residual_add_idx), math.sqrt((residual_add_idx - 1) / residual_add_idx)
 
 
@@ -453,45 +459,53 @@ class BeamTransformerLayerSubmodules(TransformerLayerSubmodules):
 
 
 class BeamTransformerLayerMixin:
-    """Sandwich norms and depth-scaled residual adds for a ``TransformerLayer``.
+    """Sandwich norms and depth-scaled residual adds for an attention-only or MLP-only hybrid layer.
 
-    The layer's bias-dropout-add callables are replaced by :meth:`_beam_bda`, which computes
-    ``bias -> post norm -> dropout -> (depth-scaled) residual add``. Everything else of the
-    base layer (offload commits, recompute hooks, viewless outputs) stays in place.
+    The bias-dropout-add of the sublayer the layer owns is replaced by :meth:`_beam_bda`,
+    which computes ``bias -> post norm -> dropout -> (depth-scaled) residual add``. The
+    absent sublayer keeps its identity pass-through. Everything else of the base layer
+    (offload commits, recompute hooks, viewless outputs) stays in place.
     """
 
     def __init__(self, config, submodules, layer_number: int = 1, *args, **kwargs):
         super().__init__(config, submodules, layer_number, *args, **kwargs)
+        has_attention = not isinstance(self.self_attention, IdentityOp)
+        has_mlp = not isinstance(self.mlp, IdentityOp)
+        dsr = config.depth_scaled_residual
+        if (config.post_self_attn_layernorm or config.post_mlp_layernorm or dsr) and not isinstance(
+            self.cross_attention, IdentityOp
+        ):
+            raise NotImplementedError(
+                "post_self_attn_layernorm / post_mlp_layernorm / depth_scaled_residual are implemented for "
+                "decoder-only layers; cross-attention adds a residual that the depth index and post-norms "
+                "do not account for."
+            )
+        if dsr and has_attention and has_mlp:
+            raise NotImplementedError(
+                "depth_scaled_residual expects split hybrid layers (attention '*' and MLP '-'/'E' as separate "
+                "layers); a layer holding both would need two residual indices."
+            )
+
         self.post_self_attn_layernorm = (
             self._beam_build_post_norm(getattr(submodules, "post_self_attn_layernorm", IdentityOp))
-            if config.post_self_attn_layernorm
+            if has_attention and config.post_self_attn_layernorm
             else None
         )
         self.post_mlp_layernorm = (
             self._beam_build_post_norm(getattr(submodules, "post_mlp_layernorm", IdentityOp))
-            if config.post_mlp_layernorm
+            if has_mlp and config.post_mlp_layernorm
             else None
         )
-        dsr = config.depth_scaled_residual
-        self._dsr_attn_coefs = depth_scaled_residual_coefs(self.layer_number, is_attention=True) if dsr else None
-        self._dsr_mlp_coefs = depth_scaled_residual_coefs(self.layer_number, is_attention=False) if dsr else None
+        self._dsr_coefs = depth_scaled_residual_coefs(self.layer_number) if dsr else None
 
         # The spec's bias-dropout-add may be a function or a module (IdentityFuncOp); drop a
         # registered module before replacing it with a plain callable.
-        if self.post_self_attn_layernorm is not None or dsr:
+        if has_attention and (self.post_self_attn_layernorm is not None or dsr):
             self._modules.pop("self_attn_bda", None)
             self.self_attn_bda = functools.partial(self._beam_bda, is_attention=True)
-        if self.post_mlp_layernorm is not None or dsr:
+        if has_mlp and (self.post_mlp_layernorm is not None or dsr):
             self._modules.pop("mlp_bda", None)
             self.mlp_bda = functools.partial(self._beam_bda, is_attention=False)
-        if (
-            self.post_self_attn_layernorm is not None or self.post_mlp_layernorm is not None or dsr
-        ) and not isinstance(self.cross_attention, IdentityOp):
-            raise NotImplementedError(
-                "post_self_attn_layernorm / post_mlp_layernorm / depth_scaled_residual are implemented for "
-                "decoder-only layers; cross-attention adds a third residual per layer that the depth index "
-                "and post-norms do not account for."
-            )
 
     def _beam_build_post_norm(self, norm):
         if norm is IdentityOp:
@@ -501,7 +515,7 @@ class BeamTransformerLayerMixin:
     def _beam_bda(self, training: bool, fused: bool, *, is_attention: bool):
         """Same call contract as ``get_bias_dropout_add``: returns ``f(x_with_bias, residual, prob)``."""
         norm = self.post_self_attn_layernorm if is_attention else self.post_mlp_layernorm
-        coefs = self._dsr_attn_coefs if is_attention else self._dsr_mlp_coefs
+        coefs = self._dsr_coefs
 
         def _sandwich_residual_add(output_with_bias, residual, prob):
             # Order is bias -> norm -> dropout -> add. Normalizing after dropout would undo
@@ -520,18 +534,16 @@ class BeamTransformerLayerMixin:
         return _sandwich_residual_add
 
 
-@functools.lru_cache(maxsize=None)
-def _beam_layer_class(layer_cls: type) -> type:
-    """``BeamTransformerLayer`` for ``TransformerLayer``; the same mixin on other layer classes."""
-    if not issubclass(layer_cls, TransformerLayer):
-        raise TypeError(f"Beam layer specs expect a TransformerLayer subclass, got {layer_cls.__name__}.")
-    if layer_cls is TransformerLayer:
-        return BeamTransformerLayer
-    return type(f"Beam{layer_cls.__name__}", (BeamTransformerLayerMixin, layer_cls), {})
-
-
 class BeamTransformerLayer(BeamTransformerLayerMixin, TransformerLayer):
-    """``TransformerLayer`` with Beam's sandwich norms and depth-scaled residuals."""
+    """Attention-only hybrid layer (``*``) with Beam's sandwich norm and depth-scaled residual."""
+
+
+class BeamMLPLayer(BeamTransformerLayerMixin, MLPLayer):
+    """Dense MLP hybrid layer (``-``) with Beam's sandwich norm and depth-scaled residual."""
+
+
+class BeamMoETransformerLayer(BeamTransformerLayerMixin, MoETransformerLayer):
+    """MoE hybrid layer (``E``) with Beam's sandwich norm and depth-scaled residual."""
 
 
 # ---------------------------------------------------------------------------
@@ -675,77 +687,93 @@ def patch_distributed_optimizer_group_index_map() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Layer spec
+# Hybrid stack spec
 # ---------------------------------------------------------------------------
 
 
-def _beam_layer_spec(layer_spec: ModuleSpec) -> ModuleSpec:
-    """Rewrite one Megatron-Core GPT layer spec to the Beam modules (sandwich norms are TE norms)."""
-    submodules = layer_spec.submodules
-
-    attention = submodules.self_attention
+def _beam_attention_spec(attention: ModuleSpec) -> ModuleSpec:
+    """Rewrite Megatron-Core's TE ``SelfAttention`` spec to the Beam gate and SSMax core attention."""
     if not (isinstance(attention, ModuleSpec) and attention.module is SelfAttention):
         raise TypeError(f"Beam expects SelfAttention in the layer spec, got {attention!r}.")
     core_attention = attention.submodules.core_attention
-    if core_attention is TEDotProductAttention:
-        core_attention = BeamTEDotProductAttention
-    elif core_attention is DotProductAttention:
-        core_attention = BeamDotProductAttention
-    else:
-        raise TypeError(f"Beam expects TE or local core attention in the layer spec, got {core_attention!r}.")
-    attention = dataclasses.replace(
+    if core_attention is not TEDotProductAttention:
+        raise TypeError(f"Beam expects TEDotProductAttention in the layer spec, got {core_attention!r}.")
+    return dataclasses.replace(
         attention,
         module=BeamSelfAttention,
-        submodules=dataclasses.replace(attention.submodules, core_attention=core_attention),
-    )
-
-    mlp = submodules.mlp
-    if isinstance(mlp, functools.partial) and isinstance(mlp.func, type) and issubclass(mlp.func, MoELayer):
-        moe_submodules = mlp.keywords["submodules"]
-        if moe_submodules.router is not TopKRouter:
-            raise TypeError(f"Beam expects TopKRouter in the MoE spec, got {moe_submodules.router!r}.")
-        mlp = functools.partial(
-            mlp.func,
-            *mlp.args,
-            **{**mlp.keywords, "submodules": dataclasses.replace(moe_submodules, router=BeamTopKRouter)},
-        )
-
-    fields = {f.name: getattr(submodules, f.name) for f in dataclasses.fields(TransformerLayerSubmodules)}
-    fields.update(
-        self_attention=attention,
-        mlp=mlp,
-        post_self_attn_layernorm=TENorm,
-        post_mlp_layernorm=TENorm,
-    )
-    return dataclasses.replace(
-        layer_spec,
-        module=_beam_layer_class(layer_spec.module),
-        submodules=BeamTransformerLayerSubmodules(**fields),
+        submodules=dataclasses.replace(attention.submodules, core_attention=BeamTEDotProductAttention),
     )
 
 
-def beam_decoder_block_spec(
-    config,
-    use_transformer_engine: bool = True,
-    normalization: Optional[str] = None,
-    qk_l2_norm: Optional[bool] = False,
-    vp_stage: Optional[int] = None,
-    pp_rank: Optional[int] = None,
-):
-    """Megatron-Core's GPT decoder block spec with every layer rewritten to the Beam modules.
+def _beam_moe_spec(mlp):
+    """Swap ``BeamTopKRouter`` into Megatron-Core's MoE spec."""
+    if not (isinstance(mlp, functools.partial) and isinstance(mlp.func, type) and issubclass(mlp.func, MoELayer)):
+        raise TypeError(f"Beam expects an MoELayer in the MoE layer spec, got {mlp!r}.")
+    moe_submodules = mlp.keywords["submodules"]
+    if moe_submodules.router is not TopKRouter:
+        raise TypeError(f"Beam expects TopKRouter in the MoE spec, got {moe_submodules.router!r}.")
+    return functools.partial(
+        mlp.func,
+        *mlp.args,
+        **{**mlp.keywords, "submodules": dataclasses.replace(moe_submodules, router=BeamTopKRouter)},
+    )
 
-    Accepts the flat ``TransformerConfig`` (provider path) or a model config with a nested
-    ``transformer`` (builder path).
+
+def beam_hybrid_stack_spec(config) -> ModuleSpec:
+    """``HybridStack`` spec with Beam's attention (``*``), dense MLP (``-``) and MoE (``E``) layers.
+
+    The layers reuse the attention, MLP and MoE submodules of Megatron-Core's Transformer
+    Engine GPT layer spec, split into one sublayer per hybrid layer, with sandwich norms
+    as TE norms. Accepts a ``TransformerConfig`` or a model config with a nested ``transformer``.
     """
     transformer_config = getattr(config, "transformer", config)
     validate_beam_config(transformer_config)
-    block_spec = get_gpt_decoder_block_spec(
-        transformer_config,
-        use_transformer_engine=use_transformer_engine,
-        normalization=normalization,
-        qk_l2_norm=qk_l2_norm,
-        vp_stage=vp_stage,
-        pp_rank=pp_rank,
+    if transformer_config.transformer_impl != "transformer_engine":
+        raise NotImplementedError(
+            f"Beam's hybrid stack is built from Transformer Engine layers; got "
+            f"transformer_impl={transformer_config.transformer_impl!r}."
+        )
+
+    def _te_submodules(num_experts):
+        return get_gpt_layer_with_transformer_engine_submodules(
+            num_experts=num_experts,
+            moe_grouped_gemm=transformer_config.moe_grouped_gemm if num_experts else False,
+            qk_layernorm=transformer_config.qk_layernorm,
+            qk_l2_norm=transformer_config.qk_l2_norm,
+            use_te_activation_func=transformer_config.use_te_activation_func,
+        )
+
+    dense = _te_submodules(None)
+    submodules = HybridStackSubmodules(
+        attention_layer=ModuleSpec(
+            module=BeamTransformerLayer,
+            submodules=BeamTransformerLayerSubmodules(
+                input_layernorm=dense.input_layernorm,
+                self_attention=_beam_attention_spec(dense.self_attention),
+                self_attn_bda=dense.self_attn_bda,
+                post_self_attn_layernorm=TENorm,
+            ),
+        ),
+        mlp_layer=ModuleSpec(
+            module=BeamMLPLayer,
+            submodules=BeamTransformerLayerSubmodules(
+                pre_mlp_layernorm=dense.pre_mlp_layernorm,
+                mlp=dense.mlp,
+                mlp_bda=dense.mlp_bda,
+                post_mlp_layernorm=TENorm,
+                sharded_state_dict_keys_map=dense.sharded_state_dict_keys_map,
+            ),
+        ),
     )
-    block_spec.layer_specs = [_beam_layer_spec(spec) for spec in block_spec.layer_specs]
-    return block_spec
+    if transformer_config.num_moe_experts:
+        moe = _te_submodules(transformer_config.num_moe_experts)
+        submodules.moe_layer = ModuleSpec(
+            module=BeamMoETransformerLayer,
+            submodules=BeamTransformerLayerSubmodules(
+                pre_mlp_layernorm=moe.pre_mlp_layernorm,
+                mlp=_beam_moe_spec(moe.mlp),
+                mlp_bda=moe.mlp_bda,
+                post_mlp_layernorm=TENorm,
+            ),
+        )
+    return ModuleSpec(module=HybridStack, submodules=submodules)

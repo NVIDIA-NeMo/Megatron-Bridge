@@ -12,17 +12,17 @@ from megatron.bridge.models.beam.beam_bridge import (
     BeamBridge,
     _beam_settings,
     _moe_layer_pattern,
+    _on_attention_layers,
     _rope_settings,
 )
 from megatron.bridge.models.beam.beam_builder import BeamModelBuilder
-from megatron.bridge.models.beam.beam_config import BeamModelConfig, BeamTransformerConfig
+from megatron.bridge.models.beam.beam_config import BeamModelConfig, BeamTransformerConfig, beam_pipeline_layer_pattern
 from megatron.bridge.models.beam.beam_mappings import (
     BeamQKVGateMapping,
     _geometry,
     merge_qkv_gate_weights,
     split_qkv_gate_weights,
 )
-from megatron.bridge.models.beam.beam_provider import BeamModelProvider
 from megatron.bridge.models.beam.modeling_beam import BeamOutputLayer, beam_logit_softcapping
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVGMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -219,15 +219,11 @@ def mock_pretrained(hf_config):
     return m
 
 
-@pytest.fixture(params=["provider", "builder"])
-def converted_config(request, mock_pretrained):
-    if request.param == "provider":
-        provider = BeamBridge().provider_bridge(mock_pretrained)
-        assert isinstance(provider, BeamModelProvider)
-        return provider
+@pytest.fixture
+def converted_config(mock_pretrained):
     cfg = BeamBridge().hf_config_to_model_config(mock_pretrained.config)
     assert isinstance(cfg, BeamModelConfig) and isinstance(cfg.transformer, BeamTransformerConfig)
-    assert cfg.transformer_layer_spec is None  # BeamModelBuilder supplies the Beam block spec
+    assert cfg.hybrid_stack_spec is None  # BeamModelBuilder supplies the Beam stack spec
     return cfg
 
 
@@ -236,15 +232,41 @@ def test_registered_for_beam_only():
     assert BeamBridge.MODEL_TYPE == "beam"
 
 
-@pytest.mark.parametrize("config_cls", ["provider", "builder"])
-def test_beam_settings_target_declared_fields(hf_config, config_cls):
+def test_beam_settings_target_declared_fields(hf_config):
     """Every setting the bridge emits exists on the target config (strict overrides reject unknown names)."""
-    fields = (
-        set(BeamModelProvider.__dataclass_fields__)
-        if config_cls == "provider"
-        else set(BeamTransformerConfig.__dataclass_fields__) | set(BeamModelConfig.__dataclass_fields__)
-    )
+    fields = set(BeamTransformerConfig.__dataclass_fields__) | set(BeamModelConfig.__dataclass_fields__)
     assert set(_beam_settings(hf_config)) <= fields
+
+
+def test_provider_path_is_not_supported(mock_pretrained):
+    """The generic GPTModelProvider would build a model without the Beam modules; refuse it."""
+    with pytest.raises(NotImplementedError, match="get_model_config"):
+        BeamBridge().provider_bridge(mock_pretrained)
+
+
+def test_per_layer_flags_land_on_attention_layers():
+    assert _on_attention_layers([1, 0, 1]) == [1, 0, 0, 0, 1, 0]
+
+
+@pytest.mark.parametrize(
+    "pattern,stages,expected",
+    [
+        ("*-*E*E*E", 1, "*-*E*E*E"),
+        ("*-*E*E*E", 2, "*-*E|*E*E"),
+        ("*-*E*E*E", 3, "*-*E|*E|*E"),  # earlier stages take the remainder; pairs stay together
+        ("*-*E|*E*E", 4, "*-|*E|*E|*E"),  # stale separators are re-split
+        ("*-*E|*E*E", 1, "*-*E*E*E"),
+    ],
+)
+def test_pipeline_layer_pattern(pattern, stages, expected):
+    assert beam_pipeline_layer_pattern(pattern, stages) == expected
+
+
+def test_pipeline_layer_pattern_rejects_bad_inputs():
+    with pytest.raises(ValueError, match="pair every attention layer"):
+        beam_pipeline_layer_pattern("*-*", 1)
+    with pytest.raises(ValueError, match="cannot fill"):
+        beam_pipeline_layer_pattern("*-*E", 3)
 
 
 def test_all_rope_model_does_not_enable_ssmax(hf_config):
@@ -256,7 +278,9 @@ def test_all_rope_model_does_not_enable_ssmax(hf_config):
 class TestConfigConversion:
     def test_config_fields(self, converted_config):
         expected = dict(
-            num_layers=4,
+            num_layers=8,  # two hybrid layers per Beam layer
+            hybrid_layer_pattern="*-*E*E*E",
+            is_hybrid_model=True,
             hidden_size=128,
             kv_channels=16,
             num_query_groups=2,
@@ -279,8 +303,8 @@ class TestConfigConversion:
             post_mlp_layernorm=True,
             depth_scaled_residual=True,
             window_size=(511, 0),
-            window_attn_skip_freq=[1, 1, 0, 1],
-            no_rope_freq=[0, 0, 1, 0],
+            window_attn_skip_freq=[1, 0, 1, 0, 0, 0, 1, 0],
+            no_rope_freq=[0, 0, 0, 0, 1, 0, 0, 0],
             ssmax=True,
             num_moe_experts=8,
             moe_ffn_hidden_size=64,
@@ -299,7 +323,6 @@ class TestConfigConversion:
             moe_grouped_gemm=True,
             moe_token_dispatcher_type="alltoall",
             moe_permute_fusion=True,
-            moe_layer_freq=[0, 1, 1, 1],
             final_logit_softcapping=30.0,
             bf16=True,
             params_dtype=torch.bfloat16,
@@ -311,16 +334,14 @@ class TestConfigConversion:
     def test_rejects_unnormalised_topk(self, mock_pretrained):
         mock_pretrained.config.norm_topk_prob = False
         with pytest.raises(ValueError, match="norm_topk_prob"):
-            BeamBridge().provider_bridge(mock_pretrained)
+            BeamBridge().hf_config_to_model_config(mock_pretrained.config)
 
     def test_all_dense_model_has_no_moe(self, mock_pretrained):
         """num_experts in the config must not create MoE layers when no layer is typed 'sparse'."""
         mock_pretrained.config.mlp_layer_types = ["dense"] * 4
-        provider = BeamBridge().provider_bridge(mock_pretrained)
-        assert provider.num_moe_experts is None and provider.moe_ffn_hidden_size is None
-        assert provider.moe_router_num_groups is None and provider.moe_router_group_topk is None
-        assert provider.moe_router_fp32_params is False
         cfg = BeamBridge().hf_config_to_model_config(mock_pretrained.config)
+        assert cfg.transformer.moe_router_num_groups is None and cfg.transformer.moe_router_group_topk is None
+        assert cfg.transformer.moe_router_fp32_params is False
         cfg.finalize()
         assert cfg.transformer.num_moe_experts is None and cfg.transformer.moe_ffn_hidden_size is None
 
@@ -328,19 +349,17 @@ class TestConfigConversion:
         """The QKV+gate fusion carries no bias; refuse instead of silently dropping the HF biases."""
         mock_pretrained.config.attention_bias = True
         with pytest.raises(ValueError, match="attention_bias=True"):
-            BeamBridge().provider_bridge(mock_pretrained)
-        with pytest.raises(ValueError, match="attention_bias=True"):
             BeamBridge().hf_config_to_model_config(mock_pretrained.config)
 
     def test_rejects_sparse_layers_without_experts(self, mock_pretrained):
         mock_pretrained.config.num_experts = 0
         with pytest.raises(ValueError, match="num_experts"):
-            BeamBridge().provider_bridge(mock_pretrained)
+            BeamBridge().hf_config_to_model_config(mock_pretrained.config)
 
     def test_rejects_sliding_layers_without_window(self, mock_pretrained):
         mock_pretrained.config.sliding_window = None
         with pytest.raises(ValueError, match="sliding_window"):
-            BeamBridge().provider_bridge(mock_pretrained)
+            BeamBridge().hf_config_to_model_config(mock_pretrained.config)
 
     def test_config_round_trip(self, converted_config):
         hf = BeamBridge.megatron_to_hf_config(converted_config)
@@ -367,10 +386,21 @@ class TestConfigConversion:
             assert key not in hf, key
 
     def test_export_rejects_mixed_rope_within_layer_type(self, mock_pretrained):
-        provider = BeamBridge().provider_bridge(mock_pretrained)
-        provider.no_rope_freq = [1, 0, 1, 0]  # layer 0 (sliding) NoPE, layer 1 (sliding) RoPE
+        cfg = BeamBridge().hf_config_to_model_config(mock_pretrained.config)
+        cfg.transformer.no_rope_freq = [1, 0, 0, 0, 1, 0, 0, 0]  # layer 0 (sliding) NoPE, layer 1 (sliding) RoPE
         with pytest.raises(ValueError, match="mix RoPE and NoPE"):
-            BeamBridge.megatron_to_hf_config(provider)
+            BeamBridge.megatron_to_hf_config(cfg)
+
+    @pytest.mark.parametrize("pattern", ["*-*E*E", "-**E*E*E", "*M*E*E*E"])
+    def test_export_rejects_non_beam_patterns(self, converted_config, pattern):
+        converted_config.hybrid_layer_pattern = pattern
+        with pytest.raises(ValueError, match="alternating attention"):
+            BeamBridge.megatron_to_hf_config(converted_config)
+
+    def test_export_ignores_pipeline_separators(self, converted_config):
+        converted_config.hybrid_layer_pattern = "*-*E|*E*E"
+        hf = BeamBridge.megatron_to_hf_config(converted_config)
+        assert hf["num_hidden_layers"] == 4 and hf["mlp_layer_types"] == BEAM_CFG["mlp_layer_types"]
 
 
 class TestMappingRegistry:
@@ -390,7 +420,9 @@ class TestMappingRegistry:
             cfg = bridge.hf_config_to_model_config(hf_config)
             cfg.finalize()
             model = BeamModelBuilder(cfg).build_model(ProcessGroupCollection.use_mpu_process_groups())
-            tasks = bridge.build_conversion_tasks(PretrainedConfig(), [model])
+            # The registry lays out the hybrid layers from the HF config handed to the conversion.
+            pretrained = PretrainedConfig(**{k: getattr(hf_config, k) for k in BEAM_CFG})
+            tasks = bridge.build_conversion_tasks(pretrained, [model])
             hf_names = [
                 name
                 for task in tasks
@@ -413,33 +445,60 @@ class TestMappingRegistry:
             assert ("model.layers.1.mlp.experts.0.gate_proj.weight" in hf_names) is not dense
             assert "model.layers.0.post_attention_layernorm.weight" in hf_names
             assert "model.layers.0.post_feedforward_layernorm.weight" in hf_names
+            assert "model.norm.weight" in hf_names
+            # Every Megatron parameter of the split layers has a mapping.
+            assert None not in tasks
+            assert {name for name, _ in model.named_parameters()} <= {task.global_param_name for task in tasks}
         finally:
             teardown()
 
-    def test_dense_and_moe_mappings(self):
+    def test_needs_the_hf_config(self):
+        with pytest.raises(RuntimeError, match="needs hf_config"):
+            BeamBridge().mapping_registry()
+
+    def test_split_layer_indices(self, hf_config):
+        """Beam layer i: attention at decoder.layers.{2i}, dense MLP / MoE at decoder.layers.{2i+1}."""
         bridge = BeamBridge()
+        bridge.hf_config = hf_config
         registry = bridge.mapping_registry()
 
-        assert registry.megatron_to_hf_lookup("decoder.layers.0.mlp.linear_fc1.weight") is not None
-        assert registry.megatron_to_hf_lookup("decoder.layers.1.mlp.router.weight") is not None
-        assert registry.megatron_to_hf_lookup("decoder.layers.1.mlp.router.expert_bias") is not None
+        assert registry.megatron_to_hf_lookup("decoder.layers.1.mlp.linear_fc1.weight").hf_param == {
+            "gate": "model.layers.0.mlp.gate_proj.weight",
+            "up": "model.layers.0.mlp.up_proj.weight",
+        }
+        assert registry.megatron_to_hf_lookup("decoder.layers.3.mlp.router.weight").hf_param == (
+            "model.layers.1.mlp.gate.weight"
+        )
+        assert registry.megatron_to_hf_lookup("decoder.layers.3.mlp.router.expert_bias") is not None
+        experts = registry.megatron_to_hf_lookup("decoder.layers.7.mlp.experts.linear_fc2.weight5")
+        assert experts.hf_param == "model.layers.3.mlp.experts.5.down_proj.weight"
+        # Layer kinds do not leak: no MoE on Beam layer 0, no dense MLP on Beam layer 1, no MLP on attention layers.
+        assert registry.megatron_to_hf_lookup("decoder.layers.1.mlp.router.weight") is None
+        assert registry.megatron_to_hf_lookup("decoder.layers.3.mlp.linear_fc1.weight") is None
+        assert registry.megatron_to_hf_lookup("decoder.layers.2.mlp.linear_fc1.weight") is None
+        assert registry.megatron_to_hf_lookup("decoder.layers.8.self_attention.linear_proj.weight") is None
 
-        qkv = registry.megatron_to_hf_lookup("decoder.layers.2.self_attention.linear_qkv.weight")
+        qkv = registry.megatron_to_hf_lookup("decoder.layers.4.self_attention.linear_qkv.weight")
         assert set(qkv.hf_param.values()) == {
             "model.layers.2.self_attn.q_proj.weight",
             "model.layers.2.self_attn.k_proj.weight",
             "model.layers.2.self_attn.v_proj.weight",
             "model.layers.2.self_attn.gate_proj.weight",
         }
-        bias = registry.megatron_to_hf_lookup("decoder.layers.2.self_attention.output_gate_bias.bias")
+        bias = registry.megatron_to_hf_lookup("decoder.layers.4.self_attention.output_gate_bias.bias")
         assert bias.hf_param == "model.layers.2.self_attn.gate_bias"
-        assert registry.megatron_to_hf_lookup("decoder.layers.2.self_attention.linear_qkv.bias") is None
+        assert registry.megatron_to_hf_lookup("decoder.layers.4.self_attention.linear_qkv.bias") is None
+        assert registry.megatron_to_hf_lookup("decoder.final_norm.weight").hf_param == "model.norm.weight"
+        assert registry.hf_to_megatron_lookup("model.layers.2.self_attn.o_proj.weight").megatron_param == (
+            "decoder.layers.4.self_attention.linear_proj.weight"
+        )
 
-    def test_mappings_validate_only_existing_parameters(self):
+    def test_mappings_validate_only_existing_parameters(self, hf_config):
         bridge = BeamBridge()
+        bridge.hf_config = hf_config
         names = [
-            "decoder.layers.0.mlp.linear_fc1.weight",
-            "decoder.layers.1.mlp.experts.linear_fc1.weight0",
+            "decoder.layers.1.mlp.linear_fc1.weight",
+            "decoder.layers.3.mlp.experts.linear_fc1.weight0",
         ]
         hf_keys = {
             "model.layers.0.mlp.gate_proj.weight",
@@ -459,20 +518,20 @@ class TestMappingRegistry:
         def hf_name(megatron_param):
             return registry.megatron_to_hf_lookup(megatron_param).hf_param
 
-        assert hf_name("decoder.layers.1.self_attention.linear_qkv.layer_norm_weight") == (
+        assert hf_name("decoder.layers.2.self_attention.linear_qkv.layer_norm_weight") == (
             "model.layers.1.input_layernorm.weight"
         )
-        assert hf_name("decoder.layers.1.post_self_attn_layernorm.weight") == (
+        assert hf_name("decoder.layers.2.post_self_attn_layernorm.weight") == (
             "model.layers.1.post_attention_layernorm.weight"
         )
         # pre-MLP norm: standalone on MoE layers, fused into linear_fc1 on dense layers
         assert (
-            hf_name("decoder.layers.1.pre_mlp_layernorm.weight") == "model.layers.1.pre_feedforward_layernorm.weight"
+            hf_name("decoder.layers.3.pre_mlp_layernorm.weight") == "model.layers.1.pre_feedforward_layernorm.weight"
         )
-        assert hf_name("decoder.layers.0.mlp.linear_fc1.layer_norm_weight") == (
+        assert hf_name("decoder.layers.1.mlp.linear_fc1.layer_norm_weight") == (
             "model.layers.0.pre_feedforward_layernorm.weight"
         )
-        assert hf_name("decoder.layers.1.post_mlp_layernorm.weight") == (
+        assert hf_name("decoder.layers.3.post_mlp_layernorm.weight") == (
             "model.layers.1.post_feedforward_layernorm.weight"
         )
 
@@ -494,7 +553,13 @@ class TestBuilderBackedConfig:
     def test_finalize_runs_core_validation(self, hf_config):
         cfg = BeamBridge().hf_config_to_model_config(hf_config)
         cfg.finalize()  # deferred MCore __post_init__: SSMax / sandwich / MoE validation
-        assert cfg.transformer.moe_layer_freq == [0, 1, 1, 1]
+        assert cfg.hybrid_layer_pattern == "*-*E*E*E" and cfg.transformer.num_layers == 8
+
+    def test_finalize_splits_the_pattern_for_pipeline_parallelism(self, hf_config):
+        cfg = BeamBridge().hf_config_to_model_config(hf_config)
+        cfg.pipeline_model_parallel_size = 2
+        cfg.finalize()
+        assert cfg.hybrid_layer_pattern == "*-*E|*E*E"
 
     def test_serialization_round_trip(self, hf_config):
         cfg = BeamBridge().hf_config_to_model_config(hf_config)
@@ -505,7 +570,7 @@ class TestBuilderBackedConfig:
         assert isinstance(restored, BeamModelConfig)
         assert isinstance(restored.transformer, BeamTransformerConfig)
         assert restored.transformer.final_logit_softcapping == 30.0
-        assert restored.transformer.moe_layer_freq == [0, 1, 1, 1]
+        assert restored.hybrid_layer_pattern == "*-*E*E*E"
         assert tuple(restored.transformer.window_size) == (511, 0)
         assert restored.transformer.attention_output_gate_bias is True
         assert restored.get_builder_cls() is BeamModelBuilder
@@ -575,10 +640,7 @@ class TestDenseExport:
         moe = BeamBridge.megatron_to_hf_config(BeamBridge().hf_config_to_model_config(hf_config))
         assert moe["num_experts"] == 8 and moe["moe_intermediate_size"] == 64 and moe["n_group"] == 4
         dense_cfg = self._dense(hf_config)  # mock_pretrained.config is the same object
-        for exported in (
-            BeamBridge.megatron_to_hf_config(dense_cfg),
-            BeamBridge.megatron_to_hf_config(BeamBridge().provider_bridge(mock_pretrained)),
-        ):
+        for exported in (BeamBridge.megatron_to_hf_config(dense_cfg),):
             assert exported["mlp_layer_types"] == ["dense"] * 4
             for key in _DENSE_EXPORT_DROPS:
                 assert key not in exported, key
@@ -610,8 +672,8 @@ class TestDenseExport:
         assert isinstance(round_tripped, BeamModelConfig)
         t = round_tripped.transformer
         assert t.num_moe_experts is None and t.moe_ffn_hidden_size is None and t.moe_router_num_groups is None
-        assert t.moe_layer_freq == dense_cfg.transformer.moe_layer_freq
-        assert t.window_attn_skip_freq == [1, 1, 0, 1] and t.no_rope_freq == [0, 0, 1, 0]
+        assert round_tripped.hybrid_layer_pattern == dense_cfg.hybrid_layer_pattern == "*-*-*-*-"
+        assert t.window_attn_skip_freq == [1, 0, 1, 0, 0, 0, 1, 0] and t.no_rope_freq == [0, 0, 0, 0, 1, 0, 0, 0]
         round_tripped.finalize()
 
 

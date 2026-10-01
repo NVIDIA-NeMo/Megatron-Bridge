@@ -15,13 +15,15 @@ from megatron.bridge.models.beam import modeling_beam
 from megatron.bridge.models.beam.beam_config import BeamTransformerConfig
 from megatron.bridge.models.beam.modeling_beam import (
     AttentionOutputGateBias,
+    BeamMLPLayer,
+    BeamMoETransformerLayer,
     BeamSelfAttention,
     BeamTopKRouter,
     BeamTransformerLayer,
     BeamTransformerLayerSubmodules,
     apply_output_gate,
     apply_ssmax_to_query,
-    beam_decoder_block_spec,
+    beam_hybrid_stack_spec,
     beam_router_gating_linear,
     depth_scaled_residual_coefs,
     scaled_residual_add,
@@ -69,11 +71,8 @@ class TestConfigValidation:
         for name in modeling_beam.BEAM_FEATURE_FIELDS:
             assert getattr(config, name) is False, name
 
-    def test_fields_declared_on_both_config_paths(self):
-        from megatron.bridge.models.beam.beam_provider import BeamModelProvider
-
-        for cls in (BeamTransformerConfig, BeamModelProvider):
-            assert set(modeling_beam.BEAM_FEATURE_FIELDS) <= set(cls.__dataclass_fields__), cls.__name__
+    def test_fields_declared_on_the_transformer_config(self):
+        assert set(modeling_beam.BEAM_FEATURE_FIELDS) <= set(BeamTransformerConfig.__dataclass_fields__)
 
     def test_ssmax_requires_nope_layers(self):
         with pytest.raises(ValueError, match="ssmax requires no_rope_freq"):
@@ -351,16 +350,16 @@ class TestAttentionOutputGateBias:
 
 
 @pytest.mark.parametrize(
-    "layer_number,is_attention,expected",
+    "layer_number,expected",
     [
-        (1, True, (1 / math.sqrt(2), 1 / math.sqrt(2))),
-        (1, False, (1 / math.sqrt(3), math.sqrt(2 / 3))),
-        (52, True, (1 / math.sqrt(104), math.sqrt(103 / 104))),
-        (52, False, (1 / math.sqrt(105), math.sqrt(104 / 105))),
+        (1, (1 / math.sqrt(2), 1 / math.sqrt(2))),  # Beam layer 0 attention
+        (2, (1 / math.sqrt(3), math.sqrt(2 / 3))),  # Beam layer 0 MLP
+        (103, (1 / math.sqrt(104), math.sqrt(103 / 104))),  # Beam layer 51 attention
+        (104, (1 / math.sqrt(105), math.sqrt(104 / 105))),  # Beam layer 51 MLP
     ],
 )
-def test_depth_scaled_residual_coefs(layer_number, is_attention, expected):
-    assert depth_scaled_residual_coefs(layer_number, is_attention) == pytest.approx(expected)
+def test_depth_scaled_residual_coefs(layer_number, expected):
+    assert depth_scaled_residual_coefs(layer_number) == pytest.approx(expected)
 
 
 def test_scaled_residual_add_formula_and_dtype():
@@ -402,7 +401,7 @@ def _layer_config(post_norm, depth_scaling, hidden_dropout=0.0):
     )
 
 
-def _layer(config, layer_number, post_norm=_PostNorm):
+def _attention_layer(config, layer_number, post_norm=_PostNorm):
     from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 
     return BeamTransformerLayer(
@@ -410,6 +409,21 @@ def _layer(config, layer_number, post_norm=_PostNorm):
         BeamTransformerLayerSubmodules(
             self_attention=_Branch,
             self_attn_bda=get_bias_dropout_add,
+            post_self_attn_layernorm=post_norm,
+            post_mlp_layernorm=post_norm,
+        ),
+        layer_number=layer_number,
+        pg_collection=SimpleNamespace(tp=None, pp=None),
+        add_layer_offset=False,
+    )
+
+
+def _mlp_layer(config, layer_number, post_norm=_PostNorm):
+    from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
+
+    return BeamMLPLayer(
+        config,
+        BeamTransformerLayerSubmodules(
             mlp=_Branch,
             mlp_bda=get_bias_dropout_add,
             post_self_attn_layernorm=post_norm,
@@ -417,27 +431,32 @@ def _layer(config, layer_number, post_norm=_PostNorm):
         ),
         layer_number=layer_number,
         pg_collection=SimpleNamespace(tp=None, pp=None),
+        add_layer_offset=False,
     )
 
 
-@pytest.mark.parametrize("layer_number", [1, 4])
+@pytest.mark.parametrize("beam_layer", [0, 3])
 @pytest.mark.parametrize("post_norm,depth_scaling", [(True, True), (True, False), (False, True), (False, False)])
-def test_transformer_layer_forward_backward(layer_number, post_norm, depth_scaling):
-    """Execute both residual branches, including bias, norm weights and depth scaling."""
+def test_split_layers_forward_backward(beam_layer, post_norm, depth_scaling):
+    """Beam layer ``i`` = attention layer ``2i + 1`` then MLP layer ``2i + 2``; adds at ``2i + 2`` and ``2i + 3``."""
     torch.manual_seed(42)
     config = _layer_config(post_norm, depth_scaling)
-    layer = _layer(config, layer_number)
+    attn = _attention_layer(config, 2 * beam_layer + 1)
+    mlp = _mlp_layer(config, 2 * beam_layer + 2)
     if post_norm:
-        assert isinstance(layer.post_self_attn_layernorm, _PostNorm)
-        assert isinstance(layer.post_mlp_layernorm, _PostNorm)
+        assert isinstance(attn.post_self_attn_layernorm, _PostNorm)
+        assert isinstance(mlp.post_mlp_layernorm, _PostNorm)
     else:
-        assert layer.post_self_attn_layernorm is None and layer.post_mlp_layernorm is None
+        assert attn.post_self_attn_layernorm is None and mlp.post_mlp_layernorm is None
+    # Each layer only builds the norm of the sublayer it owns.
+    assert attn.post_mlp_layernorm is None and mlp.post_self_attn_layernorm is None
     x = torch.randn(5, 2, 8, requires_grad=True)
-    actual, _ = layer(x)
+    hidden, _ = attn(x)
+    actual, _ = mlp(hidden)
     expected = x
     for index, (branch, norm) in enumerate(
-        [(layer.self_attention, layer.post_self_attn_layernorm), (layer.mlp, layer.post_mlp_layernorm)],
-        start=2 * layer_number,
+        [(attn.self_attention, attn.post_self_attn_layernorm), (mlp.mlp, mlp.post_mlp_layernorm)],
+        start=2 * beam_layer + 2,
     ):
         out = torch.nn.functional.linear(expected, branch.weight, branch.bias)
         if post_norm:
@@ -447,7 +466,7 @@ def test_transformer_layer_forward_backward(layer_number, post_norm, depth_scali
             out / math.sqrt(index) + expected * math.sqrt((index - 1) / index) if depth_scaling else out + expected
         )
     torch.testing.assert_close(actual, expected)
-    params = (x, *layer.parameters())
+    params = (x, *attn.parameters(), *mlp.parameters())
     actual_grads = torch.autograd.grad(actual.square().sum(), params)
     expected_grads = torch.autograd.grad(expected.square().sum(), params)
     for actual_grad, expected_grad in zip(actual_grads, expected_grads):
@@ -455,10 +474,35 @@ def test_transformer_layer_forward_backward(layer_number, post_norm, depth_scali
         assert torch.isfinite(actual_grad).all() and actual_grad.count_nonzero() > 0
 
 
+def test_absent_sublayer_keeps_its_identity_bda():
+    from megatron.core.transformer.identity_op import IdentityFuncOp
+
+    config = _layer_config(True, True)
+    assert isinstance(_attention_layer(config, 1).mlp_bda, IdentityFuncOp)
+    assert isinstance(_mlp_layer(config, 2).self_attn_bda, IdentityFuncOp)
+
+
+def test_depth_scaling_rejects_a_layer_with_both_sublayers():
+    from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
+
+    submodules = BeamTransformerLayerSubmodules(
+        self_attention=_Branch,
+        self_attn_bda=get_bias_dropout_add,
+        mlp=_Branch,
+        mlp_bda=get_bias_dropout_add,
+        post_self_attn_layernorm=_PostNorm,
+        post_mlp_layernorm=_PostNorm,
+    )
+    with pytest.raises(NotImplementedError, match="split hybrid layers"):
+        BeamTransformerLayer(
+            _layer_config(True, True), submodules, layer_number=1, pg_collection=SimpleNamespace(tp=None, pp=None)
+        )
+
+
 def test_dropout_follows_the_post_norm():
     """bias -> norm -> dropout -> add: normalizing after dropout would undo its 1/(1-p) rescale."""
     torch.manual_seed(0)
-    layer = _layer(_layer_config(True, False, hidden_dropout=0.5), 1).train()
+    layer = _attention_layer(_layer_config(True, False, hidden_dropout=0.5), 1).train()
     bda = layer.self_attn_bda(True, False)
     out, residual = torch.randn(64, 1, 8), torch.zeros(64, 1, 8)
     torch.manual_seed(1)
@@ -472,13 +516,13 @@ def test_enabled_post_norm_needs_a_norm_module():
     from megatron.core.transformer.identity_op import IdentityOp
 
     with pytest.raises(ValueError, match="normalization module"):
-        _layer(_layer_config(True, False), 1, post_norm=IdentityOp)
+        _attention_layer(_layer_config(True, False), 1, post_norm=IdentityOp)
 
 
 def test_state_dict_names_match_the_bridge_mappings():
-    layer = _layer(_layer_config(True, True), 1)
-    names = set(layer.state_dict())
-    assert {"post_self_attn_layernorm.weight", "post_mlp_layernorm.weight"} <= names
+    config = _layer_config(True, True)
+    assert "post_self_attn_layernorm.weight" in _attention_layer(config, 1).state_dict()
+    assert "post_mlp_layernorm.weight" in _mlp_layer(config, 2).state_dict()
 
 
 # ---------------------------------------------------------------------------
@@ -686,13 +730,12 @@ class TestDistributedOptimizerGroupIndexMap:
 
 
 def _spec_config(**kw):
-    return _config(
-        num_layers=4,
+    defaults = dict(
+        num_layers=8,  # 4 Beam layers: attention + MLP each
         hidden_size=64,
         num_attention_heads=4,
         num_query_groups=2,
         num_moe_experts=8,
-        moe_layer_freq=[0, 1, 1, 1],
         moe_grouped_gemm=True,
         qk_layernorm=True,
         normalization="RMSNorm",
@@ -703,38 +746,61 @@ def _spec_config(**kw):
         post_self_attn_layernorm=True,
         post_mlp_layernorm=True,
         depth_scaled_residual=True,
-        no_rope_freq=[0, 1, 0, 1],
+        no_rope_freq=[0, 0, 1, 0, 0, 0, 1, 0],
         ssmax=True,
-        **kw,
     )
+    defaults.update(kw)
+    return _config(**defaults)
 
 
-@pytest.mark.parametrize("use_te", [False, True])
-def test_block_spec_uses_the_beam_modules(use_te):
+def test_hybrid_stack_spec_uses_the_beam_modules():
+    from megatron.core.models.hybrid.hybrid_block import HybridStack
+    from megatron.core.transformer.identity_op import IdentityOp
+    from megatron.core.transformer.mlp import MLP
     from megatron.core.transformer.moe.moe_layer import MoELayer
 
-    spec = beam_decoder_block_spec(_spec_config(), use_transformer_engine=use_te, pp_rank=0)
-    assert len(spec.layer_specs) == 4
-    expected_core = modeling_beam.BeamTEDotProductAttention if use_te else modeling_beam.BeamDotProductAttention
-    expected_norm = modeling_beam.TENorm  # TE norms for the sandwich norms on either attention backend
-    for index, layer_spec in enumerate(spec.layer_specs):
-        assert layer_spec.module is BeamTransformerLayer
-        sub = layer_spec.submodules
-        assert isinstance(sub, BeamTransformerLayerSubmodules)
-        assert sub.post_self_attn_layernorm is expected_norm and sub.post_mlp_layernorm is expected_norm
-        assert sub.self_attention.module is BeamSelfAttention
-        assert sub.self_attention.submodules.core_attention is expected_core
-        if index == 0:
-            assert not (isinstance(getattr(sub.mlp, "func", None), type) and issubclass(sub.mlp.func, MoELayer))
-        else:
-            assert sub.mlp.func is MoELayer and sub.mlp.keywords["submodules"].router is BeamTopKRouter
+    spec = beam_hybrid_stack_spec(_spec_config())
+    assert spec.module is HybridStack
+    attention, mlp, moe = (spec.submodules.attention_layer, spec.submodules.mlp_layer, spec.submodules.moe_layer)
+    for layer_spec, module in ((attention, BeamTransformerLayer), (mlp, BeamMLPLayer), (moe, BeamMoETransformerLayer)):
+        assert layer_spec.module is module
+        assert isinstance(layer_spec.submodules, BeamTransformerLayerSubmodules)
+
+    sub = attention.submodules
+    assert sub.self_attention.module is BeamSelfAttention
+    assert sub.self_attention.submodules.core_attention is modeling_beam.BeamTEDotProductAttention
+    assert sub.self_attention.submodules.q_layernorm is not IdentityOp
+    assert sub.post_self_attn_layernorm is modeling_beam.TENorm
+    assert sub.mlp is IdentityOp
+
+    sub = mlp.submodules
+    mlp_cls = getattr(sub.mlp, "module", getattr(sub.mlp, "func", None))
+    assert sub.self_attention is IdentityOp and getattr(mlp_cls, "__self__", mlp_cls) is MLP
+    assert sub.post_mlp_layernorm is modeling_beam.TENorm
+
+    sub = moe.submodules
+    assert sub.self_attention is IdentityOp and sub.pre_mlp_layernorm is not IdentityOp
+    assert sub.mlp.func is MoELayer and sub.mlp.keywords["submodules"].router is BeamTopKRouter
+    assert sub.post_mlp_layernorm is modeling_beam.TENorm
 
 
-def test_block_spec_validates_the_config():
+def test_hybrid_stack_spec_without_experts_has_no_moe_layer():
+    from megatron.core.transformer.identity_op import IdentityOp
+
+    spec = beam_hybrid_stack_spec(_spec_config(num_moe_experts=None, moe_router_fp32_params=False))
+    assert spec.submodules.moe_layer is IdentityOp
+
+
+def test_hybrid_stack_spec_validates_the_config():
     config = _spec_config()
     config.attention_output_gate = False
     with pytest.raises(ValueError, match="attention_output_gate_bias requires"):
-        beam_decoder_block_spec(config, use_transformer_engine=False, pp_rank=0)
+        beam_hybrid_stack_spec(config)
+
+
+def test_hybrid_stack_spec_requires_transformer_engine():
+    with pytest.raises(NotImplementedError, match="Transformer Engine"):
+        beam_hybrid_stack_spec(_spec_config(transformer_impl="local"))
 
 
 # ---------------------------------------------------------------------------
@@ -776,7 +842,7 @@ class TestSSMaxInSelfAttention:
         )
         defaults.update(kw)
         config = _config(**defaults)
-        spec = beam_decoder_block_spec(config).layer_specs[0].submodules.self_attention
+        spec = beam_hybrid_stack_spec(config).submodules.attention_layer.submodules.self_attention
         attn = BeamSelfAttention(
             config=config, submodules=spec.submodules, layer_number=1, attn_mask_type=AttnMaskType.causal
         )

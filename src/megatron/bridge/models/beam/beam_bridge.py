@@ -6,19 +6,19 @@ full-width attention gates, SSMax on NoPE layers, and fp32 logit soft-capping.
 Router parameters remain fp32; export with ``weight_dtype=None`` preserves them.
 The expert-bias update rate defaults to zero for checkpoint fine-tuning. The modules
 Megatron-Core lacks for these features live in :mod:`.modeling_beam`.
+
+The Megatron model is a ``HybridModel`` with two hybrid layers per Beam layer ``i``:
+attention at ``decoder.layers.{2i}`` and the dense MLP or MoE at ``decoder.layers.{2i+1}``.
 """
 
-from functools import partial
 from typing import Any, Collection, Iterable, Mapping
 
 import torch
-from megatron.core.extensions.transformer_engine import HAVE_TE
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 
 from megatron.bridge.models.beam.beam_config import BeamModelConfig
 from megatron.bridge.models.beam.beam_mappings import BeamQKVGateMapping, split_qkv_gate_weights
-from megatron.bridge.models.beam.beam_provider import BeamModelProvider
-from megatron.bridge.models.beam.modeling_beam import beam_decoder_block_spec
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -97,6 +97,11 @@ def _rope_settings(hf_config) -> tuple[list[int] | None, float | None]:
     return (no_rope_freq if any(no_rope_freq) else None), (thetas.pop() if thetas else None)
 
 
+def _on_attention_layers(flags: list[int]) -> list[int]:
+    """Spread per-Beam-layer flags over the hybrid layers: set on attention (even) layers, 0 on MLP layers."""
+    return [value for flag in flags for value in (flag, 0)]
+
+
 def _beam_settings(hf_config) -> dict[str, Any]:
     """Megatron config settings for a ``BeamConfig``."""
     layer_types = _per_layer_types(hf_config, "layer_types", LAYER_TYPES)
@@ -127,6 +132,12 @@ def _beam_settings(hf_config) -> dict[str, Any]:
         )
 
     settings: dict[str, Any] = dict(
+        num_layers=2 * len(layer_types),
+        # HybridModel-aware paths: SP scatter of the packed padding mask, output-layer init depth.
+        is_hybrid_model=True,
+        hybrid_layer_pattern="".join(
+            f"{Symbols.ATTENTION}{Symbols.MOE if moe else Symbols.MLP}" for moe in moe_layer_freq
+        ),
         normalization="RMSNorm",
         gated_linear_unit=True,
         add_bias_linear=False,
@@ -167,7 +178,6 @@ def _beam_settings(hf_config) -> dict[str, Any]:
             moe_aux_loss_coeff=0.0,
             # Checkpoint fine-tuning keeps the expert bias fixed.
             moe_router_bias_update_rate=0.0,
-            moe_layer_freq=moe_layer_freq,
         )
         if n_group:
             settings["moe_router_num_groups"] = n_group
@@ -193,10 +203,10 @@ def _beam_settings(hf_config) -> dict[str, Any]:
             raise ValueError("layer_types has 'sliding_attention' layers but sliding_window is not set.")
         # HF counts the current token in the window, Megatron does not
         settings["window_size"] = (sliding_window - 1, 0)
-        settings["window_attn_skip_freq"] = sliding
+        settings["window_attn_skip_freq"] = _on_attention_layers(sliding)
 
     if no_rope_freq is not None:
-        settings["no_rope_freq"] = no_rope_freq
+        settings["no_rope_freq"] = _on_attention_layers(no_rope_freq)
         settings["ssmax"] = True
     return settings
 
@@ -222,17 +232,19 @@ def _as_layer_list(value, num_layers: int, *, int_rule) -> list[int]:
 
 @MegatronModelBridge.register_bridge(
     source="BeamForCausalLM",
-    target=GPTModel,
-    provider=BeamModelProvider,
+    target=HybridModel,
     model_type="beam",
 )
 class BeamBridge(MegatronModelBridge):
-    """Bridge between HuggingFace ``BeamForCausalLM`` and Megatron-Core ``GPTModel``.
+    """Bridge between HuggingFace ``BeamForCausalLM`` and Megatron-Core ``HybridModel``.
 
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("<beam-checkpoint>")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
+        >>> model = bridge.get_model(model_config)
+
+    Beam is builder-backed only: ``to_megatron_provider()`` is not supported.
     """
 
     MODEL_CONFIG_CLASS = BeamModelConfig
@@ -265,7 +277,7 @@ class BeamBridge(MegatronModelBridge):
         return super()._infer_qkv_projection_from_name(hf_name)
 
     def _split_qkv_linear_out_weight(
-        self, megatron_model: GPTModel | list[GPTModel], linear_out_weight: torch.Tensor
+        self, megatron_model: HybridModel | list[HybridModel], linear_out_weight: torch.Tensor
     ) -> dict[str, torch.Tensor]:
         """Split fused LoRA B along the same Q/gate/K/V rows as the base weight.
 
@@ -345,12 +357,25 @@ class BeamBridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider) -> dict:
         """Invert the config mapping so an exported checkpoint loads as ``BeamForCausalLM``.
 
-        ``provider`` is either a :class:`BeamModelProvider` or a
-        :class:`BeamModelConfig`; the latter proxies attribute access to its nested
-        transformer config, so both read the same way.
+        ``provider`` is a :class:`BeamModelConfig`, which proxies attribute access to its
+        nested transformer config. Its per-layer settings count hybrid layers; Beam layer
+        ``i`` reads them from hybrid layers ``2i`` (attention) and ``2i + 1`` (MLP).
         """
         hf_config = super().megatron_to_hf_config(provider)
-        num_layers = provider.num_layers
+        pattern = (provider.hybrid_layer_pattern or "").split(Symbols.MTP_SEPARATOR)[0].replace(Symbols.PIPE, "")
+        num_hybrid_layers = provider.num_layers
+        if (
+            len(pattern) != num_hybrid_layers
+            or len(pattern) % 2
+            or set(pattern[0::2]) - {Symbols.ATTENTION}
+            or set(pattern[1::2]) - {Symbols.MLP, Symbols.MOE}
+        ):
+            raise ValueError(
+                f"Beam exports need num_layers hybrid layers alternating attention '*' and MLP '-' / MoE 'E'; "
+                f"got hybrid_layer_pattern={provider.hybrid_layer_pattern!r} for num_layers={num_hybrid_layers}."
+            )
+        num_layers = num_hybrid_layers // 2
+        hf_config["num_hidden_layers"] = num_layers
 
         # linear_qkv has no bias; gate_bias is its own parameter.
         hf_config["attention_bias"] = False
@@ -361,7 +386,7 @@ class BeamBridge(MegatronModelBridge):
                 sliding = [1] * num_layers  # window_size alone slides every layer
             else:
                 # int form: every skip-th layer is full attention, like core's is_layer_window_attention
-                sliding = _as_layer_list(skip, num_layers, int_rule=lambda i, k: (i + 1) % k != 0)
+                sliding = _as_layer_list(skip, num_hybrid_layers, int_rule=lambda i, k: (i + 1) % k != 0)[0::2]
         else:
             hf_config["sliding_window"] = None
             sliding = [0] * num_layers
@@ -374,7 +399,7 @@ class BeamBridge(MegatronModelBridge):
         if no_rope is None:
             skips = [0] * num_layers
         else:
-            skips = _as_layer_list(no_rope, num_layers, int_rule=lambda i, k: (i + 1) % k == 0)
+            skips = _as_layer_list(no_rope, num_hybrid_layers, int_rule=lambda i, k: (i + 1) % k == 0)[0::2]
         rope_parameters: dict[str, dict | None] = {}
         for layer_type in LAYER_TYPES:
             flags = {skips[i] for i, t in enumerate(layer_types) if t == layer_type}
@@ -394,69 +419,104 @@ class BeamBridge(MegatronModelBridge):
         for key in ("rope_theta", "partial_rotary_factor", "num_local_experts", "n_routed_experts"):
             hf_config.pop(key, None)
 
-        if provider.num_moe_experts:
-            # int form mirrors get_gpt_decoder_block_spec: layer i is MoE when i % freq == 0
-            pattern = _as_layer_list(provider.moe_layer_freq, num_layers, int_rule=lambda i, k: i % k == 0)
+        mlp_symbols = pattern[1::2]
+        if Symbols.MOE in mlp_symbols:
             hf_config["norm_topk_prob"] = not provider.moe_router_pre_softmax
             hf_config["n_group"] = provider.moe_router_num_groups
             hf_config["topk_group"] = provider.moe_router_group_topk
             hf_config["routed_scaling_factor"] = provider.moe_router_topk_scaling_factor
         else:
             # BeamConfig requires typed MoE defaults even when no layer uses experts.
-            pattern = [0] * num_layers
             for key in _DENSE_EXPORT_DROPS:
                 hf_config.pop(key, None)
-        hf_config["mlp_layer_types"] = ["sparse" if is_moe else "dense" for is_moe in pattern]
+        hf_config["mlp_layer_types"] = ["sparse" if symbol == Symbols.MOE else "dense" for symbol in mlp_symbols]
 
         hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
         return hf_config
 
-    def provider_bridge(self, hf_pretrained) -> BeamModelProvider:
-        """Convert ``BeamConfig`` to a :class:`BeamModelProvider`."""
-        provider = super().provider_bridge(hf_pretrained)
-        for name, value in _beam_settings(hf_pretrained.config).items():
-            setattr(provider, name, value)
-        # Megatron-Core's decoder block spec (mixed dense and MoE layers) rewritten to the Beam modules.
-        provider.transformer_layer_spec = partial(beam_decoder_block_spec, use_transformer_engine=HAVE_TE)
-        return provider
+    def provider_bridge(self, hf_pretrained):
+        """Beam has no provider: the generic ``GPTModelProvider`` would build a model without the Beam modules."""
+        raise NotImplementedError(
+            "Beam is builder-backed only; use AutoBridge.get_model_config() / AutoBridge.get_model() "
+            "instead of to_megatron_provider()."
+        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        """Map attention, norms, dense MLPs, and MoE parameters by module path."""
-        direct = {
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "output_layer.weight": "lm_head.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            "decoder.layers.*.self_attention.output_gate_bias.bias": "model.layers.*.self_attn.gate_bias",
-            "decoder.layers.*.post_self_attn_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.pre_feedforward_layernorm.weight",
-            "decoder.layers.*.post_mlp_layernorm.weight": "model.layers.*.post_feedforward_layernorm.weight",
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.pre_feedforward_layernorm.weight",
-            "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-            "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
-        }
-        return MegatronMappingRegistry(
-            *(AutoMapping(megatron_param=m, hf_param=h) for m, h in direct.items()),
-            BeamQKVGateMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.layers.*.self_attn.q_proj.weight",
-                k="model.layers.*.self_attn.k_proj.weight",
-                v="model.layers.*.self_attn.v_proj.weight",
-                g="model.layers.*.self_attn.gate_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                gate="model.layers.*.mlp.experts.*.gate_proj.weight",
-                up="model.layers.*.mlp.experts.*.up_proj.weight",
-            ),
-        )
+        """Map every Beam layer onto its two hybrid layers.
+
+        Beam layer ``i`` (``model.layers.{i}``) is attention at ``decoder.layers.{2i}`` and a
+        dense MLP or MoE, per ``mlp_layer_types``, at ``decoder.layers.{2i+1}``.
+        """
+        if self.hf_config is None:
+            raise RuntimeError("BeamBridge.mapping_registry() needs hf_config to lay out the hybrid layers.")
+        mappings: list = [
+            AutoMapping(megatron_param="embedding.word_embeddings.weight", hf_param="model.embed_tokens.weight"),
+            AutoMapping(megatron_param="output_layer.weight", hf_param="lm_head.weight"),
+            AutoMapping(megatron_param="decoder.final_norm.weight", hf_param="model.norm.weight"),
+        ]
+        for i, is_moe in enumerate(_moe_layer_pattern(self.hf_config)):
+            hf = f"model.layers.{i}"
+            mappings += _attention_layer_mappings(f"decoder.layers.{2 * i}", hf)
+            mlp = f"decoder.layers.{2 * i + 1}"
+            mappings += _moe_layer_mappings(mlp, hf) if is_moe else _dense_mlp_layer_mappings(mlp, hf)
+        return MegatronMappingRegistry(*mappings)
+
+
+def _attention_layer_mappings(layer: str, hf: str) -> list:
+    """Parameters of one attention hybrid layer."""
+    direct = {
+        "self_attention.linear_qkv.layer_norm_weight": "input_layernorm.weight",
+        "self_attention.q_layernorm.weight": "self_attn.q_norm.weight",
+        "self_attention.k_layernorm.weight": "self_attn.k_norm.weight",
+        "self_attention.linear_proj.weight": "self_attn.o_proj.weight",
+        "self_attention.output_gate_bias.bias": "self_attn.gate_bias",
+        "post_self_attn_layernorm.weight": "post_attention_layernorm.weight",
+    }
+    return [
+        *(AutoMapping(megatron_param=f"{layer}.{m}", hf_param=f"{hf}.{h}") for m, h in direct.items()),
+        BeamQKVGateMapping(
+            megatron_param=f"{layer}.self_attention.linear_qkv.weight",
+            q=f"{hf}.self_attn.q_proj.weight",
+            k=f"{hf}.self_attn.k_proj.weight",
+            v=f"{hf}.self_attn.v_proj.weight",
+            g=f"{hf}.self_attn.gate_proj.weight",
+        ),
+    ]
+
+
+def _dense_mlp_layer_mappings(layer: str, hf: str) -> list:
+    """Parameters of one dense MLP hybrid layer (the pre-MLP norm is fused into ``linear_fc1``)."""
+    return [
+        AutoMapping(
+            megatron_param=f"{layer}.mlp.linear_fc1.layer_norm_weight",
+            hf_param=f"{hf}.pre_feedforward_layernorm.weight",
+        ),
+        GatedMLPMapping(
+            megatron_param=f"{layer}.mlp.linear_fc1.weight",
+            gate=f"{hf}.mlp.gate_proj.weight",
+            up=f"{hf}.mlp.up_proj.weight",
+        ),
+        AutoMapping(megatron_param=f"{layer}.mlp.linear_fc2.weight", hf_param=f"{hf}.mlp.down_proj.weight"),
+        AutoMapping(
+            megatron_param=f"{layer}.post_mlp_layernorm.weight", hf_param=f"{hf}.post_feedforward_layernorm.weight"
+        ),
+    ]
+
+
+def _moe_layer_mappings(layer: str, hf: str) -> list:
+    """Parameters of one MoE hybrid layer."""
+    direct = {
+        "pre_mlp_layernorm.weight": "pre_feedforward_layernorm.weight",
+        "mlp.router.weight": "mlp.gate.weight",
+        "mlp.router.expert_bias": "mlp.gate.e_score_correction_bias",
+        "mlp.experts.linear_fc2.weight*": "mlp.experts.*.down_proj.weight",
+        "post_mlp_layernorm.weight": "post_feedforward_layernorm.weight",
+    }
+    return [
+        *(AutoMapping(megatron_param=f"{layer}.{m}", hf_param=f"{hf}.{h}") for m, h in direct.items()),
+        GatedMLPMapping(
+            megatron_param=f"{layer}.mlp.experts.linear_fc1.weight*",
+            gate=f"{hf}.mlp.experts.*.gate_proj.weight",
+            up=f"{hf}.mlp.experts.*.up_proj.weight",
+        ),
+    ]
