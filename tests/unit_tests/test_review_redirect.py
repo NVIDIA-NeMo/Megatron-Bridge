@@ -21,32 +21,22 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_review_redirect_is_least_privilege_and_does_not_execute_review():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/claude-review.yml").read_text())
-    job = workflow["jobs"]["redirect-to-review"]
-    condition = job["if"]
-    assert "github.event_name == 'issue_comment'" in condition
-    assert "github.event.issue.pull_request" in condition
-    assert "github.event.comment.user.type != 'Bot'" in condition
-    for command in ("/claude review", "/claude strict-review"):
-        assert f"contains(github.event.comment.body, '{command}')" in condition
-    assert job["permissions"] == {"pull-requests": "write"}
-    assert "uses" not in job
-    assert "secrets" not in job
-    assert len(job["steps"]) == 1
-    step = job["steps"][0]
-    assert "uses" not in step
-    assert step["run"] == 'gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$NOTICE"'
-    assert "${{" not in step["run"]
-    assert "model=claude" in step["env"]["NOTICE"]
-    assert "model=codex" in step["env"]["NOTICE"]
-    assert "/review help" in step["env"]["NOTICE"]
-    assert job["env"]["REVIEW_COMMAND"] == (
-        "${{ contains(github.event.comment.body, '/claude strict-review') && '/review mode=strict' || '/review' }}"
-    )
+def test_legacy_review_workflows_are_removed() -> None:
+    workflows = ROOT / ".github/workflows"
+    assert not list(workflows.glob("*claude*review*"))
+    for path in (*workflows.glob("*.yml"), *workflows.glob("*.yaml")):
+        text = path.read_text()
+        for retired in (
+            "_claude_review",
+            "claude-code-action",
+            "auto-review:",
+            "/claude review",
+            "/claude strict-review",
+        ):
+            assert retired not in text, f"{path.name} contains {retired}"
 
 
-def test_formal_review_rubric_is_inert_and_uses_formal_submission():
+def test_formal_review_rubric_is_inert_and_uses_formal_submission() -> None:
     rubric = (ROOT / "skills/pr-review/SKILL.md").read_text()
     metadata = yaml.safe_load(rubric.split("---", 2)[1])
     assert metadata["name"] == "pr-review"
@@ -56,26 +46,3 @@ def test_formal_review_rubric_is_inert_and_uses_formal_submission():
     assert "mode=strict" in rubric
     assert "Do not run GitHub commands or" in rubric
     assert "Never approve an incomplete" in rubric
-
-
-def test_automatic_review_is_replaced_with_least_privilege_guidance():
-    source = (ROOT / ".github/workflows/claude-review.yml").read_text()
-    workflow = yaml.safe_load(source)
-    assert set(workflow["jobs"]) == {"review-hint", "redirect-to-review"}
-    assert workflow["permissions"] == {}
-    job = workflow["jobs"]["review-hint"]
-    assert "github.event_name == 'workflow_run'" in job["if"]
-    assert "github.event.workflow_run.event == 'push'" in job["if"]
-    assert "github.event.workflow_run.actor.login == 'copy-pr-bot[bot]'" in job["if"]
-    assert job["permissions"] == {"pull-requests": "write"}
-    assert job["concurrency"]["cancel-in-progress"] is False
-    assert "github.event.workflow_run.head_branch" in job["concurrency"]["group"]
-    assert len(job["steps"]) == 1
-    step = job["steps"][0]
-    assert step["uses"].startswith("actions/github-script@")
-    for text in ("/review", "model=claude", "model=codex", "mode=light|strict", "/review help"):
-        assert text in step["with"]["script"]
-    assert "${{" not in step["with"]["script"]
-    assert "secrets." not in source
-    assert "actions/checkout@" not in source
-    assert "anthropics/claude-code-action@" not in source
