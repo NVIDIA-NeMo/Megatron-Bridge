@@ -423,7 +423,12 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     return cfg
 
 
+# The flat name is also a benchmark recipe, which bare launcher lookup selects; this alias reaches the library workload.
+glm52_gb200_sft_config = glm52_sft_192gpu_gb200_bf16_config
+
+
 __all__ = [
+    "glm52_gb200_sft_config",
     "glm52_peft_192gpu_gb200_bf16_config",
     "glm52_pretrain_192gpu_gb200_bf16_config",
     "glm52_sft_192gpu_gb200_bf16_128k_config",

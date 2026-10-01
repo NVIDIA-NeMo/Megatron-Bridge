@@ -21,14 +21,19 @@ from megatron.bridge.utils.decorators import experimental_fn
 
 
 def _check_step_handles_context_parallelism(config: ConfigContainer, forward_step_func: ForwardStepCallable) -> None:
-    """The GPT step CP-shards the batch, so models that shard it themselves would shard twice."""
+    """A VLM that shards the sequence in its own forward needs its own step under CP.
+
+    Distilling only the language submodule keeps that forward out of the loop, so the GPT step is
+    correct there -- it hands mrope the full-length position ids and lets the rotary embedding shard.
+    """
     if getattr(config.model, "context_parallel_size", 1) == 1 or forward_step_func is not forward_step_modelopt:
         return
-    if getattr(config.model, "position_embedding_type", None) == "mrope":
+    distills_whole_vlm = getattr(config.model, "distill_submodule", None) is None
+    if distills_whole_vlm and getattr(config.model, "position_embedding_type", None) == "mrope":
         raise ValueError(
-            "mrope models shard the sequence inside model.forward, so the default GPT step double-shards "
-            "it under context parallelism. Pass the model's own step, e.g. "
-            "megatron.bridge.models.qwen_vl.qwen3_vl_step.forward_step_modelopt."
+            "Distilling a whole mrope VLM under context parallelism needs the model's own step, e.g. "
+            "megatron.bridge.models.qwen_vl.qwen3_vl_step.forward_step_modelopt; the GPT step would "
+            "hand Qwen3VLModel an already-sharded batch for it to shard again."
         )
 
 
@@ -41,10 +46,12 @@ def distill(
 
     Args:
         config: The main configuration container holding all necessary parameters.
-        forward_step_func: Step function to distill with, defaulting to the GPT step. Models
-            that shard the sequence themselves need their own -- pass
-            ``qwen3_vl_step.forward_step_modelopt`` for Qwen3-VL under context parallelism.
-            It must attach the KD loss, or training silently runs without distillation.
+        forward_step_func: Step function to distill with, defaulting to the GPT step. Pass
+            ``qwen3_vl_step.forward_step_modelopt`` when distilling a *whole* Qwen3-VL model under
+            context parallelism; for ``distill_submodule="language_model"`` the default is correct,
+            since that forward never re-shards the sequence -- though packed data is not supported
+            there under context parallelism. A custom step must attach the KD loss, or training
+            silently runs without distillation.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
