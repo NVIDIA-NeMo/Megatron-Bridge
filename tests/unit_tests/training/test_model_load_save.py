@@ -45,6 +45,7 @@ from megatron.bridge.training.model_load_save import (
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
@@ -475,8 +476,8 @@ class TestLoadMegatronModel:
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
 
-    def test_load_builder_model_config_from_saved_yaml(self, tmp_path):
-        """The checkpoint target scan preserves builder-backed model configs."""
+    def test_read_saved_builder_model_targets(self, tmp_path):
+        """The checkpoint target scan preserves serialized builder model targets."""
         model = GPTModelConfig(
             transformer=TransformerConfig(
                 num_layers=2,
@@ -499,10 +500,13 @@ class TestLoadMegatronModel:
         )
         config.to_yaml(str(tmp_path / "run_config.yaml"))
 
-        loaded_model, _ = load_model_config(str(tmp_path))
+        loaded = read_run_config(str(tmp_path / "run_config.yaml"))
 
-        assert isinstance(loaded_model, GPTModelConfig)
-        assert loaded_model.transformer.hidden_size == 128
+        assert loaded["model"]["_target_"] == f"{GPTModelConfig.__module__}.{GPTModelConfig.__qualname__}"
+        assert loaded["model"]["transformer"]["_target_"] == (
+            f"{TransformerConfig.__module__}.{TransformerConfig.__qualname__}"
+        )
+        assert loaded["model"]["transformer"]["hidden_size"] == 128
 
     @pytest.mark.parametrize(
         "target",

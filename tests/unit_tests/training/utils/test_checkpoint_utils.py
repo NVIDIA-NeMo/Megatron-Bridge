@@ -317,6 +317,7 @@ class TestCheckpointUtils:
             ),
             patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
             patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe", return_value=1),
+            patch("megatron.bridge.training.utils.checkpoint_utils.print_rank_0"),
             patch(
                 "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list"
             ) as broadcast,
