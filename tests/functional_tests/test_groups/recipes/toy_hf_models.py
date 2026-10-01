@@ -91,8 +91,8 @@ def _save_minimal_tokenizer(model_dir: Path, *, image_tokens: bool = False, chat
     hf_tokenizer.save_pretrained(model_dir)
 
 
-def create_deepseek_v4_toy_artifacts(root: Path) -> str:
-    """Create the config and tokenizer needed to construct a DSv4 recipe offline."""
+def create_deepseek_v4_toy_artifacts(root: Path, *, with_weights: bool = False) -> str:
+    """Create offline DSv4 config/tokenizer artifacts and optional released-layout weights."""
     from transformers import DeepseekV4Config
 
     from tests.functional_tests.test_groups.models.deepseek.test_deepseek_v4_conversion import (
@@ -101,8 +101,28 @@ def create_deepseek_v4_toy_artifacts(root: Path) -> str:
 
     model_dir = root / "deepseek_v4_toy"
     model_dir.mkdir(parents=True, exist_ok=True)
-    DeepseekV4Config(**HF_DEEPSEEK_V4_TOY_MODEL_CONFIG).save_pretrained(model_dir)
+    config = DeepseekV4Config(**HF_DEEPSEEK_V4_TOY_MODEL_CONFIG)
+    config.save_pretrained(model_dir)
     _save_minimal_tokenizer(model_dir)
+    if with_weights:
+        import torch
+        from safetensors.torch import save_file
+        from transformers import DeepseekV4ForCausalLM
+
+        from tests.functional_tests.test_groups.models.deepseek.test_deepseek_v4_conversion import (
+            _hf_to_bridge_state_dict,
+        )
+
+        torch.manual_seed(1234)
+        config.torch_dtype = torch.bfloat16
+        model = DeepseekV4ForCausalLM(config).bfloat16()
+        state_dict = _hf_to_bridge_state_dict(model.state_dict(), config.num_hidden_layers)
+        for key, value in list(state_dict.items()):
+            if key.endswith(".tid2eid"):
+                token_ids = torch.arange(value.shape[0], device=value.device)[:, None]
+                expert_offsets = torch.arange(value.shape[1], device=value.device)[None, :]
+                state_dict[key] = ((token_ids + expert_offsets) % config.n_routed_experts).to(torch.int32)
+        save_file(state_dict, model_dir / "model.safetensors")
     return str(model_dir)
 
 

@@ -156,14 +156,23 @@ def test_glm52_h100_200k_recipe_uses_packed_cp() -> None:
 
 
 @pytest.mark.parametrize(
-    ("recipe", "cp", "gbs", "steps", "dispatcher", "backend"),
+    ("recipe", "cp", "gbs", "steps", "dispatcher", "backend", "layout", "stage_layers"),
     [
-        (gb200.glm52_pretrain_192gpu_gb200_bf16_config, 1, 1024, 100, "alltoall", None),
-        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "hybridep"),
-        (gb200.glm52_peft_192gpu_gb200_bf16_config, 1, 32, 100, "alltoall", None),
+        (
+            gb200.glm52_pretrain_192gpu_gb200_bf16_config,
+            1,
+            1024,
+            100,
+            "alltoall",
+            None,
+            gb200_glm5._GLM52_PP6_128K_LAYOUT,
+            [14, 16, 12, 12, 12, 12],
+        ),
+        (gb200.glm52_sft_192gpu_gb200_bf16_config, 4, 8, 100, "flex", "hybridep", None, [14, 12, 12, 12, 12, 16]),
+        (gb200.glm52_peft_192gpu_gb200_bf16_config, 1, 32, 100, "alltoall", None, None, [14, 12, 12, 12, 12, 16]),
     ],
 )
-def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backend) -> None:
+def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backend, layout, stage_layers) -> None:
     cfg = recipe()
 
     assert cfg.model.tensor_model_parallel_size == 1
@@ -173,9 +182,18 @@ def test_glm52_gb200_recipe_topologies(recipe, cp, gbs, steps, dispatcher, backe
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.virtual_pipeline_model_parallel_size is None
-    assert cfg.model.pipeline_model_parallel_layout is None
-    assert cfg.model.num_layers_in_first_pipeline_stage == 14
-    assert cfg.model.num_layers_in_last_pipeline_stage == 16
+    assert cfg.model.pipeline_model_parallel_layout == layout
+    if layout is None:
+        assert cfg.model.num_layers_in_first_pipeline_stage == stage_layers[0]
+        assert cfg.model.num_layers_in_last_pipeline_stage == stage_layers[-1]
+    else:
+        assert cfg.model.num_layers_in_first_pipeline_stage is None
+        assert cfg.model.num_layers_in_last_pipeline_stage is None
+        assert [stage.count("t") for stage in layout.split("|")] == stage_layers
+    # DSA top-k index sharing cannot cross a pipeline boundary: every stage after
+    # the first must start on a computing layer (1-based layer numbers 3, 7, 11, ...).
+    stage_starts = [sum(stage_layers[:stage]) for stage in range(1, len(stage_layers))]
+    assert all((start + 1 - 3) % 4 == 0 for start in stage_starts)
     assert cfg.model.microbatch_group_size_per_vp_stage == 6
     assert cfg.model.moe_token_dispatcher_type == dispatcher
     assert cfg.model.moe_flex_dispatcher_backend == backend
@@ -345,3 +363,18 @@ def test_glm52_platform_recipes_are_exported() -> None:
         assert getattr(h100, recipe_name) is getattr(glm5, recipe_name)
         assert getattr(recipes, recipe_name) is getattr(glm5, recipe_name)
         assert recipe_name in h100.__all__
+
+
+@pytest.mark.parametrize(
+    ("alias_name", "module", "target"),
+    [
+        ("glm52_h100_sft_config", glm5, glm5.glm52_sft_416gpu_h100_bf16_config),
+        ("glm52_gb200_sft_config", gb200_glm5, gb200_glm5.glm52_sft_192gpu_gb200_bf16_config),
+    ],
+)
+def test_glm52_sft_library_aliases_are_exported(alias_name, module, target) -> None:
+    import megatron.bridge.recipes as recipes
+
+    assert getattr(module, alias_name) is target
+    assert alias_name in module.__all__
+    assert getattr(recipes, alias_name) is target
