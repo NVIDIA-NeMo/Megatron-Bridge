@@ -247,9 +247,15 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
 
     enable_global_batch_packing: bool = False
     """Yield unpacked variable-length samples (Megatron ``VarlenDataset`` / ``MockVarlenDataset``)
-    for Megatron-Core's online sequence-packing scheduler, which packs the global batch per step.
+    for Megatron-Core's online sequence-packing scheduler, which packs the global batch per step
+    (and forms dynamic CP groups when ``model.dynamic_context_parallel`` is set).
     ``blend`` paths are JSONL/Parquet/HF sources for ``VarlenDataset``;
     ``varlen_mock_dataset_config_json`` shapes the mock length distribution."""
+
+    fold_alignment_padding: bool = False
+    """Report each sample's CP alignment padding as part of the sequence (still loss-masked) so packed
+    bins carry no padding between sequences. Set it when attention runs on FlashAttention under context
+    parallelism; see ``megatron.bridge.data.packing.global_batch.fold_alignment_padding``."""
 
     def __init__(
         self,
@@ -274,6 +280,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         self.per_dataset_sequences_path = per_dataset_sequences_path
         # Bridge-only fields: not part of MCore's GPTDatasetConfig constructor.
         self.enable_global_batch_packing = bool(kwargs.pop("enable_global_batch_packing", False))
+        self.fold_alignment_padding = bool(kwargs.pop("fold_alignment_padding", False))
 
         if seq_length is not None:
             kwargs["sequence_length"] = seq_length
@@ -1256,13 +1263,16 @@ class ConfigContainer(Container):
             raise ValueError(f"{feature} does not yet support pipeline parallelism.")
 
     def _validate_global_batch_packing(self) -> None:
-        """Check and complete the configuration for global-batch online packing.
+        """Check and complete the configuration for global-batch online packing and dynamic CP.
 
         ``dataset.enable_global_batch_packing`` drives ``model.sequence_packing_scheduler``
-        (``dp_balanced`` unless set explicitly), the way in-batch packing drives
-        ``variable_seq_lengths``.
+        (``default_dynamic_cp`` when ``model.dynamic_context_parallel`` is set, else
+        ``dp_balanced``), the way in-batch packing drives ``variable_seq_lengths``.
         """
-        from megatron.bridge.training.global_batch_packing import probe_global_batch_packing_support
+        from megatron.bridge.training.global_batch_packing import (
+            DYNAMIC_CP_SCHEDULERS,
+            probe_global_batch_packing_support,
+        )
 
         feature = "Global-batch packing"
         model = self.model
@@ -1278,16 +1288,17 @@ class ConfigContainer(Container):
                 "collate): GPTSFTDatasetConfig or GPTDatasetConfig with enable_global_batch_packing=True, or a "
                 "DatasetProvider whose yields_unpacked_samples is True."
             )
-        if getattr(model, "dynamic_context_parallel", False):
-            raise ValueError(
-                f"{feature} does not support model.dynamic_context_parallel yet; unset it to pack with the "
-                "static context-parallel group."
-            )
+        dynamic_cp = bool(getattr(model, "dynamic_context_parallel", False))
         scheduler = getattr(model, "sequence_packing_scheduler", None)
         if scheduler is None:
-            scheduler = "dp_balanced"
+            scheduler = "default_dynamic_cp" if dynamic_cp else "dp_balanced"
             model.sequence_packing_scheduler = scheduler
-        unsupported = probe_global_batch_packing_support(scheduler)
+        if dynamic_cp and scheduler not in DYNAMIC_CP_SCHEDULERS:
+            raise ValueError(
+                f"model.dynamic_context_parallel requires a dynamic-CP scheduler {DYNAMIC_CP_SCHEDULERS}, "
+                f"got model.sequence_packing_scheduler={scheduler!r}."
+            )
+        unsupported = probe_global_batch_packing_support(scheduler, dynamic_cp=dynamic_cp)
         if unsupported is not None:
             raise ValueError(f"{feature}: {unsupported}")
 
@@ -1308,15 +1319,33 @@ class ConfigContainer(Container):
         if getattr(model, "max_seqlen_per_dp_cp_rank", None) is None:
             raise ValueError(
                 "model.max_seqlen_per_dp_cp_rank must be set explicitly for global-batch packing: it is the token "
-                "capacity of one rank per microbatch, so a bin holds at most context_parallel_size times that."
+                "capacity of one rank per microbatch, so a bin holds at most that many tokens per rank of its CP "
+                "group (under dynamic CP, also the length above which a sequence needs a larger group)."
             )
 
         cp_size = model.context_parallel_size
-        capacity = cp_size * model.max_seqlen_per_dp_cp_rank
+        pool = cp_size
+        if dynamic_cp:
+            pool = self.get_data_parallel_size(get_world_size_safe()) * cp_size
+            if self.dist.use_decentralized_pg:
+                raise ValueError(
+                    "model.dynamic_context_parallel requires dist.use_decentralized_pg=False: Megatron-Core resolves "
+                    "dynamic CP groups from parallel_state."
+                )
+            if pool < 2 or pool & (pool - 1):
+                raise ValueError(
+                    f"Dynamic context parallelism needs a power-of-two dp * cp pool of at least 2, got {pool}."
+                )
+            min_cp = getattr(model, "min_dynamic_context_parallel_size", 1)
+            if min_cp < 1 or min_cp & (min_cp - 1) or min_cp > pool:
+                raise ValueError(
+                    f"model.min_dynamic_context_parallel_size must be a power of two in [1, dp * cp = {pool}], got {min_cp}."
+                )
+        capacity = pool * model.max_seqlen_per_dp_cp_rank
         seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
         if capacity < seq_length:
             raise ValueError(
-                f"Bin capacity too small: {cp_size} CP ranks x max_seqlen_per_dp_cp_rank "
+                f"Bin capacity too small: {pool} ranks x max_seqlen_per_dp_cp_rank "
                 f"{model.max_seqlen_per_dp_cp_rank} = {capacity} tokens < seq_length {seq_length}; the longest sample "
                 "could never be scheduled."
             )
@@ -1334,6 +1363,11 @@ class ConfigContainer(Container):
             self.dataset.context_parallel_size = getattr(self.model, "context_parallel_size", 1)
             has_sp = getattr(self.model, "sequence_parallel", False)
             self.dataset.sequence_parallel_size = getattr(self.model, "tensor_model_parallel_size", 1) if has_sp else 0
+            dynamic_cp = bool(getattr(self.model, "dynamic_context_parallel", False))
+            # Megatron-Core dev names the flag dynamic_context_parallel; earlier releases hybrid_context_parallel.
+            for field_name in ("dynamic_context_parallel", "hybrid_context_parallel"):
+                if hasattr(self.dataset, field_name):
+                    setattr(self.dataset, field_name, dynamic_cp)
         dataset_seq_length = getattr(self.dataset, "seq_length", None)
         if dataset_seq_length is not None and dataset_seq_length % collate_padding_multiple:
             raise ValueError(
@@ -1412,9 +1446,12 @@ class ConfigContainer(Container):
                 "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
                 "the scheduler packs unpacked samples itself."
             )
-        if not enable_global_batch_packing and getattr(self.model, "sequence_packing_scheduler", None) is not None:
+        if not enable_global_batch_packing and (
+            getattr(self.model, "sequence_packing_scheduler", None) is not None
+            or getattr(self.model, "dynamic_context_parallel", False)
+        ):
             raise ValueError(
-                "model.sequence_packing_scheduler is driven by the dataset: set "
+                "model.sequence_packing_scheduler / model.dynamic_context_parallel are driven by the dataset: set "
                 "dataset.enable_global_batch_packing=True on a dataset that yields unpacked samples "
                 "(GPTSFTDatasetConfig or GPTDatasetConfig)."
             )
@@ -1491,6 +1528,14 @@ class ConfigContainer(Container):
         has_sp = getattr(self.model, "sequence_parallel", False)
         cp_multiples = [2 * size if size > 1 else 1 for size in cp_sizes]
         sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
+        if enable_global_batch_packing and getattr(self.model, "dynamic_context_parallel", False):
+            # Dynamic CP may run a sequence on any group of the dp x cp pool, up to the whole pool.
+            # The pool is a power of two (checked in _validate_global_batch_packing), so multiples
+            # of the full pool cover every smaller group, for both the CP zigzag split (2 x group)
+            # and the sequence-parallel shard of each CP chunk (group x tp).
+            dp_size = self.get_data_parallel_size(get_world_size_safe())
+            cp_multiples = [2 * dp_size * size for size in cp_sizes]
+            sp_multiples = [dp_size * size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
         collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
         if enable_global_batch_packing:
             self._apply_global_batch_packing_padding(collate_padding_multiple)

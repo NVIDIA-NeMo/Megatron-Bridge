@@ -18,7 +18,8 @@ Offline, in-batch, and Energon packing form bins from a local candidate pool
 (the dataset, one microbatch, or one worker's buffer). Global-batch packing forms
 them once per training step inside Megatron-Core's sequence-packing scheduler,
 after a data-parallel all-gather of sample lengths, so the candidate pool is the
-whole global batch across DP x CP ranks.
+whole global batch across DP x CP ranks. That pool is also what lets dynamic
+context parallelism size a CP group for each packed bin.
 
 The scheduler consumes *unpacked* per-sample dicts, one sequence per sample,
 delivered through an identity collate. This module holds that sample contract
@@ -28,7 +29,7 @@ and the helpers datasets use to produce it.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import torch
@@ -58,6 +59,34 @@ def identity_collate(samples: list[Any]) -> list[Any]:
     and destroy the per-sample lengths it needs.
     """
     return list(samples)
+
+
+def fold_alignment_padding(sample: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Report the padded length as the sequence length so bins carry no padding between sequences.
+
+    Set it when attention runs on FlashAttention under context parallelism: FlashAttention
+    rejects THD bins with padding between sequences, and Transformer Engine picks it for
+    training whenever cuDNN fused attention is unavailable, for example at head dimension
+    256 on Blackwell (Qwen3.5). Leave it off otherwise: cuDNN fused attention skips the
+    padding natively. The padding stays loss-masked and sits after each sequence's last
+    token, so causal attention and recurrent layers compute the same outputs for real
+    tokens; only the boundaries reported to the attention backend change. Megatron-Core
+    must also derive ``pad_between_seqs`` from the actual ``cu_seqlens``
+    (https://github.com/NVIDIA/Megatron-LM/pull/7417).
+    """
+    sample["original_seq_len"] = sample["padded_seq_len"].clone()
+    return sample
+
+
+def make_unpacked_collate(*, fold_padding: bool) -> Callable[[list[Any]], list[Any]]:
+    """Return the collate for datasets that yield unpacked samples."""
+    if not fold_padding:
+        return identity_collate
+
+    def _collate(samples: list[Any]) -> list[Any]:
+        return [fold_alignment_padding(sample) for sample in samples]
+
+    return _collate
 
 
 def build_unpacked_sequence_sample(

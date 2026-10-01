@@ -92,11 +92,12 @@ def pretrain_train_valid_test_datasets_provider(
     ).build()
 
     if global_batch_packing:
-        from megatron.bridge.data.packing.global_batch import identity_collate
+        from megatron.bridge.data.packing.global_batch import make_unpacked_collate
 
+        collate_fn = make_unpacked_collate(fold_padding=getattr(dataset_config, "fold_alignment_padding", False))
         for dataset in (train_ds, valid_ds, test_ds):
             if dataset is not None:
-                dataset.collate_fn = identity_collate
+                dataset.collate_fn = collate_fn
 
     print_rank_0("> finished creating GPT datasets ...")
 
