@@ -358,16 +358,26 @@ class DiffusionGemmaModel(Gemma4VLModel):
                 .last_hidden_state.transpose(0, 1)
                 .contiguous()
             )
+            # Only positions that predict target tokens contribute to the loss. Project just those
+            # hidden states: full-sequence vocabulary logits are O(prompt length x vocab) and dominate
+            # memory for long multimodal prompts.
+            prompt_length = input_ids.shape[1]
+            target_length = encoder_target_ids.shape[1]
+            clean_hidden = clean_hidden[prompt_length - 1 : prompt_length - 1 + target_length]
+            targets = encoder_target_ids.masked_fill(~encoder_target_mask.bool(), -100)
+            tp_size = self.config.tensor_model_parallel_size
+            if self.config.sequence_parallel and target_length % tp_size:
+                pad = tp_size - target_length % tp_size
+                clean_hidden = F.pad(clean_hidden, (0, 0, 0, 0, 0, pad))
+                targets = F.pad(targets, (0, pad), value=-100)
             if self.config.sequence_parallel:
                 clean_hidden = scatter_to_sequence_parallel_region(clean_hidden, group=self._tp_group())
             weight = self.language_model.shared_embedding_or_output_weight()
             clean_logits, _ = self.language_model.output_layer(clean_hidden, weight=weight, runtime_gather_output=True)
             vocab_size = self.config.text_config.vocab_size
             clean_logits = clean_logits.transpose(0, 1)[..., :vocab_size].float()
-            score_mask = torch.cat((torch.zeros_like(prompt_mask), encoder_target_mask), dim=1)[:, 1:].bool()
-            targets = clean_ids[:, 1:].masked_fill(~score_mask, -100)
             encoder_loss = F.cross_entropy(
-                clean_logits[:, :-1].reshape(-1, vocab_size), targets.reshape(-1), ignore_index=-100
+                clean_logits.reshape(-1, vocab_size), targets.reshape(-1), ignore_index=-100
             )
         return DiffusionGemmaBlockDiffusionOutput(
             logits=logits, encoder_last_hidden_state=encoded.last_hidden_state, encoder_loss=encoder_loss
