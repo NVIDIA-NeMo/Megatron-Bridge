@@ -352,3 +352,58 @@ def test_normalized_commands_equal_card_scalars(catalog: dict[str, object]) -> N
             if source_commands is None:
                 source_commands = []
             assert entry["commands"] == [command.strip() for command in source_commands]
+
+
+@pytest.mark.parametrize("fern", [False, True])
+def test_generated_comments_match_output_format(generator: ModuleType, catalog: dict[str, object], fern: bool) -> None:
+    directory = generator.render_supported_models_page(catalog, REPO_ROOT, fern=fern)
+    section = generator.render_model_section([_models(catalog)["qwen3-30b-a3b"]], fern=fern)
+    if fern:
+        assert directory.startswith(generator.FERN_GENERATED_NOTICE)
+        assert "{/* pragma: allowlist secret */\n        }" in directory
+        assert section.startswith(generator.FERN_MODEL_SECTION_START)
+        assert section.rstrip().endswith(generator.FERN_MODEL_SECTION_END)
+        assert "<!--" not in directory + section
+    else:
+        assert directory.startswith(generator.GENERATED_NOTICE)
+        assert "<!-- pragma: allowlist secret -->" in directory
+        assert section.startswith(generator.MODEL_SECTION_START)
+        assert section.rstrip().endswith(generator.MODEL_SECTION_END)
+        assert "{/*" not in directory + section
+
+
+@pytest.mark.parametrize("fern", [False, True])
+def test_commands_and_paragraphs_match_output_format(
+    generator: ModuleType, catalog: dict[str, object], fern: bool
+) -> None:
+    command = 'echo "${MODEL}" && printf "{a,b}\\n"\necho done'
+    expected_result = "First line.\nSecond line with <value>.\n"
+    entry = dict(_models(catalog)["qwen3-30b-a3b"]["entries"][0])
+    entry.update(commands=[command], expected_result=expected_result)
+    page = "\n".join(generator._model_combination_detail(entry, heading_level=4, fern=fern))
+    escaped_command = html.escape(command)
+    if fern:
+        escaped_command = escaped_command.replace("{", "&#123;").replace("}", "&#125;")
+        assert "<p>First line. Second line with &lt;value&gt;.</p>" in page
+        assert "\n</p>" not in page
+    else:
+        assert f"<p>{html.escape(expected_result)}</p>" in page
+    assert f'<code class="language-bash">{escaped_command}</code>' in page
+    assert html.unescape(escaped_command) == command
+
+
+def test_all_fern_model_outputs_use_mdx_markers(generator: ModuleType, catalog: dict[str, object]) -> None:
+    outputs = generator.expected_outputs(REPO_ROOT, catalog)
+    fern_pages = {path: page for path, page in outputs.items() if path.suffix == ".mdx"}
+    assert len(fern_pages) == len(catalog["models"]) + 1
+    for path, page in fern_pages.items():
+        if path.name == "README.mdx":
+            assert page.startswith(generator.FERN_GENERATED_NOTICE)
+        else:
+            assert page.count(generator.FERN_MODEL_SECTION_START) == 1
+            assert page.count(generator.FERN_MODEL_SECTION_END) == 1
+        assert "<!--" not in page
+        assert "\n</p>" not in page
+    for path, page in outputs.items():
+        if path.suffix == ".md":
+            assert "{/*" not in page

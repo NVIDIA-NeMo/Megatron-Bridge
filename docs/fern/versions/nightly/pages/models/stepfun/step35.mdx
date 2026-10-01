@@ -2,7 +2,7 @@
 
 [Step-3.5-Flash](https://huggingface.co/stepfun-ai/Step-3.5-Flash) is a MoE language model from StepFun. Megatron Bridge supports checkpoint conversion, inference, and continued pretraining through a dedicated Step-3.5 bridge, provider, and recipe.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -120,8 +120,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU import completed all mappings for the immutable 44-shard source, constructed 199,997,706,240 parameters, and created iter_0000000. The checkpoint reloaded successfully for CPU export; its subsequent strict audit covered all 804 source tensors.
-</p>
+        <p>CPU import completed all mappings for the immutable 44-shard source, constructed 199,997,706,240 parameters, and created iter_0000000. The checkpoint reloaded successfully for CPU export; its subsequent strict audit covered all 804 source tensors.</p>
       </section>
     </article>
     <article id="step35-flash-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="step35-flash-hf-to-megatron-gpu" tabindex="-1">
@@ -146,8 +145,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed import completed at TP1/PP1/EP8/ETP1, constructed 33,525,780,480 parameters per rank, and created iter_0000000. The persisted checkpoint then reloaded successfully for both distributed export and checkpoint-backed generation.
-</p>
+        <p>Distributed import completed at TP1/PP1/EP8/ETP1, constructed 33,525,780,480 parameters per rank, and created iter_0000000. The persisted checkpoint then reloaded successfully for both distributed export and checkpoint-backed generation.</p>
       </section>
     </article>
     <article id="step35-flash-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="step35-flash-megatron-to-hf-cpu" tabindex="-1">
@@ -172,8 +170,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU export reloaded the imported checkpoint and wrote 44 indexed BF16 shards with all 804 source keys, shapes, and dtypes. Of 398,768,626,944 serialized bytes, 395,600,878,848 bytes across 801 tensors matched the immutable source bitwise. The three published MTP output entries occupy 3,167,748,096 bytes and were intentionally materialized from Megatron&#x27;s shared lm_head representation; each exported entry matched lm_head bitwise and used independent safetensors storage. A Transformers reload through the pinned checkpoint&#x27;s metadata/RoPE compatibility view ignored only the three published inference-unused MTP layers, predicted the same next token as the source (&#x27; Paris&#x27;), and reached cosine similarity 0.997260 with maximum/mean absolute logit differences 1.320312/0.209649.
-</p>
+        <p>CPU export reloaded the imported checkpoint and wrote 44 indexed BF16 shards with all 804 source keys, shapes, and dtypes. Of 398,768,626,944 serialized bytes, 395,600,878,848 bytes across 801 tensors matched the immutable source bitwise. The three published MTP output entries occupy 3,167,748,096 bytes and were intentionally materialized from Megatron&#x27;s shared lm_head representation; each exported entry matched lm_head bitwise and used independent safetensors storage. A Transformers reload through the pinned checkpoint&#x27;s metadata/RoPE compatibility view ignored only the three published inference-unused MTP layers, predicted the same next token as the source (&#x27; Paris&#x27;), and reached cosine similarity 0.997260 with maximum/mean absolute logit differences 1.320312/0.209649.</p>
       </section>
     </article>
     <article id="step35-flash-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="step35-flash-megatron-to-hf-gpu" tabindex="-1">
@@ -198,8 +195,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed export reloaded the TP1/PP1/EP8/ETP1 checkpoint and wrote 44 indexed BF16 shards with all 804 source keys, shapes, and dtypes. The exact audit found 801 tensors and 395,600,878,848 bytes bit-identical to the source. Megatron-Core shares the output head with MTP, so the three source MTP output tensors were explicitly normalized to lm_head.weight; all three exported copies matched that tensor bitwise and had independent storage. The generic grouped-expert export path recovered from CUDA stack pressure by moving only the affected merge to CPU. A Transformers reload through the pinned checkpoint&#x27;s metadata/RoPE compatibility view ignored only the three published inference-unused MTP layers, predicted the same next token as the source (&#x27; Paris&#x27;), and reached cosine similarity 0.997260 with maximum/mean absolute logit differences 1.320312/0.209649.
-</p>
+        <p>Distributed export reloaded the TP1/PP1/EP8/ETP1 checkpoint and wrote 44 indexed BF16 shards with all 804 source keys, shapes, and dtypes. The exact audit found 801 tensors and 395,600,878,848 bytes bit-identical to the source. Megatron-Core shares the output head with MTP, so the three source MTP output tensors were explicitly normalized to lm_head.weight; all three exported copies matched that tensor bitwise and had independent storage. The generic grouped-expert export path recovered from CUDA stack pressure by moving only the affected merge to CPU. A Transformers reload through the pinned checkpoint&#x27;s metadata/RoPE compatibility view ignored only the three published inference-unused MTP layers, predicted the same next token as the source (&#x27; Paris&#x27;), and reached cosine similarity 0.997260 with maximum/mean absolute logit differences 1.320312/0.209649.</p>
       </section>
     </article>
     <article id="step35-flash-pretrain-h100" class="verification-model-detail" data-entry-detail="step35-flash-pretrain-h100" tabindex="-1">
@@ -243,8 +239,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The public Step-3.5-Flash H100 recipe must complete a bounded 100-step run with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final checkpoint. Training is deferred by this card.
-</p>
+        <p>The public Step-3.5-Flash H100 recipe must complete a bounded 100-step run with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final checkpoint. Training is deferred by this card.</p>
       </section>
     </article>
     <article id="step35-flash-sft-h100" class="verification-model-detail" data-entry-detail="step35-flash-sft-h100" tabindex="-1">
@@ -288,8 +283,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A pinned-data 100-step full-SFT run must finish with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final checkpoint. Training is deferred by this card.
-</p>
+        <p>A pinned-data 100-step full-SFT run must finish with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final checkpoint. Training is deferred by this card.</p>
       </section>
     </article>
     <article id="step35-flash-sft-long-context-h100" class="verification-model-detail" data-entry-detail="step35-flash-sft-long-context-h100" tabindex="-1">
@@ -333,8 +327,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A dedicated packed long-context SFT run must complete 100 steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable checkpoint. Training is deferred by this card.
-</p>
+        <p>A dedicated packed long-context SFT run must complete 100 steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable checkpoint. Training is deferred by this card.</p>
       </section>
     </article>
     <article id="step35-flash-peft-h100" class="verification-model-detail" data-entry-detail="step35-flash-peft-h100" tabindex="-1">
@@ -378,11 +371,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A Step-3.5-Flash PEFT recipe with an audited adapter target set must complete 100 steps with finite loss, all five metrics, and a reloadable adapter checkpoint. Training is deferred by this card.
-</p>
+        <p>A Step-3.5-Flash PEFT recipe with an audited adapter target set must complete 100 steps with finite loss, all five metrics, and a reloadable adapter checkpoint. Training is deferred by this card.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

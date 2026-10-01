@@ -33,7 +33,7 @@ The recorded commands and results below belong to the checkpoint named in each v
 
 [Production qualification tracker #5476](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/5476) remains open. It includes repeated-MTP training semantics, precision controls, dynamic context parallelism, production recipes, checkpoint continuity, convergence, and hardware-specific performance qualification. See also the open [export context-length fix #5996](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/5996), [router-bias fix #6036](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6036), and [recipe-selection fix #5608](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/5608).
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -180,8 +180,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Import exits successfully and creates a reloadable CPU checkpoint. Its strict round-trip comparison matches all 59,585 BF16 tensors and 753,329,940,480 elements bitwise against the immutable HF revision.
-</p>
+        <p>Import exits successfully and creates a reloadable CPU checkpoint. Its strict round-trip comparison matches all 59,585 BF16 tensors and 753,329,940,480 elements bitwise against the immutable HF revision.</p>
       </section>
     </article>
     <article id="glm5-2-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="glm5-2-hf-to-megatron-gpu" tabindex="-1">
@@ -206,8 +205,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Import exits successfully at TP1/PP13/EP8/ETP1 and creates a reloadable iter_0000000 checkpoint. Its strict round-trip comparison matches all 59,585 BF16 tensors and 753,329,940,480 elements bitwise against the immutable HF revision.
-</p>
+        <p>Import exits successfully at TP1/PP13/EP8/ETP1 and creates a reloadable iter_0000000 checkpoint. Its strict round-trip comparison matches all 59,585 BF16 tensors and 753,329,940,480 elements bitwise against the immutable HF revision.</p>
       </section>
     </article>
     <article id="glm5-2-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="glm5-2-megatron-to-hf-cpu" tabindex="-1">
@@ -232,8 +230,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Export exits successfully; all 59,585 BF16 tensors and 753,329,940,480 elements match the immutable HF revision bitwise. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters.
-</p>
+        <p>Export exits successfully; all 59,585 BF16 tensors and 753,329,940,480 elements match the immutable HF revision bitwise. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters.</p>
       </section>
     </article>
     <article id="glm5-2-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="glm5-2-megatron-to-hf-gpu" tabindex="-1">
@@ -258,8 +255,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed export exits successfully; all 59,585 BF16 tensors and 753,329,940,480 elements match the immutable HF revision bitwise. Transformers strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters.
-</p>
+        <p>Distributed export exits successfully; all 59,585 BF16 tensors and 753,329,940,480 elements match the immutable HF revision bitwise. Transformers strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters.</p>
       </section>
     </article>
     <article id="glm5-2-pretrain-h100" class="verification-model-detail" data-entry-detail="glm5-2-pretrain-h100" tabindex="-1">
@@ -309,8 +305,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The uninterrupted 352-H100 TP1/PP11/CP1/EP32/ETP1 run completed 100 real-data steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and flex/DeepEP dispatch. Loss remained finite from 13.15907 to 6.385243, final grad norm was 0.796, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 31,204.920 ms and 54.595 TFLOPS/GPU; peak observed GPU memory was 80,999 MiB. The matching step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state; the step-50 checkpoint reloads successfully.
-</p>
+        <p>The uninterrupted 352-H100 TP1/PP11/CP1/EP32/ETP1 run completed 100 real-data steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and flex/DeepEP dispatch. Loss remained finite from 13.15907 to 6.385243, final grad norm was 0.796, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 31,204.920 ms and 54.595 TFLOPS/GPU; peak observed GPU memory was 80,999 MiB. The matching step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state; the step-50 checkpoint reloads successfully.</p>
       </section>
     </article>
     <article id="glm5-2-pretrain-gb200" class="verification-model-detail" data-entry-detail="glm5-2-pretrain-gb200" tabindex="-1">
@@ -360,8 +355,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100 RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch. The RP2 Llama SentencePiece tokenizer is used while retaining GLM-5.2&#x27;s configured vocabulary size, so this is support verification rather than a cross-tokenizer convergence claim. Loss remained finite from 13.168150 to 6.523522, final grad norm was 2.775, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state.
-</p>
+        <p>The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100 RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch. The RP2 Llama SentencePiece tokenizer is used while retaining GLM-5.2&#x27;s configured vocabulary size, so this is support verification rather than a cross-tokenizer convergence claim. Loss remained finite from 13.168150 to 6.523522, final grad norm was 2.775, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state.</p>
       </section>
     </article>
     <article id="glm5-2-sft-h100" class="verification-model-detail" data-entry-detail="glm5-2-sft-h100" tabindex="-1">
@@ -411,8 +405,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 416-H100 run completes exactly 100 full-SFT steps at TP1/PP13/CP2/EP32/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and natural routing. Pad-32 packing is 99.60% efficient and contains 4,097,215 supervised tokens. Loss remains finite from 1.909875 to 0.6634203 with zero skipped or NaN iterations; the final grad norm is 0.895 and the step-100 checkpoint reloads for export.
-</p>
+        <p>The immutable-revision 416-H100 run completes exactly 100 full-SFT steps at TP1/PP13/CP2/EP32/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and natural routing. Pad-32 packing is 99.60% efficient and contains 4,097,215 supervised tokens. Loss remains finite from 1.909875 to 0.6634203 with zero skipped or NaN iterations; the final grad norm is 0.895 and the step-100 checkpoint reloads for export.</p>
       </section>
     </article>
     <article id="glm5-2-sft-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-gb200" tabindex="-1">
@@ -462,8 +455,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 192-GB200 run completed exactly 100 full-SFT steps at TP1/PP6/CP4/EP32/ETP1, DP8, and GBS/MBS 8/1 without gradient accumulation. It used the pinned Tulu 3 train[:10000] split with the GLM assistant-only chat template, 8,192-token offline packs, pad-8 sequence alignment, an 8,184-token single-sequence cap, constant-shape cu_seqlens, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, natural routing, and HybridEP. Packing is 99.72% efficient across 421 rows with a 23.75 packing factor. The 100-step window contains 6,553,600 token slots and 4,283,561 supervised tokens. Metadata and Parquet SHA-256 values are cbd964c686b74f82804ceea2df75bb00fbe28648f0458a641b9db27977a55b1b and b2c6f71a6b5add331750956622073cc8ced0bb6b2742e1d7a0e1a9f763cbaa0c. Loss remained finite from 1.704979 to 0.3682597, final grad norm was 0.873, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 8,593.990 ms and 12.446 TFLOPS/GPU. A complete step-100 distributed checkpoint was written for the future GB200 export/reload gate.
-</p>
+        <p>The immutable-revision 192-GB200 run completed exactly 100 full-SFT steps at TP1/PP6/CP4/EP32/ETP1, DP8, and GBS/MBS 8/1 without gradient accumulation. It used the pinned Tulu 3 train[:10000] split with the GLM assistant-only chat template, 8,192-token offline packs, pad-8 sequence alignment, an 8,184-token single-sequence cap, constant-shape cu_seqlens, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, natural routing, and HybridEP. Packing is 99.72% efficient across 421 rows with a 23.75 packing factor. The 100-step window contains 6,553,600 token slots and 4,283,561 supervised tokens. Metadata and Parquet SHA-256 values are cbd964c686b74f82804ceea2df75bb00fbe28648f0458a641b9db27977a55b1b and b2c6f71a6b5add331750956622073cc8ced0bb6b2742e1d7a0e1a9f763cbaa0c. Loss remained finite from 1.704979 to 0.3682597, final grad norm was 0.873, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 8,593.990 ms and 12.446 TFLOPS/GPU. A complete step-100 distributed checkpoint was written for the future GB200 export/reload gate.</p>
       </section>
     </article>
     <article id="glm5-2-sft-long-context-h100" class="verification-model-detail" data-entry-detail="glm5-2-sft-long-context-h100" tabindex="-1">
@@ -513,8 +505,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 608-H100 TP1/PP19/CP32/EP32/ETP1 run completed exactly 20 optimizer steps over 200,000-token packed rows with cuDNN DSA, sparse indexer loss coefficient 0.001, and MTP1. Loss remained finite from 8.283127 to 2.557671, final grad norm was 10838.703, and every step recorded zero skipped and NaN iterations. The last 10 steps averaged 36,603.370 ms and 39.648 TFLOPS/GPU; peak observed GPU memory was 81,005 MiB.
-</p>
+        <p>The 608-H100 TP1/PP19/CP32/EP32/ETP1 run completed exactly 20 optimizer steps over 200,000-token packed rows with cuDNN DSA, sparse indexer loss coefficient 0.001, and MTP1. Loss remained finite from 8.283127 to 2.557671, final grad norm was 10838.703, and every step recorded zero skipped and NaN iterations. The last 10 steps averaged 36,603.370 ms and 39.648 TFLOPS/GPU; peak observed GPU memory was 81,005 MiB.</p>
       </section>
     </article>
     <article id="glm5-2-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-long-context-gb200" tabindex="-1">
@@ -564,8 +555,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 192-GB200 run completed exactly 20 optimizer steps at TP1/PP6/CP32/EP32/ETP1, DP1, and GBS/MBS 56/1 with cuDNN DSA, MTP1, HybridEP, and full activation recompute. The explicit PP6 decoder layout [14, 16, 12, 12, 12, 12] completed without OOM using 32 single-sequence, 131,072-token synthetic packs. Loss remained finite from 0.4159648 to 0.000511673 with zero skipped or NaN iterations across 146,786,080 supervised tokens. The final 10 steps averaged 143,248.820 ms and 88.848 TFLOPS/GPU. This verifies long-context execution only; the 8K pinned-Tulu run provides real-data convergence evidence.
-</p>
+        <p>The immutable-revision 192-GB200 run completed exactly 20 optimizer steps at TP1/PP6/CP32/EP32/ETP1, DP1, and GBS/MBS 56/1 with cuDNN DSA, MTP1, HybridEP, and full activation recompute. The explicit PP6 decoder layout [14, 16, 12, 12, 12, 12] completed without OOM using 32 single-sequence, 131,072-token synthetic packs. Loss remained finite from 0.4159648 to 0.000511673 with zero skipped or NaN iterations across 146,786,080 supervised tokens. The final 10 steps averaged 143,248.820 ms and 88.848 TFLOPS/GPU. This verifies long-context execution only; the 8K pinned-Tulu run provides real-data convergence evidence.</p>
       </section>
     </article>
     <article id="glm5-2-peft-h100" class="verification-model-detail" data-entry-detail="glm5-2-peft-h100" tabindex="-1">
@@ -615,8 +605,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 208-H100 run completes exactly 100 LoRA steps at TP1/PP13/CP1/EP16/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and natural routing. Pad-4 packing is 99.45% efficient and contains 4,251,129 supervised tokens. Loss remains finite from 1.909421 to 0.8835775 with zero skipped or NaN iterations. The final grad norm is 0.101; the checkpoint contains exactly 790 BF16 rank-8 adapter tensors and no base-model weights.
-</p>
+        <p>The immutable-revision 208-H100 run completes exactly 100 LoRA steps at TP1/PP13/CP1/EP16/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and natural routing. Pad-4 packing is 99.45% efficient and contains 4,251,129 supervised tokens. Loss remains finite from 1.909421 to 0.8835775 with zero skipped or NaN iterations. The final grad norm is 0.101; the checkpoint contains exactly 790 BF16 rank-8 adapter tensors and no base-model weights.</p>
       </section>
     </article>
     <article id="glm5-2-peft-gb200" class="verification-model-detail" data-entry-detail="glm5-2-peft-gb200" tabindex="-1">
@@ -666,11 +655,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The immutable-revision 192-GB200 run completed exactly 100 LoRA steps at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed Tulu 3 data, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch. Loss remained finite from 1.831100 to 0.8957523, final grad norm was 0.101, and every step recorded zero skipped and NaN iterations. The step-100 adapter checkpoint was written for reload validation.
-</p>
+        <p>The immutable-revision 192-GB200 run completed exactly 100 LoRA steps at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed Tulu 3 data, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch. Loss remained finite from 1.831100 to 0.8957523, final grad norm was 0.101, and every step recorded zero skipped and NaN iterations. The step-100 adapter checkpoint was written for reload validation.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}
