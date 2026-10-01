@@ -26,7 +26,7 @@ overrides = [
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.16.0" },
-    { name = "nvidia-cudnn-frontend", specifier = "==1.28.0" },
+    { name = "nvidia-cudnn-frontend", specifier = "==1.29.0" },
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
     { name = "nvidia-modelopt", specifier = "==0.46.0rc1", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
@@ -55,8 +55,8 @@ version = "0.0.10b1"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
-version = "2.19.0+5e52befd"
-requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.28.0"]
+version = "2.20.0+131157b5"
+requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.29.0"]
 
 [[package]]
 name = "absl-py"
@@ -2267,7 +2267,7 @@ build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "ninja" },
     { name = "numpy" },
-    { name = "nvidia-cudnn-frontend", specifier = ">=1.28.0" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.29.0" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -2383,7 +2383,7 @@ requires-dist = [
     { name = "nemo-lens", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d" },
     { name = "nemo-lens", extras = ["sdk"], marker = "extra == 'otel'", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d" },
     { name = "numpy" },
-    { name = "nvidia-cudnn-frontend", extras = ["cutedsl"], marker = "extra == 'dev'", specifier = "==1.28.0" },
+    { name = "nvidia-cudnn-frontend", extras = ["cutedsl"], marker = "extra == 'dev'", specifier = "==1.29.0" },
     { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin' and extra == 'dev'", specifier = ">=0.44" },
     { name = "nvidia-resiliency-ext", marker = "extra == 'dev'", specifier = "==0.7.0" },
     { name = "omegaconf", marker = "extra == 'mlm'" },
@@ -2403,7 +2403,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.6.0" },
     { name = "torch-memory-saver", marker = "extra == 'inference'", git = "https://github.com/fzyzcjy/torch_memory_saver.git?rev=9bc9a442e6d108c7b7903def199896a005143aaf" },
     { name = "tqdm", marker = "extra == 'dev'" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5e52befd5262c06289106338c308079d6adb391f" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=131157b5750b8578cb8efb78554f6fe6a671cc53" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "transformers", marker = "extra == 'training'" },
     { name = "wandb", marker = "extra == 'mlm'" },
@@ -2418,7 +2418,7 @@ batch-invariant = [{ name = "deep-gemm", git = "https://github.com/deepseek-ai/D
 build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "hatchling" },
-    { name = "nvidia-cudnn-frontend", specifier = ">=1.28.0" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.29.0" },
     { name = "nvidia-mathdx" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "pybind11" },
@@ -2919,12 +2919,16 @@ source = { registry = "https://pypi.nvidia.com/" }
 
 [[package]]
 name = "nvidia-cudnn-frontend"
-version = "1.28.0"
+version = "1.29.0"
 source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "apache-tvm-ffi" },
+    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "sys_platform == 'never'" },
+]
 wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.28.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:060b0c021f6841312ad26dd837a51b4941d4e0d2a547d87455bd974c173da075" },
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.28.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:335c916be758a8d5533104e04fc4a15f9c30a419b103ecd2b6fd0d23e1d532e4" },
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.28.0-cp312-cp312-win_amd64.whl", hash = "sha256:e1929bde04d0172828b65584317b5e2de3e60743768e5f634875f69eeab6b97e" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.29.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a3fb92256890b3027e59bb25a468ad2b8a474d2910e394edcf0b1c1015463f78" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.29.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:596c9b7591457b4b49227fa2e22bd5960957a198e4336ce9ada8b5d2a1e4a5a1" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.29.0-cp312-cp312-win_amd64.whl", hash = "sha256:06e46b829c9f1c470e8aa78581a3af3a7041d869d7590a0e55aff6f2638be39e" },
 ]
 
 [[package]]
@@ -4832,8 +4836,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.19.0+5e52befd"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5e52befd5262c06289106338c308079d6adb391f#5e52befd5262c06289106338c308079d6adb391f" }
+version = "2.20.0+131157b5"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=131157b5750b8578cb8efb78554f6fe6a671cc53#131157b5750b8578cb8efb78554f6fe6a671cc53" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },

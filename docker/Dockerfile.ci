@@ -207,7 +207,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # its CUTLASS-backed kernels.
     if [ "$MBRIDGE_PRESERVE_BASE_RUNTIME" != "True" ]; then \
         pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
-        pip install nvidia-cutlass-dsl[cu13]==4.5.0; \
+        pip install nvidia-cutlass-dsl[cu13]==4.6.2; \
     fi && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
