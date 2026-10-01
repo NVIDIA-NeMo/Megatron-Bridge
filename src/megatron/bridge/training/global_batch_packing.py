@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Training-loop glue for global-batch online packing.
+"""Training-loop glue for global-batch online packing and dynamic context parallelism.
 
 Megatron-Core's sequence-packing scheduler (``model.sequence_packing_scheduler``,
 driven by ``dataset.enable_global_batch_packing``) packs unpacked variable-length
 samples into THD microbatches once per training step, with the whole global batch
-across data-parallel ranks as its candidate pool.
+across data-parallel ranks as its candidate pool. With
+``model.dynamic_context_parallel`` it also runs every packed bin on a
+context-parallel group sized for its longest sequence (Megatron-Core ``dev``).
 :func:`probe_global_batch_packing_support` checks the pinned Megatron-Core before
 training starts, and the entry points below adapt to the scheduler API of the pinned
 release.
@@ -44,12 +46,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DYNAMIC_CP_SCHEDULERS",
+    "dynamic_context_parallel_enabled",
     "finalize_packed_seq_params",
     "get_batch_for_global_batch_packing",
     "global_batch_packing_enabled",
     "probe_global_batch_packing_support",
     "wrap_data_iterator_for_global_batch_packing",
 ]
+
+
+DYNAMIC_CP_SCHEDULERS: tuple[str, ...] = ("default_dynamic_cp",)
+"""Scheduler names that form dynamic context-parallel groups per microbatch."""
+
+_DEV_PIN_HINT = (
+    " Dynamic context parallelism needs the Megatron-Core dev pin: `./scripts/switch_mcore.sh dev && uv sync`."
+)
 
 
 def global_batch_packing_enabled(model_config: Any) -> bool:
@@ -59,6 +71,11 @@ def global_batch_packing_enabled(model_config: Any) -> bool:
     (mocks, partial namespaces) do not route a step through the packing scheduler.
     """
     return isinstance(getattr(model_config, "sequence_packing_scheduler", None), str)
+
+
+def dynamic_context_parallel_enabled(model_config: Any) -> bool:
+    """Return whether dynamic context parallelism is configured (an explicit ``True``, not any truthy value)."""
+    return getattr(model_config, "dynamic_context_parallel", False) is True
 
 
 def _scheduler_api() -> tuple[Callable[..., Any], Callable[..., Any]]:
@@ -87,18 +104,21 @@ def _thd_cp_route_prebuilder() -> Callable[..., None] | None:
     return prebuild_thd_cp_partition_routes
 
 
-def probe_global_batch_packing_support(scheduler: str) -> str | None:
+def probe_global_batch_packing_support(scheduler: str, *, dynamic_cp: bool = False) -> str | None:
     """Return why the pinned Megatron-Core cannot run ``scheduler``, or ``None`` if it can.
 
     Probing the registered schedulers and the entry-point signatures lets validation
     fail with an actionable message instead of a ``KeyError`` or ``TypeError`` at the
-    first step.
+    first step. ``dynamic_cp`` additionally requires the packed batch fetch to accept
+    the dynamic-CP arguments.
     """
+    hint = _DEV_PIN_HINT if dynamic_cp or scheduler in DYNAMIC_CP_SCHEDULERS else ""
     try:
         data_schedule = importlib.import_module("megatron.core.datasets.data_schedule")
     except ImportError:
         return (
             "the pinned Megatron-Core does not provide megatron.core.datasets.data_schedule (online sequence packing)."
+            + hint
         )
 
     registered: set[str] = set()
@@ -109,14 +129,19 @@ def probe_global_batch_packing_support(scheduler: str) -> str | None:
     if enum is not None:
         registered |= {member.value for member in enum}
     if scheduler not in registered:
-        return f"the pinned Megatron-Core registers schedulers {sorted(registered)}; '{scheduler}' is not available."
+        return (
+            f"the pinned Megatron-Core registers schedulers {sorted(registered)}; '{scheduler}' is not available."
+            + hint
+        )
 
     get_batch = getattr(data_schedule, "get_batch_on_this_rank_for_sequence_packing", None)
     wrap = getattr(data_schedule, "wrap_data_iterator", None)
     if get_batch is None or wrap is None:
-        return "the pinned Megatron-Core lacks the packed batch entry points."
+        return "the pinned Megatron-Core lacks the packed batch entry points." + hint
     if "pg_collection" not in _accepted_parameters(wrap) or "pg_collection" not in _accepted_parameters(get_batch):
-        return "the pinned Megatron-Core scheduler does not accept a ProcessGroupCollection."
+        return "the pinned Megatron-Core scheduler does not accept a ProcessGroupCollection." + hint
+    if dynamic_cp and not {"dynamic_cp", "config"} <= _accepted_parameters(get_batch):
+        return "the pinned Megatron-Core packed batch fetch has no dynamic context parallel support." + hint
     return None
 
 
@@ -136,8 +161,8 @@ def wrap_data_iterator_for_global_batch_packing(
     """Pack this step's global batch into THD microbatches.
 
     Pulls ``num_microbatches`` samples per data-parallel rank, gathers their
-    lengths, schedules bins, reroutes samples, and returns the packed iterator
-    with the number of microbatches it yields. The packed iterator is a
+    lengths, schedules bins (and CP groups under dynamic CP), reroutes samples,
+    and returns the packed iterator with the number of microbatches it yields. The packed iterator is a
     ``RerunDataIterator`` on TP rank 0 and ``None`` on other TP ranks, so callers
     must track "already wrapped" with an explicit flag.
 
@@ -171,8 +196,8 @@ def get_batch_for_global_batch_packing(
 ]:
     """Fetch one packed microbatch and its ``PackedSeqParams`` on every rank.
 
-    Megatron-Core slices the packed bin for this rank's CP group, broadcasts it
-    over TP, and returns THD metadata.
+    Megatron-Core slices the packed bin for this rank's (possibly dynamic) CP group,
+    broadcasts it over TP, and returns THD metadata.
 
     Returns:
         ``(tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params,
@@ -185,6 +210,9 @@ def get_batch_for_global_batch_packing(
     if "config" in _accepted_parameters(get_batch_on_this_rank_for_sequence_packing):
         # Releases that accept the model config read CP partitioning and THD padding options from it.
         optional_kwargs["config"] = model_config
+    if dynamic_context_parallel_enabled(model_config):
+        # Validation checked that the pinned fetch accepts it (probe_global_batch_packing_support).
+        optional_kwargs["dynamic_cp"] = True
     tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask = (
         get_batch_on_this_rank_for_sequence_packing(
             _iterator_for_tp_rank(data_iterator, pg_collection),
@@ -210,7 +238,7 @@ def finalize_packed_seq_params(
     """Bind the CP group to one microbatch and prebuild its THD CP partition route.
 
     Uses ``pg_collection.cp`` as the static group so attention runs on the group the
-    model was built with. Releases with context-parallel layout routes get the route
+    model was built with unless the scheduler attached a dynamic group. Releases with context-parallel layout routes get the route
     built here, off the forward path; older releases partition without one.
     """
     if packed_seq_params is None:

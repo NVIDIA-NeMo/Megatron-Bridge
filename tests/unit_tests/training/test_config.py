@@ -5377,25 +5377,79 @@ class TestGlobalBatchPackingValidation:
 
     @pytest.mark.skipif(
         not hasattr(GPTModelProvider, "dynamic_context_parallel"),
-        reason="the pinned Megatron-Core has no dynamic context parallel field",
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
     )
-    def test_dynamic_context_parallel_is_rejected(self):
+    def test_dynamic_cp_selects_dynamic_scheduler_and_pool_padding_multiple(self):
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=64,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert container.model.sequence_packing_scheduler == "default_dynamic_cp"
+        # dp 4 x cp 2 = pool 8 -> 2 * pool
+        assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 16
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_dynamic_cp_sequence_parallel_multiple_covers_the_whole_pool(self):
+        # TP4 x CP1 x DP2: a sequence may run on a CP2 group spanning both DP ranks, so each of its
+        # two CP shards must split over four TP ranks: 2 x 4 = 8 (the static rule would give 4).
+        model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            context_parallel_size=1,
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            dynamic_context_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = self._gpt_sft_unpacked_dataset(512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
+        )
+        container.ddp.average_in_collective = False
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 8
+
+    @pytest.mark.skipif(
+        not hasattr(GPTModelProvider, "dynamic_context_parallel"),
+        reason="dynamic context parallel needs the Megatron-Core dev pin",
+    )
+    def test_dynamic_cp_rejects_non_power_of_two_pool(self):
         model_cfg = create_test_gpt_config(
             context_parallel_size=2,
             calculate_per_token_loss=True,
             max_seqlen_per_dp_cp_rank=256,
             dynamic_context_parallel=True,
         )
-        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=6)
         container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=8,
+            world_size_override=6,
             model_config=model_cfg,
             train_config=train_cfg,
             dataset_config_override=self._gpt_sft_unpacked_dataset(512),
         )
         container.ddp.average_in_collective = False
         try:
-            with pytest.raises(ValueError, match="dynamic_context_parallel"):
+            with pytest.raises(ValueError, match="power-of-two"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
