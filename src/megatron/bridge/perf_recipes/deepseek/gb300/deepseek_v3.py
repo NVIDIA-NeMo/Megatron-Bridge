@@ -26,6 +26,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 
 
 def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
@@ -190,6 +191,30 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, deterministic.
+
+    Wraps :func:`deepseek_v3_pretrain_256gpu_gb300_fp8mx_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+    # TODO: revert back to NCCL EP once the NCCL EP issue is fixed.
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_use_grouped_tensor = False
+    cfg.env_vars.pop("NCCL_EP_HT_EM_PULL_PUSH")
+    cfg.env_vars.update(
+        {
+            # HybridEP topology for the target system.
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        }
+    )
+    apply_determinism_overrides(cfg)
     return cfg
 
 

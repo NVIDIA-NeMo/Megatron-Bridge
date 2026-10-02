@@ -14,6 +14,8 @@
 
 """Config-level overrides for deterministic training."""
 
+from megatron.training.determinism import DETERMINISM_ENV_VAR_DEFAULTS
+
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -35,13 +37,12 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
     """
     cfg.model.deterministic_mode = True
     cfg.model.cross_entropy_loss_fusion = False
-    cfg.env_vars.update(
-        {
-            "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
-            "NCCL_ALGO": "Ring",
-            "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        }
-    )
+    # Only the MoE aux-loss fusion is non-deterministic; fused TopK routing stays on.
+    cfg.model.moe_router_aux_loss_fusion = False
+    # Exported at launch so the values are in place before TE, cuBLAS and NCCL first read them.
+    cfg.env_vars.update(DETERMINISM_ENV_VAR_DEFAULTS)
+    # Pin the Mamba/causal-conv1d kernels explicitly instead of letting them follow torch's flag.
+    cfg.env_vars.update({"MAMBA_DETERMINISTIC": "1", "CAUSAL_CONV1D_DETERMINISTIC": "1"})
 
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.tp_comm_overlap = False
