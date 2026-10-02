@@ -513,6 +513,8 @@ def setup(
     # Iterator creation draws a DataLoader base seed from the global Torch RNG,
     # even with num_workers=0. Keep that draw from advancing checkpoint-restored
     # training RNG streams; the loader still receives its usual resume seed.
+    # Cyclic and batch iterators (and the GPT validation iterator) only create
+    # their DataLoader iterator on the first next(), so their draw is not here.
     preserve_data_setup_rng = (
         should_load_checkpoint
         and state.train_state.step > 0
