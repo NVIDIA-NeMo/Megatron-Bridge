@@ -11632,25 +11632,36 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
-          "command_topologies": [],
-          "commands": [],
+          "bridge_commit": "d23c1f981596c227b13d98c95b09afb865d80258",
+          "command_topologies": [
+            {
+              "gpus_per_node": "8",
+              "nodes": "44",
+              "pipeline_parallel": "11",
+              "recipe": "glm52_pretrain_416gpu_h100_bf16_config",
+              "sequence_length": "2048",
+              "total_gpus": 352
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 2048 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-h100 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false model.moe_flex_dispatcher_backend=hybridep dist.distributed_timeout_minutes=60 model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL' checkpoint.ckpt_step=10 --load_dir work/model-verification/glm5-2/pretrain-wikitext-h100/checkpoints --save_dir work/model-verification/glm5-2/pretrain-wikitext-resume-h100/checkpoints --save_interval 0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-resume-h100/resolved-config.yaml"
+          ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-checkpoint-resume-h100",
-          "expected_result": "Pending against the current warm-start pretrain reference, which saves no checkpoint because each full GLM-5.2 checkpoint with FP32 optimizer state is about 10.5 TB. Verification requires rerunning that reference with a step-10 save and resuming steps 11-20 into a new root. The previous random-initialization reference resumed from step 50 with both sentinels inside the declared tolerance.\n",
+          "expected_result": "The run reloads the warm-start reference's step-10 model, optimizer, scheduler, data-order, and RNG state and completes steps 11-20 into a new root with zero skipped or NaN iterations. Step 11 is 0.9305546, identical to the uninterrupted reference, and step 20 is 0.9313419 versus 0.9303461, a relative difference of 0.107%. Every resumed LM and MTP loss stays within the declared bound, with a largest LM relative difference of 0.113% at step 19. The resolved reference and resume configs differ only in the checkpoint source, step, pretrained-checkpoint fallback, and output paths. The resume requires PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True in the launch environment; the reference ran without it. The recipe's own allocator setting is applied after CUDA initializes and does not take effect, and without expandable segments the first resumed step exhausts device memory when NCCL allocates buffers for the data-parallel gradient reduce-scatter on the 8-layer pipeline stages. The final-10-step window is the whole resumed segment, so its averages include HybridEP JIT compilation at step 11 (1,835.1 s); steps 12-20 average 17,201.3 ms.\n",
           "hardware": "H100",
-          "last_verified": null,
+          "last_verified": "2026-10-02",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.9313419,
+            "initial_loss": 0.9305546,
+            "last_10_steps_model_tflops_per_gpu_avg": 89.34,
+            "last_10_steps_step_time_ms_avg": 198991.51,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 29.94
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.H100",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "checkpoint_resume"
         },
@@ -11693,7 +11704,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "glm5-2",
       "source_card": "examples/model_verification_cards/glm5-2/card.yaml",
-      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. GLM-5.2 H100 support verification currently covers exact GPU checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence, bounded full SFT with export/reload inference, 200K-context CP32 SFT, bounded PEFT, and bounded warm-start pretraining; checkpoint resume against the warm-start pretrain reference remains pending. GB200 support verification currently covers bounded warm-start pretraining, bounded full SFT, 128K packed long-context SFT, bounded PEFT, bounded checkpoint resume, and deterministic legacy Megatron inference; post-SFT export/reload inference remains pending.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. GLM-5.2 H100 support verification currently covers exact GPU checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence, bounded full SFT with export/reload inference, 200K-context CP32 SFT, bounded PEFT, bounded warm-start pretraining, and bounded checkpoint resume from its step-10 checkpoint. GB200 support verification currently covers bounded warm-start pretraining, bounded full SFT, 128K packed long-context SFT, bounded PEFT, bounded checkpoint resume, and deterministic legacy Megatron inference; post-SFT export/reload inference remains pending.\n",
       "title": "glm5_2"
     }
   ],
