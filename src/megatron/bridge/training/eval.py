@@ -34,6 +34,10 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.global_batch_packing import (
+    global_batch_packing_enabled,
+    wrap_data_iterator_for_global_batch_packing,
+)
 from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
@@ -212,7 +216,16 @@ def evaluate(
             seq_length = default_seq_length  # Default for pretraining
             eval_data_iterator = data_iterator  # Default for pretraining
 
-            if state.cfg.dataset.dataloader_type == "batch":
+            scheduled_eval_num_microbatches = eval_num_microbatches
+            if global_batch_packing_enabled(model_config):
+                # The validation split is sized for every eval step at dataloader construction
+                # (loaders.py), so the scheduler never runs out of samples mid-collective.
+                eval_data_iterator, scheduled_eval_num_microbatches, _, _ = (
+                    wrap_data_iterator_for_global_batch_packing(
+                        data_iterator, model_config, eval_num_microbatches, pg_collection
+                    )
+                )
+            elif state.cfg.dataset.dataloader_type == "batch":
                 # Finetuning path: prepare batch and extract dynamic seq_length
                 eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
@@ -221,7 +234,7 @@ def evaluate(
                     seq_key="tokens",
                 )
 
-            if len(model) > 1:
+            if len(model) > 1 and not global_batch_packing_enabled(model_config):
                 # Convert to list of iterators for virtual pipeline parallelism
                 # With virtual PP, each model chunk needs independent access to the same microbatch
                 eval_data_iterator = make_data_iterator_list(
@@ -252,7 +265,7 @@ def evaluate(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
                 model=model,
-                num_microbatches=eval_num_microbatches,
+                num_microbatches=scheduled_eval_num_microbatches,
                 seq_length=seq_length,
                 micro_batch_size=eval_micro_batch_size,
                 forward_only=True,

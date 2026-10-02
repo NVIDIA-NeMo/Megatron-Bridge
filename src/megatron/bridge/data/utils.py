@@ -70,7 +70,14 @@ def pretrain_train_valid_test_datasets_provider(
         A tuple containing the train, validation, and test datasets.
     """
 
-    if dataset_config.mock:
+    global_batch_packing = getattr(dataset_config, "enable_global_batch_packing", False)
+    if global_batch_packing:
+        # Megatron's variable-length datasets yield one unpacked sample per item in the
+        # schema the online packing scheduler consumes.
+        from megatron.training.datasets.varlen_dataset import MockVarlenDataset, VarlenDataset
+
+        dataset_type = MockVarlenDataset if dataset_config.mock else VarlenDataset
+    elif dataset_config.mock:
         dataset_type = MockGPTDataset
     elif hasattr(dataset_config, "fim_data"):
         dataset_type = GPTFIMDataset
@@ -83,6 +90,13 @@ def pretrain_train_valid_test_datasets_provider(
     train_ds, valid_ds, test_ds = BlendedMegatronDatasetBuilder(
         dataset_type, train_val_test_num_samples, lambda: True, dataset_config
     ).build()
+
+    if global_batch_packing:
+        from megatron.bridge.data.packing.global_batch import identity_collate
+
+        for dataset in (train_ds, valid_ds, test_ds):
+            if dataset is not None:
+                dataset.collate_fn = identity_collate
 
     print_rank_0("> finished creating GPT datasets ...")
 
