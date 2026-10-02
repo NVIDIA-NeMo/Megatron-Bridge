@@ -57,6 +57,9 @@ from megatron.core.transformer.cuda_graphs import (
     VisionTECudaGraphHelper,
     get_vision_cuda_graph_seq_length,
 )
+from megatron.core.transformer.cuda_graphs import (
+    delete_cuda_graphs as delete_local_cuda_graphs,
+)
 from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
     get_attr_wrapped_model,
@@ -1726,6 +1729,9 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     # delete_cuda_graphs() asserts. Mirrors the guard in upstream mcore training.py.
     if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
         cuda_graph_helper.delete_cuda_graphs()
+
+    # Cleanup per-layer CUDA graphs owned by MCore CudaGraphManager (cuda_graph_impl="local").
+    delete_local_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()

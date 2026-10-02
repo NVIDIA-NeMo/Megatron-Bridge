@@ -2564,8 +2564,8 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_local_inference_scope_rejects_training_modules(self, monkeypatch):
-        """Test that an inference scope does not bypass local training-scope validation."""
+    def test_cuda_graph_local_inference_scope_allows_training_modules(self, monkeypatch):
+        """Test that local per-layer training modules can be combined with an inference scope."""
         gpt_model_cfg = create_test_gpt_config(
             cuda_graph_impl="local",
             inference_cuda_graph_scope="block",
@@ -2579,14 +2579,15 @@ class TestConfigContainerValidation:
         )
 
         try:
-            with pytest.raises(ValueError, match='cuda_graph_impl="local"'):
-                container.validate()
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert cuda_graph_module_names(container.model) == ["mlp"]
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    @pytest.mark.parametrize("graph_modules", [["mlp"], ["moe_router"]])
-    def test_cuda_graph_local_scoped_modules_raise_clear_error(self, graph_modules, monkeypatch):
-        """Test that Bridge rejects local scoped graphs before MCore layer construction."""
+    @pytest.mark.parametrize("graph_modules", [["attn"], ["attn", "mlp"]])
+    def test_cuda_graph_local_scoped_modules_allow_validation(self, graph_modules, monkeypatch):
+        """Test that Bridge passes local per-layer CUDA graph modules through to MCore."""
         gpt_model_cfg = create_test_gpt_config(
             cuda_graph_impl="local",
             use_te_rng_tracker=True,
@@ -2599,16 +2600,14 @@ class TestConfigContainerValidation:
         )
 
         try:
-            with pytest.raises(
-                ValueError,
-                match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
-            ):
-                container.validate()
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert cuda_graph_module_names(container.model) == graph_modules
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_local_deprecated_scope_raise_clear_error(self, monkeypatch):
-        """Test post-construction cuda_graph_scope overrides fail clearly for local scoped graphs."""
+    def test_cuda_graph_local_deprecated_scope_allows_validation(self, monkeypatch):
+        """Test post-construction cuda_graph_scope overrides are accepted for local per-layer graphs."""
         gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
         gpt_model_cfg.cuda_graph_impl = "local"
         gpt_model_cfg.cuda_graph_scope = ["mlp"]
@@ -2619,23 +2618,41 @@ class TestConfigContainerValidation:
         )
 
         try:
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert cuda_graph_module_names(container.model) == ["mlp"]
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_local_whole_layer_raise_clear_error(self, monkeypatch):
+        """Test that Bridge rejects local whole-layer capture before MCore layer construction."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="local",
+            use_te_rng_tracker=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
             with pytest.raises(
                 ValueError,
-                match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+                match='cuda_graph_impl="local".*cuda_graph_modules',
             ):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_cuda_graph_local_deprecated_scope_direct_provider_raise_clear_error(self):
-        """Test direct provider construction validates local scoped graphs before MCore build."""
+    def test_cuda_graph_local_whole_layer_direct_provider_raise_clear_error(self):
+        """Test direct provider construction validates local whole-layer capture before MCore build."""
         gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True, vocab_size=128)
         gpt_model_cfg.cuda_graph_impl = "local"
-        gpt_model_cfg.cuda_graph_scope = ["mlp"]
 
         with pytest.raises(
             ValueError,
-            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+            match='cuda_graph_impl="local".*cuda_graph_modules',
         ):
             gpt_model_cfg.provide()
 

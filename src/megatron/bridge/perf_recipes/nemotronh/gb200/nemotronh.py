@@ -20,6 +20,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _apply_nemotron_3_ultra_fsdp_hsdp,
+    _apply_nemotron_3_ultra_gtp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _enable_nemotron_3_super_full_iteration,
@@ -238,8 +239,11 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _apply_nemotron_3_ultra_perf_defaults(cfg)
 
-    # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
-    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
+    # Shard dense weights with GTP within each 64-GPU rack. GTP currently
+    # requires a single distributed-optimizer instance.
+    _apply_nemotron_3_ultra_gtp(cfg)
+    # Also, enable GTP sharding for the moe_latent_proj module due to memory pressure on GB200
+    cfg.model.gtp_remat_opt_in_modules = ["moe_latent_proj"]
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2
@@ -273,6 +277,14 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     # recomputes the activation output of the MoE expert MLP, while FC1 output (activation input) is saved and offloaded to cpu
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act"]
+
+    # Enable GTP sharding for the moe_latent_proj module
+    cfg.model.gtp_remat_opt_in_modules = ["moe_latent_proj"]
+
+    cfg.model.cuda_graph_impl = "local"
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
+    # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
