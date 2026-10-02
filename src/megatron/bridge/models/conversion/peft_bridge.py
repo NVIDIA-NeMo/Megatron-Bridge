@@ -802,13 +802,15 @@ class MegatronPeftBridge:
                     tp_axis=1,
                 )
             else:
+                linear_in_weight = adapter_task.linear_in_task.resolve_param_weight()
                 linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                    linear_in_weight, adapter_task.linear_in_task.megatron_module
                 )
                 linear_in_tensor = next(iter(linear_in_dict.values()))
 
+                linear_out_weight = adapter_task.linear_out_task.resolve_param_weight()
                 linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                    linear_out_weight, adapter_task.linear_out_task.megatron_module
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
@@ -842,7 +844,7 @@ class MegatronPeftBridge:
         """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
 
         mapping = task.mapping
-        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        tensor = mapping.broadcast_from_pp_rank(task.resolve_param_weight(), cache_key=task.global_param_name)
         assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
         tensor = mapping.maybe_dequantize(tensor)
         if mapping.tp_size > 1:

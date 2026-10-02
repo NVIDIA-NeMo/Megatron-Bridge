@@ -175,6 +175,52 @@ def _supports_native_grouped_mxfp8(mapping: "MegatronParamMapping") -> bool:
     return type(mapping) in (FusedGatedExpertMapping, FusedExpertMapping)
 
 
+def _split_grouped_export_members(param: Any, global_param_name: str) -> list[Any]:
+    """Return per-expert views from tensor or Transformer Engine grouped storage."""
+    splitter = getattr(param, "split_into_quantized_tensors", None)
+    if callable(splitter):
+        members = getattr(param, "quantized_tensors", None)
+        if members is None:
+            members = splitter()
+            param.quantized_tensors = members
+        return list(members)
+    if isinstance(param, torch.Tensor):
+        return list(param.unbind(0))
+    raise ValueError(f"Grouped expert parameter {global_param_name!r} does not expose per-expert members")
+
+
+@dataclass(frozen=True)
+class _GroupedExportMemberResolver:
+    """Resolve one current member without retaining an invalidated member view."""
+
+    grouped_weight: Any
+    grouped_name: str
+    expanded_name: str
+    member_index: int
+    expected_count: int
+    uses_native_storage: bool
+
+    def __call__(self) -> Any:
+        if self.uses_native_storage:
+            members = get_grouped_quantized_members(
+                self.grouped_weight,
+                create_if_missing=True,
+            )
+            current = [] if members is None else list(members)
+        else:
+            current = _split_grouped_export_members(
+                self.grouped_weight,
+                self.grouped_name,
+            )
+        if len(current) != self.expected_count:
+            raise ValueError(
+                f"Grouped expert parameter {self.grouped_name!r} has "
+                f"{len(current)} local members, expected {self.expected_count} "
+                f"while resolving {self.expanded_name!r}"
+            )
+        return current[self.member_index]
+
+
 def _supports_native_mxfp8_mapping(mapping: "MegatronParamMapping") -> bool:
     """Return whether a mapping class explicitly implements the native contract."""
     from megatron.bridge.models.conversion.param_mapping import (
@@ -314,6 +360,8 @@ class MegatronQuantizationBridge:
         self,
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
+        *,
+        expand_native_grouped: bool = False,
     ) -> List["WeightConversionTask"]:
         """Build deterministic export tasks for native MXFP8 parameters.
 
@@ -324,6 +372,8 @@ class MegatronQuantizationBridge:
         Args:
             hf_pretrained: Hugging Face model metadata used for mapping validation.
             megatron_model: Virtual-pipeline model chunks on the current rank.
+            expand_native_grouped: Expose native grouped MXFP8 storage as one
+                live task per local expert instead of one aggregate task.
 
         Returns:
             Conversion tasks in global Megatron parameter order.
@@ -367,7 +417,7 @@ class MegatronQuantizationBridge:
             if (mapping := _lookup_grouped_expert_mapping(mapping_registry, global_name)) is not None
         }
         for global_name in grouped_mappings:
-            if self._is_mtp_param(global_name):
+            if self._is_mtp_param(global_name) and not expand_native_grouped:
                 raise ValueError("Native MXFP8 export does not support co-trained MTP grouped experts")
 
         local_by_global_name: dict[str, tuple[int, str, Any, torch.Tensor]] = {}
@@ -390,7 +440,8 @@ class MegatronQuantizationBridge:
                     local_grouped_storage[global_name] = uses_native_storage
                     if uses_native_storage and _supports_native_grouped_mxfp8(grouped_mappings[global_name]):
                         members = get_grouped_quantized_members(local_weight, create_if_missing=True)
-                        local_grouped_member_counts[global_name] = None if members is None else len(tuple(members))
+                        members = None if members is None else tuple(members)
+                        local_grouped_member_counts[global_name] = None if members is None else len(members)
 
         native_grouped_names: set[str] = set()
         for global_name, mapping in grouped_mappings.items():
@@ -432,7 +483,8 @@ class MegatronQuantizationBridge:
                         f"{global_name}: grouped MXFP8 storage has {member_count} local members, "
                         f"expected {local_expert_count}"
                     )
-                native_grouped_names.add(global_name)
+                if not expand_native_grouped:
+                    native_grouped_names.add(global_name)
 
         grouped_expansions: dict[str, list[str]] = {}
         ordered_names: list[str] = []
@@ -470,7 +522,16 @@ class MegatronQuantizationBridge:
             vp_stage, local_name, local_module, local_weight = local
             expanded_names = grouped_expansions.get(global_name)
             if expanded_names is not None:
-                members = list(local_weight.unbind(0))
+                uses_native_storage = local_grouped_storage.get(global_name, False)
+                members = (
+                    get_grouped_quantized_members(
+                        local_weight,
+                        create_if_missing=True,
+                    )
+                    if uses_native_storage
+                    else _split_grouped_export_members(local_weight, global_name)
+                )
+                members = [] if members is None else list(members)
                 if len(members) != len(expanded_names):
                     raise ValueError(
                         f"Grouped expert parameter {global_name!r} has {len(members)} local members, "
@@ -483,7 +544,15 @@ class MegatronQuantizationBridge:
                         param_name=f"{local_name}{expert_id}",
                         global_param_name=expanded_name,
                         megatron_module=local_module,
-                        param_weight=members[expert_id],
+                        param_weight=None,
+                        param_weight_resolver=_GroupedExportMemberResolver(
+                            grouped_weight=local_weight,
+                            grouped_name=global_name,
+                            expanded_name=expanded_name,
+                            member_index=expert_id,
+                            expected_count=len(expanded_names),
+                            uses_native_storage=uses_native_storage,
+                        ),
                         mapping=mappings[expanded_name],
                     )
             elif global_name in mappings:
@@ -540,11 +609,12 @@ class MegatronQuantizationBridge:
         task: "WeightConversionTask",
     ) -> Optional[_NativeMXFP8TaskPlan]:
         """Validate one task using storage-free mapping inputs."""
-        if task.param_weight is None:
+        param_weight = task.resolve_param_weight()
+        if param_weight is None:
             return None
-        if _uses_dtensor_or_fsdp(task.param_weight, task.megatron_module):
+        if _uses_dtensor_or_fsdp(param_weight, task.megatron_module):
             raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support DTensor/FSDP parameters")
-        if is_grouped_mxfp8tensor(task.param_weight):
+        if is_grouped_mxfp8tensor(param_weight):
             if self._is_mtp_param(task.global_param_name):
                 raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
             if not _supports_native_grouped_mxfp8(task.mapping):
@@ -554,7 +624,7 @@ class MegatronQuantizationBridge:
             for member_name, member in self._grouped_native_mxfp8_member_contexts(task, members):
                 output_specs.extend(self._preflight_native_mxfp8_mapping(task, member, member_name))
             return _NativeMXFP8TaskPlan(task=task, grouped=True, output_specs=tuple(output_specs))
-        if not is_mxfp8tensor(task.param_weight):
+        if not is_mxfp8tensor(param_weight):
             return None
         if self._is_mtp_param(task.global_param_name):
             raise ValueError(f"{task.global_param_name}: native MXFP8 export does not support co-trained MTP")
@@ -568,7 +638,7 @@ class MegatronQuantizationBridge:
             grouped=False,
             output_specs=self._preflight_native_mxfp8_mapping(
                 task,
-                task.param_weight,
+                param_weight,
                 task.global_param_name,
             ),
         )
@@ -606,7 +676,10 @@ class MegatronQuantizationBridge:
                 )
             )
         else:
-            storage = _extract_native_mxfp8_storage(task.param_weight, task.global_param_name)
+            param_weight = task.resolve_param_weight()
+            if param_weight is None:
+                raise ValueError(f"{task.global_param_name}: missing native MXFP8 export source")
+            storage = _extract_native_mxfp8_storage(param_weight, task.global_param_name)
             materialized = task.mapping.local_mxfp8_params(
                 storage.weight,
                 storage.weight_scale,
@@ -625,7 +698,10 @@ class MegatronQuantizationBridge:
     ) -> Optional[Iterable[torch.Tensor]]:
         """Return cached grouped members with task-qualified failures."""
         try:
-            return get_grouped_quantized_members(task.param_weight, create_if_missing=False)
+            param_weight = task.resolve_param_weight()
+            if param_weight is None:
+                return None
+            return get_grouped_quantized_members(param_weight, create_if_missing=False)
         except (AttributeError, RuntimeError, TypeError, ValueError) as error:
             raise ValueError(f"{task.global_param_name}: unable to access cached grouped MXFP8 members") from error
 
@@ -724,8 +800,9 @@ class MegatronQuantizationBridge:
         for task in self._with_progress_tracking(
             megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress
         ):
+            param_weight = task.resolve_param_weight()
             converted_weights_dict = task.mapping.megatron_to_hf_quant(
-                task.param_weight, task.megatron_module, quantization_checker, quant_fn, quant_block_size
+                param_weight, task.megatron_module, quantization_checker, quant_fn, quant_block_size
             )
             if getattr(task.mapping, "is_grouped_export", False):
                 converted_weights_dict = self._accumulate_grouped_export(
