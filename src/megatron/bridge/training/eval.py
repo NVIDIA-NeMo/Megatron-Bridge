@@ -325,14 +325,17 @@ def evaluate(
                 torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
                 done = done_cuda.item()
                 if done:
+                    timers("evaluate").stop()
                     rerun_state_machine.set_mode(rerun_mode)
+                    for model_module in model:
+                        model_module.train()
                     print_rank_0("Exiting during evaluation, timelimit reached")
                     return None, None, True
 
         collected_non_loss_data = None
         if non_loss_data_func is not None:
             collected_non_loss_data = non_loss_data_func(model)
-        elif process_non_loss_data_func is not None and is_last_rank():
+        elif process_non_loss_data_func is not None:
             # Handle finetuning vs pretraining for non-loss data collection
             non_loss_data_iterator = data_iterator
             non_loss_seq_length = default_seq_length

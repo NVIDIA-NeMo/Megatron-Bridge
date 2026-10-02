@@ -154,7 +154,7 @@ def train_step_megatron_mimo(
                     val = torch.vstack(val).sum(dim=0)
                     if llm_pg is not None and llm_pg.dp_cp is not None:
                         torch.distributed.all_reduce(val, group=llm_pg.dp_cp)
-                    loss_dict[key] = val[0] / val[1]
+                    loss_dict[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
                 elif val[0].numel() == 1:
                     loss_dict[key] = torch.cat(val).mean()
                 else:
@@ -387,7 +387,12 @@ def train_megatron_mimo(
             )
 
         # Evaluation at specified intervals
-        if eval_interval and train_state.step % eval_interval == 0 and valid_data_iterator is not None:
+        if (
+            eval_interval
+            and (cfg.validation.start_eval_at_iter is None or train_state.step >= cfg.validation.start_eval_at_iter)
+            and train_state.step % eval_interval == 0
+            and valid_data_iterator is not None
+        ):
             if train_config.manual_gc and train_config.manual_gc_eval:
                 gc.collect()
             evaluate_and_print_results(
