@@ -153,9 +153,7 @@ def _enable_nemotron_3_5_lightning_full_iteration(cfg: ConfigContainer) -> None:
     # The training loop retries capacity overflows without padding.
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_use_grouped_tensor = True
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.moe_paged_stash = False
     cfg.model.offload_modules = []
 
 

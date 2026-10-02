@@ -422,9 +422,7 @@ def test_mxfp8_full_iteration_graph_config(recipe_factory: Callable[[], ConfigCo
     assert cfg.model.offload_modules == []
     assert cfg.model.moe_expert_rank_capacity_factor == 1.5
     assert cfg.model.moe_use_grouped_tensor is True
-    assert cfg.model.moe_paged_stash is (recipe_factory is nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config)
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cuda == 1.2
-    assert cfg.model.moe_paged_stash_buffer_size_factor_cpu == 1.0
+    assert cfg.model.moe_paged_stash is False
     assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
@@ -644,8 +642,7 @@ def test_vr200_perf_recipes_match_gb300_configs(
 
     The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts and the
     NCCL EP process setting); the VR200 aliases keep the shared HybridEP base. The VR200 BF16
-    recipe also offloads expert activations, and its MXFP8 recipe retains paged stashing.
-    Everything else must be identical.
+    recipe also offloads expert activations. Everything else must be identical.
     """
     vr200_cfg = vr200_factory()
     gb300_cfg = gb300_factory()
@@ -659,10 +656,6 @@ def test_vr200_perf_recipes_match_gb300_configs(
         assert "graph_capture_record_stream_reuse:True" in vr200_cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
         vr200_cfg.model.fine_grained_activation_offloading = gb300_cfg.model.fine_grained_activation_offloading
         vr200_cfg.model.offload_modules = gb300_cfg.model.offload_modules
-    else:
-        assert vr200_cfg.model.moe_paged_stash is True
-        assert gb300_cfg.model.moe_paged_stash is False
-        vr200_cfg.model.moe_paged_stash = gb300_cfg.model.moe_paged_stash
 
     _enable_ncclep(vr200_cfg)
     vr200_cfg.model.moe_use_grouped_tensor = True
