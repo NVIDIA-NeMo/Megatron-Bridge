@@ -373,7 +373,16 @@ def evaluate(
 
     for key in total_loss_dict:
         numerator, denominator = total_loss_dict[key]
-        total_loss_dict[key] = numerator / denominator
+        # An all-masked evaluation set leaves the token count at zero. Report a finite
+        # zero rather than NaN, matching the training-side reduction in train_step().
+        # Evaluation is not on the hot path, so the warning's host sync costs nothing,
+        # and without it a substituted zero reads as a real validation loss.
+        if denominator.item() == 0:
+            print_rank_last(
+                f"WARNING: no unmasked tokens in the evaluation set for '{key}'. "
+                "Reporting 0.0; check the dataset's loss mask."
+            )
+        total_loss_dict[key] = torch.where(denominator > 0, numerator / denominator, torch.zeros_like(numerator))
 
     timers("evaluate").stop()
     timers.log(["evaluate"])

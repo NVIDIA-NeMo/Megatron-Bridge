@@ -98,6 +98,7 @@ from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.bridge.training.utils.mlflow_utils import end_active_mlflow_run
 from megatron.bridge.training.utils.train_utils import (
+    accumulate_zero_token_step,
     calc_params_l2_norm,
     logical_and_across_model_parallel_group,
     prepare_forward_step_func,
@@ -1015,6 +1016,10 @@ def train_step(
         # Average loss across microbatches.
         loss_reduced = {}
 
+        # Tracks whether any key saw an empty global token count this step. Kept on
+        # device so the hot path stays free of a host sync; read at log_interval.
+        zero_token_step = None
+
         for key in losses_reduced[0].keys():
             val = [x[key].view(-1) for x in losses_reduced]
             if val[0].numel() == 2:
@@ -1023,6 +1028,8 @@ def train_step(
                 val = torch.vstack(val).sum(dim=0)
                 dp_cp_group = get_data_distribution_group(pg_collection, cfg.model, with_context_parallel=True)
                 torch.distributed.all_reduce(val, group=dp_cp_group)
+                is_empty = val[1] == 0
+                zero_token_step = is_empty if zero_token_step is None else zero_token_step | is_empty
                 loss_reduced[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
             elif val[0].numel() == 1:
                 # legacy behavior, we average over the number of microbatches
@@ -1030,6 +1037,10 @@ def train_step(
                 loss_reduced[key] = val
             else:
                 raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+
+        if zero_token_step is not None:
+            accumulate_zero_token_step(global_state, zero_token_step)
+
         return (
             loss_reduced,
             skipped_iter,
