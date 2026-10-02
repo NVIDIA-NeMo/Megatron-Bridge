@@ -507,6 +507,83 @@ class TestPipelineLayout:
             ["stage-3"],
         ]
 
+    @pytest.mark.parametrize(
+        ("model_config", "expected_mtp_layers"),
+        [
+            (types.SimpleNamespace(mtp_num_layers=None, pipeline_model_parallel_layout=None), 0),
+            (types.SimpleNamespace(mtp_num_layers=1, pipeline_model_parallel_layout=None), 1),
+            (
+                types.SimpleNamespace(
+                    transformer=types.SimpleNamespace(mtp_num_layers=1), pipeline_model_parallel_layout=None
+                ),
+                1,
+            ),
+        ],
+    )
+    def test_generate_sizes_mtp_from_configured_model(self, cli, model_config, expected_mtp_layers):
+        requested = []
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                requested.append((num_layers, pp, mtp_layers))
+                return [["embedding", "decoder"], ["decoder", "loss"]]
+
+        # The checkpoint declares an MTP layer even when the converted model disables it.
+        hf_pretrained = types.SimpleNamespace(
+            config=types.SimpleNamespace(num_hidden_layers=2, num_nextn_predict_layers=1)
+        )
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=hf_pretrained)
+
+        assert cli._maybe_generate_pipeline_layout(bridge, model_config, pp=2) is True
+
+        assert requested == [(2, 2, expected_mtp_layers)]
+        assert model_config.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "loss"]]
+
+    def test_restore_sizes_regenerated_layout_from_checkpoint_mtp(self, cli, tmp_path):
+        # Training checkpoints save string layouts, which export regenerates through the bridge hook.
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  pipeline_model_parallel_size: 2\n"
+            "  mtp_num_layers: 1\n"
+            '  pipeline_model_parallel_layout: "Et|tmL"\n'
+        )
+        requested = []
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                requested.append(mtp_layers)
+                return [["embedding", "decoder"], ["decoder", *["mtp"] * mtp_layers, "loss"]]
+
+        # The bridge disables MTP for conversion, but the trained checkpoint has an MTP layer.
+        provider = _FakeProvider([])
+        provider.mtp_num_layers = None
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.mtp_num_layers == 1
+        assert requested == [1]
+        assert provider.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "mtp", "loss"]]
+
+    def test_restore_rebalances_saved_layout_when_bridge_keeps_default_split(self, cli, tmp_path):
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  pipeline_model_parallel_size: 1\n"
+            "  pipeline_model_parallel_layout:\n"
+            "    - [embedding, decoder, decoder, loss]\n"
+        )
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                return None
+
+        provider = _FakeProvider([])
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "loss"]]
+
 
 class TestRoundtrip:
     def test_direct_roundtrip_verifies_without_saving(self, cli, monkeypatch):
