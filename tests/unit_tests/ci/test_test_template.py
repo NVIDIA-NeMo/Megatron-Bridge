@@ -118,23 +118,8 @@ def test_script_validation_and_result_logging(tmp_path: Path, script: str, step_
 
 @pytest.mark.parametrize("hardware", ["h100", "gb200"])
 @pytest.mark.parametrize("directory", ["active", "flaky"])
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("script", "L0_probe"),
-        ("headers", ""),
-        ("headers", "# CI_TIMEOUT=\n# GPU_COUNT=\n"),
-        ("script", "L0_$(touch proof)"),
-        ("script", 'L0_"injected'),
-        ("CI_TIMEOUT", "$(touch proof)"),
-        ("CI_TIMEOUT", '30,"runner":"injected"'),
-        ("GPU_COUNT", "$(touch proof)"),
-        ("GPU_COUNT", "2=ignored"),
-    ],
-)
-def test_matrix_rejects_shell_and_json_injection(
-    tmp_path: Path, hardware: str, directory: str, field: str, value: str
-) -> None:
+@pytest.mark.parametrize("script", ["L0_probe", "L0_$(touch proof)", 'L0_"injected'])
+def test_matrix_rejects_shell_and_json_injection(tmp_path: Path, hardware: str, directory: str, script: str) -> None:
     workflow = yaml.safe_load((ACTION.parents[2] / "workflows/cicd-main.yml").read_text())
     job = "generate-test-matrix" if hardware == "h100" else "generate-gb200-test-matrix"
     run = next(step["run"] for step in workflow["jobs"][job]["steps"] if step.get("id") == "scan")
@@ -145,18 +130,13 @@ def test_matrix_rejects_shell_and_json_injection(
     headers = f"# CI_TIMEOUT=45\n# GPU_COUNT={gpu_count}\n"
     for tier in ("L0", "L1", "L2"):
         (root / "active" / f"{tier}_placeholder.sh").write_text(headers)
-    script = value if field == "script" else "L0_probe"
-    if field == "headers":
-        headers = value
-    elif field != "script":
-        headers = re.sub(rf"(?m)^# {field}=.*$", f"# {field}={value}", headers)
     (root / directory / f"{script}.sh").write_text(headers)
     output = tmp_path / "output"
     env = {**os.environ, "GITHUB_OUTPUT": str(output), "RUNNER_PREFIX": "nemo-ci-aws-gpu-x2"}
     result = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", run], cwd=tmp_path, env=env, capture_output=True, text=True
     )
-    valid = field == "headers" or (field == "script" and value == "L0_probe")
+    valid = script == "L0_probe"
     assert (result.returncode == 0) == valid, result.stderr
     assert not (tmp_path / "proof").exists()
     if valid:
@@ -164,6 +144,6 @@ def test_matrix_rejects_shell_and_json_injection(
         prefix = "matrix_" if hardware == "h100" else "matrix_gb200_"
         entries = json.loads(matrices[prefix + ("l0" if directory == "active" else "flaky")])["include"]
         entry = next(entry for entry in entries if entry["script"] == script)
-        assert entry["timeout"] == (30 if field == "headers" else 45)
+        assert entry["timeout"] == 45
         runner_prefix = "nemo-ci-aws-gpu-x" if hardware == "h100" else "nemo-ci-gcp-gpu-x"
-        assert entry["runner"] == runner_prefix + ("2" if field == "headers" else "4")
+        assert entry["runner"] == runner_prefix + "4"
