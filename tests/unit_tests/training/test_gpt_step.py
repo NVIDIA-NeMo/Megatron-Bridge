@@ -808,7 +808,10 @@ class TestGetBatch:
         assert model.forward_kwargs["packed_seq_params"] is packed_params
         packed_params_mock.assert_called_once_with(metadata)
 
-    def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
+    @pytest.mark.parametrize("custom_packed_params_builder", [False, True])
+    def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(
+        self, monkeypatch, custom_packed_params_builder
+    ):
         """Packed batches without physical gaps do not need the router graph guard."""
         sentinel_packed_seq_params = object()
         tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
@@ -856,7 +859,16 @@ class TestGetBatch:
         get_packed_seq_params_mock = Mock(return_value=sentinel_packed_seq_params)
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_packed_seq_params", get_packed_seq_params_mock)
 
-        output, returned_loss_mask = _forward_step_common(state, _Iterator({}), model)
+        if custom_packed_params_builder:
+            monkeypatch.setattr(
+                "megatron.bridge.training.gpt_step.get_packed_seq_params", Mock(side_effect=AssertionError)
+            )
+        output, returned_loss_mask = _forward_step_common(
+            state,
+            _Iterator({}),
+            model,
+            _get_packed_seq_params_fn=get_packed_seq_params_mock if custom_packed_params_builder else None,
+        )
 
         assert torch.equal(output, torch.tensor(1.0))
         assert torch.equal(returned_loss_mask, loss_mask)

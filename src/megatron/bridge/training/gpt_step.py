@@ -486,6 +486,7 @@ def _forward_step_common(
     return_schedule_plan: bool = False,
     *,
     _get_batch_fn=None,
+    _get_packed_seq_params_fn=None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Forward training step.
 
@@ -590,7 +591,9 @@ def _forward_step_common(
                     packed_seq_metadata["total_tokens"] = labels.size(1)
                 else:
                     packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
-            forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
+            forward_args["packed_seq_params"] = (_get_packed_seq_params_fn or get_packed_seq_params)(
+                packed_seq_metadata
+            )
         if padding_mask is not None:
             forward_args["padding_mask"] = padding_mask
 

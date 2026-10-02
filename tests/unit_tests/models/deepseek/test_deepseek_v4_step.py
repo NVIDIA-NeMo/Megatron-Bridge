@@ -14,9 +14,13 @@
 
 """Unit tests for deepseek_v4_step.py contiguous CP partition logic."""
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
 import torch
 
+from megatron.bridge.models.deepseek import deepseek_v4_step
 from megatron.bridge.models.deepseek.deepseek_v4_step import _partition_packed_batch_contiguous
 
 
@@ -113,3 +117,78 @@ class TestPackedMetadataForForward:
         assert meta is not None
         assert meta.get("cp_partition_mode") == "contiguous"
         assert "cu_seqlens_q" in meta
+
+
+@pytest.mark.unit
+class TestFixedTHDBatches:
+    @pytest.mark.parametrize(("pp_rank", "pp_size", "vp_stage"), [(0, 4, 0), (1, 4, 2), (3, 4, 3), (0, 1, None)])
+    def test_contiguous_cp_retains_padding_metadata_on_every_pipeline_stage(
+        self, monkeypatch, pp_rank, pp_size, vp_stage
+    ):
+        """First, middle, MTP and PP1 stages see the same global THD boundaries."""
+        monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
+        monkeypatch.setattr(deepseek_v4_step.parallel_state, "get_context_parallel_rank", lambda: 1)
+        monkeypatch.setattr(deepseek_v4_step, "is_pp_first_stage", lambda group: pp_rank == 0)
+        monkeypatch.setattr(deepseek_v4_step, "is_pp_last_stage", lambda group: pp_rank == pp_size - 1)
+        monkeypatch.setattr(deepseek_v4_step, "is_vp_first_stage", lambda **kwargs: vp_stage == 0)
+        monkeypatch.setattr(deepseek_v4_step, "is_vp_last_stage", lambda **kwargs: vp_stage == 3)
+        cfg = SimpleNamespace(
+            model=SimpleNamespace(
+                virtual_pipeline_model_parallel_size=4 if pp_size > 1 else None,
+                pipeline_model_parallel_layout=None,
+                cp_partition_mode="contiguous",
+            ),
+            dataset=SimpleNamespace(
+                enable_offline_packing=True,
+                offline_packing_specs=SimpleNamespace(packed_sequence_size=8),
+                skip_getting_attention_mask_from_dataset=True,
+            ),
+        )
+        batch = {
+            "tokens": torch.arange(8).unsqueeze(0),
+            "labels": torch.arange(8).unsqueeze(0),
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "loss_mask": torch.tensor([[1.0] * 7 + [0.0]]),
+            "cu_seqlens_q": torch.tensor([[0, 7, 7]], dtype=torch.int32),
+            "cu_seqlens_kv": torch.tensor([[0, 7, 7]], dtype=torch.int32),
+            "cu_seqlens_q_padded": torch.tensor([[0, 8, 8]], dtype=torch.int32),
+            "cu_seqlens_kv_padded": torch.tensor([[0, 8, 8]], dtype=torch.int32),
+            "max_seqlen_q": torch.tensor([8], dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor([8], dtype=torch.int32),
+            "pad_between_seqs": torch.tensor([True]),
+            "padding_mask": torch.tensor([[False] * 7 + [True]]),
+        }
+        result = deepseek_v4_step.get_batch(
+            iter([batch]),
+            cfg,
+            use_mtp=True,
+            pg_collection=SimpleNamespace(pp=object(), cp=SimpleNamespace(size=lambda: 2)),
+            vp_stage=vp_stage,
+        )
+        tokens, _, _, _, _, metadata = result
+        assert tokens.tolist() == [[4, 5, 6, 7]]
+        assert metadata["cu_seqlens_q"].tolist() == [[0, 7, 7]]
+        assert metadata["cu_seqlens_q_padded"].tolist() == [[0, 8, 8]]
+        assert metadata["max_seqlen_q"].item() == 8
+        assert metadata["pad_between_seqs"].item() is True
+        assert metadata["padding_mask"].tolist() == [[False, False, False, True]]
+        assert metadata["cp_partition_mode"] == "contiguous"
+
+    @pytest.mark.parametrize("supports_routes", [False, True])
+    def test_packed_params_prepare_routes_without_allocating_ssm_indices(self, monkeypatch, supports_routes):
+        """Development MCore routes are built once before model execution."""
+        boundaries = torch.tensor([0, 7, 7], dtype=torch.int32)
+        metadata = {"cu_seqlens_q": boundaries, "total_tokens": 4, "cp_partition_mode": "contiguous"}
+        params = SimpleNamespace(cp_partition_route=None)
+        build = Mock(return_value=params)
+        finalize = Mock(return_value=params)
+        monkeypatch.setattr(deepseek_v4_step, "get_packed_seq_params", build)
+        monkeypatch.setattr(deepseek_v4_step, "finalize_packed_seq_params", finalize if supports_routes else None)
+
+        assert deepseek_v4_step._get_dsv4_packed_seq_params(metadata) is params
+        build.assert_called_once_with({"cu_seqlens_q": boundaries, "cp_partition_mode": "contiguous"})
+        assert metadata["total_tokens"] == 4
+        if supports_routes:
+            finalize.assert_called_once_with(params)
+        else:
+            finalize.assert_not_called()

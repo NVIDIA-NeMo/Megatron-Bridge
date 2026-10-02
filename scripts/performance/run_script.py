@@ -182,6 +182,11 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         forward_step_func = qwen3_vl_forward_step
     elif args.domain == "diffusion":
         forward_step_func = WanForwardStep(mode=args.task)
+    elif getattr(recipe.model, "experimental_attention_variant", None) == "dsv4_hybrid":
+        # DSv4 THD inputs use contiguous context-parallel partitioning.
+        from megatron.bridge.models.deepseek.deepseek_v4_step import forward_step as dsv4_forward_step
+
+        forward_step_func = dsv4_forward_step
     else:
         forward_step_func = forward_step
 

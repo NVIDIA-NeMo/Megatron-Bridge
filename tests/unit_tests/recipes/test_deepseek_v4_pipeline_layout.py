@@ -83,9 +83,9 @@ def test_native_pipeline_segments_match_mcore_allocation(logical_layers, pp, vp,
 
 def test_pro_perf_preserves_measured_last_stage_room_for_mtp():
     cfg = _provider(61, 4, 4)
-    set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=[4] * 15 + [1])
-    assert [len(segment) for segment in cfg.hybrid_layer_pattern.split("|")] == [8] * 15 + [2]
-    assert cfg.pipeline_model_parallel_layout[-1] == ["decoder", "decoder", "mtp", "loss"]
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg, logical_layers_per_stage=[3] + [4] * 14 + [2])
+    assert [len(segment) for segment in cfg.hybrid_layer_pattern.split("|")] == [6] + [8] * 14 + [4]
+    assert cfg.pipeline_model_parallel_layout[-1] == ["decoder"] * 4 + ["mtp", "loss"]
 
 
 def test_return_to_pp_one_removes_inherited_stage_boundaries_and_keeps_mtp():

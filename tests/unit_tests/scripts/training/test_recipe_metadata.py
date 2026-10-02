@@ -99,6 +99,23 @@ def test_metadata_does_not_impose_a_hardware_node_shape():
 
 
 @pytest.mark.parametrize(
+    ("recipe_name", "num_gpus"),
+    [
+        ("deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config", 256),
+        ("deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config", 64),
+    ],
+)
+def test_pro_log_recipes_select_packed_deepseek_forward_step(recipe_name: str, num_gpus: int) -> None:
+    module = _load_module()
+    metadata = module.selected_benchmark_recipe(["--recipe", recipe_name])
+    assert metadata is not None
+    assert metadata.num_gpus == num_gpus
+    assert metadata.family == "deepseek"
+    assert metadata.hardware == "gb300"
+    assert module.recipe_step(recipe_name) == "dsv4_step"
+
+
+@pytest.mark.parametrize(
     ("recipe_name", "task", "step_name"),
     [
         ("llama3_8b_sft_8gpu_gb200_bf16_config", "sft", "llm_step"),
@@ -183,7 +200,7 @@ def test_every_registered_non_text_prefix_covers_exported_library_recipes():
         assert matching_names, f"No exported library recipes matched registered prefix {prefix!r}."
         assert {module.recipe_step(name) for name in matching_names} == {step_name}
 
-    assert module.RECIPE_FORWARD_STEPS.keys() <= recipe_names
+    assert module.RECIPE_FORWARD_STEPS.keys() <= recipe_names | module.benchmark_recipe_names()
     assert {module.recipe_step(name) for name in module.RECIPE_FORWARD_STEPS} == set(
         module.RECIPE_FORWARD_STEPS.values()
     )
