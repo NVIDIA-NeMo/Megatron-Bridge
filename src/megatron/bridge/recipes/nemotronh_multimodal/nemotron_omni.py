@@ -16,19 +16,19 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+from megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni import (
     _DEFAULT_HF_PATH,
 )
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+from megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni import (
     nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config as nemotron_omni_cord_v2_peft_config,
 )
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+from megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni import (
     nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config as nemotron_omni_cord_v2_sft_config,
 )
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+from megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni import (
     nemotron_omni_valor32k_peft_4gpu_h100_bf16_config as nemotron_omni_valor32k_peft_config,
 )
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+from megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni import (
     nemotron_omni_valor32k_sft_4gpu_h100_bf16_config as nemotron_omni_valor32k_sft_config,
 )
 

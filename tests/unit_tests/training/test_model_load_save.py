@@ -22,8 +22,10 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.distributed as dist
+import yaml
 from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
@@ -43,6 +45,8 @@ from megatron.bridge.training.model_load_save import (
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class TestNormalizeMoeDispatcherSmConfig:
@@ -497,6 +501,54 @@ class TestLoadMegatronModel:
         loaded_provider, _ = load_model_config(str(tmp_path))
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
+
+    def test_read_saved_builder_model_targets(self, tmp_path):
+        """The checkpoint target scan preserves serialized builder model targets."""
+        model = GPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+        )
+        config = ConfigContainer(
+            model=model,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded = read_run_config(str(tmp_path / "run_config.yaml"))
+
+        assert loaded["model"]["_target_"] == f"{GPTModelConfig.__module__}.{GPTModelConfig.__qualname__}"
+        assert loaded["model"]["transformer"]["_target_"] == (
+            f"{TransformerConfig.__module__}.{TransformerConfig.__qualname__}"
+        )
+        assert loaded["model"]["transformer"]["hidden_size"] == 128
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
+            "transformers.models.auto.AutoTokenizer.from_pretrained",
+            "transformers.dynamic_module_utils.get_class_in_module",
+        ],
+        ids=["dynamic-class", "auto-tokenizer-alias", "direct-module-class"],
+    )
+    def test_load_model_config_rejects_reported_unsafe_targets(self, tmp_path, target):
+        """The real checkpoint entrypoint rejects all three reported target paths."""
+        (tmp_path / "run_config.yaml").write_text(yaml.safe_dump({"model": {"_target_": target}}))
+
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            load_model_config(str(tmp_path))
 
     @pytest.mark.parametrize(
         "pipeline_layout",
@@ -1844,6 +1896,26 @@ class TestLoadTokenizer:
         mock_tokenizer.eos_id = 1
 
         return mock_tokenizer
+
+    def test_load_tokenizer_from_saved_yaml(self, tmp_path, mock_tokenizer):
+        """The checkpoint target scan preserves ordinary tokenizer configs."""
+        config = ConfigContainer(
+            model=None,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=256),
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        with patch("megatron.bridge.training.model_load_save.build_tokenizer", return_value=mock_tokenizer) as build:
+            loaded = load_tokenizer(str(tmp_path))
+
+        assert loaded is mock_tokenizer
+        assert isinstance(build.call_args.args[0], TokenizerConfig)
 
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")

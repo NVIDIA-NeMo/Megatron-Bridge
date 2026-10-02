@@ -36,15 +36,15 @@ from megatron.bridge.training.optim import _get_scheduler
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
-_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_omni")
-_h100_recipe_package = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100")
-_h100_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni")
-_super_vl_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_35_super_vl")
+_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotronh_multimodal.nemotron_omni")
+_h100_recipe_package = importlib.import_module("megatron.bridge.recipes.nemotronh_multimodal.h100")
+_h100_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni")
+_super_vl_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotronh_multimodal.nemotron_35_super_vl")
 _super_vl_h100_recipe_module = importlib.import_module(
-    "megatron.bridge.recipes.nemotron_omni.h100.nemotron_35_super_vl"
+    "megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_35_super_vl"
 )
 _super_vl_gb200_recipe_module = importlib.import_module(
-    "megatron.bridge.recipes.nemotron_omni.gb200.nemotron_35_super_vl"
+    "megatron.bridge.recipes.nemotronh_multimodal.gb200.nemotron_35_super_vl"
 )
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
@@ -61,6 +61,39 @@ _RECIPE_FUNCS = [
     _recipe_module.nemotron_omni_valor32k_sft_config,
     _recipe_module.nemotron_omni_valor32k_peft_config,
 ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "",
+        ".h100",
+        ".gb200",
+        ".nemotron_omni",
+        ".nemotron_35_super_vl",
+        ".h100.nemotron_omni",
+        ".h100.nemotron_35_super_vl",
+        ".gb200.nemotron_35_super_vl",
+    ],
+)
+def test_legacy_recipe_modules_alias_canonical_modules(suffix):
+    legacy = importlib.import_module("megatron.bridge.recipes.nemotron_omni" + suffix)
+    canonical = importlib.import_module("megatron.bridge.recipes.nemotronh_multimodal" + suffix)
+    assert legacy is canonical
+
+
+@pytest.mark.unit
+def test_top_level_recipe_exports_keep_canonical_functions():
+    from megatron.bridge import recipes
+    from megatron.bridge.recipes import nemotronh_multimodal
+
+    for package in (nemotronh_multimodal, nemotronh_multimodal.h100, nemotronh_multimodal.gb200):
+        for name in package.__all__:
+            value = getattr(package, name)
+            if callable(value):
+                assert getattr(recipes, name) is value
+                assert value.__module__.startswith("megatron.bridge.recipes.nemotronh_multimodal.")
 
 
 class _FakeModelCfg:
