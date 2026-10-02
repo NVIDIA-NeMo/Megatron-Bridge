@@ -21,6 +21,7 @@ override system while maintaining compatibility with Megatron Core's post_init b
 import copy
 from dataclasses import dataclass, field, fields, is_dataclass
 
+from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
     HeterogeneousTransformerConfig as MCoreHeterogeneousTransformerConfig,
 )
@@ -69,6 +70,16 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         from megatron.bridge.utils.activation_map import str_to_dtype
 
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
+
+
+def _normalize_attention_backend(config: MCoreTransformerConfig) -> None:
+    """Resolve an unset recipe backend to MCore's supported automatic selection.
+
+    Explicit backend choices and Transformer Engine environment variables are
+    left unchanged. MCore validates that those process-wide settings agree.
+    """
+    if config.attention_backend is None:
+        config.attention_backend = AttnBackend.auto
 
 
 _HYBRIDEP_PADDING_FIELDS = (
@@ -181,6 +192,7 @@ class TransformerConfig(MCoreTransformerConfig):
         called multiple times safely.
         """
         _resolve_string_fields(self)
+        _normalize_attention_backend(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
@@ -276,6 +288,7 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         called multiple times safely.
         """
         _resolve_string_fields(self)
+        _normalize_attention_backend(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
@@ -333,6 +346,7 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         It can be called multiple times safely.
         """
         _resolve_string_fields(self)
+        _normalize_attention_backend(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:

@@ -40,6 +40,7 @@ Single-GPU integration (needs CUDA + model-parallel init):
 
 import os
 from contextlib import ExitStack, nullcontext
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -297,6 +298,36 @@ class TestMultiLoRALinearSlots:
         assert layer.tokens_per_adapter_splits is None
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
+
+    def test_constructor_without_wrapped_parameters_uses_config_dtype(self) -> None:
+        """A tied output layer owns no weight; slot buffers fall back to the config dtype."""
+        base = nn.Module()
+        base.in_features, base.out_features = 16, 32
+        base.config = SimpleNamespace(params_dtype=torch.bfloat16)
+        assert next(base.parameters(), None) is None
+
+        layer = MultiLoRALinear(to_wrap=base, n_adapters=2, dim=8, alpha=16, full_name="output_layer")
+
+        assert layer.alpha_values.dtype == torch.bfloat16
+        assert layer.rank_values.dtype == torch.bfloat16
+        # Device follows the adapters that were just constructed, not CUDA availability.
+        adapter_device = next(layer.adapters.parameters()).device
+        assert layer.alpha_values.device == adapter_device
+        assert layer.rank_values.device == adapter_device
+
+    def test_constructor_without_wrapped_parameters_respects_meta_device(self) -> None:
+        """A meta-device build must not allocate the slot buffers on a real device."""
+        base = nn.Module()
+        base.in_features, base.out_features = 16, 32
+        base.config = SimpleNamespace(params_dtype=torch.bfloat16)
+
+        with torch.device("meta"):
+            layer = MultiLoRALinear(to_wrap=base, n_adapters=2, dim=8, alpha=16, full_name="output_layer")
+
+        assert next(layer.adapters.parameters()).device.type == "meta"
+        assert layer.alpha_values.device.type == "meta"
+        assert layer.rank_values.device.type == "meta"
+        assert layer.alpha_values.dtype == torch.bfloat16
 
     def test_dense_layer_records_base_linear_name(self) -> None:
         # forward's token-span guard formats this name in its diagnostic; only
@@ -1026,6 +1057,54 @@ class TestMultiLoRALinearGPU:
         # (the base is bf16).
         mlora.adapters.to(device="cuda", dtype=torch.bfloat16)
         return mlora
+
+    def test_buffers_follow_cpu_initialization_with_cuda_visible(self):
+        """use_cpu_initialization keeps adapters on CPU even with a GPU; the slot buffers must too."""
+        from megatron.core.tensor_parallel import ColumnParallelLinear
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        from megatron.bridge.peft.utils import init_method_normal
+
+        config = TransformerConfig(
+            num_layers=1,
+            hidden_size=16,
+            num_attention_heads=1,
+            sequence_parallel=False,
+            tensor_model_parallel_size=1,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            use_cpu_initialization=True,
+        )
+        # A tied output layer: no weight parameter of its own (it receives the shared
+        # embedding weight per call), so there is nothing on the wrapped module to
+        # read the placement from.
+        base = ColumnParallelLinear(
+            16,
+            16,
+            config=config,
+            init_method=init_method_normal(0.02),
+            bias=False,
+            gather_output=False,
+            skip_weight_param_allocation=True,
+        )
+        assert next(base.parameters(), None) is None
+        assert torch.cuda.is_available()
+
+        mlora = MultiLoRALinear(
+            to_wrap=base,
+            n_adapters=2,
+            dim=8,
+            alpha=16,
+            full_name="output_layer",
+            column_init_method="xavier",
+            row_init_method="zero",
+            dropout=0.0,
+        )
+
+        assert next(mlora.adapters.parameters()).device.type == "cpu"
+        assert mlora.alpha_values.device.type == "cpu"
+        assert mlora.rank_values.device.type == "cpu"
+        assert mlora.alpha_values.dtype == torch.bfloat16
 
     def test_forward_grouped_gemm_smoke(self):
         from megatron.bridge.peft.multi_lora_layers import (

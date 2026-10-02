@@ -3,16 +3,17 @@
 
 title: glm5_2
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. GLM-5.2 H100 support verification currently covers exact GPU
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  GLM-5.2 H100 support verification currently covers exact GPU
   checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence,
   bounded full SFT with export/reload inference, 200K-context CP32 SFT,
   bounded PEFT, and bounded pretraining with a reloadable middle checkpoint
   and verified continuation. GB200 support verification currently covers
-  bounded pretraining, bounded full SFT, 128K packed long-context SFT, bounded
-  PEFT, bounded checkpoint resume, and deterministic legacy Megatron
-  inference; post-SFT export/reload inference remains pending.
+  bounded warm-start pretraining, bounded full SFT, 128K packed long-context
+  SFT, bounded PEFT, bounded checkpoint resume, and deterministic legacy
+  Megatron inference; post-SFT export/reload inference remains pending.
 verification_index:
   model_level:
     verified:
@@ -191,44 +192,52 @@ items:
     GB200:
       status: verified
       precision: bf16
-      bridge_commit: e79f756196e0b97ee3ad94263a896c120b32c1e5  # pragma: allowlist secret
+      bridge_commit: 6c219485815bf8afee4c22db721156a9176351c6  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
         --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain
-        --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100
-        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200
+        --dataset megatron-indexed --seq_length 4096 --max_steps 20
+        --lr 3e-6 --min_lr 3e-7 --warmup_iters 10
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        'dataset.blend=[["work/data/wikitext103/wikitext103_glm52_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200
         dataset.random_seed=1234 dataset.num_workers=8
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model
         tokenizer.use_tokenizer_vocab_size=false rng.seed=1234
-        scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false
-        checkpoint.load=null checkpoint.pretrained_checkpoint=null
+        scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false
+        checkpoint.load=null
         checkpoint.save_optim=true checkpoint.save_rng=true
         checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false
-        --save_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints
-        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        --save_dir work/model-verification/glm5-2/pretrain-wikitext-gb200/checkpoints
+        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-04
+        logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-gb200/resolved-config.yaml
+      last_verified: 2026-09-30
       metrics:
-        initial_loss: 13.168150
-        final_loss: 6.523522
-        last_10_steps_step_time_ms_avg: 64786.540
-        last_10_steps_model_tflops_per_gpu_avg: 102.520
-        last_10_steps_tokens_per_second_per_gpu_avg: 337.189
+        initial_loss: 1.044211
+        final_loss: 0.8772652
+        last_10_steps_step_time_ms_avg: 34334.290
+        last_10_steps_model_tflops_per_gpu_avg: 196.950
+        last_10_steps_tokens_per_second_per_gpu_avg: 636.254
       expected_result: >
-        The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100
-        RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse
-        indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch.
-        The RP2 Llama SentencePiece tokenizer is used while retaining GLM-5.2's
-        configured vocabulary size, so this is support verification rather
-        than a cross-tokenizer convergence claim. Loss remained finite from
-        13.168150 to 6.523522, final grad norm was 2.775, and every step
-        recorded zero skipped and NaN iterations. The final 10 steps averaged
-        64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints
-        contain model, optimizer, scheduler, data-order, and RNG state.
+        The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run uses the recipe's
+        [14, 16, 12, 12, 12, 12] decoder-layer pipeline layout, with the MTP
+        layer and loss on the last stage. It warm-starts from a Bridge GPU
+        import of the GLM-5.2 weights that includes the MTP layer (published
+        GLM-5.2 revisions ship byte-identical weight files) and completes
+        exactly 20 bounded steps at GBS/MBS 1024/1 and sequence length 4096
+        with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, all-to-all
+        expert dispatch, and natural routing, without deterministic mode. Data
+        is the WikiText-103 raw train split grouped into 29,444 articles and
+        tokenized with the pinned GLM-5.2 tokenizer (120,372,951 tokens). The
+        learning rate warms up to 3e-6 at step 10 and decays to 3e-7 at step
+        20; the random-initialization peak of 3e-4 destabilizes the pretrained
+        weights. Loss decreases from 1.044211 to 0.8772652 with a maximum grad
+        norm of 4.567, a final grad norm of 0.711, and zero skipped or NaN
+        iterations. Steps 11-20 average 34,334.290 ms, 196.950 model
+        TFLOP/s/GPU, and 636.254 token slots/s/GPU. The step-10 checkpoint
+        contains model, optimizer, scheduler, data-order, and RNG state in 199
+        files (about 10.56 TB).
 
   sft:
     H100:
@@ -240,7 +249,7 @@ items:
         moe_dispatcher: deepep
       command: >
         ./scripts/training/train.sh --nodes 52 --gpus-per-node 8
-        --recipe glm52_sft_416gpu_h100_bf16_config --mode sft
+        --recipe glm52_h100_sft_config --mode sft
         --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
         --max_steps 100 --seq_length 2048
         dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32
@@ -275,7 +284,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
-        --recipe glm52_sft_192gpu_gb200_bf16_config --mode sft
+        --recipe glm52_gb200_sft_config --mode sft
         --pretrained_checkpoint
         work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88
         --max_steps 100
@@ -519,45 +528,49 @@ items:
       status: verified
       precision: bf16
       depends_on: pretrain
-      bridge_commit: e79f756196e0b97ee3ad94263a896c120b32c1e5  # pragma: allowlist secret
+      bridge_commit: 6c219485815bf8afee4c22db721156a9176351c6  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
         --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain
-        --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100
-        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-        'dataset.blend=[["work/data/rp2/head_01_text_document"],null]'
-        dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200
+        --dataset megatron-indexed --seq_length 4096 --max_steps 20
+        --lr 3e-6 --min_lr 3e-7 --warmup_iters 10
+        'dataset.blend=[["work/data/wikitext103/wikitext103_glm52_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200
         dataset.random_seed=1234 dataset.num_workers=8
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model
         tokenizer.use_tokenizer_vocab_size=false rng.seed=1234
-        scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false
-        checkpoint.ckpt_step=50
+        scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false
+        checkpoint.ckpt_step=10
         checkpoint.save_optim=true checkpoint.save_rng=true
         checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false
-        --load_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints
-        --save_dir work/model-verification/glm5-2/pretrain-rp2-resume-gb200/checkpoints
-        --save_interval 0
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: 2026-08-04
+        --load_dir work/model-verification/glm5-2/pretrain-wikitext-gb200/checkpoints
+        --save_dir work/model-verification/glm5-2/pretrain-wikitext-resume-gb200/checkpoints
+        --save_interval 0 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-resume-gb200/resolved-config.yaml
+      last_verified: 2026-09-30
       metrics:
-        initial_loss: 7.233636
-        final_loss: 6.503141
-        last_10_steps_step_time_ms_avg: 60079.390
-        last_10_steps_model_tflops_per_gpu_avg: 110.552
-        last_10_steps_tokens_per_second_per_gpu_avg: 363.608
+        initial_loss: 0.9189469
+        final_loss: 0.8775815
+        last_10_steps_step_time_ms_avg: 82761.520
+        last_10_steps_model_tflops_per_gpu_avg: 189.670
+        last_10_steps_tokens_per_second_per_gpu_avg: 263.955
       resume_comparison:
         reference_item: pretrain
-        sentinel_steps: [51, 100]
+        sentinel_steps: [11, 20]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: true
       expected_result: >
-        The run reloads the RP2 reference's step-50 model, optimizer,
-        scheduler, data-order, and RNG state and completes steps 51-100 with
-        zero skipped or NaN iterations. Step 51 is 7.233636 versus 7.233639 in
-        the uninterrupted reference, a relative difference of 4.1e-7. Step
-        100 is 6.503141 versus 6.523522, a relative difference of 0.003124;
-        both satisfy the 1e-6 absolute plus 1% relative tolerance. Final grad
-        norm is 1.690; the last 10 steps average 60,079.390 ms and 110.552
-        TFLOPS/GPU.
+        The run reloads the warm-start reference's step-10 model, optimizer,
+        scheduler, data-order, and RNG state and completes steps 11-20 into a
+        new root with zero skipped or NaN iterations. Step 11 is 0.9189469
+        versus 0.9189264 in the uninterrupted reference, a relative difference
+        of 0.002%, and step 20 is 0.8775815 versus 0.8772652, a relative
+        difference of 0.036%. Every resumed LM and MTP loss stays within the
+        declared bound, with a largest LM relative difference of 0.078% at step
+        18. The resolved reference and resume configs differ only in the
+        checkpoint source, step, pretrained-checkpoint fallback, and output
+        paths. The final-10-step window is the whole resumed segment, so its
+        averages include first-iteration kernel autotuning at step 11
+        (534,984.2 ms); steps 11-20 average 82,761.520 ms, 189.670 model
+        TFLOP/s/GPU, and 263.955 token slots/s/GPU.

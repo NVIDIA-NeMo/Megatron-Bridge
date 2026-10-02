@@ -219,6 +219,7 @@ class TestTrainStepAttentionLogitMonitoring:
         )
         model = [Mock()]
         optimizer = Mock()
+        optimizer.chained_optimizers = []
         optimizer.step.return_value = (True, 1.0, 0)
         scheduler = Mock()
         forward_backward_func = Mock(return_value=[])
@@ -463,193 +464,30 @@ class TestPostTrainingStepHelpers:
 
 
 class TestMxfp8ParamBufferCopy:
-    """Unit tests for mxfp8 parameter buffer copying functionality."""
+    """Each optimizer's effective DDP policy controls its buffer copy."""
 
-    def _create_mock_model(self, forward_pre_hook_enabled: bool = True):
-        """Helper to create a mock model with forward_pre_hook configuration."""
-        mock_model_chunk = Mock()
-        # Simulate forward_pre_hook enabled/disabled via remove_forward_pre_hook_handles
-        if forward_pre_hook_enabled:
-            mock_model_chunk.remove_forward_pre_hook_handles = [Mock()]  # Non-empty list
-        else:
-            mock_model_chunk.remove_forward_pre_hook_handles = []  # Empty list
-        return [mock_model_chunk]
+    @pytest.mark.parametrize("chained", [False, True])
+    @pytest.mark.parametrize("reuse,overlap", [(False, False), (False, True), (True, False), (True, True)])
+    @pytest.mark.parametrize("hooks,captured", [(False, False), (True, False), (False, True)])
+    def test_effective_child_policy(self, chained, reuse, overlap, hooks, captured):
+        child = Mock(spec=DistributedOptimizer)
+        child.ddp_config = SimpleNamespace(reuse_grad_buf_for_mxfp8_param_ag=reuse, overlap_param_gather=overlap)
+        ineligible = Mock(spec=DistributedOptimizer)
+        ineligible.ddp_config = SimpleNamespace(reuse_grad_buf_for_mxfp8_param_ag=False, overlap_param_gather=True)
+        other = Mock()
+        optimizer = SimpleNamespace(chained_optimizers=[child, ineligible, other]) if chained else child
+        model = [SimpleNamespace(remove_forward_pre_hook_handles=[object()] if hooks else [])]
+        with patch(
+            "megatron.bridge.training.train.FullCudaGraphWrapper.cuda_graph",
+            {"training": object() if captured else None},
+        ):
+            _handle_mxfp8_param_buffer_copy(optimizer, model)
+        assert child._copy_main_params_to_param_buffer.call_count == int(reuse and overlap and (hooks or captured))
+        ineligible._copy_main_params_to_param_buffer.assert_not_called()
+        other._copy_main_params_to_param_buffer.assert_not_called()
 
-    def test_copy_main_params_called_when_both_flags_true_and_hook_enabled(self):
-        """Test that _copy_main_params_to_param_buffer is called when both config flags are True and hook is enabled."""
-        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
-        mock_other_optimizer = Mock()
-
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [
-            mock_other_optimizer,
-            mock_distributed_optimizer,
-        ]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=True)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=True,
-            overlap_param_gather=True,
-        )
-
-        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_called_once()
-        assert (
-            not hasattr(mock_other_optimizer, "_copy_main_params_to_param_buffer")
-            or not mock_other_optimizer._copy_main_params_to_param_buffer.called
-        )
-
-    def test_no_copy_when_forward_pre_hook_disabled(self):
-        """Test that no copying occurs when forward_pre_hook is disabled (first iteration)."""
-        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=False)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=True,
-            overlap_param_gather=True,
-        )
-
-        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
-
-    def test_no_copy_when_reuse_grad_buf_false(self):
-        """Test that no copying occurs when reuse_grad_buf_for_mxfp8_param_ag is False."""
-        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=True)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=False,
-            overlap_param_gather=True,
-        )
-        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
-
-    def test_no_copy_when_overlap_param_gather_false(self):
-        """Test that no copying occurs when overlap_param_gather is False."""
-        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=True)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=True,
-            overlap_param_gather=False,
-        )
-
-        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
-
-    def test_no_copy_when_both_flags_false(self):
-        """Test that no copying occurs when both flags are False."""
-        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [mock_distributed_optimizer]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=True)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=False,
-            overlap_param_gather=False,
-        )
-
-        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_not_called()
-
-    def test_handles_multiple_distributed_optimizers(self):
-        """Test that function calls copy on multiple DistributedOptimizers."""
-        mock_distributed_optimizer_1 = Mock(spec=DistributedOptimizer)
-        mock_distributed_optimizer_2 = Mock(spec=DistributedOptimizer)
-        mock_other_optimizer = Mock()
-
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [
-            mock_other_optimizer,
-            mock_distributed_optimizer_1,
-            mock_distributed_optimizer_2,
-        ]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=True)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=True,
-            overlap_param_gather=True,
-        )
-
-        mock_distributed_optimizer_1._copy_main_params_to_param_buffer.assert_called_once()
-        mock_distributed_optimizer_2._copy_main_params_to_param_buffer.assert_called_once()
-
-    def test_only_calls_on_distributed_optimizers(self):
-        """Test that only DistributedOptimizer instances get the copy call."""
-        mock_distributed_optimizer = Mock(spec=DistributedOptimizer)
-        mock_regular_optimizer = Mock()  # Regular optimizer without _copy_main_params_to_param_buffer
-        mock_different_optimizer = Mock()
-
-        # Add the method to one non-DistributedOptimizer to ensure it's not called
-        mock_different_optimizer._copy_main_params_to_param_buffer = Mock()
-
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [
-            mock_regular_optimizer,
-            mock_different_optimizer,
-            mock_distributed_optimizer,
-        ]
-
-        model = self._create_mock_model(forward_pre_hook_enabled=True)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=True,
-            overlap_param_gather=True,
-        )
-
-        mock_distributed_optimizer._copy_main_params_to_param_buffer.assert_called_once()
-        mock_different_optimizer._copy_main_params_to_param_buffer.assert_not_called()
-
-        assert (
-            not hasattr(mock_regular_optimizer, "_copy_main_params_to_param_buffer")
-            or not mock_regular_optimizer._copy_main_params_to_param_buffer.called
-        )
-
-    def test_no_copy_when_hook_disabled_despite_all_flags_true(self):
-        """Test that no copying occurs on first iteration (hook disabled) even when all flags are True."""
-        mock_distributed_optimizer_1 = Mock(spec=DistributedOptimizer)
-        mock_distributed_optimizer_2 = Mock(spec=DistributedOptimizer)
-
-        mock_megatron_optimizer = Mock()
-        mock_megatron_optimizer.chained_optimizers = [
-            mock_distributed_optimizer_1,
-            mock_distributed_optimizer_2,
-        ]
-
-        # Simulate first iteration where forward_pre_hook is disabled
-        model = self._create_mock_model(forward_pre_hook_enabled=False)
-
-        _handle_mxfp8_param_buffer_copy(
-            optimizer=mock_megatron_optimizer,
-            model=model,
-            reuse_grad_buf_for_mxfp8_param_ag=True,
-            overlap_param_gather=True,
-        )
-
-        # Neither optimizer should have copy called
-        mock_distributed_optimizer_1._copy_main_params_to_param_buffer.assert_not_called()
-        mock_distributed_optimizer_2._copy_main_params_to_param_buffer.assert_not_called()
+    def test_no_eligible_optimizer_does_not_require_ddp_hooks(self):
+        _handle_mxfp8_param_buffer_copy(SimpleNamespace(chained_optimizers=[]), [object()])
 
 
 class TestShouldDisableForwardPreHook:
@@ -1720,3 +1558,94 @@ class TestDummyTrainStep:
         # Call function - should not raise an error
         fake_pg = type("PG", (), {"pp": object()})()
         _dummy_train_step(global_state, train_data_iterator, fake_pg)
+
+
+@pytest.mark.parametrize(
+    "microbatches, remote, expected",
+    [
+        ([[0.0, 0.0], [0.0, 0.0]], [0.0, 0.0], 0.0),
+        ([[0.0, 0.0]], [12.0, 3.0], 4.0),
+        ([[6.0, 2.0], [15.0, 3.0]], [9.0, 1.0], 5.0),
+        ([[2.0], [6.0]], [0.0, 0.0], 4.0),
+    ],
+)
+@patch("megatron.bridge.training.train.get_data_distribution_group")
+@patch("megatron.bridge.training.train.torch.distributed.all_reduce")
+@patch("megatron.bridge.training.train.get_num_microbatches", return_value=1)
+@patch("megatron.bridge.training.train.get_model_config")
+@patch("megatron.bridge.training.train.get_rerun_state_machine")
+def test_train_step_token_weighted_loss(
+    mock_get_rerun_state_machine,
+    mock_get_model_config,
+    _mock_get_num_microbatches,
+    mock_reduce,
+    mock_get_group,
+    microbatches,
+    remote,
+    expected,
+):
+    import torch
+
+    model_config = SimpleNamespace(seq_length=8)
+    mock_get_model_config.return_value = model_config
+
+    rerun_state_machine = Mock()
+    rerun_state_machine.should_run_forward_backward.side_effect = [True, False]
+    rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+    mock_get_rerun_state_machine.return_value = rerun_state_machine
+
+    global_state = SimpleNamespace(
+        cfg=SimpleNamespace(
+            data_parallel_size=1,
+            model=SimpleNamespace(
+                seq_length=8,
+                qk_clip=False,
+                log_max_attention_logit=False,
+            ),
+            dataset=SimpleNamespace(dataloader_type="single"),
+            dist=SimpleNamespace(use_decentralized_pg=True),
+            ddp=SimpleNamespace(overlap_param_gather=False),
+            optimizer=SimpleNamespace(
+                barrier_with_L1_time=False,
+                log_num_zeros_in_grad=False,
+                reuse_grad_buf_for_mxfp8_param_ag=False,
+            ),
+            train=SimpleNamespace(
+                check_optimizer_step_success=False,
+                empty_unused_memory_level=0,
+                micro_batch_size=1,
+                skip_sync_grad_norm_across_mp=True,
+            ),
+        ),
+        timers=Mock(),
+    )
+    model = [Mock()]
+    optimizer = Mock(chained_optimizers=[])
+    optimizer.step.return_value = (True, 1.0, 0)
+    scheduler = Mock()
+    forward_backward_func = Mock(return_value=[{"lm loss": torch.tensor(v)} for v in microbatches])
+    p2p_communicator = SimpleNamespace(is_pp_last_stage=True)
+    pg_collection = SimpleNamespace(mp=Mock())
+
+    dp_cp = object()
+    mock_get_group.return_value = dp_cp
+    mock_reduce.side_effect = lambda value, **kwargs: value.add_(torch.tensor(remote))
+    result = train_step(
+        forward_step_func=Mock(),
+        data_iterator=None,
+        model=model,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        global_state=global_state,
+        pg_collection=pg_collection,
+        forward_backward_func=forward_backward_func,
+        p2p_communicator=p2p_communicator,
+    )
+
+    assert result[0]["lm loss"].item() == pytest.approx(expected)
+    assert torch.isfinite(result[0]["lm loss"])
+    if len(microbatches[0]) == 2:
+        mock_reduce.assert_called_once()
+        assert mock_reduce.call_args.kwargs["group"] is dp_cp
+    else:
+        mock_reduce.assert_not_called()

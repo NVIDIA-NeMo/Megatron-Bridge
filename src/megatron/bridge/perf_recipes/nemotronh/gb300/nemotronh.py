@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for NemotronH and Nemotron 3."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
@@ -22,7 +23,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
-    _enable_ncclep_mxfp8,
+    _enable_nemotron_3_super_full_iteration,
     _nemotron_3_super_nvfp4_precision,
     _nemotron_3_ultra_nvfp4_precision,
     _perf_precision,
@@ -76,8 +77,8 @@ def nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, BF16."""
+def _build_nemotron_3_super_gb300_bf16() -> ConfigContainer:
+    """Shared HybridEP BF16 base for the Nemotron 3 Super GB300 recipe and its VR200 alias."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
@@ -99,6 +100,16 @@ def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
     _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, BF16, NCCL EP."""
+    cfg = _build_nemotron_3_super_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -110,11 +121,8 @@ def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -132,7 +140,7 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -141,19 +149,19 @@ def _build_nemotron_3_super_gb300_mxfp8() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_nemotron_3_super_full_iteration(cfg)
     return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+    """Nemotron 3 Super pretrain: 64× GB300, MXFP8 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -161,15 +169,12 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -179,8 +184,8 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× GB300, NVFP4."""
+def _build_nemotron_3_super_gb300_nvfp4() -> ConfigContainer:
+    """Shared HybridEP NVFP4 base for the Nemotron 3 Super GB300 recipe and its VR200 alias."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
@@ -190,7 +195,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -200,10 +205,19 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_quantization = True
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-
     _apply_nemotron_3_super_perf_defaults(cfg)
+    _enable_nemotron_3_super_full_iteration(cfg)
+    cfg.mixed_precision.fp8_dot_product_attention = False
+    return cfg
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, NVFP4, NCCL EP."""
+    cfg = _build_nemotron_3_super_gb300_nvfp4()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -211,17 +225,16 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
@@ -295,6 +308,10 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         expert_model_parallel_size=64,
         global_batch_size=256,
     )
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -306,11 +323,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -409,8 +423,8 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB300, BF16."""
+def _build_nemotron_3_nano_gb300_bf16() -> ConfigContainer:
+    """Shared HybridEP BF16 base for the Nemotron 3 Nano GB300 recipe and its VR200 alias."""
     cfg = nemotron_3_nano_pretrain_config()
     _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("bf16")
@@ -434,6 +448,16 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_hybridep_num_sms = 16
+    return cfg
+
+
+def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Nano pretrain: 8× GB300, BF16, NCCL EP."""
+    cfg = _build_nemotron_3_nano_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -445,11 +469,8 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -493,6 +514,10 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -504,44 +529,8 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
-        # Transformer Engine overlap settings for this model.
-        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN LayerNorm for this measured baseline.
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
-    }
-    return cfg
-
-
-def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_ncclep_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB300, MXFP8, NCCL EP=8.
-
-    Note:
-        This recipe is temporary, added only for experimentation with NCCL EP.
-        It will be removed in the near future.
-    """
-    cfg = nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config()
-    _enable_ncclep_mxfp8(cfg)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    # Static-shape NCCL EP reads no HybridEP topology, so no HybridEP names are declared here.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -650,9 +639,9 @@ def nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× GB300, BF16."""
-    cfg = nemotron_3_nano_pretrain_8gpu_gb300_bf16_config()
+def _build_nemotron_3_5_lightning_gb300_bf16() -> ConfigContainer:
+    """Shared HybridEP BF16 base for the Nemotron 3.5 Lightning GB300 recipe and its VR200 alias."""
+    cfg = _build_nemotron_3_nano_gb300_bf16()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
@@ -662,6 +651,16 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    return cfg
+
+
+def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× GB300, BF16, NCCL EP."""
+    cfg = _build_nemotron_3_5_lightning_gb300_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -669,10 +668,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -702,6 +699,10 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer
     cfg.model.recompute_modules = []
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -709,10 +710,8 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
