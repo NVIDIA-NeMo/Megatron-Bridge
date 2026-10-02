@@ -524,11 +524,14 @@ def _forward_step_common(
         )
     timers("batch-generator").stop()
 
-    # Packed CP partitions tokens but preserves full-sequence cu_seqlens.
-    # Restore the physical token count for linear FLOPS; attention uses the
-    # unchanged sub-sequence boundaries. train.py reduces over pure DP, not CP.
+    # Both dense and packed tokens are CP-sharded. Recover the actual full batch
+    # length instead of relying on seq_length, which the builder's transformer
+    # config omits and which may exceed a dynamic batch's length. Packed attention
+    # still uses full-sequence cu_seqlens. train.py reduces over pure DP, not CP.
     # A post-process-only PP stage has labels but no input token ids.
     flops_tokens = tokens if tokens is not None else labels
+    cp_size = pg_collection.cp.size()
+    full_seq_length = flops_tokens.shape[1] * cp_size if flops_tokens is not None else None
     cu_seqlens = None
     cu_seqlens_argmin = None
     cu_seqlens_unpadded = None
@@ -548,8 +551,8 @@ def _forward_step_common(
         state,
         flops_tokens,
         vp_stage=vp_stage,
-        config_seq_len=getattr(config, "seq_length", None),
-        context_parallel_size=pg_collection.cp.size(),
+        config_seq_len=full_seq_length,
+        context_parallel_size=cp_size,
         cu_seqlens=cu_seqlens,
         cu_seqlens_argmin=cu_seqlens_argmin,
         cu_seqlens_unpadded=cu_seqlens_unpadded,
