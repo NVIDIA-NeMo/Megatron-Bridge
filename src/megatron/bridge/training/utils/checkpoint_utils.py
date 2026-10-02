@@ -27,6 +27,11 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
+from megatron.bridge.utils.instantiate_utils import (
+    _DISALLOWED_CANONICAL_TARGETS,
+    InstantiationException,
+    _reject_unsafe_target_name,
+)
 
 
 TRAIN_STATE_FILE = "train_state.pt"
@@ -387,6 +392,31 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
     return str(hf_model_id)
 
 
+def _validate_run_config_targets(value: Any, path: str = "") -> None:
+    """Reject known unsafe checkpoint targets before compatibility code imports them."""
+    if isinstance(value, dict):
+        target = value.get("_target_")
+        if isinstance(target, str):
+            full_key = f"{path}._target_" if path else "_target_"
+            _reject_unsafe_target_name(target=target, full_key=path)
+            if target in _DISALLOWED_CANONICAL_TARGETS:
+                raise InstantiationException(f"Instantiation of '{target}' is not allowed.\nfull_key: {full_key}")
+        for key, child in value.items():
+            if key != "_target_":
+                child_path = f"{path}.{key}" if path else str(key)
+                _validate_run_config_targets(child, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_run_config_targets(child, f"{path}[{index}]")
+
+
+def _prepare_run_config(config_dict: Any) -> dict[str, Any]:
+    """Sanitize and validate a parsed run config before target resolution."""
+    config_dict = _sanitize_run_config_object(config_dict)
+    _validate_run_config_targets(config_dict)
+    return apply_run_config_backward_compat(config_dict)
+
+
 @lru_cache()
 def read_run_config(run_config_filename: str) -> dict[str, Any]:
     """Read the run configuration from a YAML file (rank 0 only).
@@ -414,9 +444,7 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
                 else:
                     with open(run_config_filename, "r") as f:
                         config_dict = yaml.safe_load(f)
-                config_dict = _sanitize_run_config_object(config_dict)
-                config_dict = apply_run_config_backward_compat(config_dict)
-                config_obj[0] = config_dict
+                config_obj[0] = _prepare_run_config(config_dict)
             except Exception as e:
                 error_msg = f"ERROR: Unable to load config file {run_config_filename}: {e}"
                 sys.stderr.write(error_msg + "\n")
@@ -441,9 +469,7 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
         except Exception as e:
             raise RuntimeError(f"Unable to load config file {run_config_filename}: {e}") from e
 
-        config_dict = _sanitize_run_config_object(config_dict)
-        config_dict = apply_run_config_backward_compat(config_dict)
-        return config_dict
+        return _prepare_run_config(config_dict)
 
 
 @lru_cache()
