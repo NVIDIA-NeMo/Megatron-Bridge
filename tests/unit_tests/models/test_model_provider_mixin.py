@@ -127,12 +127,19 @@ def test_provide_distributed_model_with_hooks_as_args(
     mock_use_pg.return_value = _PG()
 
     provider.provide_distributed_model(
-        ddp_config=ddp_config, pre_wrap_hook=pre_hook, post_wrap_hook=post_hook, wrap_with_ddp=False
+        ddp_config=ddp_config,
+        pre_wrap_hook=pre_hook,
+        post_wrap_hook=post_hook,
+        wrap_with_ddp=False,
+        use_layer_wise_distributed_optimizer=True,
+        use_layer_wise_param_layout=False,
     )
 
     mock_get_model.assert_called_once()
     # Check that the argument hook is passed directly to get_model
     assert mock_get_model.call_args.kwargs["pre_wrap_hook"] is pre_hook
+    assert mock_get_model.call_args.kwargs["use_layer_wise_distributed_optimizer"] is True
+    assert mock_get_model.call_args.kwargs["use_layer_wise_param_layout"] is False
     # Check that the argument hook is called after get_model
     post_hook.assert_called_once_with(mock_model)
 

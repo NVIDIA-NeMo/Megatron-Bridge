@@ -395,7 +395,13 @@ class TestGetModel:
         ddp_config = DistributedDataParallelConfig()
 
         pg = _PG()
-        result = get_model(model_provider, ddp_config, pg_collection=pg)
+        result = get_model(
+            model_provider,
+            ddp_config,
+            pg_collection=pg,
+            use_layer_wise_distributed_optimizer=True,
+            use_layer_wise_param_layout=False,
+        )
 
         # Assertions
         assert len(result) == 1
@@ -404,6 +410,8 @@ class TestGetModel:
         assert "pg_collection" in mock_create_model.call_args.kwargs
         mock_print_params.assert_called_once()
         mock_ddp_wrap.assert_called_once()
+        assert mock_ddp_wrap.call_args.kwargs["use_layer_wise_distributed_optimizer"] is True
+        assert mock_ddp_wrap.call_args.kwargs["use_layer_wise_param_layout"] is False
 
     @patch("megatron.bridge.models.model_provider._create_model")
     @patch("megatron.bridge.models.model_provider._print_num_params")
