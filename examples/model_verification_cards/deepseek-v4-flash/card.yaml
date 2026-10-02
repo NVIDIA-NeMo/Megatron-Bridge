@@ -11,8 +11,8 @@ summary: >
   Historical verified Megatron-backed workflows below use their item-pinned
   Bridge revisions and the Megatron-Core dev branch. The migrated native-main
   long-context command is unverified and requires native DSv4 packed-CP support
-  from Megatron-Core PR #7469 plus the pipeline-override hook from Bridge PR #6248.
-  Follow examples/models/deepseek_v4/README.md for model setup.
+  from Megatron-Core PR #7469. Follow examples/models/deepseek_v4/README.md for
+  model setup.
 
   DeepSeek-V4-Flash verification covers GPU import at the item-pinned Bridge revision.
   The verified 64-GPU GB200 MXFP8 library pretraining run uses PP4/VPP4/EP16 with
@@ -355,14 +355,15 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Pending verification on the native main API with Megatron-Core PR #7469
-        and the Bridge PR #6248 pipeline-override hook. CP=2 requires packed THD
-        metadata and both attention_cp_layout and linear_cp_layout set to
-        contiguous. The packed token count must be divisible by CP size. This
-        command omits an explicit pipeline layout so the hook can regenerate
-        native attention/MoE segments for PP4. Require 100 finite steps with no
-        skipped or NaN iterations. Historical dev-API metrics do not verify this
-        migrated command and remain available in the card's git history.
+        Pending verification on the native main API with Megatron-Core PR #7469.
+        CP=2 requires packed THD metadata and both attention_cp_layout and
+        linear_cp_layout set to contiguous. The packed token count must be
+        divisible by CP size. The command no longer passes the dev-API explicit
+        pipeline layout, which counted logical blocks rather than physical
+        attention/MoE layers; the recipe's native PP4 segments apply. Require 100
+        finite steps with no skipped or NaN iterations. Historical dev-API metrics
+        do not verify this migrated command and remain available in the card's git
+        history.
 
   peft:
     GB200:

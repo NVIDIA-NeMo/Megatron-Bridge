@@ -6,8 +6,6 @@ DeepSeek V4 models are supported via the Bridge system with auto-detected config
 
 Native packed context parallelism requires Megatron-Core [PR #7469](https://github.com/NVIDIA/Megatron-LM/pull/7469) or an equivalent main revision. Use `--step-func dsv4_step`, a packed dataset, and both `model.attention_cp_layout=contiguous` and `model.linear_cp_layout=contiguous`. At CP>1 the step rejects non-packed batches and zigzag layouts; the old dev-only `cp_partition_mode` field does not select this path. Choose a total packed token length divisible by CP size; this contiguous partitioner does not impose the zigzag `2*CP` per-document padding rule.
 
-When overriding PP or VP, use the native provider's pipeline-override hook ([PR #6248](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6248)) and omit an explicit `pipeline_model_parallel_layout` unless the matching native `hybrid_layer_pattern` segments are also supplied. The hook rebuilds an even allocation of logical attention/MoE pairs, replacing any previous uneven split while preserving the MTP suffix.
-
 {/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
@@ -374,7 +372,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Pending verification on the native main API with Megatron-Core PR #7469 and the Bridge PR #6248 pipeline-override hook. CP=2 requires packed THD metadata and both attention_cp_layout and linear_cp_layout set to contiguous. The packed token count must be divisible by CP size. This command omits an explicit pipeline layout so the hook can regenerate native attention/MoE segments for PP4. Require 100 finite steps with no skipped or NaN iterations. Historical dev-API metrics do not verify this migrated command and remain available in the card&#x27;s git history.</p>
+        <p>Pending verification on the native main API with Megatron-Core PR #7469. CP=2 requires packed THD metadata and both attention_cp_layout and linear_cp_layout set to contiguous. The packed token count must be divisible by CP size. The command no longer passes the dev-API explicit pipeline layout, which counted logical blocks rather than physical attention/MoE layers; the recipe&#x27;s native PP4 segments apply. Require 100 finite steps with no skipped or NaN iterations. Historical dev-API metrics do not verify this migrated command and remain available in the card&#x27;s git history.</p>
       </section>
     </article>
     <article id="deepseek-v4-flash-peft-gb200" class="verification-model-detail" data-entry-detail="deepseek-v4-flash-peft-gb200" tabindex="-1">
