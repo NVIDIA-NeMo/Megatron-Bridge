@@ -150,7 +150,7 @@ def _enable_nemotron_3_5_lightning_full_iteration(cfg: ConfigContainer) -> None:
     cfg.model.use_te_rng_tracker = True
 
     # Static receive capacity avoids dispatcher CPU synchronization during capture.
-    # Paged stash handles overflow by rerunning the iteration without padding.
+    # The training loop retries capacity overflows without padding.
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_use_grouped_tensor = True
     cfg.model.moe_paged_stash = True
