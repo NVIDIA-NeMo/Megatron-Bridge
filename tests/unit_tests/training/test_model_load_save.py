@@ -543,6 +543,38 @@ class TestLoadMegatronModel:
         assert built_config.moe_router_force_load_balancing is (not dropless)
         assert built_config.moe_router_force_biased == (None if dropless else forced_bias)
 
+    @pytest.mark.parametrize(
+        ("expert_parallel_size", "expected_dispatcher", "expected_overlap"),
+        [(1, "allgather", False), (2, "flex", True)],
+    )
+    def test_single_rank_flex_fallback_disables_shared_expert_overlap(
+        self, expert_parallel_size, expected_dispatcher, expected_overlap
+    ):
+        """Single-rank loads replace flex with allgather, which does not support shared-expert overlap."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            num_moe_experts=2,
+            moe_shared_expert_intermediate_size=16,
+            moe_shared_expert_overlap=True,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+        )
+
+        def finalize_before_build(checkpoint_path, model_cfg, *args, **build_kwargs):
+            model_cfg.finalize()
+            return []
+
+        with (
+            patch.object(model_load_save, "load_model_config", return_value=(provider, None)),
+            patch.object(model_load_save, "build_and_load_model", side_effect=finalize_before_build),
+        ):
+            load_megatron_model("/checkpoint", mp_overrides={"expert_model_parallel_size": expert_parallel_size})
+
+        assert provider.moe_token_dispatcher_type == expected_dispatcher
+        assert provider.moe_shared_expert_overlap is expected_overlap
+
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
         provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)

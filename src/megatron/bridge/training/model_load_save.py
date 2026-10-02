@@ -554,12 +554,14 @@ def load_megatron_model(
         saved=saved_weight_topology, requested=_get_checkpoint_weight_topology(model_cfg)
     )
 
-    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
+    # DeepEP and NCCL EP flex backends require TPxEP > 1, so single-rank loads fall back to allgather.
+    # MCore allows shared-expert overlap only with alltoall and flex, so disable it with the fallback.
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
         tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
         ep = getattr(model_cfg, "expert_model_parallel_size", 1)
         if tp * ep == 1:
             model_cfg.moe_token_dispatcher_type = "allgather"
+            model_cfg.moe_shared_expert_overlap = False
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
