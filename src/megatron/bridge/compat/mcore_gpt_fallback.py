@@ -54,6 +54,7 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelBuilder, ModelConfig, compose_hooks
 from megatron.training.models.dist_utils import unimodal_build_distributed_models
@@ -435,7 +436,7 @@ class GPTModelBuilder(ModelBuilder[GPTModel, GPTModelConfig]):
 
 def mtp_block_spec(
     config: "GPTModelConfig",
-    transformer_layer_spec: ModuleSpec,
+    transformer_layer_spec: ModuleSpec | TransformerBlockSubmodules,
     vp_stage: int | None = None,
     pp_rank: int | None = None,
 ) -> ModuleSpec | None:
