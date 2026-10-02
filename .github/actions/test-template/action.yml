@@ -165,14 +165,8 @@ runs:
     - name: Create run-script
       id: create
       shell: bash
-      env:
-        SCRIPT: ${{ inputs.script }}
       run: |
         echo "::group::Create run-script"
-        if [[ ! "$SCRIPT" =~ ^(L[0-2]_|Launch_)[A-Za-z0-9_.-]+$ ]]; then
-          echo "::error::Invalid test script identifier."
-          exit 1
-        fi
         COVERAGE_PREFIX=$([[ "${{ inputs.is_unit_test }}" == "true" ]] && echo "unit-test" || echo "e2e")
         echo "coverage-prefix=$COVERAGE_PREFIX" | tee -a "$GITHUB_OUTPUT"
 

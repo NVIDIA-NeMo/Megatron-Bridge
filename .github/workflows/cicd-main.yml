@@ -726,12 +726,7 @@ jobs:
           for tier in L0 L1 L2; do
             entries=""
             for f in tests/functional_tests/launch_scripts/h100/active/${tier}_*.sh; do
-              [ -f "$f" ] || continue
               name=$(basename "$f" .sh)
-              if [[ ! "$name" =~ ^L[0-2]_[A-Za-z0-9_.-]+$ ]]; then
-                echo "::error::Invalid functional-test script identifier." >&2
-                exit 1
-              fi
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
               entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
@@ -745,10 +740,6 @@ jobs:
           for f in tests/functional_tests/launch_scripts/h100/flaky/L*.sh; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
-            if [[ ! "$name" =~ ^L[0-2]_[A-Za-z0-9_.-]+$ ]]; then
-              echo "::error::Invalid functional-test script identifier." >&2
-              exit 1
-            fi
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
             entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
@@ -989,10 +980,6 @@ jobs:
             for f in tests/functional_tests/launch_scripts/gb200/active/${tier}_*.sh; do
               [ -f "$f" ] || continue
               name=$(basename "$f" .sh)
-              if [[ ! "$name" =~ ^L[0-2]_[A-Za-z0-9_.-]+$ ]]; then
-                echo "::error::Invalid functional-test script identifier." >&2
-                exit 1
-              fi
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
               entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
@@ -1005,10 +992,6 @@ jobs:
           for f in tests/functional_tests/launch_scripts/gb200/flaky/L*.sh; do
             [ -f "$f" ] || continue
             name=$(basename "$f" .sh)
-            if [[ ! "$name" =~ ^L[0-2]_[A-Za-z0-9_.-]+$ ]]; then
-              echo "::error::Invalid functional-test script identifier." >&2
-              exit 1
-            fi
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
             entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \

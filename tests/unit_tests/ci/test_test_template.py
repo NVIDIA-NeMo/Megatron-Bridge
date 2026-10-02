@@ -19,7 +19,7 @@ ACTION = Path(__file__).resolve().parents[3] / ".github/actions/test-template/ac
 @pytest.mark.parametrize("runner", ["nemo-ci-gcp-gpu-x2", "nemo-ci-aws-gpu-x2", "nemo-ci-azure-gpu-x2"])
 @pytest.mark.parametrize("test_exit_code", [0, 7])
 @pytest.mark.parametrize("is_unit_test", [False, True])
-@pytest.mark.parametrize("script", ["L0_probe", "L0_$(touch proof)"])
+@pytest.mark.parametrize("script", ["L0_probe", "L0_$(touch proof)", 'L0_";touch proof;#'])
 def test_container_startup_cannot_override_gcp_test_environment(
     tmp_path: Path, runner: str, test_exit_code: int, is_unit_test: bool, script: str
 ) -> None:
@@ -72,11 +72,9 @@ def test_container_startup_cannot_override_gcp_test_environment(
         "BASH_ENV": str(startup),
         "GITHUB_OUTPUT": str(tmp_path / "github-output"),
         "NCCL_NET": "inherited-network",
-        "SCRIPT": "L0_probe",
+        "SCRIPT": script,
     }
     subprocess.run(["bash", "-c", create], cwd=tmp_path, env=env, check=True, capture_output=True, text=True)
-    # Bypass validation to check that the consumer also keeps filenames literal.
-    env["SCRIPT"] = script
     step = next(step for step in action["runs"]["steps"] if step.get("id") == "run-main-script")
     assert step["env"]["SCRIPT"] == "${{ inputs.script }}"
     run = re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda match: expressions[match[1]], step["run"])
@@ -95,11 +93,10 @@ def test_container_startup_cannot_override_gcp_test_environment(
 
 
 @pytest.mark.parametrize("script", ["L0_$(touch proof)", "L0_`touch proof`", 'L0_";touch proof;#', "../probe"])
-@pytest.mark.parametrize("step_id", ["create", "check"])
 @pytest.mark.parametrize("exit_code", [0, 7])
-def test_script_validation_and_result_logging(tmp_path: Path, script: str, step_id: str, exit_code: int) -> None:
+def test_result_logging_keeps_script_names_literal(tmp_path: Path, script: str, exit_code: int) -> None:
     action = yaml.safe_load(ACTION.read_text())
-    step = next(step for step in action["runs"]["steps"] if step.get("id") == step_id)
+    step = next(step for step in action["runs"]["steps"] if step.get("id") == "check")
     assert step["env"]["SCRIPT"] == "${{ inputs.script }}"
     expressions = {"inputs.script": script, "steps.run-main-script.outputs.exit_code": str(exit_code)}
     run = re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda match: expressions.get(match[1], "false"), step["run"])
@@ -110,16 +107,14 @@ def test_script_validation_and_result_logging(tmp_path: Path, script: str, step_
     env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "SCRIPT": script}
     env["GITHUB_OUTPUT"] = str(tmp_path / "output")
     result = subprocess.run(["bash", "-e", "-c", run], cwd=tmp_path, env=env, capture_output=True, text=True)
-    assert result.returncode == (0 if step_id == "check" and exit_code == 0 else 1), result.stderr
+    assert result.returncode == (0 if exit_code == 0 else 1), result.stderr
     assert not (tmp_path / "proof").exists()
-    if step_id == "create":
-        assert not (tmp_path / "job.sh").exists()
 
 
 @pytest.mark.parametrize("hardware", ["h100", "gb200"])
 @pytest.mark.parametrize("directory", ["active", "flaky"])
 @pytest.mark.parametrize("script", ["L0_probe", "L0_$(touch proof)", 'L0_"injected'])
-def test_matrix_rejects_shell_and_json_injection(tmp_path: Path, hardware: str, directory: str, script: str) -> None:
+def test_matrix_preserves_literal_script_names(tmp_path: Path, hardware: str, directory: str, script: str) -> None:
     workflow = yaml.safe_load((ACTION.parents[2] / "workflows/cicd-main.yml").read_text())
     job = "generate-test-matrix" if hardware == "h100" else "generate-gb200-test-matrix"
     run = next(step["run"] for step in workflow["jobs"][job]["steps"] if step.get("id") == "scan")
@@ -136,14 +131,12 @@ def test_matrix_rejects_shell_and_json_injection(tmp_path: Path, hardware: str, 
     result = subprocess.run(
         ["bash", "-eo", "pipefail", "-c", run], cwd=tmp_path, env=env, capture_output=True, text=True
     )
-    valid = script == "L0_probe"
-    assert (result.returncode == 0) == valid, result.stderr
+    assert result.returncode == 0, result.stderr
     assert not (tmp_path / "proof").exists()
-    if valid:
-        matrices = dict(line.split("=", 1) for line in output.read_text().splitlines())
-        prefix = "matrix_" if hardware == "h100" else "matrix_gb200_"
-        entries = json.loads(matrices[prefix + ("l0" if directory == "active" else "flaky")])["include"]
-        entry = next(entry for entry in entries if entry["script"] == script)
-        assert entry["timeout"] == 45
-        runner_prefix = "nemo-ci-aws-gpu-x" if hardware == "h100" else "nemo-ci-gcp-gpu-x"
-        assert entry["runner"] == runner_prefix + "4"
+    matrices = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    prefix = "matrix_" if hardware == "h100" else "matrix_gb200_"
+    entries = json.loads(matrices[prefix + ("l0" if directory == "active" else "flaky")])["include"]
+    entry = next(entry for entry in entries if entry["script"] == script)
+    assert entry["timeout"] == 45
+    runner_prefix = "nemo-ci-aws-gpu-x" if hardware == "h100" else "nemo-ci-gcp-gpu-x"
+    assert entry["runner"] == runner_prefix + "4"
