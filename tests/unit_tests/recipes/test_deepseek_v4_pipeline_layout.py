@@ -24,6 +24,7 @@ from megatron.core.transformer.pipeline_parallel_layer_layout import PipelinePar
 
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
@@ -143,6 +144,56 @@ def test_cli_topology_override_rebuilds_native_pattern_and_mtp(pp, vp, counts):
         assert [stage.count("decoder") for stage in cfg.pipeline_model_parallel_layout] == [
             2 * count for count in counts
         ]
+    cfg.finalize()
+
+
+@pytest.mark.parametrize(("pp", "vp"), [(1, None), (4, None), (2, 2)])
+def test_finalize_rejects_segments_left_from_another_topology(pp, vp):
+    # MCore would build only part of the decoder from these eight PP8 segments.
+    cfg = _provider(43, 8)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    cfg.pipeline_model_parallel_size = pp
+    cfg.virtual_pipeline_model_parallel_size = vp
+    cfg.pipeline_model_parallel_layout = None
+
+    with pytest.raises(ValueError, match="has 8 pipeline segments"):
+        cfg.finalize()
+
+
+def test_finalize_rejects_explicit_layout_that_disagrees_with_segments():
+    cfg = _provider(43, 4)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    assert [len(segment) for segment in cfg.hybrid_layer_pattern.split("|")] == [22, 22, 22, 20]
+    # Same stage and layer totals, different split from the pattern segments.
+    cfg.pipeline_model_parallel_layout = [
+        ["embedding"] + ["decoder"] * 24,
+        ["decoder"] * 20,
+        ["decoder"] * 22,
+        ["decoder"] * 20 + ["mtp", "loss"],
+    ]
+
+    with pytest.raises(ValueError, match="decoder layers per stage"):
+        cfg.finalize()
+
+
+def test_finalize_keeps_mcore_even_split_for_pattern_without_pipes():
+    cfg = _provider(43, 1)
+    cfg.pipeline_model_parallel_size = 2
+
+    cfg.finalize()
+
+
+def test_finalize_checks_segments_after_hybrid_finalize(monkeypatch):
+    cfg = _provider(43, 8)
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg)
+    cfg.pipeline_model_parallel_size = 4
+    cfg.pipeline_model_parallel_layout = None
+    calls = []
+    monkeypatch.setattr(HybridModelProvider, "finalize", lambda self: calls.append(self))
+
+    with pytest.raises(ValueError, match="has 8 pipeline segments"):
+        cfg.finalize()
+    assert calls == [cfg]
 
 
 @pytest.mark.parametrize("counts", [[4] * 16, [4] * 14 + [5], [4] * 15 + [-1]])

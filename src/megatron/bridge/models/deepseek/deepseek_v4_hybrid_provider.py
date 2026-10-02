@@ -35,6 +35,9 @@ the direct MLA field names.
 
 from dataclasses import dataclass
 
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.transformer.enums import LayerType
+
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -58,7 +61,8 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
         including a recipe's uneven stage allocation, are replaced by an even
         split of logical attention/MoE pairs; the MTP suffix is preserved.
         The runner skips this hook when the CLI explicitly supplies a layout,
-        so that caller must also keep the native pattern segments consistent.
+        so that caller must also supply matching native pattern segments;
+        :meth:`finalize` rejects segments that do not match the topology.
         """
         from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
 
@@ -66,3 +70,50 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
         self.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
         set_deepseek_v4_pipeline_model_parallel_layout(self)
         return self.pipeline_model_parallel_layout
+
+    def finalize(self) -> None:
+        """Finalize the hybrid provider and reject stale native pipeline segments."""
+        super().finalize()
+        self._validate_native_pipeline_segments()
+
+    def _validate_native_pipeline_segments(self) -> None:
+        """Require one ``|`` segment per PP/VP stage, matching any explicit layout.
+
+        MCore picks segment ``vp_stage * PP + pp_rank`` and only checks that the
+        segment count is divisible by PP, so segments left over from an earlier
+        topology can build only part of the decoder without an error: a PP4
+        pattern used at PP1 builds only its first segment. A pattern without
+        ``|`` keeps MCore's even split by PP.
+        """
+        main_pattern = (self.hybrid_layer_pattern or "").partition(Symbols.MTP_SEPARATOR)[0]
+        segments = main_pattern.split(Symbols.PIPE)
+        if len(segments) == 1:
+            return
+
+        pp_size = self.pipeline_model_parallel_size or 1
+        vp_size = self.virtual_pipeline_model_parallel_size or 1
+        if len(segments) != pp_size * vp_size:
+            raise ValueError(
+                f"DSv4 hybrid_layer_pattern has {len(segments)} pipeline segments, but "
+                f"pipeline_model_parallel_size={pp_size} and virtual_pipeline_model_parallel_size="
+                f"{self.virtual_pipeline_model_parallel_size} need {pp_size * vp_size}. Call "
+                "set_deepseek_v4_pipeline_model_parallel_layout() after changing PP or VP, or supply "
+                "a hybrid_layer_pattern with one '|' segment per stage."
+            )
+
+        # MCore's finalize has already converted any layout to PipelineParallelLayerLayout.
+        layout = self.pipeline_model_parallel_layout
+        if layout is None:
+            return
+        decoder_counts = [
+            layout.layout[pp_rank][vp_rank].count(LayerType.decoder)
+            for vp_rank in range(layout.virtual_pipeline_model_parallel_size)
+            for pp_rank in range(layout.pipeline_model_parallel_size)
+        ]
+        segment_lengths = [len(segment) for segment in segments]
+        if decoder_counts != segment_lengths:
+            raise ValueError(
+                f"pipeline_model_parallel_layout places {decoder_counts} decoder layers per stage, but the "
+                f"DSv4 hybrid_layer_pattern segments hold {segment_lengths} layers. Supply both from "
+                "set_deepseek_v4_pipeline_model_parallel_layout()."
+            )
