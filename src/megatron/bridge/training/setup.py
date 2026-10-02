@@ -611,7 +611,12 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
     model_config = cfg.model
     if not isinstance(model_config, ModelConfig):
         model_config.finalize()
-    configure_gtp_remat(model_config)
+    configure_gtp_remat(
+        model_config,
+        reduce_scatter_with_fp32_accumulation=cfg.dist.gtp_remat_reduce_scatter_with_fp32_accumulation,
+        nccl_ub=cfg.dist.gtp_remat_nccl_ub,
+        pg_collection=pg_collection,
+    )
     if getattr(model_config, "freeze_base_model_for_mtp", False):
         _register_setup_pre_wrap_hook(
             model_config, _freeze_base_model_for_mtp, setup_hook_name="freeze_base_model_for_mtp"
