@@ -426,8 +426,7 @@ class TestGemma2TEDotProductAttentionParity:
 
     @requires_te_flash_softcap
     def test_softcap_applied_pre_softmax(self):
-        """With large logits, the TE path must saturate via 50*tanh (matching the oracle) and differ
-        from an uncapped TE path — proving the softcap is applied pre-softmax."""
+        """Large logits must match a high-precision softcap reference and differ from uncapped TE."""
         seq, batch = 16, 1
         layer_number = 2  # even layer -> full causal, isolating the softcap from SWA masking
         config = _make_config(window_size=(3, 0), softcap=_SOFTCAP)
@@ -435,7 +434,6 @@ class TestGemma2TEDotProductAttentionParity:
         # Large scale drives pre-softmax logits well past the +/-50 softcap saturation range.
         q, k, v = _qkv(seq, batch, device="cuda", scale=8.0, seed=17)
 
-        oracle = self._make_oracle(config, layer_number)  # applies 50*tanh softcap
         te_capped = self._make_te(config, layer_number)
 
         # Uncapped reference: identical config/scale but softcap disabled. Built through the same
@@ -445,9 +443,15 @@ class TestGemma2TEDotProductAttentionParity:
         uncapped_config.attn_logit_softcapping = None
         te_uncapped = self._make_te(uncapped_config, layer_number)
 
-        oracle_out = oracle.forward(
-            query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal
-        ).float()
+        # The eager Gemma2 path rounds QK scores and tanh intermediates to bf16. With
+        # these large logits that rounding can exceed the parity tolerance even when
+        # FlashAttention is correct. Use an independent float64 reference, preserving
+        # the exact bf16 inputs and applying scale, softcap and causal mask in order.
+        scores = torch.einsum("sbhd,tbhd->bhst", q.double(), k.double()) / math.sqrt(_QUERY_PRE_ATTN_SCALAR)
+        scores = _SOFTCAP * torch.tanh(scores / _SOFTCAP)
+        causal_mask = torch.ones(seq, seq, dtype=torch.bool, device=q.device).triu(diagonal=1)
+        probs = scores.masked_fill(causal_mask, float("-inf")).softmax(dim=-1)
+        oracle_out = torch.einsum("bhst,tbhd->sbhd", probs, v.double()).reshape(seq, batch, -1).float()
         capped_out = te_capped.forward(
             query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal
         ).float()
@@ -455,13 +459,13 @@ class TestGemma2TEDotProductAttentionParity:
             query=q, key=k, value=v, attention_mask=None, attn_mask_type=AttnMaskType.causal
         ).float()
 
-        # Softcapped TE flash matches the softcapped oracle.
+        # Softcapped TE flash matches the independent high-precision reference.
         torch.testing.assert_close(
             capped_out,
             oracle_out,
             rtol=_RTOL,
             atol=_ATOL,
-            msg="Softcapped TE flash path must match the softcapped Gemma2 oracle under large logits",
+            msg="Softcapped TE flash path must match the high-precision reference under large logits",
         )
         # And the softcap must actually change the result vs. an uncapped path.
         assert not torch.allclose(capped_out, uncapped_out, rtol=_RTOL, atol=_ATOL), (
