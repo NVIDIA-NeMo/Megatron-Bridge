@@ -27,6 +27,35 @@ docker build \
   .
 ```
 
+The image installs [Mixture of Kittens](https://github.com/QiZhangNV/mixture-of-kittens)
+on both `linux/amd64` and `linux/arm64`. Each platform's native wheel includes
+GB200/B200 (`sm_100a`) and GB300/B300 (`sm_103a`) kernels by default. This does not
+enable MoK kernels on other GPUs or select MoK as a training backend.
+
+The `mok-wheel` stage builds against the same base image's Python, PyTorch, and CUDA
+as the final image, independently of the other Bridge dependencies. BuildKit caches
+it by platform, base image, source revision, GPU targets, installer, and patch; registry
+caches must export intermediate stages with `mode=max` (as Bridge CI already does).
+The build checks that the wheel contains every requested GPU target without requiring
+a GPU. The pinned source needs `scripts/prepare_thunderkittens.sh` and the compatibility
+patch in `docker/patches/mok.patch`; revisit both workarounds when updating the source.
+
+Build only the MoK wheel stage on either native builder, for example:
+
+```bash
+docker buildx build \
+  --platform linux/arm64 \
+  -f docker/Dockerfile.ci \
+  --target mok-wheel \
+  -t megatron-bridge-mok-wheel:arm64 \
+  --load \
+  .
+```
+
+Use `--platform linux/amd64` on an AMD64 builder. Full image builds use the existing
+`megatron_bridge` target and install the wheel after dependency syncing. MoK is a
+Docker-only dependency, outside `pyproject.toml` and `uv.lock`.
+
 | Argument | Description |
 |---|---|
 | `BASE_IMAGE` | Base container |
@@ -202,6 +231,8 @@ docker build \
 | `APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH` | Set to `True` to apply the torch.library finalizer patch; `False` for base images it does not apply against (e.g. Rubin) |
 | `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
+| `MOK_COMMIT` | Full Mixture of Kittens source commit SHA; defaults to `a2ad2d0ce2366c1817d15498cdbaf8ead5966117` |
+| `MOK_ARCH` | GPU targets in each CPU platform's MoK wheel: `ALL` (default, GB200 and GB300), `SM100` (GB200/B200), or `SM103` (GB300/B300) |
 | `REINSTALL_NVSHMEM` | Set to `True` to reinstall nvshmem (`nvidia-nvshmem-cu13`) over the base image version; only applied when `INSTALL_DEEPEP=True` |
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
 | `INSTALL_DIFFUSION_DEPS` | Install the test-only WAN diffusion dependencies; defaults to `false` for Framework/release images |
@@ -228,9 +259,11 @@ docker build \
 | `common/install_cublas.sh` | Reinstall cuBLAS and cuBLASLt from the public NVIDIA CUDA apt repo |
 | `common/install_nccl.sh` | Reinstall NCCL from the public NVIDIA CUDA apt repo |
 | `common/install_cudnn.sh` | Reinstall cuDNN from the public NVIDIA CUDA apt repo |
+| `common/install_mok.sh` | Build and verify the pinned Mixture of Kittens wheel |
 | `common/install_nsys.sh` | Reinstall Nsight Systems from the public NVIDIA CUDA apt repo |
 | `common/install_mamba.sh` | Build the locked Mamba sdist with the local C++ standard patch |
 | `common/preserve_base_runtime.py` | Record and check selected base package metadata for opt-in runtime preservation |
 | `patches/deepep.patch` | Patch applied to DeepEP during CI image build |
+| `patches/mok.patch` | MoK dual GPU target build support and PyTorch/CUDA namespace compatibility fix |
 | `patches/mamba.patch` | Let Mamba's CUDA extension inherit PyTorch's C++ standard |
 | `patches/vllm.patch` | Patch applied to vLLM after install in fw-base |
