@@ -587,13 +587,21 @@ def test_vr200_perf_recipes_match_gb300_configs(
     """VR200 Nemotron 3.5 recipes match their GB300 baselines up to the GB300 NCCL EP overlay.
 
     The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts and the
-    NCCL EP process setting); the VR200 aliases keep the shared HybridEP base. Everything else,
-    model, parallelism, precision and schedule, must be identical.
+    NCCL EP process setting); the VR200 aliases keep the shared HybridEP base. The VR200 BF16
+    recipe also offloads expert activations. Everything else must be identical.
     """
     vr200_cfg = vr200_factory()
     gb300_cfg = gb300_factory()
     assert vr200_cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert gb300_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+
+    if vr200_factory is nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config:
+        assert vr200_cfg.model.fine_grained_activation_offloading is True
+        assert vr200_cfg.model.offload_modules == ["expert_fc1", "moe_act"]
+        assert vr200_cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+        assert "graph_capture_record_stream_reuse:True" in vr200_cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
+        vr200_cfg.model.fine_grained_activation_offloading = gb300_cfg.model.fine_grained_activation_offloading
+        vr200_cfg.model.offload_modules = gb300_cfg.model.offload_modules
 
     _enable_ncclep(vr200_cfg)
     vr200_cfg.model.moe_use_grouped_tensor = True
