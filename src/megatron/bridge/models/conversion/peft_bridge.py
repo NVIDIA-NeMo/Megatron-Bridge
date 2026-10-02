@@ -1791,11 +1791,18 @@ def _pack_target_parameter_adapter_weights(
     lora_a: torch.Tensor,
     lora_b: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout."""
+    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout.
+
+    Exported factors are ``lora_A [E, r, in]`` and ``lora_B [E, out, r]``. ParamWrapper
+    reads ``lora_A`` as ``(E, r, in)`` and ``lora_B`` as ``(out, r, E)``, so the columns
+    of the packed ``lora_B`` must be expert-fastest.
+    """
 
     if lora_a.ndim == 3 and lora_b.ndim == 3:
-        packed_lora_a = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_b], dim=0)
-        packed_lora_b = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_a], dim=1)
+        num_experts, rank, in_features = lora_a.shape
+        out_features = lora_b.shape[1]
+        packed_lora_a = lora_a.reshape(num_experts * rank, in_features).contiguous()
+        packed_lora_b = lora_b.permute(1, 2, 0).reshape(out_features, rank * num_experts).contiguous()
         return packed_lora_a, packed_lora_b
 
     return lora_a, lora_b

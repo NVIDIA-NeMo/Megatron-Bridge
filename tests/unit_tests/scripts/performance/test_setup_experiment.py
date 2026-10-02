@@ -88,7 +88,8 @@ def test_recipe_arguments_are_forwarded_unchanged() -> None:
     ]
 
 
-def test_submission_dry_run_does_not_import_bridge_or_mcore(tmp_path: Path) -> None:
+@pytest.mark.parametrize("is_long_convergence_run", [False, True])
+def test_submission_dry_run_does_not_import_bridge_or_mcore(tmp_path: Path, is_long_convergence_run: bool) -> None:
     blocker_dir = tmp_path / "login_node"
     blocker_dir.mkdir()
     (blocker_dir / "sitecustomize.py").write_text(
@@ -103,6 +104,11 @@ class _RejectMegatron(importlib.abc.MetaPathFinder):
         return None
 
 sys.meta_path.insert(0, _RejectMegatron())
+
+# Exercise the W&B 0.29 API surface even when testing with an older SDK.
+import wandb
+if hasattr(wandb.util, "generate_id"):
+    del wandb.util.generate_id
 """
     )
     environment = os.environ.copy()
@@ -133,6 +139,8 @@ sys.meta_path.insert(0, _RejectMegatron())
         "none",
         "--dryrun",
     ]
+    if is_long_convergence_run:
+        command.append("--is_long_convergence_run")
 
     result = subprocess.run(
         command,
@@ -148,4 +156,6 @@ sys.meta_path.insert(0, _RejectMegatron())
     assert result.returncode == 0, output
     assert "bootstrap.py" in output
     assert "pretrain_llama3_8b_bf16_gpus8_h100" in output
+    assert "WANDB_RUN_ID" in output
+    assert "WANDB_RESUME" in output
     assert "login-node import forbidden" not in output
