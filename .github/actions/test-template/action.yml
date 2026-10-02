@@ -71,6 +71,53 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Validate test inputs
+      id: create
+      shell: bash
+      env:
+        SCRIPT: ${{ inputs.script }}
+        SCRIPT_DIR: ${{ inputs.script_dir }}
+        IS_UNIT_TEST: ${{ inputs.is_unit_test }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        # Validate before starting containers or exposing credentials to a test.
+        if [[ ! "$TIMEOUT" =~ ^[1-9][0-9]*$ ]] || (( ${#TIMEOUT} > 10 )); then
+          echo "::error::Timeout must be a positive 32-bit integer (minutes)."
+          exit 1
+        fi
+        if (( TIMEOUT > 2147483647 )); then
+          echo "::error::Timeout must be a positive 32-bit integer (minutes)."
+          exit 1
+        fi
+        case "$IS_UNIT_TEST" in
+          true)
+            if [[ ! "$SCRIPT" =~ ^Launch_[A-Za-z0-9_.-]+$ ]]; then
+              echo "::error::Invalid unit-test script identifier."
+              exit 1
+            fi
+            TEST_SCRIPT="tests/unit_tests/${SCRIPT}.sh"
+            COVERAGE_PREFIX=unit-test
+            ;;
+          false)
+            if [[ ! "$SCRIPT" =~ ^L[0-2]_[A-Za-z0-9_.-]+$ ]]; then
+              echo "::error::Invalid functional-test script identifier."
+              exit 1
+            fi
+            case "$SCRIPT_DIR" in
+              h100/active|h100/flaky|gb200/active|gb200/flaky) ;;
+              *) echo "::error::Invalid functional-test script directory."; exit 1 ;;
+            esac
+            TEST_SCRIPT="tests/functional_tests/launch_scripts/${SCRIPT_DIR}/${SCRIPT}.sh"
+            COVERAGE_PREFIX=e2e
+            ;;
+          *) echo "::error::is_unit_test must be true or false."; exit 1 ;;
+        esac
+        {
+          printf 'coverage-prefix=%s\n' "$COVERAGE_PREFIX"
+          printf 'timeout_in_seconds=%s\n' "$(( TIMEOUT * 60 ))"
+          printf 'script_path=%s\n' "$TEST_SCRIPT"
+        } >> "$GITHUB_OUTPUT"
+
     - name: Checkout repository
       uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       with:
@@ -118,103 +165,84 @@ runs:
       shell: bash
       env:
         MOUNT_FS: ${{ inputs.is_unit_test == 'false' }}
+        TEST_DATA_PATH: ${{ inputs.test-data-path }}
+        RUNNER: ${{ inputs.runner }}
+        CONTAINER_IMAGE: ${{ inputs.container-image }}
+        SHARD_ID: ${{ inputs.shard-id }}
+        NUM_SHARDS: ${{ inputs.num-shards }}
+        TIMEOUT_SECONDS: ${{ steps.create.outputs.timeout_in_seconds }}
       run: |
         echo "::group::Start test container"
+        VOLUME_ARGS=()
         if [[ "$MOUNT_FS" == "true" ]]; then
-          VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
+          VOLUME_ARGS=(--volume "${TEST_DATA_PATH}:/home/TestData" --env HF_HUB_OFFLINE=1)
           HF_HOME=/home/TestData/HF_HOME
           NEMO_HOME=/home/TestData/nemo_home
         else
-          VOLUME_ARGS=""
           HF_HOME=/home/ubuntu/.cache/huggingface
           NEMO_HOME=/home/ubuntu/.cache/nemo
         fi
         HF_MODULES_CACHE=/home/ubuntu/.cache/huggingface/modules
 
-        cmd=$(cat <<RUN_TEST_EOF
-        #!/bin/bash
-        docker container rm -f nemo_container_${{ github.run_id }} || true
+        docker container rm -f "nemo_container_${GITHUB_RUN_ID}" || true
 
         docker run \
           --rm \
           -d \
-          --name nemo_container_${{ github.run_id }} \
+          --name "nemo_container_${GITHUB_RUN_ID}" \
           --runtime=nvidia --gpus all \
           --shm-size=64g \
           --cpus=40 \
-          --env GHA_RUNNER=${{ inputs.runner }} \
+          --env "GHA_RUNNER=$RUNNER" \
           --env HYDRA_FULL_ERROR=1 \
-          --env HF_HOME=$HF_HOME \
-          --env HF_MODULES_CACHE=$HF_MODULES_CACHE \
-          --env NEMO_HOME=$NEMO_HOME \
-          --env RUN_ID=${{ github.run_id }} \
+          --env "HF_HOME=$HF_HOME" \
+          --env "HF_MODULES_CACHE=$HF_MODULES_CACHE" \
+          --env "NEMO_HOME=$NEMO_HOME" \
+          --env "RUN_ID=$GITHUB_RUN_ID" \
           --env UV_NO_SYNC=1 \
-          --env SHARD_ID=${{ inputs.shard-id }} \
-          --env NUM_SHARDS=${{ inputs.num-shards }} \
+          --env "SHARD_ID=$SHARD_ID" \
+          --env "NUM_SHARDS=$NUM_SHARDS" \
           --workdir /opt/Megatron-Bridge \
-          $VOLUME_ARGS \
-          ${{ inputs.container-image }} \
-          bash -c "sleep $(( ${{ inputs.timeout }} * 60 + 60 ))"
-        RUN_TEST_EOF
-        )
-
-        echo "$cmd" | tee "retry_job.sh"
-        bash retry_job.sh
-        echo "::endgroup::"
-
-    - name: Create run-script
-      id: create
-      shell: bash
-      run: |
-        echo "::group::Create run-script"
-        COVERAGE_PREFIX=$([[ "${{ inputs.is_unit_test }}" == "true" ]] && echo "unit-test" || echo "e2e")
-        echo "coverage-prefix=$COVERAGE_PREFIX" | tee -a "$GITHUB_OUTPUT"
-
-        cmd=$(cat <<'RUN_TEST_EOF'
-        #!/bin/bash
-
-        docker exec -t nemo_container_${{ github.run_id }} bash -c '
-          set -e
-          export GH_TOKEN=${{ inputs.github-token }}
-
-          if [[ "${{ contains(inputs.runner, 'gcp') }}" == "true" ]]; then
-            export NCCL_ENV_PLUGIN=none
-            export NCCL_NET_PLUGIN=none
-            export NCCL_PROFILER_PLUGIN=none
-            export NCCL_NET=Socket
-            # The container startup has already run in this shell. Do not let
-            # child Bash startup scripts re-enable cloud plugins for the tests.
-            export BASH_ENV=/dev/null
-          fi
-
-          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
-
-          if [[ "$EXIT_CODE" -eq 124 ]]; then
-            echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
-          fi
-
-          exit $EXIT_CODE
-        '
-
-        RUN_TEST_EOF
-        )
-
-        echo "timeout_in_seconds=$(( ${{ inputs.timeout }} * 60 ))" | tee -a "$GITHUB_OUTPUT"
-        echo "$cmd" | tee "job.sh"
+          "${VOLUME_ARGS[@]}" \
+          "$CONTAINER_IMAGE" \
+          sleep "$(( TIMEOUT_SECONDS + 60 ))"
         echo "::endgroup::"
 
     - name: Run main script
       id: run-main-script
       shell: bash -e -u -o pipefail {0}
+      env:
+        SCRIPT: ${{ inputs.script }}
+        RUNNER: ${{ inputs.runner }}
+        CONTAINER_IMAGE: ${{ inputs.container-image }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        TEST_SCRIPT: ${{ steps.create.outputs.script_path }}
+        TIMEOUT_SECONDS: ${{ steps.create.outputs.timeout_in_seconds }}
+        TIMEOUT: ${{ inputs.timeout }}
       run: |
         echo -e "\033[1;34m┌─ launching test ─────────────────────────────────────────────────────────┐\033[0m"
-        echo -e "\033[1;34m│  script    : ${{ inputs.script }}\033[0m"
-        echo -e "\033[1;34m│  runner    : ${{ inputs.runner }}\033[0m"
-        echo -e "\033[1;34m│  container : ${{ inputs.container-image }}\033[0m"
+        printf '\033[1;34m│  script    : %s\033[0m\n' "$SCRIPT"
+        printf '\033[1;34m│  runner    : %s\033[0m\n' "$RUNNER"
+        printf '\033[1;34m│  container : %s\033[0m\n' "$CONTAINER_IMAGE"
         echo -e "\033[1;34m└──────────────────────────────────────────────────────────────────────────┘\033[0m"
         echo "::group::Logs"
         EXIT_CODE=0
-        /bin/bash job.sh || EXIT_CODE=$?
+        # Keep inputs out of shell source, including the nested container shell.
+        docker exec -t --env GH_TOKEN "nemo_container_${GITHUB_RUN_ID}" bash -c '
+          set -e
+          if [[ "$3" == *gcp* ]]; then
+            export NCCL_ENV_PLUGIN=none
+            export NCCL_NET_PLUGIN=none
+            export NCCL_PROFILER_PLUGIN=none
+            export NCCL_NET=Socket
+            # Apply after startup so child shells cannot re-enable cloud plugins.
+            export BASH_ENV=/dev/null
+          fi
+          exec timeout "${1}s" bash -- "$2"
+        ' bash "$TIMEOUT_SECONDS" "$TEST_SCRIPT" "$RUNNER" || EXIT_CODE=$?
+        if [[ "$EXIT_CODE" -eq 124 ]]; then
+          printf '::error:: Test timed out after %s minutes. Please reach out to the PIC.\n' "$TIMEOUT"
+        fi
         echo "exit_code=$EXIT_CODE" | tee -a "$GITHUB_OUTPUT"
         echo "::endgroup::"
         exit $EXIT_CODE
@@ -222,45 +250,50 @@ runs:
     - name: Check result
       id: check
       shell: bash -e -u -o pipefail {0}
-      if: always()
+      if: ${{ always() && steps.run-main-script.outcome != 'skipped' }}
+      env:
+        SCRIPT: ${{ inputs.script }}
+        EXIT_CODE: ${{ steps.run-main-script.outputs.exit_code }}
+        IS_OPTIONAL: ${{ inputs.is-optional }}
+        COVERAGE_PREFIX: ${{ steps.create.outputs.coverage-prefix }}
       run: |
-        docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage combine || true
-        docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage xml || true
-        docker cp nemo_container_${{ github.run_id }}:/opt/Megatron-Bridge/.coverage .coverage || true
-        docker cp nemo_container_${{ github.run_id }}:/opt/Megatron-Bridge/coverage.xml coverage.xml || true
+        docker exec "nemo_container_${GITHUB_RUN_ID}" /opt/venv/bin/coverage combine || true
+        docker exec "nemo_container_${GITHUB_RUN_ID}" /opt/venv/bin/coverage xml || true
+        docker cp "nemo_container_${GITHUB_RUN_ID}:/opt/Megatron-Bridge/.coverage" .coverage || true
+        docker cp "nemo_container_${GITHUB_RUN_ID}:/opt/Megatron-Bridge/coverage.xml" coverage.xml || true
 
-        coverage_report=coverage-${{ steps.create.outputs.coverage-prefix }}-${{ github.run_id }}-$(uuidgen)
+        coverage_report="coverage-${COVERAGE_PREFIX}-${GITHUB_RUN_ID}-$(uuidgen)"
         echo "coverage_report=$coverage_report" | tee -a "$GITHUB_OUTPUT"
 
-        EXIT_CODE=${{ steps.run-main-script.outputs.exit_code }}
-        IS_SUCCESS=$([[ "$EXIT_CODE" -eq 0 ]] && echo "true" || echo "false")
+        EXIT_CODE=${EXIT_CODE:-1}
+        IS_SUCCESS=$([[ "$EXIT_CODE" == "0" ]] && echo "true" || echo "false")
 
-        if [[ "$IS_SUCCESS" == "false" && "${{ inputs.is-optional }}" == "true" ]]; then
+        if [[ "$IS_SUCCESS" == "false" && "$IS_OPTIONAL" == "true" ]]; then
           echo "::warning::Test failed but is marked optional — treating as success."
           IS_SUCCESS=true
         fi
 
         echo "::group::Coverage report"
-        docker exec -t nemo_container_${{ github.run_id }} /opt/venv/bin/coverage report -i || true
+        docker exec -t "nemo_container_${GITHUB_RUN_ID}" /opt/venv/bin/coverage report -i || true
         echo "::endgroup::"
 
         if [[ "$IS_SUCCESS" == "true" ]]; then
           echo -e "\033[1;32m╔══════════════════════════════════════════════════════════════════════════╗\033[0m"
           echo -e "\033[1;32m║                                                                          ║\033[0m"
           echo -e "\033[1;32m║   ✅  PASSED                                                             ║\033[0m"
-          echo -e "\033[1;32m║   ${{ inputs.script }}\033[0m"
+          printf '\033[1;32m║   %s\033[0m\n' "$SCRIPT"
           echo -e "\033[1;32m║                                                                          ║\033[0m"
           echo -e "\033[1;32m╚══════════════════════════════════════════════════════════════════════════╝\033[0m"
-          echo "::notice title=Result::✅ ${{ inputs.script }} — PASSED"
+          printf '::notice title=Result::✅ %s — PASSED\n' "$SCRIPT"
           exit 0
         else
           echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════════════════╗\033[0m"
           echo -e "\033[1;31m║                                                                          ║\033[0m"
-          echo -e "\033[1;31m║   ❌  FAILED  (exit code: ${EXIT_CODE})                                  ║\033[0m"
-          echo -e "\033[1;31m║   ${{ inputs.script }}\033[0m"
+          printf '\033[1;31m║   ❌  FAILED  (exit code: %s)\033[0m\n' "$EXIT_CODE"
+          printf '\033[1;31m║   %s\033[0m\n' "$SCRIPT"
           echo -e "\033[1;31m║                                                                          ║\033[0m"
           echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════════════════╝\033[0m"
-          echo "::error title=Result::❌ ${{ inputs.script }} — FAILED (exit $EXIT_CODE)"
+          printf '::error title=Result::❌ %s — FAILED (exit %s)\n' "$SCRIPT" "$EXIT_CODE"
           exit 1
         fi
 
@@ -278,4 +311,4 @@ runs:
       if: always()
       shell: bash
       run: |
-        docker container rm -f nemo_container_${{ github.run_id }} || true
+        docker container rm -f "nemo_container_${GITHUB_RUN_ID}" || true
