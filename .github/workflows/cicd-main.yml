@@ -710,14 +710,22 @@ jobs:
           get_timeout() {
             local f="$1"
             local t
-            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
+            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2-)
+            if [[ -n "$t" && ! "$t" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::CI_TIMEOUT must be a positive integer." >&2
+              return 1
+            fi
             echo "${t:-30}"
           }
           get_runner() {
             local f="$1"
             local gpu_count
-            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
+            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2-)
             if [ -n "$gpu_count" ]; then
+              if [[ ! "$gpu_count" =~ ^[1-9][0-9]*$ ]]; then
+                echo "::error::GPU_COUNT must be a positive integer for H100." >&2
+                return 1
+              fi
               echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/"
             else
               echo "${RUNNER_PREFIX}"
@@ -958,14 +966,22 @@ jobs:
           get_timeout() {
             local f="$1"
             local t
-            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2)
+            t=$(grep -m1 '^# CI_TIMEOUT=' "$f" | cut -d= -f2-)
+            if [[ -n "$t" && ! "$t" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error::CI_TIMEOUT must be a positive integer." >&2
+              return 1
+            fi
             echo "${t:-30}"
           }
           get_runner() {
             local f="$1"
             local gpu_count
-            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2)
+            gpu_count=$(grep -m1 '^# GPU_COUNT=' "$f" | cut -d= -f2-)
             if [ -n "$gpu_count" ]; then
+              if [[ ! "$gpu_count" =~ ^x[1-9][0-9]*$ ]]; then
+                echo "::error::GPU_COUNT must be x followed by a positive integer for GB200." >&2
+                return 1
+              fi
               echo "nemo-ci-gcp-gpu-${gpu_count}"
             else
               echo "nemo-ci-gcp-gpu-x2"
