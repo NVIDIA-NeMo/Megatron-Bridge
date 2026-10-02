@@ -15,9 +15,11 @@
 import json
 import re
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Callable, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, Union, cast
 
 import torch
 import torch.distributed
@@ -48,6 +50,15 @@ import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+# Export policy is scoped to one conversion operation rather than stored on a
+# mapping instance. Some mappings (notably AutoMapping) create their concrete
+# delegate lazily while ``megatron_to_hf`` is running, so an instance property
+# would not reliably reach the object that performs the PP broadcast.
+_PIPELINE_STAGE_LOCAL_EXPORT: ContextVar[bool] = ContextVar(
+    "megatron_bridge_pipeline_stage_local_export", default=False
+)
 
 
 @dataclass(frozen=True)
@@ -261,6 +272,26 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # absent for some layers or configurations. Both bypass the hf_keys check in
         # `build_conversion_tasks`, which raises otherwise.
         self.allow_hf_name_mismatch = False
+
+    @classmethod
+    @contextmanager
+    def pipeline_stage_local_export(cls) -> Iterator[None]:
+        """Disable PP replication for the duration of one HF export.
+
+        In this mode ``broadcast_from_pp_rank`` and
+        ``broadcast_obj_from_pp_rank`` return the value local to the current
+        rank. TP/EP collectives remain enabled, so mappings still perform all
+        required shard reconstruction and HF layout conversion on the owning
+        pipeline stage.
+
+        The policy is held in a :class:`ContextVar` so it also applies to
+        mappings created lazily by wrappers such as :class:`AutoMapping`.
+        """
+        token = _PIPELINE_STAGE_LOCAL_EXPORT.set(True)
+        try:
+            yield
+        finally:
+            _PIPELINE_STAGE_LOCAL_EXPORT.reset(token)
 
     def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
         """Describe canonical local HF views for one mapped parameter.
@@ -622,6 +653,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 in the calling code).
         """
 
+        # PP-local export deliberately leaves non-owning stages with ``None``.
+        # The caller filters those tasks, while the owning stage continues into
+        # the normal TP/EP gathering and layout-conversion code below.
+        if _PIPELINE_STAGE_LOCAL_EXPORT.get():
+            return tensor
+
         # Fast-path when we are not using pipeline parallelism.
         if self.pp_size == 1:
             return tensor
@@ -709,6 +746,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         Raises:
             ValueError: If object does not exist on any rank.
         """
+        if _PIPELINE_STAGE_LOCAL_EXPORT.get():
+            return obj
+
         if self.pp_size == 1:
             return obj
 
@@ -1964,27 +2004,34 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Need to determine type even if module is None (different PP rank)
         assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
 
-        if self._mapping is None:
+        mapping = self._mapping
+        if mapping is None:
             if megatron_module is not None:
-                self._detected_type = self._detect_parallelism_type(megatron_module)
+                detected_type = self._detect_parallelism_type(megatron_module)
                 # Broadcast to other ranks
-                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
+                detected_type = self.broadcast_obj_from_pp_rank(detected_type, "detected_type")
             else:
                 # Receive from owning rank
-                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
-                if self._detected_type is None:
+                detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
+                if detected_type is None:
                     # PP group likely has 1 member - skipping.
                     return {}
 
             # If no PP rank detected a type (e.g. Megatron parameter without an
             # HF counterpart, such as MoE modules on dense layers created by
             # moe_layer_freq), skip export gracefully.
-            if self._detected_type is None:
+            if detected_type is None:
                 return {}
 
-            self._mapping = self._get_or_create_mapping(self._detected_type)
+            mapping = self._get_or_create_mapping(detected_type)
+            # A PP-local export skips this task on non-owning stages. Do not
+            # cache the lazy delegate only on the owner, or a later full export
+            # could enter different PP collectives on different ranks.
+            if not _PIPELINE_STAGE_LOCAL_EXPORT.get():
+                self._detected_type = detected_type
+                self._mapping = mapping
 
-        result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
+        result = mapping.megatron_to_hf(megatron_weights, megatron_module)
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:

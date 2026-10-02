@@ -48,6 +48,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import os
 import sys
 
@@ -55,6 +56,7 @@ import torch
 from rich.console import Console
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.conversion.model_bridge import _get_pp_rank
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
@@ -83,6 +85,93 @@ IGNORE_PRECISION_PARAMS = [
 
 # FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
+
+
+def _weight_signature(tensor: torch.Tensor) -> tuple[tuple[int, ...], str, str]:
+    """Return a compact, exact signature for a streamed weight."""
+    tensor = tensor.detach().cpu().contiguous()
+    digest = hashlib.sha256(tensor.view(torch.uint8).numpy().tobytes()).hexdigest()
+    return tuple(tensor.shape), str(tensor.dtype), digest
+
+
+def _verify_pipeline_stage_local_export(
+    bridge: AutoBridge,
+    megatron_model,
+    baseline: dict[str, tuple[tuple[int, ...], str, str]],
+) -> None:
+    """Verify that PP-stage streams reconstruct the full export across TP/EP replicas."""
+    local = {}
+    for name, weight in bridge.export_hf_weights(
+        megatron_model,
+        cpu=False,
+        show_progress=False,
+        pipeline_stage_local=True,
+    ):
+        if name in local:
+            raise ValueError(f"PP-local export yielded a duplicate tensor on this rank: {name}")
+        local[name] = _weight_signature(weight)
+    world_size = torch.distributed.get_world_size()
+    rank = torch.distributed.get_rank()
+    baselines = [None] * world_size
+    local_records = [None] * world_size
+    torch.distributed.all_gather_object(baselines, baseline)
+    torch.distributed.all_gather_object(local_records, (_get_pp_rank(megatron_model), local))
+
+    errors = None
+    if rank == 0:
+        errors = []
+        reference = baselines[0]
+        for other_rank, other in enumerate(baselines[1:], start=1):
+            if other != reference:
+                errors.append(f"full export on rank {other_rank} differs from rank 0")
+
+        stage_replicas = {}
+        for world_rank, (pp_rank, signatures) in enumerate(local_records):
+            stage_replicas.setdefault(pp_rank, []).append((world_rank, signatures))
+            for name, signature in signatures.items():
+                if reference.get(name) != signature:
+                    errors.append(f"rank {world_rank} PP-local tensor differs from baseline: {name}")
+
+        stage_streams = {}
+        for pp_rank, replicas in stage_replicas.items():
+            representative_rank, representative = replicas[0]
+            stage_streams[pp_rank] = representative
+            for replica_rank, replica in replicas[1:]:
+                if replica != representative:
+                    errors.append(
+                        f"PP stage {pp_rank} local stream differs between ranks "
+                        f"{representative_rank} and {replica_rank}"
+                    )
+
+        owners = {}
+        overlaps = {}
+        for owner_stage, signatures in stage_streams.items():
+            for name, signature in signatures.items():
+                if name in owners:
+                    overlaps.setdefault(name, [owners[name]]).append(owner_stage)
+                else:
+                    owners[name] = owner_stage
+
+        local_names = set(owners)
+        baseline_names = set(reference)
+        if overlaps:
+            errors.append(f"PP-local rank outputs overlap: {overlaps}")
+        if local_names != baseline_names:
+            errors.append(
+                f"PP-local union differs from baseline: "
+                f"missing={sorted(baseline_names - local_names)}, extra={sorted(local_names - baseline_names)}"
+            )
+        if not errors:
+            stage_counts = {pp_rank: len(signatures) for pp_rank, signatures in stage_streams.items()}
+            console.print(
+                f"[green]PP-local verification: stage_counts={stage_counts}, intersection=0, "
+                f"union={len(local_names)}, exact signatures matched[/green]"
+            )
+
+    payload = [errors]
+    torch.distributed.broadcast_object_list(payload, src=0)
+    if payload[0]:
+        raise ValueError("PP-local export mismatch: " + "; ".join(payload[0]))
 
 
 def _configure_slurm_distributed_environment() -> None:
@@ -165,6 +254,7 @@ def main(
     skip_save: bool = False,
     atol: float = 1e-1,
     rtol: float = 1e-5,
+    verify_pipeline_stage_local: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     _configure_slurm_distributed_environment()
@@ -257,7 +347,12 @@ def main(
     mismatch_samples: list[str] = []
     fp8_skip_count = 0
     fp8_skip_samples: list[str] = []
+    baseline_signatures = {} if verify_pipeline_stage_local else None
     for name, param in bridge.export_hf_weights(megatron_model, show_progress=False):
+        if baseline_signatures is not None:
+            if name in baseline_signatures:
+                raise ValueError(f"Full export yielded a duplicate tensor on this rank: {name}")
+            baseline_signatures[name] = _weight_signature(param)
         if is_rank_0:
             original_param = bridge.hf_pretrained.state[name]
             compare_param = param
@@ -310,6 +405,10 @@ def main(
                 fp8_skip_samples,
             )
         raise ValueError("Weight mismatch detected")
+
+    if verify_pipeline_stage_local:
+        assert baseline_signatures is not None
+        _verify_pipeline_stage_local_export(bridge, megatron_model, baseline_signatures)
 
     if skip_save:
         if is_rank_0:
@@ -389,6 +488,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for tensor comparison")
     parser.add_argument("--rtol", type=float, default=1e-5, help="Relative tolerance for tensor comparison")
+    parser.add_argument(
+        "--verify-pipeline-stage-local",
+        action="store_true",
+        help="Verify PP-local stage streams across TP/EP replicas against the full export",
+    )
     return parser
 
 
@@ -409,6 +513,7 @@ if __name__ == "__main__":
         skip_save=args.skip_save,
         atol=args.atol,
         rtol=args.rtol,
+        verify_pipeline_stage_local=args.verify_pipeline_stage_local,
     )
 
     if torch.distributed.is_initialized():

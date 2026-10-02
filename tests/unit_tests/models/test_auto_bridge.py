@@ -1715,6 +1715,20 @@ class TestAutoBridge:
                         weight_dtype=None,
                     )
 
+                    mock_model_bridge.stream_weights_megatron_to_hf.reset_mock()
+                    mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(mock_weight_iter)
+                    list(bridge.export_hf_weights(mock_megatron_model, cpu=False, pipeline_stage_local=True))
+                    mock_model_bridge.stream_weights_megatron_to_hf.assert_called_once_with(
+                        mock_megatron_model,
+                        mock_hf_model,
+                        cpu=False,
+                        show_progress=True,
+                        conversion_tasks=None,
+                        merge_adapter_weights=True,
+                        weight_dtype=None,
+                        pipeline_stage_local=True,
+                    )
+
     def test_export_with_megatron_names_rejects_streamers_without_the_flag(self):
         """A bridge whose streaming overrides lack ``with_megatron_names`` fails before streaming."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
@@ -1762,6 +1776,8 @@ class TestAutoBridge:
                     # Python's generic unexpected-keyword error from inside the generator.
                     with pytest.raises(TypeError, match="stream_weights_megatron_to_hf does not accept"):
                         bridge.export_hf_weights([object()], cpu=True, with_megatron_names=True)
+                    with pytest.raises(TypeError, match="pipeline_stage_local"):
+                        bridge.export_hf_weights([object()], cpu=True, pipeline_stage_local=True)
                     with pytest.raises(TypeError, match="stream_adapter_weights_megatron_to_hf does not accept"):
                         bridge.export_adapter_weights([object()], with_megatron_names=True)
 

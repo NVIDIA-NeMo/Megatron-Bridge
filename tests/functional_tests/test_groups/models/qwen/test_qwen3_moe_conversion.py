@@ -242,11 +242,16 @@ class TestQwen3MoEConversion:
             str(pp),
             "--ep",
             str(ep),
+            "--verify-pipeline-stage-local",
         ]
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+                timeout=300,
             )
 
             # Check that the conversion completed successfully
@@ -296,6 +301,7 @@ class TestQwen3MoEConversion:
             assert saved_config[num_experts_key] == 4, "Number of experts should match toy config"
             assert saved_config["num_experts_per_tok"] == 4, "Number of experts per token should match toy config"
             assert saved_config["moe_intermediate_size"] == 768, "MoE intermediate size should match toy config"
+            assert "PP-local verification:" in result.stdout
 
             print(f"SUCCESS: Qwen3 MoE {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")

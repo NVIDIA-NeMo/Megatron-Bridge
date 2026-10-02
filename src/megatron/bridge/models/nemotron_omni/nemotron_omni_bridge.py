@@ -339,6 +339,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         merge_adapter_weights: bool = True,
         weight_dtype: torch.dtype | None = None,
         with_megatron_names: bool = False,
+        pipeline_stage_local: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
         """Export model weights and preserve immutable source-only buffers."""
         yield from super().stream_weights_megatron_to_hf(
@@ -350,7 +351,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
             with_megatron_names=with_megatron_names,
+            pipeline_stage_local=pipeline_stage_local,
         )
+        if not self._should_emit_hf_passthrough(megatron_model, pipeline_stage_local=pipeline_stage_local):
+            return
         # Passthrough tensors are copied straight from the HF checkpoint and have no
         # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
         passthrough_sources = () if with_megatron_names else None

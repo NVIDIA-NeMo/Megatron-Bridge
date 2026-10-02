@@ -316,6 +316,23 @@ def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: obj
     )
 
 
+def _check_pipeline_stage_local_support(stream_fn: Callable[..., Any], owner: object) -> None:
+    """Fail early when a streaming override cannot accept PP-local export."""
+    try:
+        parameters = inspect.signature(stream_fn).parameters
+    except (TypeError, ValueError):
+        return
+    if "pipeline_stage_local" in parameters or any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    ):
+        return
+    raise TypeError(
+        f"{type(owner).__name__}.{getattr(stream_fn, '__name__', 'stream_weights')} does not accept "
+        "'pipeline_stage_local'; a bridge that overrides the streaming export must forward this flag "
+        "before its exported weights can use pipeline-stage-local mode."
+    )
+
+
 class AutoBridge(Generic[MegatronModelT]):
     """
     Automatically select and instantiate the appropriate bridge for a model.
@@ -800,13 +817,15 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
+        pipeline_stage_local: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
 
         This method yields weight tensors in HuggingFace format, handling the
         gathering of distributed tensors and format conversion. It's useful for
-        streaming weight export or custom processing. All ranks get full tensors.
+        streaming weight export or custom processing. By default all ranks get full tensors;
+        set ``pipeline_stage_local=True`` to yield only the current pipeline stage's tensors.
 
         If the model contains LoRA adapters, they will be automatically merged
         into the base weights before export. This ensures the exported model
@@ -831,6 +850,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 a grouped-expert export, and none for HF-only passthrough tensors. Bridges that
                 override ``stream_weights_megatron_to_hf`` must accept the flag; otherwise a
                 ``TypeError`` is raised before any weight is streamed.
+            pipeline_stage_local: Export only parameters owned by the current pipeline stage and
+                suppress cross-stage PP broadcasts. TP/EP gathering and HF layout conversion remain
+                enabled. Defaults to False. Bridges that override the streamer must accept this
+                flag when it is enabled.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor), or HFSourcedWeightTuple
@@ -858,6 +881,8 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = self._model_bridge
         if with_megatron_names:
             _check_with_megatron_names_support(bridge.stream_weights_megatron_to_hf, bridge)
+        if pipeline_stage_local:
+            _check_pipeline_stage_local_support(bridge.stream_weights_megatron_to_hf, bridge)
         return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
@@ -868,6 +893,7 @@ class AutoBridge(Generic[MegatronModelT]):
             weight_dtype=weight_dtype,
             # Only forward the flag when set so bridges with a custom streamer keep working by default.
             **({"with_megatron_names": True} if with_megatron_names else {}),
+            **({"pipeline_stage_local": True} if pipeline_stage_local else {}),
         )
 
     def export_hf_weights_modelopt(

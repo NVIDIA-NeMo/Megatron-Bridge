@@ -220,11 +220,16 @@ class TestQwen2Conversion:
             str(tp),
             "--pp",
             str(pp),
+            "--verify-pipeline-stage-local",
         ]
 
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+                timeout=300,
             )
 
             # Check that the conversion completed successfully
@@ -257,6 +262,8 @@ class TestQwen2Conversion:
             assert saved_config["model_type"] == "qwen2", "Model type should be qwen2"
             assert saved_config["hidden_size"] == 896, "Hidden size should match toy config"
             assert saved_config["num_attention_heads"] == 14, "Number of attention heads should match toy config"
+
+            assert "PP-local verification:" in result.stdout
 
             print(f"SUCCESS: Qwen2 {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")

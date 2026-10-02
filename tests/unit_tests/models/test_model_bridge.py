@@ -48,6 +48,35 @@ class DummyBridge(MegatronModelBridge):
         return MegatronMappingRegistry()
 
 
+@pytest.mark.parametrize(
+    ("pipeline_stage_local", "pp_rank", "expected"),
+    [(False, 1, True), (True, 0, True), (True, 1, False)],
+)
+def test_hf_passthrough_has_canonical_pipeline_owner(monkeypatch, pipeline_stage_local, pp_rank, expected):
+    monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: pp_rank)
+    assert DummyBridge()._should_emit_hf_passthrough([], pipeline_stage_local=pipeline_stage_local) is expected
+
+
+@pytest.mark.parametrize(
+    ("pre_process", "mtp_process", "expected"),
+    [(False, True, True), (True, True, False), (False, False, False)],
+)
+def test_mtp_duplicate_embedding_source_is_excluded(pre_process, mtp_process, expected):
+    model = SimpleNamespace(
+        config=SimpleNamespace(pipeline_model_parallel_size=2),
+        pre_process=pre_process,
+        language_model=SimpleNamespace(mtp_process=mtp_process),
+    )
+
+    assert (
+        DummyBridge._is_mtp_duplicate_embedding_source(
+            "embedding.word_embeddings.weight",
+            model,
+        )
+        is expected
+    )
+
+
 def test_weight_conversion_task_round_trips_local_hf_views():
     mapping = GatedMLPMapping(
         "decoder.mlp.linear_fc1.weight",
@@ -608,6 +637,200 @@ def _patch_stream_weights_megatron_to_hf_basics(
         "megatron.bridge.models.conversion.model_bridge.parallel_state.get_expert_model_parallel_world_size",
         lambda: expert_parallel_size,
     )
+
+
+def test_stream_weights_megatron_to_hf_pipeline_stage_local_filters_non_owned_tasks(monkeypatch):
+    bridge = DummyBridge()
+    source = torch.ones(2, 2)
+    calls = []
+
+    class DummyMapping:
+        is_grouped_export = False
+        hf_param = "hf.weight"
+
+        def __init__(self, hf_name):
+            self.hf_name = hf_name
+
+        def megatron_to_hf(self, weight, module):
+            calls.append(
+                (
+                    self.hf_name,
+                    weight,
+                    module,
+                    param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get(),
+                )
+            )
+            return {self.hf_name: weight}
+
+    owned_task = WeightConversionTask(
+        param_name="decoder.layers.0.weight",
+        global_param_name="decoder.layers.0.weight",
+        mapping=DummyMapping("hf.layers.0.weight"),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=object(),
+        param_weight=source,
+    )
+    remote_task = WeightConversionTask(
+        param_name="decoder.layers.1.weight",
+        global_param_name="decoder.layers.1.weight",
+        mapping=DummyMapping("hf.layers.1.weight"),
+        pp_rank=1,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=None,
+    )
+    bridge._cached_param_owners = {
+        owned_task.global_param_name: 0,
+        remote_task.global_param_name: 1,
+    }
+    monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: 0)
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    weights = bridge.stream_weights_megatron_to_hf(
+        [Mock()],
+        SimpleNamespace(),
+        cpu=False,
+        show_progress=False,
+        conversion_tasks=[owned_task, remote_task],
+        merge_adapter_weights=False,
+        pipeline_stage_local=True,
+    )
+    weight = next(weights)
+
+    # The local policy is active while the mapping executes, but must be reset
+    # before the streaming generator yields control back to its caller.
+    assert calls[0][3] is True
+    assert param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get() is False
+    with pytest.raises(StopIteration):
+        next(weights)
+
+    assert weight[0] == "hf.layers.0.weight"
+    assert torch.equal(weight[1], source)
+    assert len(calls) == 1
+    assert calls[0][0] == "hf.layers.0.weight"
+    assert torch.equal(calls[0][1], source)
+    assert calls[0][2] is owned_task.megatron_module
+
+
+@pytest.mark.parametrize(("pp_rank", "expected_names"), [(0, ["hf.shared.weight"]), (1, [])])
+def test_pipeline_stage_local_uses_canonical_owner_for_duplicate_parameters(
+    monkeypatch,
+    pp_rank,
+    expected_names,
+):
+    bridge = DummyBridge()
+    bridge._cached_param_owners = {"decoder.shared.weight": 0}
+    source = torch.ones(2, 2)
+    calls = []
+
+    class DummyMapping:
+        is_grouped_export = False
+        hf_param = "hf.shared.weight"
+
+        def megatron_to_hf(self, weight, module):
+            calls.append((weight, module))
+            return {self.hf_param: weight}
+
+    task = WeightConversionTask(
+        param_name="decoder.shared.weight",
+        global_param_name="decoder.shared.weight",
+        mapping=DummyMapping(),
+        pp_rank=pp_rank,
+        vp_stage=0,
+        megatron_module=object(),
+        param_weight=source,
+    )
+    monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: pp_rank)
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=False,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=False,
+            pipeline_stage_local=True,
+        )
+    )
+
+    assert [weight.param_name for weight in weights] == expected_names
+    assert len(calls) == (1 if pp_rank == 0 else 0)
+
+
+def test_stream_weights_megatron_to_hf_pipeline_stage_local_covers_adapter_materialization(monkeypatch):
+    bridge = DummyBridge()
+    source = torch.ones(2, 2)
+    observed_context = []
+
+    class DummyMapping:
+        is_grouped_export = False
+        hf_param = "hf.weight"
+
+        def megatron_to_hf(self, weight, module):
+            return {"hf.weight": weight}
+
+    task = WeightConversionTask(
+        param_name="decoder.layers.0.linear.to_wrap.weight",
+        global_param_name="decoder.layers.0.linear.to_wrap.weight",
+        mapping=DummyMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=object(),
+        param_weight=source,
+    )
+    bridge._cached_param_owners = {task.global_param_name: 0}
+    monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: 0)
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "build_adapter_conversion_tasks",
+        lambda self, *_args: {"decoder.layers.0.linear": [object()]},
+    )
+
+    def materialize_adapter_weights(self, adapter_tasks):
+        observed_context.append(param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get())
+        return []
+
+    monkeypatch.setattr(DummyBridge, "materialize_adapter_weights", materialize_adapter_weights)
+    monkeypatch.setattr(
+        DummyBridge,
+        "_merge_lora_adapter_weights",
+        lambda self, _model, converted, _adapters: converted,
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=False,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=True,
+            pipeline_stage_local=True,
+        )
+    )
+
+    assert [weight.param_name for weight in weights] == ["hf.weight"]
+    assert observed_context == [True]
+    assert param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get() is False
 
 
 def test_stream_weights_megatron_to_hf_custom_export_preserves_device_when_cpu_false(monkeypatch):

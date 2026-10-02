@@ -259,12 +259,19 @@ def test_export_with_megatron_names_marks_passthrough_weights_sourceless(monkeyp
         yield HFSourcedWeightTuple("language_model.weight", language, ("decoder.weight",))
 
     monkeypatch.setattr(MegatronModelBridge, "stream_weights_megatron_to_hf", fake_stream)
+    monkeypatch.setattr(KimiK3Bridge, "_should_emit_hf_passthrough", lambda *_args, **_kwargs: True)
 
     result = list(
-        KimiK3Bridge().stream_weights_megatron_to_hf([], SimpleNamespace(state=_State()), with_megatron_names=True)
+        KimiK3Bridge().stream_weights_megatron_to_hf(
+            [],
+            SimpleNamespace(state=_State()),
+            with_megatron_names=True,
+            pipeline_stage_local=True,
+        )
     )
 
     assert seen_kwargs["with_megatron_names"] is True
+    assert seen_kwargs["pipeline_stage_local"] is True
     assert [type(item) for item in result] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
     assert result[0].megatron_param_names == ("decoder.weight",)
     assert result[1].param_name == "vision_tower.encoder.weight"
