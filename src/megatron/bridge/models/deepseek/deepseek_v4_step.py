@@ -78,7 +78,11 @@ _DSV4_LEGACY_PACKED_SEQ_PARAM_KEYS = (
 
 
 def _packed_metadata_for_forward(batch: dict) -> dict | None:
-    """Extract global packed-sequence boundaries for native DSv4 attention."""
+    """Extract global packed-sequence boundaries for native DSv4 attention.
+
+    Unlike gpt_step, this does not forward ``padding_mask`` to the model, so
+    MoE router statistics still count alignment padding in DSv4 packed batches.
+    """
     if batch.get("cu_seqlens_q") is not None:
         return {k: batch[k] for k in _DSV4_CURRENT_PACKED_SEQ_PARAM_KEYS if batch.get(k) is not None}
     if batch.get("cu_seqlens") is not None:
