@@ -4,6 +4,8 @@ Nemotron 3.5 Super VL combines a Nemotron-H hybrid language decoder with a RADIO
 
 Megatron Bridge provides checkpoint conversion and pretraining, SFT, and PEFT recipes. The verification records below distinguish verified configurations from pending checks; adding a recipe does not imply that every workflow is verified.
 
+Python recipes live in `megatron.bridge.recipes.nemotronh_multimodal`, the shared recipe package for Nemotron Omni and Super VL. Existing imports through `megatron.bridge.recipes.nemotron_omni` remain compatible aliases; CLI recipe names such as `nemotron_35_super_vl_sft_config` are unchanged.
+
 The `freeze_vision_model`, `freeze_vision_projection`, and `freeze_language_model` provider options independently control which model components are trained. The Super-VL SFT recipes freeze the vision encoder while keeping the projection and language model trainable.
 
 The records below contain refreshed conversion, inference, and training verification with the corrected training callbacks and shared-MTP objective. Verification is scoped to each recorded workflow and hardware configuration; the GB200 pretrain/resume comparison and stronger visual diagnostics are not all passing. The public checkpoint revision remains unbound, and functional throughput measurements are not optimized-performance claims.
