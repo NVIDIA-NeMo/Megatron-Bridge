@@ -96,15 +96,20 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
-    """Generate a bridge-specific pipeline layout when the model requires one."""
+    """Generate a bridge-specific pipeline layout when the model requires one.
+
+    A bridge returns ``None`` when the default pipeline split already applies.
+    """
     if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
         return False
-    hf_config = bridge.hf_pretrained.config
-    num_layers = hf_config.num_hidden_layers
-    mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
-    model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
-        num_layers, pp, mtp_layers
-    )
+    num_layers = bridge.hf_pretrained.config.num_hidden_layers
+    # The layout must match the model being built, which may omit the checkpoint's MTP layers.
+    model_config = getattr(model_provider, "transformer", model_provider)
+    mtp_layers = getattr(model_config, "mtp_num_layers", None) or 0
+    layout = bridge._model_bridge.generate_pipeline_layout(num_layers, pp, mtp_layers)
+    if layout is None:
+        return False
+    model_provider.pipeline_model_parallel_layout = layout
     print_rank_0(f"Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp_layers} MTP)")
     return True
 
@@ -125,7 +130,11 @@ def _rebalance_pipeline_layout(saved_layout: list[list[str]], pp: int) -> list[l
 def _maybe_restore_pipeline_layout(
     bridge: AutoBridge, model_provider: GPTModelProvider, megatron_path: str, pp: int
 ) -> None:
-    """Restore a serialized pipeline layout or regenerate it for export."""
+    """Restore a serialized pipeline layout or regenerate it for export.
+
+    The provider adopts the checkpoint's MTP layer count because export builds the model from the
+    checkpoint config, so a restored or regenerated layout must place the MTP layers that model has.
+    """
     checkpoint_path = Path(megatron_path)
     iteration_paths = [path for path in checkpoint_path.glob("iter_*") if path.is_dir()]
 
@@ -144,6 +153,8 @@ def _maybe_restore_pipeline_layout(
         with config_path.open() as config_file:
             config = yaml.safe_load(config_file) or {}
         model_config = config.get("model", {})
+        if "mtp_num_layers" in model_config:
+            model_provider.mtp_num_layers = model_config["mtp_num_layers"]
         saved_layout = model_config.get("pipeline_model_parallel_layout")
         saved_pp = model_config.get("pipeline_model_parallel_size")
         is_valid_layout = isinstance(saved_layout, list) and all(isinstance(stage, list) for stage in saved_layout)
