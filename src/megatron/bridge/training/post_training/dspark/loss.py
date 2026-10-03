@@ -84,7 +84,9 @@ class DSparkForwardOutput:
             ``[batch, num_blocks, block_size]``.
         eval_mask: Bool/float supervision mask ``[batch, num_blocks, block_size]``
             (a block is a contiguous, in-bounds, loss-enabled prefix).
-        block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``.
+        block_keep_mask: Kept-anchor mask ``[batch, num_blocks]``. Dropped anchors
+            are excluded from every loss term, from ``num_tokens``, and from the
+            acceptance metrics, independently of what ``eval_mask`` says.
         confidence_pred: Optional per-position acceptance logit
             ``[batch, num_blocks, block_size]``.
         aligned_target_logits: Optional target next-token logits
@@ -253,10 +255,14 @@ def dspark_loss(
             ``aligned_target_logits``.
     """
     draft_logits = outputs.draft_logits
-    weight = _loss_weight_mask(outputs.eval_mask, loss_decay_gamma)  # [B, N, L]
+    # A position is supervised iff it is eval-masked AND its anchor was kept. A
+    # dropped anchor must not receive gradient or enter the diagnostics, whatever
+    # its eval_mask says, so one combined mask drives the loss weight, the token
+    # count, and the acceptance metrics alike.
+    supervised = outputs.eval_mask.to(torch.float32) * outputs.block_keep_mask.to(torch.float32).unsqueeze(-1)
+    weight = _loss_weight_mask(supervised, loss_decay_gamma)  # [B, N, L]
     weight_sum = weight.sum()
-    eval_mask = outputs.eval_mask.to(torch.float32)
-    num_tokens = eval_mask.sum().detach().to(torch.int)
+    num_tokens = supervised.sum().detach().to(torch.int)
 
     has_confidence = outputs.confidence_pred is not None
     target_logits = outputs.aligned_target_logits
@@ -300,13 +306,11 @@ def dspark_loss(
     }
     if accept_rate is not None:
         with torch.no_grad():
-            report.update(_acceptance_report(outputs, eval_mask, accept_rate))
+            report.update(_acceptance_report(supervised, accept_rate))
     return loss, num_tokens, report
 
 
-def _acceptance_report(
-    outputs: DSparkForwardOutput, eval_mask: torch.Tensor, accept_rate: torch.Tensor
-) -> dict[str, torch.Tensor]:
+def _acceptance_report(supervised: torch.Tensor, accept_rate: torch.Tensor) -> dict[str, torch.Tensor]:
     """Analytical acceptance diagnostics as reducible ``[numerator, denominator]`` pairs.
 
     ``accept_rate`` (``= 1 - 0.5 * L1``) is the per-position acceptance probability.
@@ -315,17 +319,18 @@ def _acceptance_report(
     anchor token.
 
     Args:
-        outputs: The forward outputs (for ``block_keep_mask``).
-        eval_mask: The float supervision mask ``[batch, num_blocks, block_size]``.
+        supervised: The combined eval-mask-and-kept-anchor float mask
+            ``[batch, num_blocks, block_size]``. Dropped anchors are already zero
+            here, so they contribute to neither numerator nor denominator.
         accept_rate: Per-position acceptance ``[batch, num_blocks, block_size]``.
 
     Returns:
         ``{"dspark accept rate": pair, "dspark tau": pair}``.
     """
-    valid_accept = accept_rate * eval_mask
-    valid_blocks = (outputs.block_keep_mask.bool() & (eval_mask > 0).any(dim=-1)).to(torch.float32)
+    valid_accept = accept_rate * supervised
+    valid_blocks = (supervised > 0).any(dim=-1).to(torch.float32)
     tau_per_block = valid_accept.cumprod(dim=-1).sum(dim=-1) + 1.0
     return {
-        "dspark accept rate": _pair(valid_accept.sum(), eval_mask.sum()),
+        "dspark accept rate": _pair(valid_accept.sum(), supervised.sum()),
         "dspark tau": _pair((tau_per_block * valid_blocks).sum(), valid_blocks.sum()),
     }
