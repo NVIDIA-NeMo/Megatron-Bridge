@@ -28,6 +28,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.dev_compat import set_default_log_ranks
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
     EXPERT_VIEW_NAME,
     build_hypercomm_grids,
@@ -38,7 +39,6 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 from megatron.bridge.models.megatron_mimo.megatron_mimo_ddp import wrap_megatron_mimo_model_distributed
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.utils.common_utils import set_default_log_ranks
 
 
 if TYPE_CHECKING:

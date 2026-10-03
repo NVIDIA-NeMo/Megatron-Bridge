@@ -45,6 +45,7 @@ from megatron.core.utils import (
     is_torch_min_version,
 )
 
+from megatron.bridge.dev_compat import set_default_log_ranks
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -58,7 +59,6 @@ from megatron.bridge.utils.common_utils import (
     get_master_port_safe,
     get_rank_safe,
     get_world_size_safe,
-    set_default_log_ranks,
 )
 
 

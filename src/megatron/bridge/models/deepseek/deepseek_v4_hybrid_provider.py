@@ -35,6 +35,7 @@ the direct MLA field names.
 
 from dataclasses import dataclass
 
+from megatron.bridge.dev_compat import MCORE_HYBRID_DSV4_STACK_SPEC
 from megatron.bridge.models.hybrid.hybrid_provider import (
     HybridModelProvider,
     transformer_engine_hybrid_stack_spec,
@@ -44,16 +45,14 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 
 def deepseek_v4_hybrid_stack_spec(config: HybridModelProvider):
     """Resolve the richest DSv4 hybrid stack supported by the active MCore pin."""
-    try:
-        from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_dsv4_stack_spec
-    except ImportError:
+    if MCORE_HYBRID_DSV4_STACK_SPEC is None:
         return transformer_engine_hybrid_stack_spec()
 
     from megatron.core.transformer import ModuleSpec
 
-    if isinstance(hybrid_dsv4_stack_spec, ModuleSpec):
-        return hybrid_dsv4_stack_spec
-    return hybrid_dsv4_stack_spec(config)
+    if isinstance(MCORE_HYBRID_DSV4_STACK_SPEC, ModuleSpec):
+        return MCORE_HYBRID_DSV4_STACK_SPEC
+    return MCORE_HYBRID_DSV4_STACK_SPEC(config)
 
 
 @dataclass

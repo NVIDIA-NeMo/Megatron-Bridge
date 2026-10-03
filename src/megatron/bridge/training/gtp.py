@@ -20,24 +20,7 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 
-
-def get_gtp_api() -> Any | None:
-    """Return MCore's optional GTP API when the selected core provides it."""
-    try:
-        from megatron.core.tensor_parallel import gtp_api
-    except ImportError:
-        return None
-    return gtp_api
-
-
-def get_gtp_native_fp8_load_context(module: torch.nn.Module):
-    """Return the native-FP8 load context, or a no-op on cores without GTP."""
-    gtp_api = get_gtp_api()
-    if gtp_api is None or not gtp_api.HAVE_GTP:
-        from contextlib import nullcontext
-
-        return nullcontext()
-    return gtp_api.gtp_native_fp8_load_context(module)
+from megatron.bridge.dev_compat import get_gtp_api
 
 
 def get_transformer_config(model_config: Any) -> Any:

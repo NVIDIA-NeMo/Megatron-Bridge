@@ -62,6 +62,7 @@ from megatron.bridge.data.builders.gpt_sft import (
 )
 from megatron.bridge.data.builders.mock_vlm_sft import MockVLMSFTDatasetConfig
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
+from megatron.bridge.dev_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -71,7 +72,6 @@ from megatron.bridge.models.transformer_config import _enable_safe_hybridep_disp
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
