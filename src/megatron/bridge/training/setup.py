@@ -38,6 +38,7 @@ from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
+from megatron.bridge.dev_compat import MEGATRON_FSDP_TYPES, MEGATRON_FSDP_V2_TYPES
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -59,7 +60,6 @@ from megatron.bridge.training.checkpointing import (
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES, MEGATRON_FSDP_V2_TYPES
 from megatron.bridge.training.gtp import (
     classify_gtp_remat_chains,
     configure_gtp_remat,
@@ -169,9 +169,7 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
-    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
-        cfg.checkpoint.load, cfg.checkpoint
-    )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
 
     if cfg.peft is not None:
         load_checkpoint_exists = cfg.checkpoint.load is not None and (
@@ -398,9 +396,7 @@ def setup(
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
                 ckpt_step = None
             else:
-                raise RuntimeError(
-                    "No checkpoint source is available for ModelOpt state restoration"
-                )
+                raise RuntimeError("No checkpoint source is available for ModelOpt state restoration")
 
             if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
                 raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
@@ -586,7 +582,9 @@ def _register_setup_pre_wrap_hook(
             ]
         else:
             model_cfg._pre_wrap_hooks[:] = [
-                registered_hook for registered_hook in model_cfg._pre_wrap_hooks if registered_hook is not previous_hook
+                registered_hook
+                for registered_hook in model_cfg._pre_wrap_hooks
+                if registered_hook is not previous_hook
             ]
 
     setup_hooks[setup_hook_name] = hook
@@ -657,8 +655,7 @@ def _update_model_config_funcs(
     # every backward finalizes the DP-outer axis and only the last microbatch's gradient
     # reaches the optimizer.
     if isinstance(model[0], MEGATRON_FSDP_V2_TYPES) or (
-        isinstance(model[0], (DistributedDataParallel, *MEGATRON_FSDP_TYPES))
-        and ddp_config.overlap_grad_reduce
+        isinstance(model[0], (DistributedDataParallel, *MEGATRON_FSDP_TYPES)) and ddp_config.overlap_grad_reduce
     ):
         assert model_config.no_sync_func is None, (
             "config.no_sync_func must be None when the wrapper supplies its own no_sync "

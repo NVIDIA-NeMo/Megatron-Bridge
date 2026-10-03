@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from megatron.core.tensor_parallel.random import initialize_rng_tracker
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.dev_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.training.config import (
@@ -39,7 +40,6 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     runtime_config_update,
 )
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.state import GlobalState

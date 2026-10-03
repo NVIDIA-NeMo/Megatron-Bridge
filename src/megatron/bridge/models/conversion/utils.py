@@ -49,7 +49,7 @@ def unwrap_model(model, module_instances=None):
         from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
         from megatron.core.transformer.module import Float16Module
 
-        from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+        from megatron.bridge.dev_compat import MEGATRON_FSDP_TYPES
 
         module_instances = (
             DDP,
