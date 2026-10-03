@@ -63,7 +63,9 @@ def test_native_router_bias_survives_peft_checkpoint_and_merge(tmp_path):
     if owns_parallel:
         parallel_state.initialize_model_parallel()
     try:
-        groups = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["tp", "cp", "tp_cp", "tp_dp_cp", "dp_cp"])
+        groups = ProcessGroupCollection.use_mpu_process_groups(
+            required_pgs=["tp", "cp", "tp_cp", "tp_dp_cp", "dp_cp", "ep", "expt_tp", "expt_dp"]
+        )
         torch.manual_seed(1234)
         torch.cuda.manual_seed(1234)
         config = TransformerConfig(

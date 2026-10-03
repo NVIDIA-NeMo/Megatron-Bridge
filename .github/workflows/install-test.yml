@@ -204,6 +204,13 @@ jobs:
           echo "PATH=$HOME/.local/bin:$PATH:$CUDA_HOME/bin" | tee -a "$GITHUB_ENV"
           echo "CUDACXX=/usr/local/cuda/bin/nvcc" | tee -a "$GITHUB_ENV"
           echo "TORCH_CUDA_ARCH_LIST=6.0;6.1;7.0;7.5;8.0;8.6;9.0" | tee -a "$GITHUB_ENV"
+          # This AMD64 install lane runs on Hopper. Restrict TE's source build to that target and
+          # parallelize its per-source GPU targets so the install completes within the runner budget.
+          echo "NVTE_CUDA_ARCHS=90" | tee -a "$GITHUB_ENV"
+          echo "NVTE_BUILD_THREADS_PER_JOB=4" | tee -a "$GITHUB_ENV"
+          echo "NVTE_BUILD_MAX_JOBS=10" | tee -a "$GITHUB_ENV"
+          echo "NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1" | tee -a "$GITHUB_ENV"
+          echo "NVTE_WITH_NCCL_EP=0" | tee -a "$GITHUB_ENV"
 
       - name: Verify MCore version before install
         if: ${{ github.event.inputs.mcore_commit != '' }}

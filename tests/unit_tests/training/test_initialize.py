@@ -538,26 +538,20 @@ class TestSetupFlightRecorderEnv:
 def test_torch_dist_init_resets_default_logging_ranks(lazy):
     from types import SimpleNamespace
 
-    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
-
     from megatron.bridge.training.initialize import torch_dist_init
 
-    original = get_default_log_ranks()
-    try:
-        set_default_log_ranks({0, 4})
-        with (
-            patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
-            patch("megatron.bridge.training.initialize._set_random_seed"),
-            patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
-            patch("megatron.bridge.training.initialize.parallel_state"),
-        ):
-            model = SimpleNamespace(
-                num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
-            )
-            result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
-            assert get_default_log_ranks() == (0,)
-            if lazy:
-                result()
-                assert get_default_log_ranks() == (0,)
-    finally:
-        set_default_log_ranks(original)
+    with (
+        patch("megatron.bridge.training.initialize._initialize_distributed", return_value=Mock()),
+        patch("megatron.bridge.training.initialize._set_random_seed"),
+        patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0),
+        patch("megatron.bridge.training.initialize.parallel_state"),
+        patch("megatron.bridge.training.initialize.set_default_log_ranks") as mock_set_default_log_ranks,
+    ):
+        model = SimpleNamespace(
+            num_moe_experts=None, cuda_graph_impl="none", tp_comm_overlap=False, tensor_model_parallel_size=1
+        )
+        result = torch_dist_init(model, SimpleNamespace(lazy_mpu_init=lazy), Mock(), 1, 1, None, None, False)
+        mock_set_default_log_ranks.assert_called_once_with({0})
+        if lazy:
+            result()
+            mock_set_default_log_ranks.assert_called_once_with({0})

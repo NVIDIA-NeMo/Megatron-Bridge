@@ -16,7 +16,7 @@
 import os
 import pickle
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -3617,10 +3617,12 @@ class TestLoadModelStateDictHelper:
 
     @pytest.fixture(autouse=True)
     def _disable_gtp_load_context(self, monkeypatch):
-        monkeypatch.setattr("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", False)
+        monkeypatch.setattr(
+            "megatron.bridge.training.checkpointing.get_gtp_native_fp8_load_context",
+            lambda _module: nullcontext(),
+        )
 
-    @patch("megatron.core.tensor_parallel.gtp_api.gtp_native_fp8_load_context", create=True)
-    @patch("megatron.core.tensor_parallel.gtp_api.HAVE_GTP", True)
+    @patch("megatron.bridge.training.checkpointing.get_gtp_native_fp8_load_context")
     def test_load_model_state_dict_wraps_gtp_native_fp8_loads(self, mock_load_context):
         module = Mock()
         load_return = Mock(missing_keys=[], unexpected_keys=[])
@@ -4901,6 +4903,40 @@ class TestCheckpointPathOverride:
         mock_dist_ckpt.load.assert_called_once()
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
+
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
+    @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
+    def test_load_global_dist_applies_gtp_padding_compat(self, mock_dist_ckpt, mock_strategy_cls):
+        from types import SimpleNamespace
+
+        from megatron.bridge.training import checkpointing
+
+        mock_strategy_cls.return_value = Mock()
+        mock_dist_ckpt.load.return_value = {"model": "sharded_data"}
+        mock_pg = Mock()
+        mock_pg.dp_cp = Mock()
+        sharded_state_dict = {"model": {}}
+        mock_resolve_gtp = Mock(return_value=32)
+        mock_grant_shape_mismatch = Mock()
+
+        with (
+            patch.object(checkpointing, "resolve_gtp_pad_for_alignment", mock_resolve_gtp),
+            patch.object(checkpointing, "grant_shape_mismatch_for_gtp_padding", mock_grant_shape_mismatch),
+        ):
+            checkpointing._load_global_dist_base_checkpoint(
+                load_dir="/checkpoints",
+                ckpt_cfg=CheckpointConfig(),
+                rank0=False,
+                sharded_state_dict=sharded_state_dict,
+                iteration=None,
+                release=False,
+                checkpoint_path_override="/direct/iter_0001000",
+                pg_collection=mock_pg,
+                cfg=SimpleNamespace(model=SimpleNamespace(fp4=True, fp8_recipe="mxfp8", fp8=True)),
+            )
+
+        mock_resolve_gtp.assert_called_once_with(fp4=True, fp8_recipe="mxfp8", fp8=True)
+        mock_grant_shape_mismatch.assert_called_once_with(sharded_state_dict, "/direct/iter_0001000", 32)
 
     @pytest.mark.parametrize("strictness", ["return_unexpected", "return_all"])
     @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")

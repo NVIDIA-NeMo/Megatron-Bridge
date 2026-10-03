@@ -56,14 +56,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import (
-    get_pg_rank,
-    get_pg_size,
-    grant_shape_mismatch_for_gtp_padding,
-    resolve_gtp_pad_for_alignment,
-    unwrap_model,
-)
-from megatron.training.checkpointing import save_tokenizer_assets
+from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -71,6 +64,12 @@ from modelopt.torch.opt.plugins import (
 )
 from torch.distributed.tensor import DTensor
 
+from megatron.bridge.dev_compat import (
+    get_gtp_native_fp8_load_context,
+    grant_shape_mismatch_for_gtp_padding,
+    resolve_gtp_pad_for_alignment,
+    save_tokenizer_assets,
+)
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -2758,13 +2757,7 @@ def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], 
         for key in list(state_dict.keys()):
             state_dict[f"module.{key}"] = state_dict.pop(key)
 
-    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
-
-    load_context = contextlib.nullcontext
-    if HAVE_GTP:
-        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
-
-        load_context = partial(gtp_native_fp8_load_context, module)
+    load_context = partial(get_gtp_native_fp8_load_context, module)
 
     try:
         with load_context():
@@ -3336,7 +3329,11 @@ def _load_checkpoint_from_path(
             and cfg.ddp is not None
             and (cfg.ddp.fp8_param_gather or cfg.ddp.fp4_param_gather)
         ):
-            optimizer.quantize_and_sync_model_params_from_main_params()
+            quantize_and_sync_model_params = getattr(
+                optimizer, "quantize_and_sync_model_params_from_main_params", None
+            )
+            if callable(quantize_and_sync_model_params):
+                quantize_and_sync_model_params()
     else:
         if (
             not skip_load_to_model_and_opt

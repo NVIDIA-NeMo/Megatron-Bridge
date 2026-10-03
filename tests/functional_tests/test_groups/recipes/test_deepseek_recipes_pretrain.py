@@ -27,6 +27,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_pretrain_mxfp8_config,
 )
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
+from tests.functional_tests.test_groups.recipes.toy_hf_models import create_deepseek_v4_toy_artifacts
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
 
@@ -55,14 +56,11 @@ def _has_dsv4_in_mcore() -> bool:
         return False
 
 
-def _deepseek_v4_toy_model_path() -> str:
+def _deepseek_v4_toy_model_path(tmp_path: Path) -> str:
     model_path = Path(os.environ.get(DEEPSEEK_V4_TEST_MODEL_ENV, DEEPSEEK_V4_TEST_MODEL_PATH))
-    if not model_path.exists():
-        pytest.skip(
-            f"DeepSeek-V4 toy HF model not found at {model_path}. "
-            f"Set {DEEPSEEK_V4_TEST_MODEL_ENV} or upload the synthetic model to CI test data."
-        )
-    return str(model_path)
+    if model_path.exists():
+        return str(model_path)
+    return create_deepseek_v4_toy_artifacts(tmp_path)
 
 
 # On HybridModel, DeepSeek-V4's layer count, per-layer compression ratios, and MoE
@@ -82,25 +80,30 @@ DEEPSEEK_V4_MODEL_OVERRIDES = {
     "recompute_modules": None,
 }
 
+# The reduced two-rank smoke layout can leave optimizer buckets empty on one rank.
+# Checkpoint model weights, which is the recipe contract exercised here, without
+# asking MCore's distributed optimizer to serialize that artificial empty bucket.
+_DSV4_CHECKPOINT_OVERRIDES = {"save_optim": False, "load_optim": False}
+
 DEEPSEEK_V4_PRETRAIN_RECIPES = [
     # (config_func, name, requires_blackwell, checkpoint_overrides)
     (
         deepseek_v4_flash_pretrain_config,
         "deepseek_v4_flash_adam_bf16",
         False,
-        None,
+        _DSV4_CHECKPOINT_OVERRIDES,
     ),
     (
         deepseek_v4_flash_pretrain_muon_config,
         "deepseek_v4_flash_muon_bf16",
         False,
-        None,
+        _DSV4_CHECKPOINT_OVERRIDES,
     ),
     (
         deepseek_v4_flash_pretrain_mxfp8_config,
         "deepseek_v4_flash_adam_mxfp8",
         True,
-        {"save_optim": False, "load_optim": False},
+        _DSV4_CHECKPOINT_OVERRIDES,
     ),
 ]
 
@@ -125,7 +128,7 @@ class TestDeepSeekRecipes:
         if requires_blackwell and torch.cuda.get_device_capability()[0] < 10:
             pytest.skip("DeepSeek-V4 MXFP8 recipe requires Blackwell GPUs.")
 
-        hf_path = _deepseek_v4_toy_model_path()
+        hf_path = _deepseek_v4_toy_model_path(tmp_path)
 
         def recipe_with_test_model():
             with pytest.MonkeyPatch.context() as monkeypatch:

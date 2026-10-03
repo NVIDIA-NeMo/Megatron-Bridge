@@ -34,6 +34,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_sft_openmath_thinking_packed_config,
 )
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
+from tests.functional_tests.test_groups.recipes.toy_hf_models import create_deepseek_v4_toy_artifacts
 
 
 DEEPSEEK_V4_TEST_MODEL_ENV = "DEEPSEEK_V4_TOY_HF_PATH"
@@ -54,26 +55,21 @@ def _has_dsv4_in_mcore() -> bool:
         return False
 
 
-def _deepseek_v4_toy_model_path() -> str:
+def _deepseek_v4_toy_model_path(tmp_path: Path) -> str:
     model_path = Path(os.environ.get(DEEPSEEK_V4_TEST_MODEL_ENV, DEEPSEEK_V4_TEST_MODEL_PATH))
-    if not model_path.exists():
-        pytest.skip(
-            f"DeepSeek-V4 toy HF model not found at {model_path}. "
-            f"Set {DEEPSEEK_V4_TEST_MODEL_ENV} or upload the synthetic model to CI test data."
-        )
-    return str(model_path)
+    if model_path.exists():
+        return str(model_path)
+    return create_deepseek_v4_toy_artifacts(tmp_path, with_weights=True)
 
 
-# Shrink the Flash architecture to a 2-layer toy. Keep the validated SFT path
-# (unfused mHC/rope); MTP off and recompute off for a fast smoke.
+# HybridModel derives its physical layer count, compression ratios, and MoE
+# placement from the toy HF config's hybrid pattern. Do not override those fields
+# independently: every logical DSv4 block expands to an attention + MoE pair.
+# Keep the validated SFT path unfused and disable recompute for a fast smoke.
 DEEPSEEK_V4_SFT_MODEL_OVERRIDES = {
-    "num_layers": 2,
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
     "num_moe_experts": 8,
-    "moe_router_topk": 1,
-    "moe_layer_freq": [0, 1],
-    "csa_compress_ratios": [0, 0],
     "dsa_kernel_backend": "none",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
@@ -105,7 +101,7 @@ class TestDeepSeekV4FinetuneRecipes:
         if requires_blackwell and torch.cuda.get_device_capability()[0] < 10:
             pytest.skip("DeepSeek-V4 MXFP8 recipe requires Blackwell GPUs.")
 
-        hf_path = _deepseek_v4_toy_model_path()
+        hf_path = _deepseek_v4_toy_model_path(tmp_path)
         with pytest.MonkeyPatch.context() as monkeypatch:
             monkeypatch.setattr(deepseek_v4_h100_module, "DEEPSEEK_V4_FLASH_HF_PATH", hf_path)
             config = config_func()
@@ -139,10 +135,12 @@ class TestDeepSeekV4FinetuneRecipes:
         config.scheduler.lr_warmup_iters = 1
         config.logger.dir = str(tmp_path)
         config.logger.name = recipe_name
-        # Smoke test: train from the toy model's init (no pretrained checkpoint, no save).
-        config.checkpoint.pretrained_checkpoint = None
+        # Exercise the actual finetune path from the offline toy HF checkpoint.
+        config.checkpoint.pretrained_checkpoint = hf_path
         config.checkpoint.load = None
         config.checkpoint.save = None
+        config.checkpoint.load_optim = False
+        config.checkpoint.load_rng = False
 
         # Minimal dataset splits sized to the iteration counts above.
         train_samples = config.train.train_iters * config.train.global_batch_size

@@ -15,7 +15,7 @@
 """Provider for DeepSeek-V4 expressed as a Megatron-Core ``HybridModel``.
 
 DeepSeek-V4 is a Multi-Latent-Attention (MLA) model, so it needs every MLA
-configuration field (``q_lora_rank``, ``output_projection_groups``,
+configuration field (``q_lora_rank``, grouped output projection geometry,
 ``v_head_dim``, ``rope_type`` / YaRN parameters, …). Those live on
 :class:`MLAModelProvider`.
 It is also a *hybrid* model: each logical DeepSeek-V4 block is expressed as two
@@ -35,8 +35,24 @@ the direct MLA field names.
 
 from dataclasses import dataclass
 
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.dev_compat import MCORE_HYBRID_DSV4_STACK_SPEC
+from megatron.bridge.models.hybrid.hybrid_provider import (
+    HybridModelProvider,
+    transformer_engine_hybrid_stack_spec,
+)
 from megatron.bridge.models.mla_provider import MLAModelProvider
+
+
+def deepseek_v4_hybrid_stack_spec(config: HybridModelProvider):
+    """Resolve the richest DSv4 hybrid stack supported by the active MCore pin."""
+    if MCORE_HYBRID_DSV4_STACK_SPEC is None:
+        return transformer_engine_hybrid_stack_spec()
+
+    from megatron.core.transformer import ModuleSpec
+
+    if isinstance(MCORE_HYBRID_DSV4_STACK_SPEC, ModuleSpec):
+        return MCORE_HYBRID_DSV4_STACK_SPEC
+    return MCORE_HYBRID_DSV4_STACK_SPEC(config)
 
 
 @dataclass
@@ -44,8 +60,14 @@ class DeepSeekV4HybridModelProvider(HybridModelProvider, MLAModelProvider):
     """MLA-capable :class:`HybridModelProvider` for DeepSeek-V4.
 
     All configuration is supplied by :class:`DeepSeekV4Bridge.provider_bridge`;
-    this class only fixes the method-resolution order so a single provider is
-    both an MLA config carrier and a hybrid-model builder.
+    this class fixes the method-resolution order so a single provider is both
+    an MLA config carrier and a hybrid-model builder. It also retains both names
+    for the grouped-output geometry: MCore main uses the descriptive
+    ``output_projection_*`` fields while the frozen dev pin still reads the
+    original ``o_*`` fields directly from the config object.
     """
 
-    pass
+    output_projection_groups: int = 8
+    output_projection_lora_rank: int = 1024
+    o_groups: int = 8
+    o_lora_rank: int = 1024

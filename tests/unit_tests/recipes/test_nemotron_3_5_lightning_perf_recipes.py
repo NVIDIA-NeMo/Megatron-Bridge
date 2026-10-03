@@ -382,6 +382,15 @@ def test_b_non_mxfp8_skips_cutedsl_fusion_and_fp8_attention(recipe_factory: Call
     assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in cfg.env_vars
 
 
+def test_gb300_bf16_ncclep_enables_te_op_fuser() -> None:
+    """The GB300 BF16 NCCL-EP recipe uses the op-fuser required for grouped tensors."""
+    cfg = nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config()
+
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.model.use_transformer_engine_op_fuser is True
+
+
 @pytest.mark.parametrize(
     "recipe_factory",
     (
@@ -640,9 +649,10 @@ def test_vr200_perf_recipes_match_gb300_configs(
 ) -> None:
     """VR200 Nemotron 3.5 recipes match their GB300 baselines up to the GB300 NCCL EP overlay.
 
-    The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts and the
-    NCCL EP process setting); the VR200 aliases keep the shared HybridEP base. The VR200 BF16
-    recipe also offloads expert activations. Everything else must be identical.
+    The GB300 recipes default to NCCL EP (dispatcher backend, device-side expert counts, the
+    TE op-fuser, and the NCCL EP process setting); the VR200 aliases keep the shared HybridEP base.
+    The VR200 BF16 recipe also offloads expert activations. Everything else, including model,
+    parallelism, precision and schedule, must be identical.
     """
     vr200_cfg = vr200_factory()
     gb300_cfg = gb300_factory()
@@ -658,6 +668,7 @@ def test_vr200_perf_recipes_match_gb300_configs(
         vr200_cfg.model.offload_modules = gb300_cfg.model.offload_modules
 
     _enable_ncclep(vr200_cfg)
+    vr200_cfg.model.use_transformer_engine_op_fuser = True
     vr200_cfg.model.moe_use_grouped_tensor = True
     vr200_cfg.env_vars = gb300_cfg.env_vars
     assert vr200_cfg == gb300_cfg

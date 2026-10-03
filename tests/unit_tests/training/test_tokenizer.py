@@ -185,12 +185,13 @@ class TestTokenizers:
 
         assert build_tokenizer(config) is sentinel.tokenizer
 
-        mock_from_pretrained.assert_called_once_with(
-            tokenizer_path="tokenizer.model",
-            metadata_path={"library": "sft"},
-            prompt_format="nemotron-h-aligned",
-            use_gigatoken=False,
-        )
+        call_kwargs = mock_from_pretrained.call_args.kwargs
+        assert call_kwargs.pop("use_gigatoken", False) is False
+        assert call_kwargs == {
+            "tokenizer_path": "tokenizer.model",
+            "metadata_path": {"library": "sft"},
+            "prompt_format": "nemotron-h-aligned",
+        }
 
     @pytest.mark.timeout(30)
     def test_hf_tokenizer_as_local_path_object(self, tmp_path):

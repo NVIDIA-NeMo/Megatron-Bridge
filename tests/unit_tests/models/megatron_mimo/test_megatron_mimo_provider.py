@@ -886,25 +886,23 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
 def test_build_infra_selects_language_representative_log_rank(offset):
     from types import SimpleNamespace
 
-    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
-
     provider = MegatronMIMOProvider(
         language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
         megatron_mimo_parallelism_config=Mock(),
     )
-    original = get_default_log_ranks()
-    try:
-        with (
-            patch(
-                "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids",
-                return_value={"language": SimpleNamespace(rank_offset=offset)},
-            ),
-            patch.object(provider, "_get_pg_collections_from_grids", return_value={}),
-        ):
-            provider.build_infra()
-        assert set(get_default_log_ranks()) == {0, offset}
+    with (
+        patch(
+            "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids",
+            return_value={"language": SimpleNamespace(rank_offset=offset)},
+        ),
+        patch.object(provider, "_get_pg_collections_from_grids", return_value={}),
+        patch(
+            "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.set_default_log_ranks"
+        ) as mock_set_default_log_ranks,
+    ):
+        provider.build_infra()
         provider.megatron_mimo_parallelism_config = None
         provider.build_infra()
-        assert get_default_log_ranks() == (0,)
-    finally:
-        set_default_log_ranks(original)
+
+    assert mock_set_default_log_ranks.call_args_list[0].args == ({0, offset},)
+    assert mock_set_default_log_ranks.call_args_list[1].args == ({0},)

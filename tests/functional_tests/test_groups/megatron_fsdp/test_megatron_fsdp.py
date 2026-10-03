@@ -22,6 +22,7 @@ import torch.nn.functional as F
 from megatron.core.tensor_parallel.random import initialize_rng_tracker
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.dev_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.training.config import (
@@ -422,6 +423,7 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MCore does not expose Megatron-FSDP v2")
     def test_fsdp_v2_cp2_pretrain(self) -> None:
         """Pretrain a small GPT model for ten iterations with MFSDP V2 and CP=2."""
         initialize_distributed()
@@ -447,6 +449,7 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MCore does not expose Megatron-FSDP v2")
     def test_fsdp_v2_dense_hybrid_pretrain_smoke(self):
         """Train a dense two-layer HybridModel with MFSDP V2 in eager mode."""
         initialize_distributed()
@@ -465,6 +468,7 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MCore does not expose Megatron-FSDP v2")
     def test_fsdp_v2_dense_hybrid_cuda_graph_pretrain_smoke(self):
         """Train a dense HybridModel with MFSDP V2 full-iteration and optimizer graphs."""
         initialize_distributed()
@@ -494,6 +498,7 @@ class TestMegatronFSDP:
         torch.distributed.barrier()
 
     @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MCore does not expose Megatron-FSDP v2")
     def test_fsdp_v2_moe_ep2_pretrain_smoke(self):
         """Train a small MoE HybridModel with MFSDP V2 and EP=2."""
         initialize_distributed()
@@ -513,6 +518,7 @@ class TestMegatronFSDP:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("outer_dp_sharding_strategy", ["no_shard", "optim"], ids=["hsdp", "hfsdp"])
+    @pytest.mark.skipif(not MCORE_HAS_MEGATRON_FSDP_V2, reason="MCore does not expose Megatron-FSDP v2")
     def test_fsdp_v2_hybrid_dp_pretrain_smoke(self, outer_dp_sharding_strategy):
         """Train the dense HybridModel over an outer data-parallel axis.
 

@@ -201,6 +201,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # Multi-token prediction
     mtp_enabled: bool = False
+    freeze_base_model_for_mtp: bool = False
+
+    # MoE shortcut connection is Bridge-owned until it is available in every supported MCore.
+    moe_shortcut_connection: bool = False
 
     # Additional parameters that might be needed
     init_model_with_meta_device: bool = False

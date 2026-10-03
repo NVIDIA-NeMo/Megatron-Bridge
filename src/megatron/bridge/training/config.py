@@ -62,6 +62,7 @@ from megatron.bridge.data.builders.gpt_sft import (
 )
 from megatron.bridge.data.builders.mock_vlm_sft import MockVLMSFTDatasetConfig
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
+from megatron.bridge.dev_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -1090,8 +1091,8 @@ class ConfigContainer(Container):
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
-        megatron_fsdp_version = self.ddp.megatron_fsdp_version
-        if megatron_fsdp_version == 1:
+        megatron_fsdp_version = getattr(self.ddp, "megatron_fsdp_version", 1)
+        if not MCORE_HAS_MEGATRON_FSDP_V2 or megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
         elif megatron_fsdp_version == 2:
             self._validate_and_apply_megatron_fsdp_v2_configs()
@@ -1139,8 +1140,9 @@ class ConfigContainer(Container):
             # Only compatible with NCCL UBR.
             assert not self.ddp.fsdp_manual_registration, "DDP.fsdp_manual_registration requires DDP.nccl_ub!"
         sharding_strategies = {self.ddp.data_parallel_sharding_strategy}
-        if self.ddp.expert_data_parallel_sharding_strategy is not None:
-            sharding_strategies.add(self.ddp.expert_data_parallel_sharding_strategy)
+        expert_sharding_strategy = getattr(self.ddp, "expert_data_parallel_sharding_strategy", None)
+        if expert_sharding_strategy is not None:
+            sharding_strategies.add(expert_sharding_strategy)
         if sharding_strategies & {"optim_grads", "optim_grads_params"} and self.model.gradient_accumulation_fusion:
             warn_rank_0("Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP.")
         if self.model.init_model_with_meta_device and sharding_strategies == {"no_shard"}:

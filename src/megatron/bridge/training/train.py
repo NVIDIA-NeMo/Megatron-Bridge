@@ -24,10 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
-    FullyShardedDataParallelV1,
-    FullyShardedDataParallelV2,
-)
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
     get_current_global_batch_size,
@@ -68,6 +64,7 @@ from megatron.core.utils import (
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
+from megatron.bridge.dev_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import (
@@ -1673,9 +1670,11 @@ def _handle_mxfp8_param_buffer_copy(
         optimizer: The MegatronOptimizer instance
         model: List of model chunks (MegatronModule instances)
     """
+    chained_optimizers = getattr(optimizer, "chained_optimizers", None)
+    optimizers = chained_optimizers if isinstance(chained_optimizers, (list, tuple)) else [optimizer]
     eligible_optimizers = [
         child
-        for child in getattr(optimizer, "chained_optimizers", [optimizer])
+        for child in optimizers
         if isinstance(child, DistributedOptimizer)
         and child.ddp_config.reuse_grad_buf_for_mxfp8_param_ag
         and child.ddp_config.overlap_param_gather
@@ -1744,7 +1743,7 @@ def _maybe_register_fsdp_buffers(
     ):
         print_rank_0("[Megatron-FSDP] Registering FSDP communication buffers manually")
         for model_chunk in model:
-            if isinstance(model_chunk, (FullyShardedDataParallelV1, FullyShardedDataParallelV2)) and getattr(
+            if isinstance(model_chunk, MEGATRON_FSDP_TYPES) and getattr(
                 model_chunk.ddp_config, "fsdp_manual_registration", False
             ):
                 fsdp_param_and_grad_buffer = getattr(model_chunk, "param_and_grad_buffer", None)

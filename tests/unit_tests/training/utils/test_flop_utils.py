@@ -3572,7 +3572,10 @@ class TestLoraSquadPackedFlopBranch:
 @pytest.mark.parametrize("householders, expected_layer", [(1, 784), (2, 1152), (3, 1520)])
 @pytest.mark.parametrize("spec_kind", ["module", "factory", "provider_factory", "lazy_module"])
 def test_hybrid_gdp_flops(householders, expected_layer, spec_kind):
-    from megatron.core.models.hybrid.hybrid_layer_specs import gated_delta_product_stack_spec
+    hybrid_layer_specs = pytest.importorskip("megatron.core.models.hybrid.hybrid_layer_specs")
+    gated_delta_product_stack_spec = getattr(hybrid_layer_specs, "gated_delta_product_stack_spec", None)
+    if gated_delta_product_stack_spec is None:
+        pytest.skip("gated delta product stack specs require newer MCore")
 
     spec = gated_delta_product_stack_spec
     if spec_kind == "factory":
