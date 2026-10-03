@@ -362,7 +362,12 @@ class Qwen35VLBridge(MegatronModelBridge):
         mapping_list.extend(
             Qwen35Bridge._get_dense_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="language_model.")
         )
-        mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
+        # MTP is attached at the top level of the Megatron VL model (a sibling of
+        # `language_model`, not nested under it), so its real parameter names are
+        # "mtp.layers.*" rather than "language_model.mtp.layers.*". Passing a
+        # "language_model." prefix here would produce mappings that never match the
+        # actual Megatron parameter names.
+        mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix=""))
         mapping_list.extend(_get_vision_mappings())
         return MegatronMappingRegistry(*mapping_list)
 
