@@ -166,7 +166,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-22</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-02</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -175,12 +175,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --torch-dtype bfloat16</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Import exits successfully and creates a reloadable CPU checkpoint. Its strict round-trip comparison matches all 59,585 BF16 tensors and 753,329,940,480 elements bitwise against the immutable HF revision.
+        <p>Import exits successfully at about 1.4 TiB peak process RSS and creates a reloadable CPU checkpoint. Weights stay on CPU, but one GPU must be visible because the DSA indexer builds its rotary embedding on a CUDA device. The 791 tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and are not imported; the CPU export of this checkpoint matches the remaining 58,794 tensors and 743,377,019,904 elements bitwise against the immutable HF revision. Verified in a NeMo Framework 26.10 release-candidate container, not the card&#x27;s base container, with its bundled, unmodified Bridge.
 </p>
       </section>
     </article>
@@ -218,7 +218,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-22</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-02</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -227,12 +227,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --hf-path work/model-verification/glm5-2/cpu-hf-export --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --hf-path work/model-verification/glm5-2/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Export exits successfully; all 59,585 BF16 tensors and 753,329,940,480 elements match the immutable HF revision bitwise. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters.
+        <p>The 32-process distributed CPU export exits successfully and writes 280 safetensors shards at about 0.9 TiB peak summed process RSS per node. All 58,794 exported tensors (58,719 BF16 and 75 FP32) and 743,377,019,904 elements match the immutable HF revision bitwise. The 791 tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and remain outside this item. Transformers 5.15.0 strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters and no loading discrepancies. config.json is regenerated from the checkpoint; as loaded by Transformers it matches the reference except num_nextn_predict_layers, which is null because the MTP layer is not exported. generation_config.json, tokenizer.json, and chat_template.jinja are identical. A single-process export is OOM-killed above 1.9 TiB on 2 TB nodes, so EP32 splits the routed experts across 32 processes and each process keeps a full copy of the non-expert weights. PP stays 1 because convert.sh creates only uniform pipeline splits, and no uniform split of the 78 layers starts every stage on a layer that computes DSA top-k indices. The distributed CPU launcher requests no GPUs, but the exclusive nodes must expose one, because the DSA indexer builds its rotary embedding on a CUDA device. Verified in a NeMo Framework 26.10 release-candidate container, not the card&#x27;s base container, with its bundled, unmodified Bridge.
 </p>
       </section>
     </article>
