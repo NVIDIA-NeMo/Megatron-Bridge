@@ -27,6 +27,7 @@ import torch
 import torch.distributed as dist
 
 from megatron.bridge.data.megatron_mimo.reorder_buffer import (
+    ReorderingBuffer,
     balanced_assignment,
     build_module_dp_process_groups,
     exchange_window,
@@ -150,4 +151,53 @@ def test_reorder_exchange_dp2_variable_images():
     global_samples = [[2, 2], [2], [], [2]]
     image_count_of = lambda b: (b["input_ids"] == _VISION_START).sum(dim=1).to(torch.long)  # noqa: E731
     _run_exchange_case(global_samples, image_count_of)
+    dist.barrier()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_reorder_buffer_overlap_dp2_exits_on_exhaustion():
+    """Overlap path: the prefetch thread exchanges on its own NCCL group and exits once the source is exhausted."""
+    initialize_distributed()
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for this functional test")
+    if dist.get_world_size() != 2:
+        pytest.skip("This functional test requires exactly 2 ranks")
+
+    dp_size, n_groups, n_windows, window_size = 2, 2, 3, 2
+    rank = dist.get_rank()
+    # Six micro-batches; micro-batch m holds globals [4m + 2*rank, 4m + 2*rank + 1] with costs [4,3,1,2] (a swap every time).
+    global_samples = [[4], [3], [1], [2]]
+    main_pg = dist.new_group(ranks=list(range(dp_size)), backend="nccl")
+    dp_rank, ds, gloo, nccl = build_module_dp_process_groups(main_pg, overlap=True)
+    assert nccl is not main_pg  # overlap=True creates a side NCCL group
+
+    def source():
+        for m in range(n_windows * window_size):
+            yield _make_shard([(4 * m + g, global_samples[g]) for g in range(rank * 2, rank * 2 + 2)])
+
+    image_count_of = lambda b: (b["input_ids"] == _VISION_START).sum(dim=1).to(torch.long)  # noqa: E731
+    buf = ReorderingBuffer(
+        source(),
+        dp_rank=dp_rank,
+        dp_size=ds,
+        n_groups=n_groups,
+        cost_of=functools.partial(sample_cost, encoder_cost_weight=1.0),
+        dp_group_gloo=gloo,
+        dp_group_nccl=nccl,
+        overlap=True,
+        image_count_of=image_count_of,
+        window_size=window_size,
+    )
+    assert buf._thread is not None and buf._thread.is_alive()
+
+    expected = _expected_owned(global_samples, dp_rank, dp_size, n_groups)
+    served = 0
+    for m, out in enumerate(buf):
+        got = [int((int(row[0].item()) - 1) // 100) for row in out["input_ids"].cpu()]
+        assert got == [4 * m + g for g in expected], (rank, m, got)
+        served += 1
+    assert served == n_windows * window_size
+
+    buf._thread.join(timeout=5.0)
+    assert not buf._thread.is_alive(), "worker must exit on its own once the source iterator is exhausted"
     dist.barrier()
