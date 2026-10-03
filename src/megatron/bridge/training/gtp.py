@@ -37,8 +37,26 @@ def is_gtp_remat_active(model_config: Any) -> bool:
     return any(isinstance(size, int) and size > 1 for size in (dense_size, expert_size))
 
 
-def configure_gtp_remat(model_config: Any) -> None:
-    """Configure process-global GTP state before constructing model modules."""
+def configure_gtp_remat(
+    model_config: Any,
+    *,
+    reduce_scatter_with_fp32_accumulation: bool = False,
+    nccl_ub: bool = False,
+    pg_collection: ProcessGroupCollection | None = None,
+) -> None:
+    """Configure process-global GTP state before constructing model modules.
+
+    Args:
+        model_config: Model provider or builder config containing the GTP sizes.
+        reduce_scatter_with_fp32_accumulation: Accumulate GTP reduce-scatter
+            results locally in FP32.
+        nccl_ub: Register an NCCL symmetric-memory pool for the dense GTP group.
+        pg_collection: Initialized process groups, required when nccl_ub is enabled.
+
+    Raises:
+        RuntimeError: GTP is active but the required Transformer Engine support is missing.
+        ValueError: GTP is active and nccl_ub is enabled without process groups.
+    """
     if not is_gtp_remat_active(model_config):
         return
 
@@ -56,7 +74,14 @@ def configure_gtp_remat(model_config: Any) -> None:
         fp8_recipe=transformer_config.fp8_recipe,
         fp8=transformer_config.fp8 is not None,
         calculate_per_token_loss=transformer_config.calculate_per_token_loss,
+        reduce_scatter_with_fp32_accumulation=reduce_scatter_with_fp32_accumulation,
     )
+    if nccl_ub:
+        if pg_collection is None:
+            raise ValueError("gtp_remat_nccl_ub requires an initialized process-group collection.")
+        from megatron.core.process_groups_config import resolve_gtp_remat_group
+
+        gtp_api.register_gtp_symm_pool(resolve_gtp_remat_group(pg_collection, is_expert=False))
 
 
 def classify_gtp_remat_chains(model: list[torch.nn.Module], model_config: Any) -> None:
