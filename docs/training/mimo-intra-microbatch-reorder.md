@@ -111,10 +111,11 @@ with the variable unset.
 | Tensor parallelism > 1 | Validated (language tp 2 with and without vision tp 2). |
 | Context parallelism > 1 | Untested. |
 
-A real exchange needs a module with data-parallel size 2 or more, which
-exceeds the two-GPU functional-test budget. CI covers the exchange arithmetic
-with CPU-emulated all-to-all unit tests and a two-GPU smoke test; multi-rank
-runs are validated manually.
+A full MIMO run with an exchanging module needs at least three GPUs, which
+exceeds the two-GPU functional-test budget. CI covers the balancing and
+serialization logic with CPU-emulated unit tests, and the real Gloo/NCCL
+exchange, including the overlapped prefetch thread, with a two-rank functional
+test; full MIMO runs are validated manually.
 
 ## Expected Metric Changes
 
@@ -137,12 +138,13 @@ bf16), language dp 4 with vision dp 4 at micro-batch 8 cut the mean
 max-minus-min image-token spread across vision ranks from `643` to `421` and
 lowered iteration time by about 2% with overlap on. A 3-rank run with vision
 dp 1 was about 5% slower with overlap and 10% slower without, because the dp-1
-module's permutation is synchronous. Across these runs the per-micro-batch
-sum of image tokens over all vision ranks matched the unreordered run exactly,
-iteration-1 and iteration-2 losses matched to all printed digits, and
-checkpoint resume reproduced the continuous run. The same geometry completed
-3000 iterations with overlap and 10000 iterations without overlap under
-`CUDA_DEVICE_MAX_CONNECTIONS=1`; language tp 2, pp 2, and tp 2 with vision tp 2
+module's permutation is synchronous. In the dp 4 run the per-micro-batch sum
+of image tokens over all vision ranks matched the unreordered run for all 40
+micro-batches. On language dp 2 + vision dp 2 the reorder off/on pair had
+identical iteration-1 and iteration-2 losses, checkpoint resume reproduced the
+continuous run, and an overlapped run completed 3000 iterations. Under
+`CUDA_DEVICE_MAX_CONNECTIONS=1` without overlap, language tp 2 dp 2 + vision
+dp 2 completed 10000 iterations; language tp 2, pp 2, and tp 2 with vision tp 2
 each completed 1000 iterations. Treat these as patterns to reproduce on the
 target model and data, not as fixed gains.
 
