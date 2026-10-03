@@ -39,7 +39,9 @@ fan-out stays aligned. Balancing is done over the canonical grid (the least
 common multiple of the module data-parallel sizes), so modules with different
 data-parallel sizes, including a module with data-parallel size 1, agree on
 the same order. A data-parallel-1 module has nothing to exchange and simply
-permutes its whole micro-batch locally.
+permutes its whole micro-batch locally; that permutation runs synchronously on
+the training thread (about 14 ms per micro-batch of 4 samples on A100) because
+there is no exchange to overlap.
 
 By default the exchange for the next window runs on a background thread with a
 dedicated NCCL process group, overlapping with the current window's compute.
@@ -99,19 +101,50 @@ with the variable unset.
 
 | Configuration | Status |
 |---|---|
-| Heterogeneous module data parallelism (for example vision dp 1 or 2 with language dp 2 or 4) | Supported. Balancing uses the canonical grid; a dp-1 module reorders locally. |
+| Heterogeneous module data parallelism (for example vision dp 1 or 2 with language dp 2 or 4) | Supported. Balancing uses the canonical grid; a dp-1 module reorders locally. The encoder data-parallel size must not exceed the language data-parallel size: Megatron Core's bridge fan-in with variable per-sample image-token counts is not implemented and asserts on the first forward step. |
 | Language pipeline parallelism > 1 | Supported. Every language stage receives `input_ids` so all stages compute the same assignment. |
 | Encoder pipeline parallelism > 1 | Not supported; the example raises before training starts. |
 | `--pad-to-seq-length false` (variable batch width) | Not supported with reordering; the example raises before training starts. Exchanged samples are concatenated back into one micro-batch, so all ranks must pad to the same length. |
 | `micro_batch_size` not divisible by the canonical grid size | Rejected by the canonical loader. |
 | `drop_last=False`, or a dataloader type other than `single` / `cyclic` | Rejected by scalable data parallelism. |
 | Expert tensor parallelism > 1 | Rejected by scalable data parallelism. |
-| Tensor parallelism > 1, context parallelism > 1 | Untested. |
+| Tensor parallelism > 1 | Validated (language tp 2 with and without vision tp 2). |
+| Context parallelism > 1 | Untested. |
 
 A real exchange needs a module with data-parallel size 2 or more, which
 exceeds the two-GPU functional-test budget. CI covers the exchange arithmetic
 with CPU-emulated all-to-all unit tests and a two-GPU smoke test; multi-rank
 runs are validated manually.
+
+## Expected Metric Changes
+
+| Metric | Expected Change | Conditions | Evidence |
+|---|---|---|---|
+| per-rank vision load spread | down | module data-parallel size 2 or more, varied image sizes | measured |
+| `step_time` | flat to slightly down | every module has data-parallel size 2 or more, overlap on | measured |
+| `step_time` | slightly up | a module has data-parallel size 1 (its local permutation is synchronous) | measured |
+| `step_time` | up | overlap off (`--no-overlap-intra-microbatch-reorder`) | measured |
+| `peak_memory` | up by up to two extra windows of micro-batches per data rank | overlap on; grows with `megatron_mimo_reorder_window_size` | expected |
+
+Balancing cannot remove the imbalance entirely: every rank keeps the same
+number of samples, so with few samples per rank and a bimodal image-size
+distribution the reachable spread is bounded by the largest single image.
+
+## Representative Validation Patterns
+
+On one 8×A100 node with Qwen3.5-0.8B on cord-v2 (sequence length 2048,
+bf16), language dp 4 with vision dp 4 at micro-batch 8 cut the mean
+max-minus-min image-token spread across vision ranks from `643` to `421` and
+lowered iteration time by about 2% with overlap on. A 3-rank run with vision
+dp 1 was about 5% slower with overlap and 10% slower without, because the dp-1
+module's permutation is synchronous. Across these runs the per-micro-batch
+sum of image tokens over all vision ranks matched the unreordered run exactly,
+iteration-1 and iteration-2 losses matched to all printed digits, and
+checkpoint resume reproduced the continuous run. The same geometry completed
+3000 iterations with overlap and 10000 iterations without overlap under
+`CUDA_DEVICE_MAX_CONNECTIONS=1`; language tp 2, pp 2, and tp 2 with vision tp 2
+each completed 1000 iterations. Treat these as patterns to reproduce on the
+target model and data, not as fixed gains.
 
 ## Feature Interactions
 
