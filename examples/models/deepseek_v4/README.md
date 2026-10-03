@@ -50,6 +50,15 @@ The Flash library recipe uses PP4/VPP4; the 128-GPU Flash benchmark uses PP1.
 The Pro benchmark also combines mHC CUDA graphs with recompute and activation
 offload, which remains unsupported by the main-based runtime above.
 
+When `train.sh` overrides `model.pipeline_model_parallel_size` or
+`model.virtual_pipeline_model_parallel_size`, the pattern segments and layout
+are rebuilt with an even split of attention/MoE pairs. This replaces a recipe's
+uneven split and keeps the MTP suffix. If the command also sets
+`model.pipeline_model_parallel_layout`, nothing is rebuilt, so pass a matching
+`model.hybrid_layer_pattern` as well. Python code that changes PP or VPP on a
+recipe should call `set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)`.
+Training rejects `|` segments that do not match PP x VPP or the explicit layout.
+
 `fast-hadamard-transform` is required by DSA and is installed from the pinned
 source dependency by `uv sync`. Run the examples in a CUDA-enabled Megatron
 Bridge container; see the
