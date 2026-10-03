@@ -14,8 +14,6 @@
 
 import argparse
 import logging
-import os
-import socket
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Generator, Literal, Optional, Union
@@ -122,22 +120,20 @@ def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None
     Useful for operations that require Megatron's parallel state but should run
     standalone (e.g., loading distributed checkpoints).
 
+    Uses an in-process store for rendezvous: this context is intentionally
+    single-process (world_size=1, rank=0), so it does not need a TCPStore
+    endpoint. A TCPStore rendezvous would either race on a dynamically picked
+    port (the socket is closed before init binds it) or silently inherit the
+    caller's MASTER_ADDR/MASTER_PORT settings.
+
     Args:
         backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
 
     Yields:
         None.
     """
-    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
-        init_method = None
-    else:
-        # Find an available port dynamically
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("localhost", 0))
-            addr, port = s.getsockname()
-        init_method = f"tcp://{addr}:{port}"
-
-    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
+    store = dist.HashStore()
+    dist.init_process_group(backend=backend, store=store, world_size=1, rank=0)
     parallel_state.initialize_model_parallel()
 
     # Initialize RNG tracker for model initialization
@@ -514,8 +510,19 @@ def load_megatron_model(
 
     # Apply model-parallel overrides if provided
     if mp_overrides:
+        # Allowlist of fields where explicitly passing None clears the saved value;
+        # other None overrides are ignored. Omitted fields are not overridden here.
+        # For example, inference may override a saved moe_expert_capacity_factor=1.1
+        # with None to disable capacity-based token dropping. Ignoring that None
+        # would incorrectly retain the training-time capacity limit.
+        nullable_overrides = {
+            "pipeline_model_parallel_layout",
+            "moe_expert_capacity_factor",
+            "moe_expert_rank_capacity_factor",
+            "moe_router_force_biased",
+        }
         for key, value in mp_overrides.items():
-            if hasattr(model_cfg, key) and (value is not None or key == "pipeline_model_parallel_layout"):
+            if hasattr(model_cfg, key) and (value is not None or key in nullable_overrides):
                 setattr(model_cfg, key, value)
 
         if (
@@ -530,12 +537,14 @@ def load_megatron_model(
     if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
         model_cfg.pipeline_model_parallel_layout = None
 
-    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
+    # DeepEP and NCCL EP flex backends require TPxEP > 1, so single-rank loads fall back to allgather.
+    # MCore allows shared-expert overlap only with alltoall and flex, so disable it with the fallback.
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
         tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
         ep = getattr(model_cfg, "expert_model_parallel_size", 1)
         if tp * ep == 1:
             model_cfg.moe_token_dispatcher_type = "allgather"
+            model_cfg.moe_shared_expert_overlap = False
 
     return build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
@@ -650,10 +659,9 @@ def save_megatron_model(
     # Complete tokenizer construction and persistence before save_checkpoint publishes
     # the root selectors for this checkpoint.
     if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import (
-            get_checkpoint_name,
-            save_tokenizer_assets,
-        )
+        from megatron.training.checkpointing import save_tokenizer_assets
+
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
 
         tokenizer_error: Exception | None = None
         try:

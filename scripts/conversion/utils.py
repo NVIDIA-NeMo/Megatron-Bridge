@@ -62,13 +62,14 @@ def resolve_hf_commit_revision(hf_model: str, hf_revision: str | None) -> str | 
     return resolved_revision
 
 
-def resolve_hf_model_revision(hf_model: str, hf_revision: str | None) -> str:
+def resolve_hf_model_revision(hf_model: str, hf_revision: str | None, *, config_only: bool = False) -> str:
     """Resolve a remote Hugging Face model revision to an immutable local snapshot.
 
     Args:
         hf_model: Hugging Face model ID or local path.
         hf_revision: Hub branch, tag, or commit to resolve. ``None`` preserves
             the original model reference.
+        config_only: Download only config and custom Python dependencies, not weights.
 
     Returns:
         The original model reference when no revision is provided, otherwise
@@ -83,7 +84,8 @@ def resolve_hf_model_revision(hf_model: str, hf_revision: str | None) -> str:
 
     from huggingface_hub import snapshot_download
 
-    return snapshot_download(repo_id=hf_model, revision=hf_revision)
+    kwargs = {"allow_patterns": ["config.json", "*.py"]} if config_only else {}
+    return snapshot_download(repo_id=hf_model, revision=hf_revision, **kwargs)
 
 
 def parse_dtype(name: str) -> torch.dtype:

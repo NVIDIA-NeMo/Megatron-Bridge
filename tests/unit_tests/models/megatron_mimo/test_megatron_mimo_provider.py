@@ -3,6 +3,7 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.megatron_mimo import (
@@ -137,6 +138,7 @@ class TestMegatronMIMOProvider:
 
         pp_group = MagicMock(name="pp_group")
         mock_grid = MagicMock()
+        mock_grid.rank_offset = 0
         mock_grid.is_current_rank_in_grid.return_value = True
         mock_grid.get_pg.side_effect = lambda dims, *, view=None: pp_group if dims == ["pp"] else MagicMock()
         mock_build_grids.return_value = {"language": mock_grid}
@@ -878,3 +880,31 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
             assert pgc.tp_ep_pp_with_egtp_remat == mock_tp_ep_pp
         assert pgc.intra_expt_dp == mock_expt_dp
         assert pgc.intra_dist_opt == mock_intra_dist_opt
+
+
+@pytest.mark.parametrize("offset", [0, 4])
+def test_build_infra_selects_language_representative_log_rank(offset):
+    from types import SimpleNamespace
+
+    from megatron.core._rank_utils import get_default_log_ranks, set_default_log_ranks
+
+    provider = MegatronMIMOProvider(
+        language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+        megatron_mimo_parallelism_config=Mock(),
+    )
+    original = get_default_log_ranks()
+    try:
+        with (
+            patch(
+                "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.build_hypercomm_grids",
+                return_value={"language": SimpleNamespace(rank_offset=offset)},
+            ),
+            patch.object(provider, "_get_pg_collections_from_grids", return_value={}),
+        ):
+            provider.build_infra()
+        assert set(get_default_log_ranks()) == {0, offset}
+        provider.megatron_mimo_parallelism_config = None
+        provider.build_infra()
+        assert get_default_log_ranks() == (0,)
+    finally:
+        set_default_log_ranks(original)

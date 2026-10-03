@@ -24,6 +24,7 @@ import pytest
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
+from megatron.core.transformer.transformer_layer import TransformerLayer
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
@@ -837,6 +838,77 @@ class TestGemma4SelfAttention:
 
 
 class TestGemma4TEDotProductAttention:
+    def test_image_attention_keeps_future_image_tokens_in_window(self, monkeypatch):
+        from megatron.core.transformer.enums import AttnMaskType
+
+        calls = {}
+
+        def fake_init(self, **kwargs):
+            calls.update(kwargs)
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.TEDotProductAttention.__init__", fake_init)
+        config = SimpleNamespace(
+            interleaved_attn_pattern=(1, 1),
+            window_size=512,
+            text_config=SimpleNamespace(use_bidirectional_attention="vision"),
+        )
+        Gemma4TEDotProductAttention(
+            config=config, layer_number=1, attn_mask_type=AttnMaskType.causal, attention_type="self"
+        )
+
+        assert calls["config"].window_size is None
+        assert calls["attn_mask_type"] == AttnMaskType.arbitrary
+        assert config.window_size == 512
+
+    @pytest.mark.parametrize("image_bidirectional", [True, False])
+    def test_forward_selects_explicit_image_mask_mode(self, monkeypatch, image_bidirectional):
+        from megatron.core.transformer.enums import AttnMaskType
+
+        calls = {}
+
+        def fake_forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
+            calls.update(mask=attention_mask, mask_type=attn_mask_type, **kwargs)
+            return value
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.TEDotProductAttention.forward", fake_forward)
+        attention = object.__new__(Gemma4TEDotProductAttention)
+        attention._image_bidirectional_attention = image_bidirectional
+        attention._image_attention_window = 512 if image_bidirectional else None
+        mask = torch.tensor([[[[False, False], [False, False]]]])
+        value = torch.ones(2, 1, 1, 4)
+
+        output = attention.forward(value, value, value, mask, AttnMaskType.causal, attention_bias=None)
+
+        assert output is value
+        torch.testing.assert_close(calls["mask"], mask)
+        assert calls["mask_type"] == (AttnMaskType.arbitrary if image_bidirectional else AttnMaskType.causal)
+        assert calls["attention_bias"] is None
+
+    @pytest.mark.parametrize("with_image_mask", [True, False])
+    def test_image_attention_applies_left_window_without_losing_future_image_tokens(
+        self, monkeypatch, with_image_mask
+    ):
+        from megatron.core.transformer.enums import AttnMaskType
+
+        calls = {}
+
+        def fake_forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
+            calls["mask"] = attention_mask
+            return value
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.TEDotProductAttention.forward", fake_forward)
+        attention = object.__new__(Gemma4TEDotProductAttention)
+        attention._image_bidirectional_attention = True
+        attention._image_attention_window = 2
+        value = torch.ones(4, 1, 1, 4)
+        mask = torch.zeros(1, 1, 4, 4, dtype=torch.bool) if with_image_mask else None
+
+        attention.forward(value, value, value, mask, AttnMaskType.causal)
+
+        assert calls["mask"][0, 0, 3, 0].item() is True
+        assert calls["mask"][0, 0, 3, 2].item() is False
+        assert calls["mask"][0, 0, 0, 1].item() is (not with_image_mask)
+
     def test_init_sets_local_window_size(self, monkeypatch):
         calls = []
 
@@ -869,7 +941,11 @@ class TestGemma4TEDotProductAttention:
             "megatron.bridge.models.gemma.modeling_gemma4.TEDotProductAttention.__init__",
             fake_init,
         )
-        cfg = SimpleNamespace(interleaved_attn_pattern=(1, 1), window_size=512)
+        cfg = SimpleNamespace(
+            interleaved_attn_pattern=(1, 1),
+            window_size=512,
+            text_config=SimpleNamespace(use_bidirectional_attention="vision"),
+        )
 
         Gemma4TEDotProductAttention(
             config=cfg,
@@ -2042,7 +2118,29 @@ class TestGemma4MoEHelpers:
         torch.testing.assert_close(residual, hidden_states)
         torch.testing.assert_close(padding_mask, torch.tensor([[True]]))
 
-    def test_transformer_layer_preserves_packed_moe_batch_semantics(self):
+    @pytest.mark.parametrize("helper_signature", ["installed", "legacy", "input_ids"])
+    def test_transformer_layer_preserves_packed_moe_batch_semantics(self, monkeypatch, helper_signature):
+        if helper_signature != "installed":
+
+            def legacy_unflatten(self, hidden_states, padding_mask, packed_seq_params):
+                mbs = hidden_states.shape[0] // packed_seq_params.tokens_per_sample
+                hidden_states = hidden_states.view(mbs, packed_seq_params.tokens_per_sample, -1)
+                return hidden_states.transpose(0, 1).contiguous(), padding_mask, mbs
+
+            def unflatten_with_input_ids(self, hidden_states, padding_mask, input_ids, packed_seq_params):
+                assert input_ids is None
+                hidden_states, padding_mask, mbs = legacy_unflatten(
+                    self, hidden_states, padding_mask, packed_seq_params
+                )
+                return hidden_states, padding_mask, input_ids, mbs
+
+            monkeypatch.setattr(
+                TransformerLayer,
+                "_maybe_unflatten_for_moe",
+                legacy_unflatten if helper_signature == "legacy" else unflatten_with_input_ids,
+                raising=False,
+            )
+
         calls = []
 
         class FakeMoE:

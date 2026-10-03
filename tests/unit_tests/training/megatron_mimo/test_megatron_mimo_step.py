@@ -13,6 +13,23 @@ from megatron.bridge.training.megatron_mimo_step import resolve_step_packing
 class TestLossFunc:
     """Test cases for loss_func()."""
 
+    def test_loss_rejects_nan_by_default(self):
+        """The stock MIMO loss should honor the default non-finite loss guard."""
+        from megatron.core.rerun_state_machine import destroy_rerun_state_machine, initialize_rerun_state_machine
+
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        destroy_rerun_state_machine()
+        initialize_rerun_state_machine()
+        try:
+            with (
+                patch("torch.cuda.current_device", return_value=0),
+                pytest.raises(RuntimeError, match="Unexpected result"),
+            ):
+                loss_func(torch.ones(2), torch.tensor([1.0, float("nan")]))
+        finally:
+            destroy_rerun_state_machine()
+
     def test_loss_computation(self):
         """Test loss is computed correctly with mask."""
         from megatron.bridge.training.megatron_mimo_step import loss_func
@@ -53,6 +70,19 @@ class TestLossFunc:
 
         assert total_loss.item() == 0.0
         assert num_tokens.item() == 0
+
+    def test_loss_with_noncontiguous_mask(self):
+        """The shared loss helper should preserve the MIMO loss mask contract."""
+        from megatron.bridge.training.megatron_mimo_step import loss_func
+
+        output_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        loss_mask = torch.tensor([[1.0, 0.0], [1.0, 0.0]]).T
+
+        assert not loss_mask.is_contiguous()
+        total_loss, num_tokens, _ = loss_func(loss_mask, output_tensor)
+
+        assert total_loss.item() == 3.0
+        assert num_tokens.item() == 2
 
 
 class TestGetBatch:
@@ -461,3 +491,55 @@ class TestResolveStepPacking:
             defer_in_batch_packing_to_step=True,
         )
         assert resolve_step_packing(cfg) is True
+
+
+@pytest.mark.parametrize(
+    "local, remote, expected",
+    [([0.0, 0.0], [0.0, 0.0], 0.0), ([0.0, 0.0], [12.0, 3.0], 4.0), ([6.0, 2.0], [9.0, 1.0], 5.0)],
+)
+def test_mimo_train_step_token_weighted_loss(local, remote, expected):
+    import megatron.bridge.training.train_megatron_mimo as training
+
+    dp_cp = object()
+    real_tensor = torch.tensor
+
+    def cpu_tensor(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*args, **kwargs)
+
+    def reduce(value, **kwargs):
+        if kwargs.get("group") is dp_cp:
+            value.add_(real_tensor(remote))
+
+    optimizer = MagicMock()
+    optimizer.step.return_value = (True, 1.0, 0)
+    with (
+        patch.object(training, "zero_grad_buffer_for_multimodule"),
+        patch.object(
+            training,
+            "forward_backward_pipelining_without_interleaving",
+            return_value=[{"lm loss": real_tensor(local)}],
+        ),
+        patch.object(training, "unwrap_megatron_mimo_model", return_value=SimpleNamespace(role=None)),
+        patch.object(training.dist, "get_world_size", return_value=1),
+        patch.object(training.dist, "get_rank", return_value=0),
+        patch.object(training.dist, "all_reduce", side_effect=reduce) as reduction,
+        patch.object(training.torch, "tensor", side_effect=cpu_tensor),
+    ):
+        result = training.train_step_megatron_mimo(
+            MagicMock(),
+            iter([]),
+            MagicMock(),
+            optimizer,
+            {},
+            SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1)),
+            None,
+            None,
+            SimpleNamespace(pg_collections={"language": SimpleNamespace(dp_cp=dp_cp)}),
+            [],
+            1,
+            8,
+            1,
+        )
+    assert result[0]["lm loss"].item() == pytest.approx(expected)
+    assert reduction.call_args_list[0].kwargs["group"] is dp_cp

@@ -555,12 +555,49 @@ def test_gemma3_recipe_examples_match_source_signatures():
     assert not unsupported_by_recipe, f"Gemma 3 docs use unsupported recipe keywords: {unsupported_by_recipe}"
 
 
+def _normalize_model_guide_format(text: str) -> str:
+    """Normalize only the catalog's intentional Sphinx/Fern rendering differences."""
+    for boundary in ("BEGIN", "END"):
+        text = text.replace(
+            f"{{/* {boundary} GENERATED VERIFIED CONFIGURATIONS */}}",
+            f"<!-- {boundary} GENERATED VERIFIED CONFIGURATIONS -->",
+        )
+    text = re.sub(r"<p>(.*?)</p>", lambda match: "<p>" + " ".join(match[1].split()) + "</p>", text, flags=re.DOTALL)
+    return re.sub(
+        r'(<code class="language-bash">)(.*?)(</code>)',
+        lambda match: match[1] + match[2].replace("&#123;", "{").replace("&#125;", "}") + match[3],
+        text,
+        flags=re.DOTALL,
+    )
+
+
+def test_model_guide_format_normalization_preserves_content() -> None:
+    """Format parity must still detect changed prose, commands, and code spacing."""
+    sphinx = (
+        "<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->\n"
+        "<p>Expected result\n</p>\n"
+        '<code class="language-bash">echo ${MODEL}\n  --flag</code>\n'
+        "<!-- END GENERATED VERIFIED CONFIGURATIONS -->\n"
+    )
+    fern = (
+        "{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}\n"
+        "<p>Expected result</p>\n"
+        '<code class="language-bash">echo $&#123;MODEL&#125;\n  --flag</code>\n'
+        "{/* END GENERATED VERIFIED CONFIGURATIONS */}\n"
+    )
+    expected = _normalize_model_guide_format(sphinx)
+    assert expected == _normalize_model_guide_format(fern)
+    for old, new in (("Expected result", "Different result"), ("MODEL", "OTHER"), ("  --flag", " --flag")):
+        assert expected != _normalize_model_guide_format(fern.replace(old, new))
+    assert _normalize_model_guide_format("Prose &#123;value&#125;") == "Prose &#123;value&#125;"
+
+
 def test_qwen3_model_guides_match_fern_and_reference_exported_recipes():
     """Split Qwen3 guides must match Fern and reference exported recipes."""
     defined_recipes = _defined_recipe_names()
     for sphinx_path, fern_path in QWEN3_DOC_PAIRS:
         sphinx_text = _read(sphinx_path)
-        assert sphinx_text == _read(fern_path)
+        assert _normalize_model_guide_format(sphinx_text) == _normalize_model_guide_format(_read(fern_path))
 
         documented_recipes = set(re.findall(r"(qwen[0-9A-Za-z_]+_config)", sphinx_text))
         assert documented_recipes, f"{sphinx_path.relative_to(REPO_ROOT)} documents no Qwen recipes"

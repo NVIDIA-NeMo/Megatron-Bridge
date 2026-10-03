@@ -96,15 +96,20 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
 
 
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
-    """Generate a bridge-specific pipeline layout when the model requires one."""
+    """Generate a bridge-specific pipeline layout when the model requires one.
+
+    A bridge returns ``None`` when the default pipeline split already applies.
+    """
     if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
         return False
-    hf_config = bridge.hf_pretrained.config
-    num_layers = hf_config.num_hidden_layers
-    mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
-    model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
-        num_layers, pp, mtp_layers
-    )
+    num_layers = bridge.hf_pretrained.config.num_hidden_layers
+    # The layout must match the model being built, which may omit the checkpoint's MTP layers.
+    model_config = getattr(model_provider, "transformer", model_provider)
+    mtp_layers = getattr(model_config, "mtp_num_layers", None) or 0
+    layout = bridge._model_bridge.generate_pipeline_layout(num_layers, pp, mtp_layers)
+    if layout is None:
+        return False
+    model_provider.pipeline_model_parallel_layout = layout
     print_rank_0(f"Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp_layers} MTP)")
     return True
 
@@ -125,7 +130,11 @@ def _rebalance_pipeline_layout(saved_layout: list[list[str]], pp: int) -> list[l
 def _maybe_restore_pipeline_layout(
     bridge: AutoBridge, model_provider: GPTModelProvider, megatron_path: str, pp: int
 ) -> None:
-    """Restore a serialized pipeline layout or regenerate it for export."""
+    """Restore a serialized pipeline layout or regenerate it for export.
+
+    The provider adopts the checkpoint's MTP layer count because export builds the model from the
+    checkpoint config, so a restored or regenerated layout must place the MTP layers that model has.
+    """
     checkpoint_path = Path(megatron_path)
     iteration_paths = [path for path in checkpoint_path.glob("iter_*") if path.is_dir()]
 
@@ -144,6 +153,8 @@ def _maybe_restore_pipeline_layout(
         with config_path.open() as config_file:
             config = yaml.safe_load(config_file) or {}
         model_config = config.get("model", {})
+        if "mtp_num_layers" in model_config:
+            model_provider.mtp_num_layers = model_config["mtp_num_layers"]
         saved_layout = model_config.get("pipeline_model_parallel_layout")
         saved_pp = model_config.get("pipeline_model_parallel_size")
         is_valid_layout = isinstance(saved_layout, list) and all(isinstance(stage, list) for stage in saved_layout)
@@ -317,6 +328,7 @@ def import_checkpoint(
     low_memory_save: bool,
     distributed_timeout_minutes: int | None,
     overwrite: bool,
+    text_only: bool = False,
 ) -> None:
     """Import a Hugging Face model into a distributed Megatron checkpoint.
 
@@ -333,6 +345,7 @@ def import_checkpoint(
         low_memory_save: Reduce peak GPU memory while saving the imported checkpoint.
         distributed_timeout_minutes: Process-group timeout in minutes.
         overwrite: Delete a non-empty destination before conversion.
+        text_only: Convert only the supported model's language component.
     """
     _ensure_distributed_initialized(distributed_timeout_minutes)
     _prepare_distributed_output(megatron_path, overwrite=overwrite, source_paths=[hf_model])
@@ -341,6 +354,8 @@ def import_checkpoint(
     print_rank_0(f"GPU import: {hf_model} -> {megatron_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
@@ -391,6 +406,7 @@ def export_checkpoint(
     show_progress: bool,
     distributed_save: bool,
     save_every_n_ranks: int,
+    text_only: bool = False,
     distributed_timeout_minutes: int | None,
     export_weight_dtype: str | None,
     overwrite: bool,
@@ -432,13 +448,19 @@ def export_checkpoint(
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
+    if text_only:
+        revision_kwargs["text_only"] = True
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=trusted,
         torch_dtype=dtype,
         **revision_kwargs,
     )
-    reference_model = resolve_hf_model_revision(hf_model, hf_revision)
+    reference_model = (
+        resolve_hf_model_revision(hf_model, hf_revision, config_only=True)
+        if text_only
+        else resolve_hf_model_revision(hf_model, hf_revision)
+    )
     checkpoint_config_bridge = AutoBridge.from_auto_config(
         megatron_path,
         reference_model,

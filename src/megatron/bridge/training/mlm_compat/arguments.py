@@ -69,11 +69,13 @@ def _transformer_config_from_args(
     args: argparse.Namespace, config_class: type[TransformerConfig] = TransformerConfig
 ) -> TransformerConfig:
     """Build a variant of TransformerConfig based on contents of the MLM argparse args object."""
-    if args.multi_latent_attention:
+    multi_latent_attention = getattr(args, "multi_latent_attention", False)
+    if multi_latent_attention:
         config_class = MLATransformerConfig
 
-    if args.heterogeneous_layers_config_path is not None:
-        assert not args.multi_latent_attention, "Multi latent attention with heterogeneous layers is not supported."
+    heterogeneous_layers_config_path = getattr(args, "heterogeneous_layers_config_path", None)
+    if heterogeneous_layers_config_path is not None:
+        assert not multi_latent_attention, "Multi latent attention with heterogeneous layers is not supported."
         config_class = HeterogeneousTransformerConfig
 
     # Translate args to core transformer configuration
@@ -90,10 +92,13 @@ def _transformer_config_from_args(
     kw_args["pipeline_dtype"] = args.params_dtype
     kw_args["batch_p2p_comm"] = not args.overlap_p2p_comm
     kw_args["num_moe_experts"] = args.num_experts
-    kw_args["rotary_interleaved"] = args.rotary_interleaved
-    kw_args["num_layers_in_first_pipeline_stage"] = args.decoder_first_pipeline_num_layers
-    kw_args["num_layers_in_last_pipeline_stage"] = args.decoder_last_pipeline_num_layers
-    kw_args["fp8_param"] = args.fp8_param_gather
+    if hasattr(args, "decoder_first_pipeline_num_layers"):
+        kw_args["num_layers_in_first_pipeline_stage"] = args.decoder_first_pipeline_num_layers
+    if hasattr(args, "decoder_last_pipeline_num_layers"):
+        kw_args["num_layers_in_last_pipeline_stage"] = args.decoder_last_pipeline_num_layers
+    if hasattr(args, "fp8_param_gather"):
+        kw_args["fp8_param"] = args.fp8_param_gather
+
     if args.swiglu:
         kw_args["activation_func"] = F.silu
         kw_args["gated_linear_unit"] = True
@@ -109,12 +114,10 @@ def _transformer_config_from_args(
         kw_args["num_query_groups"] = args.num_query_groups
     else:
         kw_args["num_query_groups"] = None
-    kw_args["config_logger_dir"] = args.config_logger_dir
 
-    if len(args.cp_comm_type) == 1:
-        kw_args["cp_comm_type"] = args.cp_comm_type[0]
-    if args.is_hybrid_model:
-        kw_args["is_hybrid_model"] = args.is_hybrid_model
+    cp_comm_type = getattr(args, "cp_comm_type", ["p2p"])
+    if len(cp_comm_type) == 1:
+        kw_args["cp_comm_type"] = cp_comm_type[0]
 
     # handle quantization config
     # NOTE: Kitchen arguments are only added to the namespace when

@@ -14,6 +14,7 @@
 
 import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -21,12 +22,15 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.distributed as dist
+import yaml
 from megatron.core import parallel_state
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import save_megatron_mimo_model
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.training import model_load_save
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
@@ -41,6 +45,8 @@ from megatron.bridge.training.model_load_save import (
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class TestNormalizeMoeDispatcherSmConfig:
@@ -186,18 +192,8 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_gloo(self, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_gloo(self, mock_parallel_state, mock_dist):
         """Test temporary distributed context with gloo backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
-
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
             patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed") as mock_seed,
@@ -206,8 +202,10 @@ class TestTemporaryDistributedContext:
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="gloo", init_method="tcp://localhost:12345", world_size=1, rank=0
+            backend="gloo", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
+        mock_dist.HashStore.assert_called_once_with()
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
         mock_dist.destroy_process_group.assert_called_once()
@@ -215,31 +213,23 @@ class TestTemporaryDistributedContext:
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.os")
-    def test_temporary_distributed_context_with_env_vars(self, mock_os, mock_parallel_state, mock_dist):
-        """Test temporary distributed context when env vars are already set."""
-        mock_os.environ = {"MASTER_ADDR": "localhost", "MASTER_PORT": "12345"}
+    def test_temporary_distributed_context_ignores_rendezvous_env(self, mock_parallel_state, mock_dist):
+        """Rendezvous env vars must not leak into the temporary context init."""
+        with patch.dict(os.environ, {"MASTER_ADDR": "203.0.113.1", "MASTER_PORT": "1"}):
+            with temporary_distributed_context(backend="gloo"):
+                pass
 
-        with temporary_distributed_context(backend="gloo"):
-            pass
-
-        mock_dist.init_process_group.assert_called_once_with(backend="gloo", init_method=None, world_size=1, rank=0)
+        mock_dist.init_process_group.assert_called_once_with(
+            backend="gloo", store=mock_dist.HashStore.return_value, world_size=1, rank=0
+        )
+        mock_dist.HashStore.assert_called_once_with()
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
 
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.parallel_state")
-    @patch("megatron.bridge.training.model_load_save.socket")
-    @patch("megatron.bridge.training.model_load_save.os")
     @patch("megatron.core.tensor_parallel.model_parallel_cuda_manual_seed")
-    def test_temporary_distributed_context_nccl(self, mock_seed, mock_os, mock_socket, mock_parallel_state, mock_dist):
+    def test_temporary_distributed_context_nccl(self, mock_seed, mock_parallel_state, mock_dist):
         """Test temporary distributed context with nccl backend."""
-        # Mock environment to not have MASTER_ADDR and MASTER_PORT
-        mock_os.environ = {}
-
-        # Mock socket for port selection
-        mock_socket_instance = Mock()
-        mock_socket_instance.getsockname.return_value = ("localhost", 12345)
-        mock_socket.socket.return_value.__enter__.return_value = mock_socket_instance
-
         with (
             patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=True),
             patch("megatron.bridge.training.model_load_save.torch.cuda.device_count", return_value=1),
@@ -248,12 +238,53 @@ class TestTemporaryDistributedContext:
             pass
 
         mock_dist.init_process_group.assert_called_once_with(
-            backend="nccl", init_method="tcp://localhost:12345", world_size=1, rank=0
+            backend="nccl", store=mock_dist.HashStore.return_value, world_size=1, rank=0
         )
+        mock_dist.HashStore.assert_called_once_with()
+        assert "init_method" not in mock_dist.init_process_group.call_args.kwargs
         mock_seed.assert_called_once_with(0)
         mock_parallel_state.initialize_model_parallel.assert_called_once()
         mock_parallel_state.destroy_model_parallel.assert_called_once()
-        mock_dist.destroy_process_group.assert_called_once()
+        mock_dist.destroy_process_group.assert_called_once_with()
+
+    @pytest.mark.parametrize("inherited_env", [False, True])
+    @pytest.mark.parametrize("raise_in_context", [False, True])
+    @pytest.mark.skipif(
+        not torch.distributed.is_available() or not torch.distributed.is_gloo_available(),
+        reason="requires torch.distributed with gloo",
+    )
+    def test_temporary_distributed_context_real_gloo_single_process(
+        self, monkeypatch, inherited_env, raise_in_context
+    ):
+        """Initialize, use, and clean up an isolated group, including on exceptions."""
+        for var in ("MASTER_ADDR", "MASTER_PORT"):
+            monkeypatch.delenv(var, raising=False)
+        if inherited_env:
+            monkeypatch.setenv("MASTER_ADDR", "203.0.113.1")
+            monkeypatch.setenv("MASTER_PORT", "not-a-port")
+
+        assert not dist.is_initialized()
+        for _ in range(2):
+            expected_error = (
+                pytest.raises(RuntimeError, match="context body failed") if raise_in_context else nullcontext()
+            )
+            with (
+                patch("megatron.bridge.training.model_load_save.parallel_state") as mock_parallel_state,
+                patch("megatron.bridge.training.model_load_save.torch.cuda.is_available", return_value=False),
+            ):
+                with expected_error, temporary_distributed_context(backend="gloo"):
+                    assert dist.is_initialized()
+                    assert dist.get_world_size() == 1
+                    assert dist.get_rank() == 0
+                    value = torch.tensor([7.0])
+                    dist.all_reduce(value)
+                    assert value.item() == 7.0
+                    if raise_in_context:
+                        raise RuntimeError("context body failed")
+
+                mock_parallel_state.initialize_model_parallel.assert_called_once_with()
+                mock_parallel_state.destroy_model_parallel.assert_called_once_with()
+            assert not dist.is_initialized()
 
 
 class TestGetOrInitializePgCollection:
@@ -327,6 +358,130 @@ class TestGetOrInitializePgCollection:
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
+    @pytest.mark.parametrize("path", ["provider", "checkpoint"])
+    def test_dropless_inference_finalizes_saved_paged_stash(self, path):
+        from megatron.bridge.inference.text_generation import (
+            _apply_provider_parallelism,
+            _megatron_checkpoint_overrides,
+        )
+
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_use_grouped_tensor=True,
+            moe_grouped_gemm=True,
+            moe_expert_rank_capacity_factor=1.5,
+            moe_paged_stash=True,
+        )
+        provider.finalize()
+        kwargs = dict(
+            tp=1,
+            pp=1,
+            ep=2,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.bfloat16,
+            attention_backend=None,
+            inference_moe_token_dispatcher_type=None,
+        )
+        if path == "provider":
+            _apply_provider_parallelism(provider, cache_mla_latents=None, **kwargs)
+            provider.finalize()
+        else:
+            overrides = _megatron_checkpoint_overrides(provider, **kwargs)
+
+            def finalize_before_build(checkpoint_path, model_cfg, *args, **build_kwargs):
+                model_cfg.finalize()
+                return []
+
+            with (
+                patch.object(model_load_save, "load_model_config", return_value=(provider, None)),
+                patch.object(model_load_save, "build_and_load_model", side_effect=finalize_before_build),
+            ):
+                load_megatron_model("/checkpoint", mp_overrides=overrides)
+
+        assert provider.moe_expert_rank_capacity_factor is None
+        assert provider.moe_paged_stash is False
+        assert provider.moe_token_dispatcher_type == "flex"
+        assert provider.moe_flex_dispatcher_backend == "hybridep"
+
+    @pytest.mark.parametrize("dropless", [False, True])
+    @pytest.mark.parametrize("forced_bias", [None, 0.0, 0.5, -0.5])
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_explicit_dropless_load_preserves_hybridep(
+        self, mock_load_model_config, mock_build_and_load_model, dropless, forced_bias
+    ):
+        cfg = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        cfg.moe_token_dispatcher_type = "flex"
+        cfg.moe_flex_dispatcher_backend = "hybridep"
+        cfg.moe_expert_capacity_factor = 1.1
+        cfg.moe_expert_rank_capacity_factor = 1.5
+        cfg.moe_hybridep_pad_uneven_dispatch_inputs = False
+        cfg.moe_pad_expert_input_to_capacity = True
+        cfg.moe_router_force_load_balancing = True
+        assert hasattr(cfg, "moe_router_force_biased")
+        cfg.moe_router_force_biased = forced_bias
+        mock_load_model_config.return_value = (cfg, None)
+        overrides = {"expert_model_parallel_size": 8}
+        if dropless:
+            overrides.update(
+                moe_expert_capacity_factor=None,
+                moe_expert_rank_capacity_factor=None,
+                moe_hybridep_pad_uneven_dispatch_inputs=True,
+                moe_pad_expert_input_to_capacity=False,
+                moe_router_force_load_balancing=False,
+                moe_router_force_biased=None,
+            )
+
+        load_megatron_model("/ckpt", mp_overrides=overrides)
+
+        built_config = mock_build_and_load_model.call_args.args[1]
+        assert built_config.moe_token_dispatcher_type == "flex"
+        assert built_config.moe_flex_dispatcher_backend == "hybridep"
+        assert built_config.moe_expert_capacity_factor == (None if dropless else 1.1)
+        assert built_config.moe_expert_rank_capacity_factor == (None if dropless else 1.5)
+        assert built_config.moe_hybridep_pad_uneven_dispatch_inputs is dropless
+        assert built_config.moe_pad_expert_input_to_capacity is (not dropless)
+        assert built_config.moe_router_force_load_balancing is (not dropless)
+        assert built_config.moe_router_force_biased == (None if dropless else forced_bias)
+
+    @pytest.mark.parametrize(
+        ("expert_parallel_size", "expected_dispatcher", "expected_overlap"),
+        [(1, "allgather", False), (2, "flex", True)],
+    )
+    def test_single_rank_flex_fallback_disables_shared_expert_overlap(
+        self, expert_parallel_size, expected_dispatcher, expected_overlap
+    ):
+        """Single-rank loads replace flex with allgather, which does not support shared-expert overlap."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            num_moe_experts=2,
+            moe_shared_expert_intermediate_size=16,
+            moe_shared_expert_overlap=True,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+        )
+
+        def finalize_before_build(checkpoint_path, model_cfg, *args, **build_kwargs):
+            model_cfg.finalize()
+            return []
+
+        with (
+            patch.object(model_load_save, "load_model_config", return_value=(provider, None)),
+            patch.object(model_load_save, "build_and_load_model", side_effect=finalize_before_build),
+        ):
+            load_megatron_model("/checkpoint", mp_overrides={"expert_model_parallel_size": expert_parallel_size})
+
+        assert provider.moe_token_dispatcher_type == expected_dispatcher
+        assert provider.moe_shared_expert_overlap is expected_overlap
+
     def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
         """Verify native checkpoints retain a finalized custom pipeline layout."""
         provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
@@ -352,6 +507,54 @@ class TestLoadMegatronModel:
         loaded_provider, _ = load_model_config(str(tmp_path))
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
+
+    def test_read_saved_builder_model_targets(self, tmp_path):
+        """The checkpoint target scan preserves serialized builder model targets."""
+        model = GPTModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                ffn_hidden_size=256,
+                use_cpu_initialization=True,
+            ),
+            vocab_size=256,
+        )
+        config = ConfigContainer(
+            model=model,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded = read_run_config(str(tmp_path / "run_config.yaml"))
+
+        assert loaded["model"]["_target_"] == f"{GPTModelConfig.__module__}.{GPTModelConfig.__qualname__}"
+        assert loaded["model"]["transformer"]["_target_"] == (
+            f"{TransformerConfig.__module__}.{TransformerConfig.__qualname__}"
+        )
+        assert loaded["model"]["transformer"]["hidden_size"] == 128
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
+            "transformers.models.auto.AutoTokenizer.from_pretrained",
+            "transformers.dynamic_module_utils.get_class_in_module",
+        ],
+        ids=["dynamic-class", "auto-tokenizer-alias", "direct-module-class"],
+    )
+    def test_load_model_config_rejects_reported_unsafe_targets(self, tmp_path, target):
+        """The real checkpoint entrypoint rejects all three reported target paths."""
+        (tmp_path / "run_config.yaml").write_text(yaml.safe_dump({"model": {"_target_": target}}))
+
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            load_model_config(str(tmp_path))
 
     @pytest.mark.parametrize(
         "pipeline_layout",
@@ -1137,6 +1340,7 @@ class TestSaveMegatronModel:
             callback_manager=None,
         )
 
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
@@ -1153,6 +1357,7 @@ class TestSaveMegatronModel:
         mock_global_state,
         mock_get_model_config,
         mock_save_checkpoint,
+        mock_save_tokenizer_assets,
     ):
         """Builder-backed checkpoints serialize the complete outer model config."""
         mock_model = Mock()
@@ -1174,7 +1379,7 @@ class TestSaveMegatronModel:
             model_load_save._CpuTorchDistSaveShardedStrategy,
         )
 
-    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
@@ -1265,6 +1470,95 @@ class TestSaveMegatronModel:
             "/fake/checkpoint/iter_0000000",
             raise_on_error=True,
         )
+
+    @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_tokenizer")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.maybe_finalize_async_save")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.save_checkpoint")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.get_active_module_pg")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.GlobalState")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.ConfigContainer")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.OptimizerConfig")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.LoggerConfig")
+    @patch("megatron.bridge.models.megatron_mimo.conversion.mimo_model_io.CheckpointConfig")
+    def test_save_megatron_mimo_model_with_tokenizer(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_active_module_pg,
+        mock_save_checkpoint,
+        mock_maybe_finalize_async_save,
+        mock_build_tokenizer,
+        mock_get_checkpoint_name,
+        mock_save_tokenizer_assets,
+    ):
+        """Test saving a MegatronMIMO model with tokenizer configuration."""
+        # Setup mocks
+        mock_model = Mock()
+        mock_infra = Mock()
+        mock_provider = Mock()
+        mock_provider.language_model_spec = Mock()
+        mock_provider.modality_submodules_spec = {"images": Mock()}
+        mock_provider.special_token_ids = {"image": 1}
+        mock_provider._grids = {"images": (2, 2)}
+
+        mock_get_active_module_pg.return_value = ("language", Mock())
+
+        mock_state = Mock()
+        mock_global_state.return_value = mock_state
+
+        # Mock the ConfigContainer to capture tokenizer config
+        mock_container_instance = Mock()
+        mock_config_container.return_value = mock_container_instance
+
+        # Mock tokenizer building
+        mock_tokenizer = Mock()
+        mock_build_tokenizer.return_value = mock_tokenizer
+        mock_get_checkpoint_name.return_value = "/fake/checkpoint/iter_0000000"
+
+        # Test with tokenizer path
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_mimo_model(
+                mock_model,
+                mock_infra,
+                mock_provider,
+                temp_dir,
+                hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+                hf_tokenizer_kwargs={"trust_remote_code": True},
+                ckpt_format="torch_dist",
+            )
+
+            # Assertions
+            mock_get_active_module_pg.assert_called_once_with(mock_infra)
+            mock_global_state.assert_called_once()
+
+            # Check that ConfigContainer was called with a tokenizer config
+            mock_config_container.assert_called_once()
+            call_kwargs = mock_config_container.call_args[1]
+            assert "tokenizer" in call_kwargs
+            tokenizer_config = call_kwargs["tokenizer"]
+            assert tokenizer_config.tokenizer_type == "HuggingFaceTokenizer"
+            assert tokenizer_config.tokenizer_model == "meta-llama/Meta-Llama-3-8B"
+            assert tokenizer_config.hf_tokenizer_kwargs == {"trust_remote_code": True}
+
+            mock_save_checkpoint.assert_called_once_with(
+                state=mock_state,
+                model=[mock_model],
+                optimizer=None,
+                opt_param_scheduler=None,
+                num_floating_point_operations_so_far=0,
+                callback_manager=None,
+                pg_collection=mock_get_active_module_pg.return_value[1],
+                module_name="language",
+            )
+
+            # Verify tokenizer was built and saved
+            mock_build_tokenizer.assert_called_once_with(tokenizer_config)
+            mock_get_checkpoint_name.assert_called_once()
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
     @patch("megatron.bridge.training.model_load_save.get_model_config")
@@ -1608,6 +1902,26 @@ class TestLoadTokenizer:
         mock_tokenizer.eos_id = 1
 
         return mock_tokenizer
+
+    def test_load_tokenizer_from_saved_yaml(self, tmp_path, mock_tokenizer):
+        """The checkpoint target scan preserves ordinary tokenizer configs."""
+        config = ConfigContainer(
+            model=None,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=256),
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        with patch("megatron.bridge.training.model_load_save.build_tokenizer", return_value=mock_tokenizer) as build:
+            loaded = load_tokenizer(str(tmp_path))
+
+        assert loaded is mock_tokenizer
+        assert isinstance(build.call_args.args[0], TokenizerConfig)
 
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")

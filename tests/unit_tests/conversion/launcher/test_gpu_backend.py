@@ -301,9 +301,13 @@ class TestImportHfToMegatron:
 
 
 class TestExportMegatronToHf:
-    def test_export_uses_checkpoint_config_and_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch, tmp_path):
+    @pytest.mark.parametrize("text_only", [False, True])
+    def test_export_uses_checkpoint_config_and_does_not_move_loaded_model_to_cuda(
+        self, cli, monkeypatch, tmp_path, text_only
+    ):
         calls = []
         prepared_outputs = []
+        resolved = []
         checkpoint_config = types.SimpleNamespace(num_hidden_layers=2, num_nextn_predict_layers=0)
         reference_state_source = object()
         reference_pretrained = _FakeHfPretrained()
@@ -348,7 +352,8 @@ class TestExportMegatronToHf:
         monkeypatch.setattr(
             cli,
             "resolve_hf_model_revision",
-            lambda model, revision: f"{model}@{revision}" if revision else model,
+            lambda model, revision, **kwargs: resolved.append(kwargs)
+            or (f"{model}@{revision}" if revision else model),
         )
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
         monkeypatch.setattr(cli.AutoBridge, "from_auto_config", fake_from_auto_config)
@@ -356,6 +361,7 @@ class TestExportMegatronToHf:
         checkpoint_path = tmp_path / "iter_0000000"
         checkpoint_path.mkdir()
         cli.export_checkpoint.__wrapped__(
+            text_only=text_only,
             hf_model="hf",
             hf_revision="0123456789abcdef",  # pragma: allowlist secret
             megatron_path=str(checkpoint_path),
@@ -383,11 +389,15 @@ class TestExportMegatronToHf:
 
         reference_call = next(call for call in calls if call[0] == "from_hf_pretrained")
         assert reference_call[1] == ("hf",)
-        assert reference_call[2] == {
+        expected_kwargs = {
             "trust_remote_code": True,
             "torch_dtype": torch.bfloat16,
             "revision": "0123456789abcdef",  # pragma: allowlist secret
         }
+        if text_only:
+            expected_kwargs["text_only"] = True
+        assert reference_call[2] == expected_kwargs
+        assert resolved == ([{"config_only": True}] if text_only else [{}])
 
         bridge_call = next(call for call in calls if call[0] == "from_auto_config")
         assert bridge_call[1] == (str(checkpoint_path), "hf@0123456789abcdef")  # pragma: allowlist secret
@@ -496,6 +506,83 @@ class TestPipelineLayout:
             ["stage-2"],
             ["stage-3"],
         ]
+
+    @pytest.mark.parametrize(
+        ("model_config", "expected_mtp_layers"),
+        [
+            (types.SimpleNamespace(mtp_num_layers=None, pipeline_model_parallel_layout=None), 0),
+            (types.SimpleNamespace(mtp_num_layers=1, pipeline_model_parallel_layout=None), 1),
+            (
+                types.SimpleNamespace(
+                    transformer=types.SimpleNamespace(mtp_num_layers=1), pipeline_model_parallel_layout=None
+                ),
+                1,
+            ),
+        ],
+    )
+    def test_generate_sizes_mtp_from_configured_model(self, cli, model_config, expected_mtp_layers):
+        requested = []
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                requested.append((num_layers, pp, mtp_layers))
+                return [["embedding", "decoder"], ["decoder", "loss"]]
+
+        # The checkpoint declares an MTP layer even when the converted model disables it.
+        hf_pretrained = types.SimpleNamespace(
+            config=types.SimpleNamespace(num_hidden_layers=2, num_nextn_predict_layers=1)
+        )
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=hf_pretrained)
+
+        assert cli._maybe_generate_pipeline_layout(bridge, model_config, pp=2) is True
+
+        assert requested == [(2, 2, expected_mtp_layers)]
+        assert model_config.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "loss"]]
+
+    def test_restore_sizes_regenerated_layout_from_checkpoint_mtp(self, cli, tmp_path):
+        # Training checkpoints save string layouts, which export regenerates through the bridge hook.
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  pipeline_model_parallel_size: 2\n"
+            "  mtp_num_layers: 1\n"
+            '  pipeline_model_parallel_layout: "Et|tmL"\n'
+        )
+        requested = []
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                requested.append(mtp_layers)
+                return [["embedding", "decoder"], ["decoder", *["mtp"] * mtp_layers, "loss"]]
+
+        # The bridge disables MTP for conversion, but the trained checkpoint has an MTP layer.
+        provider = _FakeProvider([])
+        provider.mtp_num_layers = None
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.mtp_num_layers == 1
+        assert requested == [1]
+        assert provider.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "mtp", "loss"]]
+
+    def test_restore_rebalances_saved_layout_when_bridge_keeps_default_split(self, cli, tmp_path):
+        (tmp_path / "run_config.yaml").write_text(
+            "model:\n"
+            "  pipeline_model_parallel_size: 1\n"
+            "  pipeline_model_parallel_layout:\n"
+            "    - [embedding, decoder, decoder, loss]\n"
+        )
+
+        class ModelBridge:
+            def generate_pipeline_layout(self, num_layers, pp, mtp_layers):
+                return None
+
+        provider = _FakeProvider([])
+        bridge = types.SimpleNamespace(_model_bridge=ModelBridge(), hf_pretrained=_FakeHfPretrained())
+
+        cli._maybe_restore_pipeline_layout(bridge, provider, str(tmp_path), pp=2)
+
+        assert provider.pipeline_model_parallel_layout == [["embedding", "decoder"], ["decoder", "loss"]]
 
 
 class TestRoundtrip:

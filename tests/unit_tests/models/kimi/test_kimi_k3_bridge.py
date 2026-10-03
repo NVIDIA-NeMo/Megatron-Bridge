@@ -18,7 +18,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -233,6 +233,44 @@ def test_export_preserves_unconverted_multimodal_weights(monkeypatch: pytest.Mon
     ]
     torch.testing.assert_close(result[1].weight, vision, rtol=0, atol=0)
     torch.testing.assert_close(result[2].weight, projector, rtol=0, atol=0)
+
+
+def test_export_with_megatron_names_marks_passthrough_weights_sourceless(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flag reaches the language-model export; HF-only multimodal tensors carry zero sources."""
+    language = torch.tensor([1.0])
+    vision = torch.tensor([2.0])
+    tensors = {"vision_tower.encoder.weight": vision, "unrelated.weight": torch.tensor([4.0])}
+
+    class _Source:
+        @staticmethod
+        def get_all_keys() -> list[str]:
+            return list(tensors)
+
+    class _State:
+        source = _Source()
+
+        def __getitem__(self, name: str) -> torch.Tensor:
+            return tensors[name]
+
+    seen_kwargs: dict = {}
+
+    def fake_stream(*_args, **kwargs):
+        seen_kwargs.update(kwargs)
+        yield HFSourcedWeightTuple("language_model.weight", language, ("decoder.weight",))
+
+    monkeypatch.setattr(MegatronModelBridge, "stream_weights_megatron_to_hf", fake_stream)
+
+    result = list(
+        KimiK3Bridge().stream_weights_megatron_to_hf([], SimpleNamespace(state=_State()), with_megatron_names=True)
+    )
+
+    assert seen_kwargs["with_megatron_names"] is True
+    assert [type(item) for item in result] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
+    assert result[0].megatron_param_names == ("decoder.weight",)
+    assert result[1].param_name == "vision_tower.encoder.weight"
+    assert result[1].megatron_param_names == ()
+    assert result[1].megatron_param_name is None
+    torch.testing.assert_close(result[1].weight, vision, rtol=0, atol=0)
 
 
 def test_stage_boundary_pack_unpack_and_bank_schedule() -> None:
