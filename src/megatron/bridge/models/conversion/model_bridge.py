@@ -1061,7 +1061,7 @@ class MegatronModelBridge(
                 global_param_name = _megatron_local_name_to_global(
                     models_list, model_config, local_param_name, vp_stage
                 )
-                if self._is_mtp_duplicate_embedding_source(global_param_name, model):
+                if self._should_skip_mtp_duplicate_embedding_export(global_param_name, model):
                     continue
                 if self._is_adapter_param_name(global_param_name):
                     continue
@@ -1695,7 +1695,7 @@ class MegatronModelBridge(
         self,
         megatron_model: MegatronModel | List[MegatronModel],
         *,
-        pipeline_stage_local: bool,
+        current_pp_stage_only: bool,
     ) -> bool:
         """Return whether this rank should emit source-only HF tensors.
 
@@ -1703,7 +1703,7 @@ class MegatronModelBridge(
         assign them to PP rank 0 so every pipeline group emits one deterministic
         copy while the union of stage streams remains complete.
         """
-        return not pipeline_stage_local or _get_pp_rank(megatron_model) == 0
+        return not current_pp_stage_only or _get_pp_rank(megatron_model) == 0
 
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
@@ -1716,7 +1716,7 @@ class MegatronModelBridge(
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
-        pipeline_stage_local: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable["HFWeightTuple | HFSourcedWeightTuple"]:
         """Export Megatron weights to HuggingFace format.
 
@@ -1751,7 +1751,7 @@ class MegatronModelBridge(
                 directly converted weight, every contributing per-expert task for a grouped-expert
                 export, and no names for HF-only passthrough tensors. Defaults to False, which
                 keeps the two-field :class:`HFWeightTuple` output.
-            pipeline_stage_local (bool, optional): When True, execute only conversion tasks whose
+            current_pp_stage_only (bool, optional): When True, execute only conversion tasks whose
                 Megatron parameter is owned by the current pipeline stage and suppress PP tensor and
                 metadata broadcasts. TP/EP gathering and all HF layout conversions remain enabled.
                 Defaults to False.
@@ -1778,7 +1778,7 @@ class MegatronModelBridge(
             ValueError: If input parameters are invalid.
 
         Note:
-            Unless ``pipeline_stage_local`` is enabled, all ranks yield the full tensors after
+            Unless ``current_pp_stage_only`` is enabled, all ranks yield the full tensors after
             gathering from distributed format.
         """
 
@@ -1802,7 +1802,7 @@ class MegatronModelBridge(
                 "omit conversion_tasks so the dtype can be recorded at task-build time."
             )
 
-        if pipeline_stage_local:
+        if current_pp_stage_only:
             # Keep the globally deterministic task construction above, but only
             # execute tasks whose parameter is physically present on this PP
             # stage. If a logical parameter is duplicated across stages, use
@@ -1847,8 +1847,8 @@ class MegatronModelBridge(
 
         def _mapping_export_context():
             return (
-                MegatronParamMapping.pipeline_stage_local_export()
-                if pipeline_stage_local
+                MegatronParamMapping.skip_pp_broadcast()
+                if current_pp_stage_only
                 else contextlib.nullcontext()
             )
 
@@ -1862,7 +1862,7 @@ class MegatronModelBridge(
             else:
                 megatron_weights = task.param_weight
             megatron_module = task.megatron_module
-            if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
+            if task.vp_stage is not None and self._should_skip_mtp_duplicate_embedding_export(task.global_param_name, megatron_model[task.vp_stage]):
                 megatron_weights = None
                 megatron_module = None
 
@@ -2162,8 +2162,13 @@ class MegatronModelBridge(
             refresh_module_caches(megatron_model)
 
     @staticmethod
-    def _is_mtp_duplicate_embedding_source(global_param_name: str, model) -> bool:
-        """Return whether a model chunk only mirrors the primary embedding for MTP."""
+    def _should_skip_mtp_duplicate_embedding_export(global_param_name: str, model) -> bool:
+        """Return whether ``model`` owns only the MTP copy of the input embedding.
+
+        The MTP stage needs a local input embedding even when the model uses untied
+        output weights. Megatron keeps that tensor synchronized with the canonical
+        pre-process embedding, so it must not become a second HF parameter.
+        """
         if not global_param_name.endswith("embedding.word_embeddings.weight"):
             return False
 
@@ -2177,28 +2182,6 @@ class MegatronModelBridge(
         inner_model = getattr(model_chunk, "language_model", model_chunk)
         return bool(getattr(inner_model, "mtp_process", False))
 
-    def _should_skip_mtp_duplicate_embedding_export(
-        self,
-        task: WeightConversionTask,
-        megatron_model: List[MegatronModel],
-    ) -> bool:
-        """Treat duplicate MTP embedding copies as PP receivers during export."""
-        if task.vp_stage is None or not 0 <= task.vp_stage < len(megatron_model):
-            return False
-
-        if not task.global_param_name.endswith("embedding.word_embeddings.weight"):
-            return False
-
-        model_chunk = unwrap_model(megatron_model[task.vp_stage])
-        model_config = getattr(model_chunk, "config", None)
-        if getattr(model_config, "pipeline_model_parallel_size", 1) <= 1:
-            return False
-
-        if getattr(model_chunk, "pre_process", False):
-            return False
-
-        inner_model = getattr(model_chunk, "language_model", model_chunk)
-        return bool(getattr(inner_model, "mtp_process", False))
 
     def _get_tied_output_hf_name(
         self,
@@ -2288,7 +2271,7 @@ class MegatronModelBridge(
 
                 local_name = self._unwrap_name(local_name)
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
-                if self._is_mtp_duplicate_embedding_source(global_name, model):
+                if self._should_skip_mtp_duplicate_embedding_export(global_name, model):
                     continue
                 # if name removed due to some reason, continue. e.g. embeddings_are_tied
                 if global_name not in global_names_index_dict:
@@ -2531,7 +2514,7 @@ class MegatronModelBridge(
 
                 local_name = self._unwrap_name(local_name)
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
-                if self._is_mtp_duplicate_embedding_source(global_name, model):
+                if self._should_skip_mtp_duplicate_embedding_export(global_name, model):
                     continue
                 if global_name not in global_names_index_dict:
                     continue
@@ -2695,7 +2678,7 @@ def stream_weights_megatron_to_hf(
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
     merge_adapter_weights: bool = True,
-    pipeline_stage_local: bool = False,
+    current_pp_stage_only: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...
@@ -2767,7 +2750,7 @@ def register_bridge_implementation(
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
-        pipeline_stage_local: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
@@ -2782,7 +2765,7 @@ def register_bridge_implementation(
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
-            **({"pipeline_stage_local": True} if pipeline_stage_local else {}),
+            **({"current_pp_stage_only": True} if current_pp_stage_only else {}),
         )
 
     @stream_weights_megatron_to_hf_quant.impl((source, target))

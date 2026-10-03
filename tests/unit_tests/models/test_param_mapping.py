@@ -379,14 +379,14 @@ class TestColumnParallelMapping:
             assert "hf.weight" in result
             assert torch.equal(result["hf.weight"], full_weight)
 
-    def test_pipeline_stage_local_export_keeps_tp_gather(self, mock_distributed_env):
+    def test_current_pp_stage_only_export_keeps_tp_gather(self, mock_distributed_env):
         _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
         mapping = ColumnParallelMapping("col.weight", "hf.weight")
         local_shard = torch.randn(4, 3)
         remote_shard = torch.randn(4, 3)
 
         with patch.object(mapping, "gather_from_tp_ranks", return_value=[local_shard, remote_shard]) as gather:
-            with MegatronParamMapping.pipeline_stage_local_export():
+            with MegatronParamMapping.skip_pp_broadcast():
                 result = mapping.megatron_to_hf(local_shard, None)
 
         gather.assert_called_once_with(local_shard)
@@ -394,7 +394,7 @@ class TestColumnParallelMapping:
         mock_dist.broadcast.assert_not_called()
         assert torch.equal(result["hf.weight"], torch.cat([local_shard, remote_shard], dim=0))
 
-    def test_pipeline_stage_local_export_keeps_ep_gather(self, mock_distributed_env):
+    def test_current_pp_stage_only_export_keeps_ep_gather(self, mock_distributed_env):
         _, mock_dist = mock_distributed_env(tp_size=1, pp_size=2)
         mapping = ColumnParallelMapping(
             "decoder.layers.0.mlp.experts.linear_fc1.weight0",
@@ -424,7 +424,7 @@ class TestColumnParallelMapping:
 
         mock_dist.all_gather.side_effect = all_gather
         module = SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))
-        with MegatronParamMapping.pipeline_stage_local_export():
+        with MegatronParamMapping.skip_pp_broadcast():
             result = mapping.megatron_to_hf(local_expert, module)
 
         mock_dist.all_gather.assert_called_once()
@@ -500,7 +500,7 @@ class TestAutoMapping:
         with pytest.raises(ValueError):
             mapping._detect_parallelism_type(torch.nn.Linear(5, 5))
 
-    def test_pipeline_stage_local_export_reaches_lazy_delegate(self, mock_distributed_env):
+    def test_current_pp_stage_only_export_reaches_lazy_delegate(self, mock_distributed_env):
         _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
         mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
 
@@ -516,7 +516,7 @@ class TestAutoMapping:
             outputs[1].copy_(remote_shard)
 
         mock_dist.all_gather.side_effect = all_gather
-        with MegatronParamMapping.pipeline_stage_local_export():
+        with MegatronParamMapping.skip_pp_broadcast():
             result = mapping.megatron_to_hf(local_shard, MyColumnParallel())
 
         # Local export must not cache a delegate only on the owning PP stage;
@@ -620,7 +620,7 @@ class TestQKVMapping:
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
 
-    def test_pipeline_stage_local_export_keeps_qkv_split(self, mock_distributed_env, transformer_config):
+    def test_current_pp_stage_only_export_keeps_qkv_split(self, mock_distributed_env, transformer_config):
         _, mock_dist = mock_distributed_env(tp_size=2, pp_size=2)
         mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
         q = torch.randn(32, 32)
@@ -630,7 +630,7 @@ class TestQKVMapping:
         megatron_module = MockModule(transformer_config, weight_shape=packed_qkv.shape)
 
         with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"qkv.weight": packed_qkv}):
-            with MegatronParamMapping.pipeline_stage_local_export():
+            with MegatronParamMapping.skip_pp_broadcast():
                 result = mapping.megatron_to_hf(packed_qkv, megatron_module)
 
         mock_dist.all_gather_object.assert_not_called()

@@ -56,8 +56,8 @@ logger = logging.getLogger(__name__)
 # mapping instance. Some mappings (notably AutoMapping) create their concrete
 # delegate lazily while ``megatron_to_hf`` is running, so an instance property
 # would not reliably reach the object that performs the PP broadcast.
-_PIPELINE_STAGE_LOCAL_EXPORT: ContextVar[bool] = ContextVar(
-    "megatron_bridge_pipeline_stage_local_export", default=False
+_SKIP_PP_BROADCAST: ContextVar[bool] = ContextVar(
+    "megatron_bridge_skip_pp_broadcast", default=False
 )
 
 
@@ -275,7 +275,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
     @classmethod
     @contextmanager
-    def pipeline_stage_local_export(cls) -> Iterator[None]:
+    def skip_pp_broadcast(cls) -> Iterator[None]:
         """Disable PP replication for the duration of one HF export.
 
         In this mode ``broadcast_from_pp_rank`` and
@@ -287,11 +287,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         The policy is held in a :class:`ContextVar` so it also applies to
         mappings created lazily by wrappers such as :class:`AutoMapping`.
         """
-        token = _PIPELINE_STAGE_LOCAL_EXPORT.set(True)
+        token = _SKIP_PP_BROADCAST.set(True)
         try:
             yield
         finally:
-            _PIPELINE_STAGE_LOCAL_EXPORT.reset(token)
+            _SKIP_PP_BROADCAST.reset(token)
 
     def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
         """Describe canonical local HF views for one mapped parameter.
@@ -656,7 +656,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # PP-local export deliberately leaves non-owning stages with ``None``.
         # The caller filters those tasks, while the owning stage continues into
         # the normal TP/EP gathering and layout-conversion code below.
-        if _PIPELINE_STAGE_LOCAL_EXPORT.get():
+        if _SKIP_PP_BROADCAST.get():
             return tensor
 
         # Fast-path when we are not using pipeline parallelism.
@@ -746,7 +746,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         Raises:
             ValueError: If object does not exist on any rank.
         """
-        if _PIPELINE_STAGE_LOCAL_EXPORT.get():
+        if _SKIP_PP_BROADCAST.get():
             return obj
 
         if self.pp_size == 1:
@@ -2027,7 +2027,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             # A PP-local export skips this task on non-owning stages. Do not
             # cache the lazy delegate only on the owner, or a later full export
             # could enter different PP collectives on different ranks.
-            if not _PIPELINE_STAGE_LOCAL_EXPORT.get():
+            if not _SKIP_PP_BROADCAST.get():
                 self._detected_type = detected_type
                 self._mapping = mapping
 

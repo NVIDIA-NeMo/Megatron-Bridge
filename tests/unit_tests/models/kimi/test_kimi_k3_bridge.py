@@ -266,12 +266,12 @@ def test_export_with_megatron_names_marks_passthrough_weights_sourceless(monkeyp
             [],
             SimpleNamespace(state=_State()),
             with_megatron_names=True,
-            pipeline_stage_local=True,
+            current_pp_stage_only=True,
         )
     )
 
     assert seen_kwargs["with_megatron_names"] is True
-    assert seen_kwargs["pipeline_stage_local"] is True
+    assert seen_kwargs["current_pp_stage_only"] is True
     assert [type(item) for item in result] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
     assert result[0].megatron_param_names == ("decoder.weight",)
     assert result[1].param_name == "vision_tower.encoder.weight"

@@ -361,12 +361,12 @@ HF stream across PP ranks:
 for name, weight in bridge.export_hf_weights(
     megatron_model,
     show_progress=False,
-    pipeline_stage_local=True,
+    current_pp_stage_only=True,
 ):
     send_to_inference_workers(name, weight)
 ```
 
-- `pipeline_stage_local` changes ownership only across the PP axis.
+- `current_pp_stage_only` changes ownership only across the PP axis.
 - TP/EP ranks in the owning stage still gather shards and perform normal HF layout conversion.
 - Combining one representative stream from every PP stage reconstructs the normal complete export.
 - Source-only HF passthrough tensors are assigned to PP stage 0; duplicate Megatron parameters use the lowest PP owner.

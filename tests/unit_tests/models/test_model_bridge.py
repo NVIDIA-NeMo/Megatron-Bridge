@@ -49,12 +49,12 @@ class DummyBridge(MegatronModelBridge):
 
 
 @pytest.mark.parametrize(
-    ("pipeline_stage_local", "pp_rank", "expected"),
+    ("current_pp_stage_only", "pp_rank", "expected"),
     [(False, 1, True), (True, 0, True), (True, 1, False)],
 )
-def test_hf_passthrough_has_canonical_pipeline_owner(monkeypatch, pipeline_stage_local, pp_rank, expected):
+def test_hf_passthrough_has_canonical_pipeline_owner(monkeypatch, current_pp_stage_only, pp_rank, expected):
     monkeypatch.setattr(model_bridge_module, "_get_pp_rank", lambda _model: pp_rank)
-    assert DummyBridge()._should_emit_hf_passthrough([], pipeline_stage_local=pipeline_stage_local) is expected
+    assert DummyBridge()._should_emit_hf_passthrough([], current_pp_stage_only=current_pp_stage_only) is expected
 
 
 @pytest.mark.parametrize(
@@ -63,18 +63,20 @@ def test_hf_passthrough_has_canonical_pipeline_owner(monkeypatch, pipeline_stage
 )
 def test_mtp_duplicate_embedding_source_is_excluded(pre_process, mtp_process, expected):
     model = SimpleNamespace(
-        config=SimpleNamespace(pipeline_model_parallel_size=2),
+        # MTP input embeddings are synchronized copies even when output embeddings are untied.
+        config=SimpleNamespace(pipeline_model_parallel_size=2, share_embeddings_and_output_weights=False),
         pre_process=pre_process,
         language_model=SimpleNamespace(mtp_process=mtp_process),
     )
 
     assert (
-        DummyBridge._is_mtp_duplicate_embedding_source(
+        DummyBridge._should_skip_mtp_duplicate_embedding_export(
             "embedding.word_embeddings.weight",
             model,
         )
         is expected
     )
+    assert not DummyBridge._should_skip_mtp_duplicate_embedding_export("output_layer.weight", model)
 
 
 def test_weight_conversion_task_round_trips_local_hf_views():
@@ -639,7 +641,7 @@ def _patch_stream_weights_megatron_to_hf_basics(
     )
 
 
-def test_stream_weights_megatron_to_hf_pipeline_stage_local_filters_non_owned_tasks(monkeypatch):
+def test_stream_weights_megatron_to_hf_current_pp_stage_only_filters_non_owned_tasks(monkeypatch):
     bridge = DummyBridge()
     source = torch.ones(2, 2)
     calls = []
@@ -657,7 +659,7 @@ def test_stream_weights_megatron_to_hf_pipeline_stage_local_filters_non_owned_ta
                     self.hf_name,
                     weight,
                     module,
-                    param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get(),
+                    param_mapping_module._SKIP_PP_BROADCAST.get(),
                 )
             )
             return {self.hf_name: weight}
@@ -699,14 +701,14 @@ def test_stream_weights_megatron_to_hf_pipeline_stage_local_filters_non_owned_ta
         show_progress=False,
         conversion_tasks=[owned_task, remote_task],
         merge_adapter_weights=False,
-        pipeline_stage_local=True,
+        current_pp_stage_only=True,
     )
     weight = next(weights)
 
     # The local policy is active while the mapping executes, but must be reset
     # before the streaming generator yields control back to its caller.
     assert calls[0][3] is True
-    assert param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get() is False
+    assert param_mapping_module._SKIP_PP_BROADCAST.get() is False
     with pytest.raises(StopIteration):
         next(weights)
 
@@ -719,7 +721,7 @@ def test_stream_weights_megatron_to_hf_pipeline_stage_local_filters_non_owned_ta
 
 
 @pytest.mark.parametrize(("pp_rank", "expected_names"), [(0, ["hf.shared.weight"]), (1, [])])
-def test_pipeline_stage_local_uses_canonical_owner_for_duplicate_parameters(
+def test_current_pp_stage_only_uses_canonical_owner_for_duplicate_parameters(
     monkeypatch,
     pp_rank,
     expected_names,
@@ -762,7 +764,7 @@ def test_pipeline_stage_local_uses_canonical_owner_for_duplicate_parameters(
             show_progress=False,
             conversion_tasks=[task],
             merge_adapter_weights=False,
-            pipeline_stage_local=True,
+            current_pp_stage_only=True,
         )
     )
 
@@ -770,7 +772,7 @@ def test_pipeline_stage_local_uses_canonical_owner_for_duplicate_parameters(
     assert len(calls) == (1 if pp_rank == 0 else 0)
 
 
-def test_stream_weights_megatron_to_hf_pipeline_stage_local_covers_adapter_materialization(monkeypatch):
+def test_stream_weights_megatron_to_hf_current_pp_stage_only_covers_adapter_materialization(monkeypatch):
     bridge = DummyBridge()
     source = torch.ones(2, 2)
     observed_context = []
@@ -801,7 +803,7 @@ def test_stream_weights_megatron_to_hf_pipeline_stage_local_covers_adapter_mater
     )
 
     def materialize_adapter_weights(self, adapter_tasks):
-        observed_context.append(param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get())
+        observed_context.append(param_mapping_module._SKIP_PP_BROADCAST.get())
         return []
 
     monkeypatch.setattr(DummyBridge, "materialize_adapter_weights", materialize_adapter_weights)
@@ -824,13 +826,13 @@ def test_stream_weights_megatron_to_hf_pipeline_stage_local_covers_adapter_mater
             show_progress=False,
             conversion_tasks=[task],
             merge_adapter_weights=True,
-            pipeline_stage_local=True,
+            current_pp_stage_only=True,
         )
     )
 
     assert [weight.param_name for weight in weights] == ["hf.weight"]
     assert observed_context == [True]
-    assert param_mapping_module._PIPELINE_STAGE_LOCAL_EXPORT.get() is False
+    assert param_mapping_module._SKIP_PP_BROADCAST.get() is False
 
 
 def test_stream_weights_megatron_to_hf_custom_export_preserves_device_when_cpu_false(monkeypatch):
