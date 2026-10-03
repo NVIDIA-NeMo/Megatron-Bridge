@@ -187,14 +187,14 @@ runs:
             export BASH_ENV=/dev/null
           fi
 
-          timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash -- "tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/$1.sh" || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then
             echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
           fi
 
           exit $EXIT_CODE
-        '
+        ' bash "$SCRIPT"
 
         RUN_TEST_EOF
         )
@@ -206,9 +206,11 @@ runs:
     - name: Run main script
       id: run-main-script
       shell: bash -e -u -o pipefail {0}
+      env:
+        SCRIPT: ${{ inputs.script }}
       run: |
         echo -e "\033[1;34m┌─ launching test ─────────────────────────────────────────────────────────┐\033[0m"
-        echo -e "\033[1;34m│  script    : ${{ inputs.script }}\033[0m"
+        echo -e "\033[1;34m│  script    : $SCRIPT\033[0m"
         echo -e "\033[1;34m│  runner    : ${{ inputs.runner }}\033[0m"
         echo -e "\033[1;34m│  container : ${{ inputs.container-image }}\033[0m"
         echo -e "\033[1;34m└──────────────────────────────────────────────────────────────────────────┘\033[0m"
@@ -223,6 +225,8 @@ runs:
       id: check
       shell: bash -e -u -o pipefail {0}
       if: always()
+      env:
+        SCRIPT: ${{ inputs.script }}
       run: |
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage combine || true
         docker exec nemo_container_${{ github.run_id }} /opt/venv/bin/coverage xml || true
@@ -248,19 +252,19 @@ runs:
           echo -e "\033[1;32m╔══════════════════════════════════════════════════════════════════════════╗\033[0m"
           echo -e "\033[1;32m║                                                                          ║\033[0m"
           echo -e "\033[1;32m║   ✅  PASSED                                                             ║\033[0m"
-          echo -e "\033[1;32m║   ${{ inputs.script }}\033[0m"
+          echo -e "\033[1;32m║   $SCRIPT\033[0m"
           echo -e "\033[1;32m║                                                                          ║\033[0m"
           echo -e "\033[1;32m╚══════════════════════════════════════════════════════════════════════════╝\033[0m"
-          echo "::notice title=Result::✅ ${{ inputs.script }} — PASSED"
+          echo "::notice title=Result::✅ $SCRIPT — PASSED"
           exit 0
         else
           echo -e "\033[1;31m╔══════════════════════════════════════════════════════════════════════════╗\033[0m"
           echo -e "\033[1;31m║                                                                          ║\033[0m"
           echo -e "\033[1;31m║   ❌  FAILED  (exit code: ${EXIT_CODE})                                  ║\033[0m"
-          echo -e "\033[1;31m║   ${{ inputs.script }}\033[0m"
+          echo -e "\033[1;31m║   $SCRIPT\033[0m"
           echo -e "\033[1;31m║                                                                          ║\033[0m"
           echo -e "\033[1;31m╚══════════════════════════════════════════════════════════════════════════╝\033[0m"
-          echo "::error title=Result::❌ ${{ inputs.script }} — FAILED (exit $EXIT_CODE)"
+          echo "::error title=Result::❌ $SCRIPT — FAILED (exit $EXIT_CODE)"
           exit 1
         fi
 
