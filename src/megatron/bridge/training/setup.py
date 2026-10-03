@@ -17,7 +17,7 @@ import logging
 import random
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from pathlib import Path
 from typing import Any, Callable, NamedTuple, Optional
@@ -510,14 +510,26 @@ def setup(
         tokenizer=tokenizer,
         pg_collection=pg_collection,
     )
-    train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
-        cfg=cfg,
-        train_state=state.train_state,
-        model_length=len(model),
-        train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-        dp_group=get_data_distribution_group(pg_collection, cfg.model),
-        eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
+    # Iterator creation draws a DataLoader base seed from the global Torch RNG,
+    # even with num_workers=0. Keep that draw from advancing checkpoint-restored
+    # training RNG streams; the loader still receives its usual resume seed.
+    # Cyclic and batch iterators (and the GPT validation iterator) only create
+    # their DataLoader iterator on the first next(), so their draw is not here.
+    preserve_data_setup_rng = (
+        should_load_checkpoint
+        and state.train_state.step > 0
+        and cfg.checkpoint.load_rng
+        and not cfg.checkpoint.finetune
     )
+    with _preserve_rng_state() if preserve_data_setup_rng else nullcontext():
+        train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
+            cfg=cfg,
+            train_state=state.train_state,
+            model_length=len(model),
+            train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+            dp_group=get_data_distribution_group(pg_collection, cfg.model),
+            eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
+        )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
 

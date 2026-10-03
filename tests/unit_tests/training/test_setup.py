@@ -23,6 +23,7 @@ from megatron.core.distributed import finalize_model_grads
 
 import megatron.bridge.training.setup as training_setup
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -183,15 +184,27 @@ def test_gpt_sft_config_receives_tokenizer_through_builder_binding_without_mutat
     assert not hasattr(config, "tokenizer")
 
 
-def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
-    """A disposable warmup must not change the first real resumed step's RNG state."""
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("checkpoint_loaded", "step", "load_rng", "finetune", "warmup"),
+    [
+        pytest.param(True, 5, True, False, True, id="warmup"),
+        pytest.param(True, 5, True, False, False, id="resumed-iterator"),
+        pytest.param(False, 0, True, False, False, id="missing-checkpoint"),
+        pytest.param(True, 0, True, False, False, id="step-zero"),
+        pytest.param(True, 5, False, False, False, id="rng-loading-disabled"),
+        pytest.param(True, 0, True, True, False, id="finetune"),
+    ],
+)
+def test_data_setup_preserves_checkpoint_restored_rng_state(checkpoint_loaded, step, load_rng, finetune, warmup):
+    """Resume setup must preserve training RNG without changing the loader's seed or next batch."""
     cfg = SimpleNamespace(
         _checkpoint_load_required=False,
         checkpoint=SimpleNamespace(
-            finetune=False,
+            finetune=finetune,
             load="/checkpoint",
             load_optim=True,
-            load_rng=True,
+            load_rng=load_rng,
             pretrained_checkpoint=None,
             save=None,
         ),
@@ -238,7 +251,7 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
         start_time=0.0,
         tensorboard_logger=None,
         timers=Mock(return_value=timer),
-        train_state=SimpleNamespace(step=1),
+        train_state=SimpleNamespace(step=step, consumed_train_samples=step * 2),
         wandb_logger=None,
     )
     pg_collection = SimpleNamespace(dp=object())
@@ -249,11 +262,38 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
 
     torch.manual_seed(1234)
     restored_rng_state = torch.get_rng_state().clone()
-    torch.manual_seed(4321)
-    checkpoint_manager.load.side_effect = lambda _ctx: torch.set_rng_state(restored_rng_state)
+    dataset = torch.utils.data.TensorDataset(torch.arange(40))
+
+    def make_iterator(consumed_samples):
+        return iter(
+            build_pretraining_data_loader(
+                dataset,
+                consumed_samples=consumed_samples,
+                dataloader_type="single",
+                micro_batch_size=2,
+                num_workers=0,
+                data_sharding=True,
+                pin_memory=False,
+            )
+        )
+
+    # Establish the ordinary resumed loader's seed, next batch and RNG advance.
+    expected_iterator = make_iterator(step * 2)
+    expected_seed = expected_iterator._base_seed
+    expected_batch = next(expected_iterator)[0]
+    advanced_rng_state = torch.get_rng_state().clone()
+    torch.set_rng_state(restored_rng_state)
+    if checkpoint_loaded and load_rng and not finetune:
+        torch.manual_seed(4321)
+        checkpoint_manager.load.side_effect = lambda _ctx: torch.set_rng_state(restored_rng_state)
 
     callback_manager = CallbackManager()
-    callback_manager.register("on_data_init_start", lambda _ctx: torch.rand(4))
+    if warmup:
+        callback_manager.register("on_data_init_start", lambda _ctx: torch.rand(4))
+
+    def setup_iterators(**kwargs):
+        iterator = None if warmup else make_iterator(kwargs["train_state"].consumed_train_samples)
+        return iterator, None, None
 
     start_time_tensor = Mock()
     start_time_tensor.item.return_value = 0.0
@@ -261,7 +301,7 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
         patch.multiple(
             training_setup,
             _build_distributed_model=Mock(return_value=model),
-            _should_load_checkpoint=Mock(return_value=True),
+            _should_load_checkpoint=Mock(return_value=checkpoint_loaded),
             _update_model_config_funcs=Mock(),
             _validate_and_set_vocab_size=Mock(return_value=(32, False)),
             barrier_and_log=Mock(),
@@ -276,7 +316,7 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
             print_rank_0=Mock(),
             set_experimental_flag=Mock(),
             set_jit_fusion_options=Mock(),
-            setup_data_iterators=Mock(return_value=(None, None, None)),
+            setup_data_iterators=Mock(side_effect=setup_iterators),
             setup_logging=Mock(),
             setup_optimizer=Mock(return_value=(optimizer, scheduler)),
             start_memory_history_recording=Mock(),
@@ -285,9 +325,15 @@ def test_data_init_warmup_preserves_checkpoint_restored_rng_state():
         patch.object(torch, "tensor", return_value=start_time_tensor),
         patch.object(torch.distributed, "all_reduce"),
     ):
-        training_setup.setup(state, Mock(), callback_manager=callback_manager)
+        result = training_setup.setup(state, Mock(), callback_manager=callback_manager)
 
-    assert torch.equal(torch.get_rng_state(), restored_rng_state)
+    preserve_iterator_rng = checkpoint_loaded and step > 0 and load_rng and not finetune
+    expected_rng = restored_rng_state if warmup or preserve_iterator_rng else advanced_rng_state
+    assert torch.equal(torch.get_rng_state(), expected_rng)
+    if not warmup:
+        assert result.train_data_iterator._base_seed == expected_seed
+        torch.testing.assert_close(next(result.train_data_iterator)[0], expected_batch, rtol=0, atol=0)
+        assert torch.equal(torch.get_rng_state(), expected_rng)
 
 
 class TestShouldLoadCheckpoint:
