@@ -43,6 +43,8 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
+    DeepSeekV41Bridge,
+    DeepSeekV41ModelProvider,
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
@@ -234,6 +236,8 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    "DeepSeekV41Bridge",
+    "DeepSeekV41ModelProvider",
     # ERNIE Text-Only Models
     "Ernie45Bridge",
     # ERNIE VL Models
