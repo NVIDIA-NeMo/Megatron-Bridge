@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import copy
 import functools
 from typing import TYPE_CHECKING, Any
 
@@ -565,6 +566,16 @@ class MuseGlimmerModel(HybridModel):
             vp_stage=vp_stage,
         )
         self.model_config = config
+        if hasattr(self.decoder, "final_norm"):
+            # HF stores the final norm gain directly, unlike the zero-centered decoder-layer
+            # norms. Keep it uncentered so bf16 weights load without a lossy ``w - 1``.
+            final_norm_config = copy.copy(config.transformer)
+            final_norm_config.layernorm_zero_centered_gamma = False
+            self.decoder.final_norm = TENorm(
+                config=final_norm_config,
+                hidden_size=final_norm_config.hidden_size,
+                eps=final_norm_config.layernorm_epsilon,
+            )
         if hasattr(self, "output_layer"):
             extend_instance(self.output_layer, MuseGlimmerOutputLayerMixin)
         if pre_process:
