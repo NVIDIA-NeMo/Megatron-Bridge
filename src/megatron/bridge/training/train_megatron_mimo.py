@@ -476,9 +476,4 @@ def train_megatron_mimo(
 
     timers("interval-time").stop()
 
-    # Stop the reorder prefetch thread when the train iterator is a ReorderingBuffer; a plain
-    # iterator has no shutdown() and is left alone.
-    if hasattr(train_data_iterator, "shutdown"):
-        train_data_iterator.shutdown()
-
     logger.info(f"Rank {dist.get_rank()}: MegatronMIMO training completed")
