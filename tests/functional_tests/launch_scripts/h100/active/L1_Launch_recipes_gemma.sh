@@ -30,4 +30,5 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage
 # fixture deliberately refuses to delete pre-existing experiment directories.
 rm -rf -- "${REPO_ROOT}/NeMo_experiments" "${REPO_ROOT}/nemo_experiments"
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/unit_tests/models/gemma/test_gemma4_ple_sequence_parallel_distributed.py
+uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/unit_tests/models/gemma/test_gemma4_cp_attention_distributed.py
 coverage combine -q
