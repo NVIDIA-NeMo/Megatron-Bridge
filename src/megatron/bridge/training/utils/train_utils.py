@@ -1224,7 +1224,7 @@ def training_log(
                 # after that step, so warmup_steps + 1 is the post-capture iteration.
                 memory_reporting_iterations = max(
                     memory_reporting_iterations,
-                    config.model.cuda_graph_warmup_steps + 1,
+                    getattr(config.model, "cuda_graph_warmup_steps", 0) + 1,
                 )
             if iteration >= loaded_iteration + memory_reporting_iterations:
                 # Always include optimizer state memory and, when enabled, CUDA graph
