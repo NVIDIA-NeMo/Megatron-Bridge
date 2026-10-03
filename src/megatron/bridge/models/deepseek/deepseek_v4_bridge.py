@@ -78,9 +78,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import (
+    DeepSeekV4HybridModelProvider,
+    deepseek_v4_hybrid_stack_spec,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hybrid.hybrid_provider import transformer_engine_hybrid_stack_spec
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
@@ -491,7 +493,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     DeepSeek-V4 is built on Megatron-Core's :class:`HybridModel`: each logical
     DSv4 block is expressed as an attention-only hybrid layer (``W``/``C``/``H``)
     followed by a MoE-only hybrid layer (``E``), driven by ``hybrid_layer_pattern``
-    and :func:`transformer_engine_hybrid_stack_spec`. See the module docstring for the checkpoint
+    and :func:`deepseek_v4_hybrid_stack_spec`. See the module docstring for the checkpoint
     naming implications of this split.
     """
 
@@ -546,7 +548,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         # attention layers are numerically identical to the GPT-form dsv4_hybrid path.
         # Keep a named factory so checkpoint reload does not deserialize the
         # unused module templates in the expanded MCore stack.
-        provider.hybrid_stack_spec = transformer_engine_hybrid_stack_spec
+        provider.hybrid_stack_spec = deepseek_v4_hybrid_stack_spec
         provider.qk_layernorm = True
         provider.normalization = "RMSNorm"
         provider.add_bias_linear = False
@@ -563,8 +565,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
+        # MCore main renamed these fields while the frozen dev pin still reads
+        # the original names directly. Keep both pairs synchronized so the same
+        # provider config instantiates identical grouped output projections.
         provider.output_projection_groups = hf_config.o_groups  # 8
         provider.output_projection_lora_rank = hf_config.o_lora_rank  # 1024
+        provider.o_groups = hf_config.o_groups
+        provider.o_lora_rank = hf_config.o_lora_rank
 
         # ---- Rotary embeddings (YaRN) ----
         # Two separate RoPE bases in V4:
@@ -633,8 +640,16 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_kernel_backend = "cudnn" if use_dsa_kernel_fusion else "none"
 
         # ---- Hyper-Connections (mHC) ----
-        provider.enable_mhc_connections = True
-        provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
+        # MCore renamed these fields after the frozen dev pin. Select the names that
+        # the active provider dataclass actually consumes so both pins build the same
+        # wrapped HybridStack parameter layout.
+        provider_fields = getattr(type(provider), "__dataclass_fields__", None)
+        if provider_fields is None or "enable_mhc_connections" in provider_fields:
+            provider.enable_mhc_connections = True
+            provider.mhc_num_residual_streams = hf_config.hc_mult  # 4
+        else:
+            provider.enable_hyper_connections = True
+            provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.use_fused_mhc = use_blackwell_fused_kernels
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
 

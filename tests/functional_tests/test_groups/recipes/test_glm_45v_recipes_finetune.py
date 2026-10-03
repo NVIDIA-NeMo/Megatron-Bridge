@@ -19,18 +19,30 @@ import pytest
 from megatron.bridge.recipes.glm_vl.glm_45v import (
     glm_45v_sft_config,
 )
+from megatron.bridge.recipes.glm_vl.h100 import glm_45v as glm_45v_h100_module
+from tests.functional_tests.test_groups.recipes.toy_hf_models import create_glm_45v_toy_artifacts
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
-def _skip_if_model_unavailable(config_func):
-    """Call config_func and skip the test if the HF model config is not available (e.g. offline CI)."""
-    try:
-        return config_func()
-    except (ValueError, OSError) as e:
-        err = str(e).lower()
-        if "couldn't connect" in err or "cached files" in err or "failed to load configuration" in err:
-            pytest.skip(f"Model config not available (offline?): {e}")
-        raise
+def _recipe_with_toy_model(config_func, tmp_path):
+    hf_path = create_glm_45v_toy_artifacts(tmp_path)
+    original_from_hf_pretrained = glm_45v_h100_module.AutoBridge.from_hf_pretrained
+
+    def config_with_test_model():
+        class LocalAutoBridge:
+            @staticmethod
+            def from_hf_pretrained(_model_name_or_path):
+                return original_from_hf_pretrained(hf_path)
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(glm_45v_h100_module, "AutoBridge", LocalAutoBridge)
+            config = config_func()
+        # Keep the toy vision projector aligned with the language width overridden below.
+        config.model.vision_config.out_hidden_size = 4096
+        config.dataset.hf_processor_path = hf_path
+        return config
+
+    return config_with_test_model
 
 
 GLM_45V_FINETUNE_RECIPES = [
@@ -80,8 +92,8 @@ class TestGLM45VRecipes:
     @pytest.mark.parametrize("config_func,recipe_name,model_overrides", GLM_45V_FINETUNE_RECIPES)
     def test_glm_45v_finetune_recipes(self, config_func, recipe_name, model_overrides, tmp_path):
         """Functional test for GLM 4.5V recipes with appropriate parallelism configurations."""
-        _skip_if_model_unavailable(config_func)  # early check before distributed setup
-        run_pretrain_vl_recipe_test(config_func, recipe_name, tmp_path, model_overrides=model_overrides)
+        config_with_test_model = _recipe_with_toy_model(config_func, tmp_path)
+        run_pretrain_vl_recipe_test(config_with_test_model, recipe_name, tmp_path, model_overrides=model_overrides)
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
@@ -91,9 +103,9 @@ class TestGLM45VRecipes:
         self, config_func, recipe_name, model_overrides, dataset_overrides, tmp_path
     ):
         """Functional test for GLM 4.5V recipes with packed sequences enabled."""
-        _skip_if_model_unavailable(config_func)  # early check before distributed setup
+        config_with_test_model = _recipe_with_toy_model(config_func, tmp_path)
         run_pretrain_vl_recipe_test(
-            config_func,
+            config_with_test_model,
             recipe_name,
             tmp_path,
             model_overrides=model_overrides,

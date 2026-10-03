@@ -20,6 +20,8 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 
+from megatron.bridge.dev_compat import get_gtp_api
+
 
 def get_transformer_config(model_config: Any) -> Any:
     """Return the MCore transformer config nested in a Bridge model config."""
@@ -61,12 +63,8 @@ def configure_gtp_remat(
         return
 
     transformer_config = get_transformer_config(model_config)
-    try:
-        from megatron.core.tensor_parallel import gtp_api
-    except ImportError as error:
-        raise RuntimeError("GTP requires TransformerEngine >= 2.19.") from error
-
-    if not gtp_api.HAVE_GTP:
+    gtp_api = get_gtp_api()
+    if gtp_api is None or not gtp_api.HAVE_GTP:
         raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     gtp_api.configure_gtp_remat_from_recipe(
@@ -90,10 +88,9 @@ def classify_gtp_remat_chains(model: list[torch.nn.Module], model_config: Any) -
         return
 
     transformer_config = get_transformer_config(model_config)
-    try:
-        from megatron.core.tensor_parallel import gtp_api
-    except ImportError as error:
-        raise RuntimeError("GTP requires TransformerEngine >= 2.19.") from error
+    gtp_api = get_gtp_api()
+    if gtp_api is None:
+        raise RuntimeError("GTP requires TransformerEngine >= 2.19.")
 
     gtp_api.classify_gtp_remat_chains(
         model,

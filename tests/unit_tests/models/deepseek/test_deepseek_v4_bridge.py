@@ -37,11 +37,11 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     _dsv4_num_hash_layers,
     deepseek_v4_supports_fused_dsa_kernels,
 )
-from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
-from megatron.bridge.models.hybrid.hybrid_provider import (
-    HybridModelProvider,
-    transformer_engine_hybrid_stack_spec,
+from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import (
+    DeepSeekV4HybridModelProvider,
+    deepseek_v4_hybrid_stack_spec,
 )
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
@@ -593,6 +593,22 @@ class TestDeepSeekV4HardwareDefaults:
         assert out.enable_mhc_connections is True
         assert out.use_fused_mhc is False
 
+    def test_provider_bridge_sets_legacy_hyper_connection_fields(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = _provider_with_fields("enable_hyper_connections", "num_residual_streams")
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch.object(torch.cuda, "is_available", return_value=False),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.enable_hyper_connections is True
+        assert out.num_residual_streams == hf_pretrained.config.hc_mult
+        assert not hasattr(out, "enable_mhc_connections")
+
     def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
@@ -723,7 +739,7 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         assert out.hybrid_layer_pattern == "WECEHECE"
         assert out.num_layers == 8
         assert out.mtp_hybrid_override_pattern == "WE"
-        assert out.hybrid_stack_spec is transformer_engine_hybrid_stack_spec
+        assert out.hybrid_stack_spec is deepseek_v4_hybrid_stack_spec
         assert out.output_projection_groups == 8
         assert out.output_projection_lora_rank == 1024
         # MCore counts MoE positions, so this remains the logical HF layer count.
@@ -731,6 +747,18 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         assert out.hash_moe_vocab_size == 129280
         # Doubled per-hybrid-layer ratios (main) + one MTP depth [0, 0].
         assert out.csa_compress_ratios == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
+
+    def test_stack_resolver_accepts_static_mcore_spec(self, monkeypatch):
+        from megatron.core.transformer import ModuleSpec
+
+        from megatron.bridge import dev_compat
+        from megatron.bridge.models.deepseek import deepseek_v4_hybrid_provider
+
+        static_spec = ModuleSpec(module=object)
+        monkeypatch.setattr(dev_compat, "MCORE_HYBRID_DSV4_STACK_SPEC", static_spec)
+        monkeypatch.setattr(deepseek_v4_hybrid_provider, "MCORE_HYBRID_DSV4_STACK_SPEC", static_spec)
+
+        assert deepseek_v4_hybrid_stack_spec(SimpleNamespace()) is static_spec
 
     @pytest.mark.parametrize("mtp_depth", [0, 1])
     def test_checkpoint_config_reloads_native_stack(self, tmp_path, mtp_depth):
@@ -760,8 +788,8 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
 
         assert mlm_args is None
         assert isinstance(restored, DeepSeekV4HybridModelProvider)
-        assert restored.hybrid_stack_spec is transformer_engine_hybrid_stack_spec
-        assert restored._resolve_hybrid_stack_spec() is transformer_engine_hybrid_stack_spec()
+        assert restored.hybrid_stack_spec is deepseek_v4_hybrid_stack_spec
+        assert restored._resolve_hybrid_stack_spec().module is deepseek_v4_hybrid_stack_spec(restored).module
         assert restored.hybrid_layer_pattern == provider.hybrid_layer_pattern
         assert (restored.mtp_num_layers or 0) == mtp_depth
 

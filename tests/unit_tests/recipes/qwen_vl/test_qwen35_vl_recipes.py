@@ -442,6 +442,12 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.MonkeyPatch):
     """The 64-GB300 library pretrain recipe should own the measured execution policy."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(
+        monkeypatch,
+        _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config,
+        "AutoBridge",
+        _FakeAutoBridge,
+    )
 
     cfg = _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config()
 
@@ -473,6 +479,12 @@ def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.M
 def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.MonkeyPatch):
     """The 16-GB300 library pretrain recipe should own the measured execution policy."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(
+        monkeypatch,
+        _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config,
+        "AutoBridge",
+        _FakeAutoBridge,
+    )
 
     cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config()
 

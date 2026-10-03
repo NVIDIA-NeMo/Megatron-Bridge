@@ -14,6 +14,7 @@
 
 """Native pipeline allocation for DeepSeek V4 attention/MoE pairs."""
 
+import inspect
 from unittest.mock import patch
 
 import pytest
@@ -46,6 +47,19 @@ def _provider(logical_layers, pp, vp=None):
     )
 
 
+def _select_pipeline_segment(pattern, config, pp_group, vp_stage):
+    parameters = inspect.signature(allocation.select_pipeline_segment).parameters
+    if "config" in parameters:
+        return allocation.select_pipeline_segment(pattern, config, pp_group, vp_stage)
+    return allocation.select_pipeline_segment(pattern, pp_group, vp_stage)
+
+
+def _layer_type_symbols(layers):
+    if not layers or isinstance(layers[0], str):
+        return layers
+    return allocation.get_layer_type_list_from_layer_config_list(layers)
+
+
 @pytest.mark.parametrize(
     ("logical_layers", "pp", "vp", "counts"),
     [(43, 8, None, [6] * 3 + [5] * 5), (43, 4, 4, [3] * 11 + [2] * 5), (61, 4, None, [16, 15, 15, 15])],
@@ -73,11 +87,11 @@ def test_native_pipeline_segments_match_mcore_allocation(logical_layers, pp, vp,
             patch.object(allocation.torch.distributed, "get_world_size", return_value=pp),
             patch.object(allocation, "log_on_each_pipeline_stage"),
         ):
-            configs, offset = allocation.select_pipeline_segment(
+            configs, offset = _select_pipeline_segment(
                 cfg.hybrid_layer_pattern, cfg, object(), vp_rank if vp else None
             )
         assert offset == 2 * sum(counts[:index])
-        assert "".join(allocation.get_layer_type_list_from_layer_config_list(configs)) == segment
+        assert "".join(_layer_type_symbols(configs)) == segment
         assert layout.layout[pp_rank][vp_rank].count(LayerType.decoder) == len(configs)
 
 
