@@ -11,8 +11,8 @@ own TP/PP/DP configuration.
 Conversation examples are built with the standard HF VLM provider, then the
 resulting Qwen batch is adapted into the MIMO forward shape:
 
-  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and the
-    tokenizer's ``attention_mask``
+  - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask, and (when packing
+    or with a reorder language cost term) the tokenizer's ``attention_mask``
   - image inputs: ``modality_inputs["images"]["qwen_visual"]``
 
 Example 2-GPU smoke:
@@ -133,6 +133,7 @@ class MIMOBatchSpec:
     labels: bool = True
     loss_mask: bool = True
     modality_inputs: bool = True
+    attention_mask: bool = False
 
     def describe(self) -> str:
         enabled = [
@@ -143,6 +144,7 @@ class MIMOBatchSpec:
                 ("labels", self.labels),
                 ("loss_mask", self.loss_mask),
                 ("modality_inputs", self.modality_inputs),
+                ("attention_mask", self.attention_mask),
             )
             if value
         ]
@@ -278,24 +280,39 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
 
     pp_rank = _grid_dim_rank(grid, "pp", 0)
     pp_size = _grid_dim_size(grid, "pp", 1)
+    is_first_pp = pp_rank == 0
     is_last_pp = pp_rank == pp_size - 1
 
-    # Cheap [B, S] fields are always shipped; forward_step decides what reaches the model.
+    dataset_cfg = getattr(cfg, "dataset", None)
+    packing_active = bool(getattr(dataset_cfg, "enable_in_batch_packing", False))
+    reorder_active = bool(
+        getattr(dataset_cfg, "megatron_mimo_scalable_dp", False)
+        and getattr(dataset_cfg, "megatron_mimo_intra_microbatch_reorder", False)
+    )
+    language_cost_active = reorder_active and (
+        getattr(dataset_cfg, "megatron_mimo_reorder_language_cost_weight", 0.0) > 0
+    )
+
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
-            input_ids=True,
+            input_ids=is_first_pp or reorder_active,
+            # Qwen3.5-VL mRoPE needs position_ids on every language PP stage.
             position_ids=True,
             labels=is_last_pp,
             loss_mask=is_last_pp,
             modality_inputs=False,
+            # Packing length source; the packer nulls it again before the model.
+            attention_mask=packing_active or language_cost_active,
         )
 
     return MIMOBatchSpec(
-        input_ids=True,
+        # Encoder first stages need input_ids to attach per-sample split metadata.
+        input_ids=is_first_pp or reorder_active,
         position_ids=False,
         labels=False,
         loss_mask=False,
-        modality_inputs=True,
+        modality_inputs=is_first_pp,
+        attention_mask=language_cost_active,
     )
 
 
@@ -313,6 +330,8 @@ def _project_adapted_batch(
         adapted["loss_mask"] = None
     if not batch_spec.modality_inputs:
         adapted["modality_inputs"] = None
+    if not batch_spec.attention_mask:
+        adapted["attention_mask"] = None
     return adapted
 
 
@@ -985,16 +1004,11 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
                         f"(module {_name!r} has PP={_par.pipeline_model_parallel_size}): non-first encoder stages "
                         "skip data loading, so the collective process-group creation below would hang."
                     )
-            # n_groups is the canonical grid size (LCM of the module DP sizes), the geometry the canonical
-            # loader reads with, so vision and language ranks derive one identical per-sample assignment.
             balance_n_groups = canonical_grid_size(module_dps)
             _grid, _ = _find_rank_module(cfg.model._grids)
             dp_rank, dp_size, dp_group_gloo, dp_group_nccl = build_module_dp_process_groups(
                 _grid.get_pg(["dp"]), overlap=cfg.dataset.megatron_mimo_reorder_overlap
             )
-            # Cost = encoder_cost_weight * patches + language_cost_weight * real_tokens. The patch count comes from the
-            # image-placeholder token count in input_ids (present on every module and PP stage), not
-            # from grid_thw, which the metadata collate omits on language shards.
             cost_of = functools.partial(
                 sample_cost,
                 encoder_cost_weight=cfg.dataset.megatron_mimo_reorder_encoder_cost_weight,
@@ -1004,7 +1018,6 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
             )
 
             def image_count_of(b: dict[str, Any]) -> torch.Tensor:
-                # One vision-start token precedes each image, so this counts images, not patches.
                 return (b["input_ids"] == spec.vision_start_token_id).sum(dim=1).to(torch.long)
 
             loader_iter = ReorderingBuffer(

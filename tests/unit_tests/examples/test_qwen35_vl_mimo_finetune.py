@@ -287,43 +287,76 @@ def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
         sys.modules.pop(name, None)
 
 
-def test_batch_spec_language_non_first_stage_ships_cheap_fields(monkeypatch):
-    # Non-first language stage: input_ids/position_ids always shipped (reorder cost, MRoPE); labels and
-    # loss_mask only on the last stage. forward_step decides what the model receives.
+def _spec_for(module, module_name, pp_rank, pp_size, dataset):
+    class _PG:
+        def rank(self):
+            return pp_rank
+
+    grid = SimpleNamespace(dim_names=("pp",), shape=[pp_size], get_pg=lambda dims: _PG())
+    module._rank_grid_and_module = lambda grids: (grid, module_name)
+    cfg = SimpleNamespace(model=SimpleNamespace(_grids={module_name: grid}), dataset=dataset)
+    return module._batch_spec_for_rank(cfg)
+
+
+def _dataset(reorder=False, language_cost=0.0, packing=False):
+    return SimpleNamespace(
+        megatron_mimo_scalable_dp=reorder,
+        megatron_mimo_intra_microbatch_reorder=reorder,
+        megatron_mimo_reorder_language_cost_weight=language_cost,
+        enable_in_batch_packing=packing,
+    )
+
+
+def test_batch_spec_language_non_first_stage_input_ids_only_under_reorder():
+    # Upstream ships input_ids to the first language stage only; the reorder cost reads it on every
+    # stage, so reorder (and only reorder) keeps it on later stages. Labels/loss_mask stay last-stage only.
     name = "qwen35_vl_mimo_finetune_batch_spec_under_test"
     module = _load_example_module(name)
     try:
-
-        class _PG:
-            def rank(self):
-                return 1  # stage 1 of 3: neither first nor last
-
-        grid = SimpleNamespace(dim_names=("pp",), shape=[3], get_pg=lambda dims: _PG())
-        monkeypatch.setattr(module, "_rank_grid_and_module", lambda grids: (grid, module.MIMO_LANGUAGE_MODULE_KEY))
-        cfg = SimpleNamespace(model=SimpleNamespace(_grids={module.MIMO_LANGUAGE_MODULE_KEY: grid}))
-        spec = module._batch_spec_for_rank(cfg)
-        assert spec.input_ids is True and spec.position_ids is True
-        assert spec.labels is False and spec.loss_mask is False
-        assert spec.modality_inputs is False
+        lang = module.MIMO_LANGUAGE_MODULE_KEY
+        off = _spec_for(module, lang, pp_rank=1, pp_size=3, dataset=_dataset(reorder=False))
+        assert off.input_ids is False and off.position_ids is True
+        assert off.labels is False and off.loss_mask is False and off.modality_inputs is False
+        on = _spec_for(module, lang, pp_rank=1, pp_size=3, dataset=_dataset(reorder=True))
+        assert on.input_ids is True and on.position_ids is True
+        assert on.labels is False and on.loss_mask is False and on.modality_inputs is False
+        first = _spec_for(module, lang, pp_rank=0, pp_size=3, dataset=_dataset(reorder=False))
+        assert first.input_ids is True
     finally:
         sys.modules.pop(name, None)
 
 
-def test_batch_spec_encoder_ships_inputs_and_pixels(monkeypatch):
+def test_batch_spec_attention_mask_follows_packing_or_language_cost():
+    name = "qwen35_vl_mimo_finetune_attention_mask_spec_under_test"
+    module = _load_example_module(name)
+    try:
+        lang = module.MIMO_LANGUAGE_MODULE_KEY
+        neither = _dataset()
+        assert _spec_for(module, lang, 0, 1, neither).attention_mask is False
+        assert _spec_for(module, "images", 0, 1, neither).attention_mask is False
+        packing = _dataset(packing=True)
+        assert _spec_for(module, lang, 0, 1, packing).attention_mask is True
+        assert _spec_for(module, "images", 0, 1, packing).attention_mask is False
+        cost = _dataset(reorder=True, language_cost=0.5)
+        assert _spec_for(module, lang, 0, 1, cost).attention_mask is True
+        assert _spec_for(module, "images", 0, 1, cost).attention_mask is True
+        cost_without_reorder = _dataset(reorder=False, language_cost=0.5)
+        assert _spec_for(module, "images", 0, 1, cost_without_reorder).attention_mask is False
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_batch_spec_encoder_ships_inputs_and_pixels():
     name = "qwen35_vl_mimo_finetune_encoder_spec_under_test"
     module = _load_example_module(name)
     try:
-
-        class _PG:
-            def rank(self):
-                return 0
-
-        grid = SimpleNamespace(dim_names=("pp",), shape=[1], get_pg=lambda dims: _PG())
-        monkeypatch.setattr(module, "_rank_grid_and_module", lambda grids: (grid, "images"))
-        cfg = SimpleNamespace(model=SimpleNamespace(_grids={"images": grid}))
-        spec = module._batch_spec_for_rank(cfg)
-        assert spec.input_ids is True and spec.modality_inputs is True
-        assert spec.labels is False and spec.loss_mask is False and spec.position_ids is False
+        first = _spec_for(module, "images", pp_rank=0, pp_size=1, dataset=_dataset())
+        assert first.input_ids is True and first.modality_inputs is True
+        assert first.labels is False and first.loss_mask is False and first.position_ids is False
+        later_off = _spec_for(module, "images", pp_rank=1, pp_size=2, dataset=_dataset(reorder=False))
+        assert later_off.input_ids is False and later_off.modality_inputs is False
+        later_on = _spec_for(module, "images", pp_rank=1, pp_size=2, dataset=_dataset(reorder=True))
+        assert later_on.input_ids is True and later_on.modality_inputs is False
     finally:
         sys.modules.pop(name, None)
 
