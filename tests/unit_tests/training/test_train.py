@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
-from megatron.bridge.training.fsdp_compat import MEGATRON_FSDP_TYPES
+from megatron.bridge.dev_compat import MEGATRON_FSDP_TYPES
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,

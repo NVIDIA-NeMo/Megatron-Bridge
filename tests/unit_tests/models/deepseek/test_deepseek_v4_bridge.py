@@ -749,11 +749,14 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
         assert out.csa_compress_ratios == [0, 0, 4, 0, 128, 0, 4, 0, 0, 0]
 
     def test_stack_resolver_accepts_static_mcore_spec(self, monkeypatch):
-        from megatron.core.models.hybrid import hybrid_layer_specs
         from megatron.core.transformer import ModuleSpec
 
+        from megatron.bridge import dev_compat
+        from megatron.bridge.models.deepseek import deepseek_v4_hybrid_provider
+
         static_spec = ModuleSpec(module=object)
-        monkeypatch.setattr(hybrid_layer_specs, "hybrid_dsv4_stack_spec", static_spec, raising=False)
+        monkeypatch.setattr(dev_compat, "MCORE_HYBRID_DSV4_STACK_SPEC", static_spec)
+        monkeypatch.setattr(deepseek_v4_hybrid_provider, "MCORE_HYBRID_DSV4_STACK_SPEC", static_spec)
 
         assert deepseek_v4_hybrid_stack_spec(SimpleNamespace()) is static_spec
 
