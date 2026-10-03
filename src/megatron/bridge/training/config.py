@@ -71,7 +71,6 @@ from megatron.bridge.models.transformer_config import _enable_safe_hybridep_disp
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
-from megatron.bridge.training.fsdp_compat import MCORE_HAS_MEGATRON_FSDP_V2
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
@@ -153,6 +152,12 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     instead of local rank for CUDA device selection. This is useful when launching
     with external process managers that handle GPU visibility.
     """
+
+    gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
+    """Accumulate GTP remat reduce-scatter results locally in FP32."""
+
+    gtp_remat_nccl_ub: bool = False
+    """Register the dense GTP remat group with an NCCL symmetric-memory user buffer."""
 
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
@@ -536,6 +541,9 @@ class CheckpointConfig(MTrainCheckpointConfig):
     strict_fsdp_dtensor_load: bool = False
     """Whether to enforce strict loading for FSDP DTensor checkpoints. When False, allows partial loading."""
 
+    save_rng_state_per_dp_rank: bool = False
+    """Save distinct RNG states for data-parallel ranks whose runtime RNG streams can diverge."""
+
     custom_manager_class: str | None = None
     """Fully qualified class name for a custom CheckpointManager implementation.
 
@@ -753,8 +761,8 @@ class ProfilingConfig(MTrainProfilingConfig):
     profile_ranks: list[int] = field(default_factory=lambda: [0])
     """Ranks to capture in memory snapshots / nsys / pytorch profiler.
 
-    Memory-snapshot and recording-start guards use a strict membership check,
-    so an empty list disables capture. Default ``[0]`` gives rank-0 capture
+    An empty list captures on all ranks, including memory snapshots and
+    allocator history. Default ``[0]`` gives rank-0 capture
     whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
     enabled, with no further override required.
     """
@@ -1082,8 +1090,8 @@ class ConfigContainer(Container):
         self.dist.use_megatron_fsdp = True
         self.ddp.use_megatron_fsdp = True
 
-        megatron_fsdp_version = getattr(self.ddp, "megatron_fsdp_version", 1)
-        if not MCORE_HAS_MEGATRON_FSDP_V2 or megatron_fsdp_version == 1:
+        megatron_fsdp_version = self.ddp.megatron_fsdp_version
+        if megatron_fsdp_version == 1:
             self._validate_and_apply_megatron_fsdp_v1_configs()
         elif megatron_fsdp_version == 2:
             self._validate_and_apply_megatron_fsdp_v2_configs()
@@ -1130,7 +1138,14 @@ class ConfigContainer(Container):
         else:
             # Only compatible with NCCL UBR.
             assert not self.ddp.fsdp_manual_registration, "DDP.fsdp_manual_registration requires DDP.nccl_ub!"
-        if self.ddp.data_parallel_sharding_strategy == "optim_grads_params":
+        sharding_strategies = {self.ddp.data_parallel_sharding_strategy}
+        if self.ddp.expert_data_parallel_sharding_strategy is not None:
+            sharding_strategies.add(self.ddp.expert_data_parallel_sharding_strategy)
+        if sharding_strategies & {"optim_grads", "optim_grads_params"} and self.model.gradient_accumulation_fusion:
+            warn_rank_0("Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP.")
+        if self.model.init_model_with_meta_device and sharding_strategies == {"no_shard"}:
+            raise ValueError("Meta device initialization is not supported with only no_shard strategies.")
+        if "optim_grads_params" in sharding_strategies:
             assert self.train.check_weight_hash_across_dp_replicas_interval is None, (
                 "TrainingConfig.check_weight_hash_across_dp_replicas_interval is not "
                 "supported with the Megatron-FSDP optim_grads_params sharding strategy"
@@ -1142,7 +1157,7 @@ class ConfigContainer(Container):
 
         MFSDP V2 owns its sharded parameter and gradient storage, so it must use
         its dedicated optimizer rather than Bridge's distributed-optimizer path.
-        Checkpointing and model-parallel topologies remain intentionally unsupported
+        Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
         upstream and are rejected here before model construction.
         """
         if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
@@ -1153,7 +1168,6 @@ class ConfigContainer(Container):
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
-            "context_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1161,9 +1175,7 @@ class ConfigContainer(Container):
             if getattr(self.model, name) != 1
         ]
         if configured_parallelisms:
-            raise ValueError(
-                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
-            )
+            raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.expert_model_parallel_size > 1:
             if self.model.num_moe_experts is None:
                 raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
@@ -1173,32 +1185,20 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support use_tp_pp_dp_mapping.")
         if self.rng.data_parallel_random_init:
             raise ValueError("MFSDP V2 does not support data_parallel_random_init.")
-        if self.ddp.num_distributed_optimizer_instances != 1:
-            raise ValueError("MFSDP V2 does not currently support HSDP.")
-        if self.ddp.outer_dp_sharding_strategy != "no_shard":
-            raise ValueError("MFSDP V2 does not currently support outer DP sharding.")
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             raise ValueError("MFSDP V2 checkpoint save and load are not yet supported.")
         if self.checkpoint.pretrained_checkpoint is not None:
             raise ValueError("MFSDP V2 checkpoint loading is not yet supported.")
         if self.optimizer.loss_scale is not None:
             raise ValueError("MFSDP V2 does not support loss scaling.")
-        if self.optimizer.clip_grad > 0.0:
-            raise ValueError("MFSDP V2 does not currently support gradient clipping.")
-        if self.optimizer.use_precision_aware_optimizer:
-            raise ValueError("MFSDP V2 does not support precision-aware optimizer.")
         if self.optimizer.optimizer_cpu_offload:
             raise ValueError("MFSDP V2 does not support optimizer CPU offload.")
         if self.optimizer.use_layer_wise_distributed_optimizer:
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
-        if self.optimizer.optimizer_cuda_graph:
-            raise ValueError("MFSDP V2 does not support optimizer CUDA graphs.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
         if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
             raise ValueError("MFSDP V2 does not support FP8 or FP4.")
-        if self.model.cuda_graph_impl != "none" or self.ddp.megatron_fsdp_cuda_graph_mode:
-            raise ValueError("MFSDP V2 does not support CUDA graphs.")
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
@@ -1424,6 +1424,22 @@ class ConfigContainer(Container):
                 )
             if self.ddp.average_in_collective:
                 raise ValueError("GTP requires ddp.average_in_collective=False.")
+            if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
+                if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+                    raise ValueError(
+                        "GTP + mxfp8 is not supported with Megatron FSDP because "
+                        "reuse_grad_buf_for_mxfp8_param_ag is required."
+                    )
+                if not self.ddp.fp8_param_gather:
+                    raise ValueError(
+                        "GTP + mxfp8 requires ddp.fp8_param_gather=True because GTP does not keep "
+                        "or re-quantize a BF16 weight."
+                    )
+                if not self.ddp.reuse_grad_buf_for_mxfp8_param_ag:
+                    raise ValueError(
+                        "GTP + mxfp8 requires ddp.reuse_grad_buf_for_mxfp8_param_ag=True because "
+                        "MXFP8 parameters cannot be mapped into the contiguous parameter buffer."
+                    )
 
         self.logger.finalize()
         self.train.finalize()
@@ -1501,6 +1517,19 @@ class ConfigContainer(Container):
             f"eval_micro_batch_size * eval_data_parallel_size ({self.validation.eval_micro_batch_size} * "
             f"{eval_data_parallel_size} = {eval_dp_product})"
         )
+
+        if getattr(self.model, "freeze_base_model_for_mtp", False):
+            if not self.model.mtp_num_layers:
+                raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
+        if getattr(self.model, "moe_shortcut_connection", False) and (
+            self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        ):
+            raise ValueError("moe_shortcut_connection is not supported with FSDP.")
+        # Core also enables LayerWise for legacy dist_* optimizer names.
+        if (
+            self.optimizer.use_layer_wise_distributed_optimizer or self.optimizer.optimizer.startswith("dist_")
+        ) and self.model.moe_single_grouped_weight:
+            raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
