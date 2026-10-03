@@ -332,3 +332,5 @@ if assert_baseline_precedes_dispatched_copy "$temporary_dir/early-copy.Dockerfil
   echo "Cache-order regression accepted an early mutable MCore copy" >&2
   exit 1
 fi
+
+bash "$(dirname "${BASH_SOURCE[0]}")/test_mok_install.sh" "$dockerfile"
