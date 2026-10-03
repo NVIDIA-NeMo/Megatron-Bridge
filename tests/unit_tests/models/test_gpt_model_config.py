@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import warnings
 from dataclasses import dataclass
 from unittest.mock import Mock, patch
 
@@ -21,12 +22,14 @@ import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel
 from megatron.core.transformer import ModuleSpec
+from transformers import Qwen3Config
 
 from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
 from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
+from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -153,6 +156,33 @@ def test_bridge_can_explicitly_disable_model_config() -> None:
 
     with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
         UnsupportedBridge().hf_config_to_model_config(object())
+
+
+def _make_qwen3_config() -> Qwen3Config:
+    return Qwen3Config(
+        num_hidden_layers=2,
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        vocab_size=256,
+    )
+
+
+def test_bridge_without_model_config_mapping_rejects_model_config() -> None:
+    with pytest.raises(ModelConfigNotSupportedError, match="Qwen3Bridge.*to_megatron_provider"):
+        Qwen3Bridge().hf_config_to_model_config(_make_qwen3_config())
+
+
+def test_bridge_without_model_config_mapping_keeps_provider_without_warning() -> None:
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        provider = Qwen3Bridge().provider_bridge(Mock(config=_make_qwen3_config()))
+
+    assert provider.position_embedding_type == "rope"
+    assert provider.qk_layernorm is True
+    assert provider.add_bias_linear is False
 
 
 @pytest.mark.skipif(
