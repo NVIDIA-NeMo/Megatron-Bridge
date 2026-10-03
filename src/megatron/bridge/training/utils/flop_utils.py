@@ -779,13 +779,16 @@ def num_floating_point_operations(
         gqa_groups=8,
         kv_channels=None,
         core_attn_seq_factor=None,
+        attention_output_gate=False,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
         g = gqa_groups
         core_seq = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
+        gate_projection_size = hidden_size * p if attention_output_gate else 0
         return (
             4 * batch_size * seq_len * hidden_size * p * (hidden_size + (hidden_size * (g / num_heads)))
+            + 2 * batch_size * seq_len * hidden_size * gate_projection_size
             + 2 * batch_size * seq_len * hidden_size * p * core_seq
         )
 
@@ -945,6 +948,7 @@ def num_floating_point_operations(
         num_swa_attn_layers=0,
         swa_context=None,
         core_attn_seq_factor=None,
+        attention_output_gate=False,
     ):
         """Calculate total FLOPs for the hybrid model."""
         num_full_attn_layers = num_attn_layers - num_swa_attn_layers
@@ -956,6 +960,7 @@ def num_floating_point_operations(
             gqa_groups,
             kv_channels,
             core_attn_seq_factor=core_attn_seq_factor,
+            attention_output_gate=attention_output_gate,
         )
         swa_attn_flops = 0
         if num_swa_attn_layers > 0:
@@ -969,6 +974,7 @@ def num_floating_point_operations(
                 gqa_groups,
                 kv_channels,
                 core_attn_seq_factor=2 * swa_context,
+                attention_output_gate=attention_output_gate,
             )
 
         flops_fwd = (
@@ -1741,6 +1747,7 @@ def num_floating_point_operations(
             num_swa_attn_layers=num_swa_attn_layers,
             swa_context=swa_context,
             core_attn_seq_factor=core_attn_seq_factor,
+            attention_output_gate=getattr(cfg.model, "attention_output_gate", False),
         )
         # Native DSv4 blocks split attention (W/C/H) and MoE (E) into
         # separate physical layers. Generic hybrid accounting above includes
