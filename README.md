@@ -111,6 +111,16 @@ The submodule committed to the repo always points to the **main** commit. Use th
 
 The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://github.com/NVIDIA/Megatron-LM/tree/dev) — features are experimental, follow a streamlined review process, and must graduate to stable within 6 months or be deprecated.
 
+### Supported Megatron-Core versions
+
+Bridge supports a rolling three-minor Megatron-Core window: if the pinned minor is N, the supported
+minors are N, N-1, and N-2. When the pin advances, the lower bound advances too, so older minors are
+not supported indefinitely. With the current pin at `0.20`, package installation enforces
+`megatron-core>=0.18.0,<0.21`.
+
+Compatibility shims cover APIs missing from older supported minors; for example,
+`megatron.bridge.compat.mcore_gpt` provides the GPT builder interface on 0.18.x.
+
 ## ⚡ Quickstart
 
 To get started, install Megatron Bridge or download a NeMo Framework container as described [above](#-installation).
