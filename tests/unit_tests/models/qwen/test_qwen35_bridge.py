@@ -306,6 +306,26 @@ class TestQwen35DenseBridge:
         assert "model.norm.weight" in hf_params
         assert "decoder.final_layernorm.weight" in megatron_params
 
+    def test_mapping_registry_mtp_layer_spellings(self):
+        """Every dense MTP sub-layer mapping is registered under both Megatron-Core spellings."""
+        bridge = Qwen35Bridge()
+
+        registry = bridge.mapping_registry()
+
+        megatron_params = [mapping.megatron_param for mapping in registry.mappings]
+        for layer_attr in ("mtp_model_layer", "transformer_layer"):
+            for suffix in (
+                "mlp.linear_fc1.layer_norm_weight",
+                "mlp.linear_fc2.weight",
+                "mlp.linear_fc1.weight",
+                "self_attention.linear_qkv.layer_norm_weight",
+                "self_attention.q_layernorm.weight",
+                "self_attention.k_layernorm.weight",
+                "self_attention.linear_proj.weight",
+            ):
+                assert f"mtp.layers.0.{layer_attr}.{suffix}" in megatron_params
+            assert f"mtp.layers.*.{layer_attr}.self_attention.linear_qkv.weight" in megatron_params
+
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
         bridge = Qwen35Bridge()
