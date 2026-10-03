@@ -336,3 +336,10 @@ Cluster fabric and orchestration settings do not belong in recipes. Keep credent
 - [torchrun Documentation](https://docs.pytorch.org/docs/stable/elastic/run.html)
 - [PyTorch Multinode Training documentation](https://docs.pytorch.org/tutorials/intermediate/ddp_series_multinode.html)
 - [NeMo-Run documentation](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/index.html#)
+
+### Qwen3.5 text-only 128K MXFP8 SFT
+
+The 16-GB200 recipe uses a text-only checkpoint with MTP, CoderForge offline
+packs and MXFP8 parameter gather. See the
+[checkpoint, data and launch steps](../examples/models/qwen/qwen35_text/README.md)
+for runtime prerequisites and the bounded validation results.
