@@ -22,6 +22,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedExpertMapping,
     FusedGatedExpertMapping,
     GatedMLPMapping,
+    HCAlphaMapping,
+    InitOnlyMapping,
     MegatronParamMapping,
     QKVMapping,
     ReplicatedMapping,
@@ -43,5 +45,7 @@ __all__ = [
     "ReplicatedMapping",
     "RowParallelMapping",
     "AutoMapping",
+    "HCAlphaMapping",
+    "InitOnlyMapping",
     "weights_verification_table",
 ]
