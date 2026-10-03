@@ -12,18 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional test for the MegatronMIMO intra-microbatch reorder exchange on a real 2-rank
-process group.
-
-The CPU unit tests (``tests/unit_tests/data/megatron_mimo/test_reorder_buffer.py``) emulate the
-``all_to_all_single``; this exercises the on-device path that those cannot — the real Gloo cost
-all-gather + NCCL ragged ``all_to_all_single`` inside :func:`exchange_window`, plus the side-PG
-setup in :func:`build_module_dp_process_groups`. The 2-rank world is treated as a single module's
-``dp=2`` group (het-DP pairing needs two modules / 4 ranks and stays unit-emulated).
+"""MegatronMIMO intra-microbatch reorder exchange on a real 2-rank process group (NCCL + Gloo side PGs).
 
 Run by ``tests/functional_tests/launch_scripts/h100/active/L0_Launch_training_megatron_mimo.sh``
-(``torch.distributed.run --nproc_per_node=2 -m pytest .../test_groups/megatron_mimo``).
-"""
+(``torch.distributed.run --nproc_per_node=2 -m pytest .../test_groups/megatron_mimo``)."""
 
 from __future__ import annotations
 
@@ -43,19 +35,13 @@ from megatron.bridge.data.megatron_mimo.reorder_buffer import (
 from tests.functional_tests.utils import initialize_distributed
 
 
-_VISION_START = 990  # synthetic vision-start token; one per image, counted by image_count_of
+_VISION_START = 990  # one per image; counted by image_count_of
 _SEQ = 8
 _DIM = 4
 
 
 def _make_shard(samples: List[Tuple[int, List[int]]]) -> dict:
-    """Build one rank's nested micro-batch from ``[(global_idx, [patches_per_image, ...]), ...]``.
-
-    ``input_ids[i]`` is tagged with ``1 + g*100`` (so the global index is recoverable as
-    ``(first_token - 1)//100``) and carries one ``_VISION_START`` token per image. Each image
-    contributes ``p`` ``hidden_states`` rows all filled with ``float(g)`` so vision can be traced to
-    its owning sample; a text-only sample (no images) contributes empty ``[0, d]`` / ``[0, 3]``.
-    """
+    """One rank's micro-batch from ``[(g, [patches, ...]), ...]``; first token is ``1 + g*100``, vision rows ``g``."""
     b = len(samples)
     rows = []
     grids: List[List[int]] = []
@@ -93,9 +79,7 @@ def _expected_owned(global_patches: List[List[int]], dp_rank: int, dp_size: int,
 
 
 def _run_exchange_case(global_samples: List[List[int]], image_count_of: "Any") -> None:
-    """Shard ``global_samples`` (patch lists per global sample) contiguously across 2 ranks, run the
-    real exchange, and assert this rank recovers exactly its cost-balanced shard with vision intact.
-    """
+    """Shard contiguously across 2 ranks, run the real exchange, and check this rank's balanced shard."""
     dp_size = dist.get_world_size()
     n_groups = dp_size
     b = len(global_samples)
@@ -125,8 +109,7 @@ def _run_exchange_case(global_samples: List[List[int]], image_count_of: "Any") -
     got_globals = [int((int(row[0].item()) - 1) // 100) for row in out["input_ids"].cpu()]
     assert got_globals == expected_globals, (rank, got_globals, expected_globals)
 
-    # Vision must travel with its sample through the real all-to-all: reconstruct the expected
-    # concatenation (per-sample patch blocks tagged float(g)) and compare byte-for-byte.
+    # Vision must travel with its sample through the real all-to-all
     exp_hidden = [torch.full((sum(global_samples[g]), _DIM), float(g), dtype=torch.float32) for g in expected_globals]
     exp_grid = [
         torch.tensor([[1, 1, p] for p in global_samples[g]], dtype=torch.int64).reshape(-1, 3)
@@ -142,15 +125,13 @@ def _run_exchange_case(global_samples: List[List[int]], image_count_of: "Any") -
 
 @pytest.mark.run_only_on("GPU")
 def test_reorder_exchange_dp2_single_image():
-    """One image per sample; per-sample patch counts force a real cross-rank swap."""
     initialize_distributed()
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required for this functional test")
     if dist.get_world_size() != 2:
         pytest.skip("This functional test requires exactly 2 ranks")
 
-    # costs [4,3,1,2]: balanced owner is g0,g2 -> rank0 and g1,g3 -> rank1, but the contiguous
-    # initial shards are [g0,g1] / [g2,g3], so rank0 must SEND g1 and RECEIVE g2 (a real exchange).
+    # costs [4,3,1,2]: owners g0,g2 -> rank0, g1,g3 -> rank1; initial shards [g0,g1] / [g2,g3] force a swap
     global_samples = [[4], [3], [1], [2]]
     image_count_of = lambda b: (b["input_ids"] == _VISION_START).sum(dim=1).to(torch.long)  # noqa: E731
     _run_exchange_case(global_samples, image_count_of)
@@ -159,16 +140,13 @@ def test_reorder_exchange_dp2_single_image():
 
 @pytest.mark.run_only_on("GPU")
 def test_reorder_exchange_dp2_variable_images():
-    """Mixed image counts per sample (text-only / single / multi) survive the real exchange."""
     initialize_distributed()
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required for this functional test")
     if dist.get_world_size() != 2:
         pytest.skip("This functional test requires exactly 2 ranks")
 
-    # counts [2,1,0,1] (g2 text-only, g0 multi-image), patches=2/image -> costs [4,2,0,2]: owner is
-    # g0,g2 -> rank0 and g1,g3 -> rank1; initial shards [g0,g1] / [g2,g3], so a multi-image sample
-    # stays, a single-image (g1) and a TEXT-ONLY (g2) sample swap across ranks.
+    # counts [2,1,0,1] at 2 patches/image -> costs [4,2,0,2]: g1 (single-image) and g2 (text-only) swap ranks
     global_samples = [[2, 2], [2], [], [2]]
     image_count_of = lambda b: (b["input_ids"] == _VISION_START).sum(dim=1).to(torch.long)  # noqa: E731
     _run_exchange_case(global_samples, image_count_of)

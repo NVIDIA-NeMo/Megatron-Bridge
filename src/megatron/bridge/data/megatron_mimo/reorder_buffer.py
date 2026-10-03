@@ -12,50 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Per-sample reorder buffer for MegatronMIMO intra-microbatch reordering (post-batch).
+"""Per-sample reorder buffer for MegatronMIMO intra-microbatch reordering.
 
-Each MegatronMIMO data rank reads only its **disjoint** scalable-data-parallel shard of the global
-micro-batch, and the per-microbatch cost imbalance between shards is corrected by a
-**communication** step (cost all-gather + ragged sample all-to-all over the module DP
-group) that can be overlapped with compute — instead of every rank reading the full
-global micro-batch and slicing it locally.
-
-Contents, bottom-up:
-
-1. Pure, communication-free building blocks (all CPU-unit-testable without a process
-   group):
-
-   - :func:`balanced_assignment` — the per-sample plan: for each global sample in a
-     micro-batch, the module-local DP rank that should own it and its canonical position.
-     Built on :func:`balanced_index_order` (same module),
-     with het-DP handled via canonical ``n_groups = canonical_grid_size(module dp_sizes)`` (their LCM) (so the vision
-     and language modules, which may have different DP sizes, derive an identical
-     assignment and the ``BridgeCommunicator`` keeps vision replica *r* paired with
-     language replica *r*).
-   - Ragged (de)serialization of a sample's tensors to an 8-byte-aligned ``uint8`` buffer
-     (:func:`serialize_sample` / :func:`deserialize_sample`), so any dtype/shape mix can
-     ride a single ``all_to_all_single`` with per-rank byte splits; the receiver
-     reconstructs from metadata alone.
-   - :func:`prepare_sample_exchange` — from this rank's local samples plus the all-gathered
-     plan and metadata, partition kept-vs-exchanged samples, pack the contiguous send buffer,
-     and build the ``send_splits``/``recv_splits`` + ordered recv schedule for one
-     ``all_to_all_single``.
-
-2. The MIMO data plane: :func:`split_microbatch` / :func:`merge_samples` convert a nested
-   micro-batch to and from ``B`` per-sample flat (dotted-key) dicts, and :func:`sample_cost`
-   is the (collation-independent) per-sample cost — ``encoder_cost_weight·patches + language_cost_weight·real_tokens`` —
-   that drives the balanced assignment.
-
-3. The distributed glue: :func:`exchange_window` ties the above into one cost-balancing round
-   over a window of micro-batches on a module DP group, :class:`ReorderingBuffer` wraps a data
-   iterator to run that round per window (optionally on a background prefetch thread with a dedicated CUDA
-   stream + side NCCL PG, so step ``t+1``'s exchange overlaps step ``t``'s compute), and
-   :func:`build_module_dp_process_groups` creates the Gloo (metadata) and side NCCL
-   (exchange) process groups the buffer needs.
-
-The unit of exchange is a **single sample** (finer than a whole-microbatch swap), and the
-assignment reuses the existing MIMO cost-balanced ordering rather than a separate
-group-then-LPT pass.
+Each data rank reads only its disjoint scalable-data-parallel shard of the global micro-batch.
+The per-microbatch cost imbalance between shards is corrected by a cost all-gather plus one
+ragged per-sample ``all_to_all_single`` over the module DP group, optionally overlapped with
+compute. Paired modules derive the same assignment from the same costs and canonical grid, so
+the ``BridgeCommunicator`` positional routing stays valid without cross-module communication.
 """
 
 import logging
@@ -76,20 +39,17 @@ from megatron.bridge.data.megatron_mimo.dp_utils import (
 
 logger = logging.getLogger(__name__)
 
-# All sample tensors are serialized into uint8 byte buffers padded to this alignment, so
-# the receiver can view-cast any dtype back from the received bytes without alignment
-# errors and compute exact offsets from metadata alone.
+# Serialized fields are padded to this alignment so the receiver can view-cast any dtype back
+# from the byte buffer and compute exact offsets from metadata alone.
 _SERIALIZED_TENSOR_BYTE_ALIGNMENT = 8
 
 
 def _alignment_padding_bytes(nbytes: int) -> int:
-    """Zero-padding bytes to round ``nbytes`` up to the next :data:`_SERIALIZED_TENSOR_BYTE_ALIGNMENT` multiple."""
+    """Return the zero-padding bytes that round ``nbytes`` up to the serialization alignment."""
     return (-nbytes) % _SERIALIZED_TENSOR_BYTE_ALIGNMENT
 
 
-# String -> (torch.dtype, byte width), for reconstructing tensors from metadata shared via
-# all_gather_object. The itemsize is precomputed once so the (de)serialize byte-size loops do not
-# allocate a throwaway tensor per field just to read ``element_size()``.
+# Item sizes are precomputed so the byte-size loops do not allocate a throwaway tensor per field.
 _DTYPE_INFO = {
     name: (dt, torch.empty((), dtype=dt).element_size())
     for name, dt in {
@@ -105,7 +65,7 @@ _DTYPE_INFO = {
 
 
 def _dtype_info(dtype_name: str) -> Tuple[torch.dtype, int]:
-    """Return ``(dtype, byte width)`` for a dtype encoded in sample metadata, rejecting unknown values."""
+    """Return ``(dtype, byte width)`` for a dtype name from sample metadata."""
     try:
         return _DTYPE_INFO[dtype_name]
     except KeyError as exc:
@@ -120,24 +80,15 @@ def _dtype_info(dtype_name: str) -> Tuple[torch.dtype, int]:
 def balanced_index_order(costs: List[float], n_groups: int) -> List[int]:
     """Permute indices so contiguous equal-size groups have balanced total cost.
 
-    For intra-microbatch reordering when the downstream distributor slices the global
-    batch into ``n_groups`` **contiguous, equal-size** shards (e.g.
-    :func:`megatron.bridge.data.megatron_mimo.dp_utils.slice_batch_for_megatron_mimo`).
-    Returns a permutation of ``range(len(costs))`` laid out group-by-group, so that
-    taking contiguous block ``r`` (size ``len(costs)//n_groups``) yields a
-    cost-balanced shard for DP rank ``r``.
-
-    Equal-cardinality LPT: items in decreasing cost are each placed into the
-    lowest-cost group that still has capacity (``len(costs)//n_groups``). Deterministic
-    (stable tie-break by group index) so paired modules reorder identically.
+    Equal-cardinality LPT with a stable tie-break by group index, so paired modules that
+    feed the same costs produce the same permutation.
 
     Args:
         costs: Per-item cost.
-        n_groups: Number of contiguous shards (e.g. DP size). Must divide ``len(costs)``.
+        n_groups: Number of contiguous shards; must divide ``len(costs)``.
 
     Returns:
-        A permutation of ``range(len(costs))``; the concatenation of the ``n_groups``
-        balanced groups in order.
+        A permutation of ``range(len(costs))`` laid out group-by-group.
 
     Raises:
         ValueError: If ``n_groups <= 0`` or does not divide ``len(costs)``.
@@ -151,7 +102,6 @@ def balanced_index_order(costs: List[float], n_groups: int) -> List[int]:
     groups: List[List[int]] = [[] for _ in range(n_groups)]
     group_cost = [0.0] * n_groups
     for i in sorted(range(n), key=lambda j: (-costs[j], j)):
-        # lowest-cost group that still has capacity (tie-break by group index)
         best = min(
             (g for g in range(n_groups) if len(groups[g]) < cap),
             key=lambda g: (group_cost[g], g),
@@ -162,34 +112,21 @@ def balanced_index_order(costs: List[float], n_groups: int) -> List[int]:
 
 
 def balanced_assignment(costs: List[float], n_groups: int, dp_size: int) -> List[Tuple[int, int]]:
-    """Per-sample exchange plan for one micro-batch.
+    """Map each sample of one micro-batch to its owner rank and canonical position.
 
-    Runs the canonical cost-balanced ordering over ``n_groups`` equal-cardinality groups,
-    then maps each global sample to the **module-local DP rank** that should own it and to
-    its **canonical position** in the globally balanced order.
-
-    The owner mapping uses canonical groups (``n_groups = canonical_grid_size(module dp_sizes)`` (their LCM)): a module
-    of size ``dp_size`` covers ``n_groups // dp_size`` contiguous canonical groups, so
-    ``owner = canonical_group // (n_groups // dp_size)``. Because the vision and language
-    modules feed the same ``costs`` and ``n_groups``, they produce an identical plan and
-    paired replicas end up with the same samples in the same (canonical) order — required
-    by the ``BridgeCommunicator`` batch-dim fan-out.
+    ``n_groups`` is the canonical grid (LCM of the module DP sizes); a module of size ``dp_size``
+    owns ``n_groups // dp_size`` consecutive groups, so modules with different DP sizes agree.
 
     Args:
-        costs: Per-sample cost, indexed by the sample's global position in the micro-batch
-            (the patch-only cost from :func:`sample_cost`).
-        n_groups: Canonical group count (LCM of the module DP sizes). Must divide ``len(costs)``.
-        dp_size: This module's DP size. Must divide ``n_groups``.
+        costs: Per-sample cost indexed by global position in the micro-batch.
+        n_groups: Canonical group count; must divide ``len(costs)``.
+        dp_size: This module's DP size; must divide ``n_groups``.
 
     Returns:
-        For each global sample index ``g``: ``(owner_rank, canonical_pos)`` where
-        ``owner_rank`` is in ``[0, dp_size)`` and ``canonical_pos`` is in ``[0, len(costs))``.
-        Sorting a rank's owned samples by ``canonical_pos`` yields the order paired modules
-        agree on.
+        ``(owner_rank, canonical_pos)`` per global sample index.
 
     Raises:
-        ValueError: If ``n_groups`` does not divide ``len(costs)`` or ``dp_size`` does not
-            divide ``n_groups``.
+        ValueError: If ``n_groups`` does not divide ``len(costs)`` or ``dp_size`` does not divide it.
     """
     n = len(costs)
     if n_groups <= 0 or n % n_groups != 0:
@@ -197,7 +134,7 @@ def balanced_assignment(costs: List[float], n_groups: int, dp_size: int) -> List
     if dp_size <= 0 or n_groups % dp_size != 0:
         raise ValueError(f"dp_size ({dp_size}) must be positive and divide n_groups ({n_groups}).")
 
-    perm = balanced_index_order(costs, n_groups)  # global indices laid out group-by-group
+    perm = balanced_index_order(costs, n_groups)
     cap = n // n_groups
     groups_per_rank = n_groups // dp_size
 
@@ -210,73 +147,49 @@ def balanced_assignment(costs: List[float], n_groups: int, dp_size: int) -> List
 
 
 def intra_route(assignment: List[Tuple[int, int]], *, src_slot: int = 0) -> List[Tuple[int, int, int]]:
-    """Lift a single-slot 2D balanced assignment to the 3D window route.
+    """Lift a single-slot assignment to the ``(dst_slot, owner_rank, canonical_pos)`` window route.
 
-    The window transport routes every sample by **three** coordinates
-    ``route[g] = (dst_slot, owner_rank, canonical_pos)`` (the destination micro-batch slot, the
-    module-local DP rank that owns it, and its canonical intra-slot position). The **intra**
-    balancer never moves a sample across micro-batch slots, so ``dst_slot == src_slot`` for every
-    sample; a future inter (cross-slot) balancer fills ``dst_slot`` freely behind this same seam.
+    Intra routing never moves a sample across slots, so ``dst_slot == src_slot`` for every sample.
 
     Args:
-        assignment: Per-slot output of :func:`balanced_assignment` — ``(owner_rank, canonical_pos)``
-            per global sample index within the slot.
-        src_slot: The slot these samples were read from (and, for intra, stay in). Defaults to ``0``
-            (the single-slot ``window_size == 1`` case).
+        assignment: Output of :func:`balanced_assignment` for one slot.
+        src_slot: Slot the samples were read from.
 
     Returns:
-        For each global sample index ``g``: ``(dst_slot, owner_rank, canonical_pos)`` with
-        ``dst_slot == src_slot``.
+        ``(dst_slot, owner_rank, canonical_pos)`` per global sample index.
     """
     return [(src_slot, owner_rank, canonical_pos) for owner_rank, canonical_pos in assignment]
 
 
 def build_window_route(costs_per_slot: List[List[float]], n_groups: int, dp_size: int) -> List[Tuple[int, int, int]]:
-    """Concatenate the per-slot intra assignments of a window into one 3D route.
+    """Build the slot-major window route by balancing each slot independently.
 
-    The window holds ``W = len(costs_per_slot)`` micro-batch slots, each with ``B_global`` samples
-    contiguous-sharded across ``dp_size`` ranks. The **intra** balancer runs **independently per
-    slot** (each slot cost-balanced across ranks); slots never mix. The window global index of slot
-    ``s``'s slot-local sample ``j`` is ``g = s · B_global + j`` (slots laid out back-to-back), so
-    concatenating each slot's :func:`intra_route` (stamped with ``src_slot = s``) in slot order
-    yields ``route[g]`` directly. ``dst_slot == src_slot == s`` for every sample (intra invariant).
-
-    A future inter (cross-slot) balancer replaces this builder with one that fills ``dst_slot``
-    across slots; the transport (:func:`exchange_by_route`) is unchanged.
+    The window global index of slot ``s``, slot-local position ``j`` is ``g = s * B_global + j``.
 
     Args:
-        costs_per_slot: ``costs_per_slot[s]`` = slot ``s``'s per-sample costs indexed by slot-local
-            global position ``j`` (length ``B_global``, identical on paired modules).
-        n_groups: Canonical group count (LCM of the module DP sizes); must divide each ``B_global``.
+        costs_per_slot: Per-slot per-sample costs indexed by slot-local position.
+        n_groups: Canonical group count; must divide each slot's sample count.
         dp_size: This module's DP size.
 
     Returns:
-        ``route`` of length ``W · B_global`` — ``(dst_slot, owner_rank, canonical_pos)`` per window
-        global index, slot-major.
+        ``(dst_slot, owner_rank, canonical_pos)`` per window global index.
     """
     route: List[Tuple[int, int, int]] = []
     for slot, costs in enumerate(costs_per_slot):
         route.extend(intra_route(balanced_assignment(costs, n_groups, dp_size), src_slot=slot))
-    # Safety net: the intra balancer must never move a sample across slots. Cheap, always-on.
     assert_intra_no_cross_slot(route, len(costs_per_slot[0]) if costs_per_slot else 0)
     return route
 
 
 def assert_intra_no_cross_slot(route: List[Tuple[int, int, int]], b_global: int) -> None:
-    """Guard against cross-slot leaks: every sample's ``dst_slot`` equals its source slot.
-
-    For the slot-major window layout (``g = src_slot · b_global + j``) the source slot of global
-    index ``g`` is ``g // b_global``. The **intra** balancer keeps every sample in its own slot, so
-    a mismatch means slot plumbing (route build / binning) corrupted the slot dimension. A future
-    inter (cross-slot) balancer would route
-    across slots by design and must **not** run this guard.
+    """Raise if any sample's ``dst_slot`` differs from its source slot ``g // b_global``.
 
     Args:
-        route: The window route (``(dst_slot, owner_rank, canonical_pos)`` per global index).
-        b_global: Samples per micro-batch slot (``local · dp_size``); ``0`` skips the check.
+        route: ``(dst_slot, owner_rank, canonical_pos)`` per window global index.
+        b_global: Samples per micro-batch slot; ``0`` skips the check.
 
     Raises:
-        RuntimeError: If any sample's ``dst_slot`` differs from its source slot.
+        RuntimeError: If a sample's ``dst_slot`` differs from its source slot.
     """
     if b_global <= 0:
         return
@@ -292,21 +205,15 @@ def assert_intra_no_cross_slot(route: List[Tuple[int, int, int]], b_global: int)
 def window_cost_spread(
     costs_per_slot: List[List[float]], route: List[Tuple[int, int, int]], dp_size: int
 ) -> List[Dict[str, float]]:
-    """Per-slot pre/post-balance per-rank cost spread + remote-sample count (the balance probe).
-
-    For each slot, totals the per-rank cost **before** balancing (the natural contiguous shard: rank
-    ``r`` holds slot-local positions ``[r·local, (r+1)·local)``) and **after** balancing (each sample
-    credited to its routed ``owner_rank``), plus how many samples change rank. Pure and cheap — used
-    only to log how much the reorder tightens the per-rank load (``after`` max/min should narrow
-    toward 1.0).
+    """Compute per-slot per-rank cost max/min before and after balancing and the remote-sample count.
 
     Args:
-        costs_per_slot: ``costs_per_slot[s]`` = slot ``s``'s per-sample costs by slot-local position.
-        route: The window route (:func:`build_window_route`), indexed by ``g = s·B_global + j``.
+        costs_per_slot: Per-slot per-sample costs indexed by slot-local position.
+        route: Window route from :func:`build_window_route`.
         dp_size: This module's DP size.
 
     Returns:
-        One dict per slot: ``{before_max, before_min, after_max, after_min, remote}``.
+        One ``{before_max, before_min, after_max, after_min, remote}`` dict per slot.
     """
     spreads: List[Dict[str, float]] = []
     for slot, costs in enumerate(costs_per_slot):
@@ -340,30 +247,34 @@ def window_cost_spread(
 
 
 def sample_keys(meta: Dict[str, Any]) -> List[str]:
-    """Sorted non-None tensor keys for a sample, computed identically on both sides."""
+    """Return the sorted tensor keys of a sample's metadata, identical on sender and receiver.
+
+    Args:
+        meta: Sample metadata from :func:`tensor_metadata`.
+
+    Returns:
+        Sorted keys whose metadata entry carries a ``dtype``.
+    """
     return sorted(k for k, v in meta.items() if isinstance(v, dict) and "dtype" in v)
 
 
 def tensor_metadata(flat: Dict[str, Any]) -> Dict[str, Any]:
-    """Per-field metadata for a flattened sample, keyed identically on both sides.
+    """Build per-field ``{shape, dtype}`` / ``{non_tensor: value}`` / ``None`` metadata for one sample.
 
-    Each key maps to ``{shape, dtype}`` for a tensor, ``{non_tensor: value}`` for a non-None
-    scalar/global field, or ``None``. Shared across ranks via ``all_gather_object`` so a
-    receiver can pre-allocate buffers and reconstruct the sample without seeing the data.
+    Args:
+        flat: One flattened sample dict.
 
-    A tensor whose dtype is not in :data:`_DTYPE_INFO` is rejected **here** — at metadata creation,
-    before the all-gather — via the same :func:`_dtype_info` check the deserializer uses,
-    so an unsupported dtype fails loudly and uniformly on the producing rank rather than only
-    surfacing later as a byte-size/deserialize ``ValueError`` on the receiver.
+    Returns:
+        Metadata keyed like ``flat``, sufficient to size and decode the sample without its data.
 
     Raises:
-        ValueError: If a tensor field has a dtype not supported by the ragged (de)serializer.
+        ValueError: If a tensor field has a dtype the serializer does not support.
     """
     meta: Dict[str, Any] = {}
     for key, t in flat.items():
         if isinstance(t, torch.Tensor):
             dtype_name = str(t.dtype)
-            _dtype_info(dtype_name)  # reject unsupported dtypes early (same check as decode)
+            _dtype_info(dtype_name)  # fail on the producing rank, before the metadata all-gather
             meta[key] = {"shape": list(t.shape), "dtype": dtype_name}
         elif t is not None:
             meta[key] = {"non_tensor": t}
@@ -373,15 +284,14 @@ def tensor_metadata(flat: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def serialize_sample(flat: Dict[str, Any], keys: List[str]) -> torch.Tensor:
-    """Serialize one sample's tensors into a 1D uint8 buffer (8-byte aligned, sorted keys).
+    """Serialize one sample's tensors into a 1D aligned ``uint8`` buffer in ``keys`` order.
 
     Args:
-        flat: Flattened tensor dict; ``None`` values are skipped.
-        keys: Sorted non-None tensor keys (from :func:`sample_keys`), same on both sides.
+        flat: Flattened sample dict; ``None`` values are skipped.
+        keys: Sorted tensor keys from :func:`sample_keys`.
 
     Returns:
-        1D uint8 CPU tensor with each tensor's raw bytes concatenated in ``keys`` order,
-        each padded to :data:`_SERIALIZED_TENSOR_BYTE_ALIGNMENT`.
+        1D ``uint8`` tensor with each field padded to the serialization alignment.
     """
     parts = []
     for key in keys:
@@ -397,7 +307,15 @@ def serialize_sample(flat: Dict[str, Any], keys: List[str]) -> torch.Tensor:
 
 
 def sample_byte_size(meta: Dict[str, Any], keys: List[str]) -> int:
-    """Byte size of a serialized sample from metadata alone (matches :func:`serialize_sample`)."""
+    """Return the serialized byte size of a sample from its metadata alone.
+
+    Args:
+        meta: Sample metadata from :func:`tensor_metadata`.
+        keys: Sorted tensor keys from :func:`sample_keys`.
+
+    Returns:
+        Byte count matching :func:`serialize_sample` for the same sample.
+    """
     total = 0
     for key in keys:
         info = meta.get(key)
@@ -413,19 +331,16 @@ def sample_byte_size(meta: Dict[str, Any], keys: List[str]) -> int:
 def deserialize_sample(
     buf: torch.Tensor, offset: int, meta: Dict[str, Any], keys: List[str]
 ) -> Tuple[Dict[str, Any], int]:
-    """Inverse of :func:`serialize_sample`: reconstruct tensors from a uint8 buffer.
+    """Reconstruct one sample from a ``uint8`` buffer (inverse of :func:`serialize_sample`).
 
     Args:
-        buf: Received 1D uint8 buffer.
-        offset: Starting byte offset of this sample in ``buf``.
-        meta: This sample's field metadata (from :func:`tensor_metadata`:
-            ``{key: {shape, dtype} | {non_tensor: value} | None}``).
-        keys: Sorted non-None tensor keys (from :func:`sample_keys`).
+        buf: Received 1D ``uint8`` buffer.
+        offset: Byte offset of this sample in ``buf``.
+        meta: This sample's metadata from :func:`tensor_metadata`.
+        keys: Sorted tensor keys from :func:`sample_keys`.
 
     Returns:
-        ``(flat, new_offset)`` — the reconstructed tensor dict (tensors cloned off ``buf``,
-        with ``None`` and non-tensor keys restored from ``meta``) and the byte offset just
-        past this sample.
+        ``(flat, new_offset)``: the rebuilt sample and the byte offset just past it in ``buf``.
     """
     flat: Dict[str, Any] = {}
     cursor = offset
@@ -460,57 +375,34 @@ def prepare_sample_exchange(
     *,
     window_size: int = 1,
 ) -> Dict[str, Any]:
-    """Prepare everything one per-sample ``all_to_all_single`` needs, in three parts.
+    """Build the kept-local partition, packed send buffer, and splits for one ``all_to_all_single``.
 
-    Pure and communication-free: all cross-rank information (which rank currently holds which
-    global sample, and each sample's tensor metadata) is passed in, having been shared by a
-    prior ``all_gather_object``. This single pass produces three distinct things:
-
-    1. **Partition** — split this rank's samples into those it already owns (kept locally) and
-       those it must send/receive (``local_samples`` + the send/recv schedules).
-    2. **Pack** — serialize the outgoing samples into one contiguous ``send_buf`` ordered by
-       destination rank.
-    3. **Plan** — the per-rank byte ``send_splits``/``recv_splits`` and the ordered
-       ``recv_schedule`` that drive (and decode) the ``all_to_all_single``.
-
-    Each sample carries its destination micro-batch slot (``dst_slot``) end-to-end so the receiver
-    can bin it into the right slot bucket on reassembly (:func:`reassemble_window`); this is the
-    only genuinely new plumbing vs. the single-slot path. Sender
-    and receiver order the moves identically by ``(dst_slot, canonical_pos, src_local_idx)`` so the
-    packed bytes line up.
+    Sender and receiver sort moves by ``(dst_slot, canonical_pos, src_local_idx)``, so the packed
+    bytes and ``recv_schedule`` line up without further communication.
 
     Args:
-        local_flats: This rank's flattened samples (tensor dicts), in local order.
-        local_global_indices: Global index of each entry in ``local_flats`` (same length).
-        route: Output of :func:`intra_route` (or a future inter balancer) —
-            ``(dst_slot, owner_rank, canonical_pos)`` per global sample index.
-        all_global_indices: ``all_global_indices[r]`` = the global indices currently held by
-            rank ``r`` (the all-gathered ``local_global_indices``).
-        all_tensor_meta: ``all_tensor_meta[r][i]`` = tensor metadata of rank ``r``'s ``i``-th
-            local sample (the all-gathered :func:`tensor_metadata`).
+        local_flats: This rank's flattened samples in local order.
+        local_global_indices: Global index of each entry in ``local_flats``.
+        route: ``(dst_slot, owner_rank, canonical_pos)`` per global sample index.
+        all_global_indices: Global indices held by each rank, all-gathered.
+        all_tensor_meta: :func:`tensor_metadata` of each rank's samples, all-gathered.
         dp_rank: This rank's module-local DP rank.
         dp_size: This module's DP size.
-        window_size: Number of micro-batch slots ``W`` in the window; ``dst_slot`` must be in
-            ``[0, W)``. Defaults to ``1`` (the single-slot, byte-for-byte-with-intra case).
+        window_size: Number of micro-batch slots; every ``dst_slot`` must be in ``[0, window_size)``.
 
     Returns:
-        Dict with:
-          - (partition) ``local_samples``: ``[(dst_slot, canonical_pos, local_idx)]`` kept on this
-            rank.
-          - (pack) ``send_buf``: 1D uint8 tensor on the same device as the sample tensors (GPU
-            when CUDA is available), outgoing samples serialized contiguously by dst.
-          - (plan) ``send_splits`` / ``recv_splits``: per-rank byte counts for
-            ``all_to_all_single`` (``0`` for self).
-          - (plan) ``recv_schedule``: ``{src_rank: [(dst_slot, canonical_pos, src_local_idx)]}`` in
-            recv order, so the receiver deserializes ``recv_buf`` in the same order it was packed.
+        Dict with ``local_samples`` (``(dst_slot, canonical_pos, local_idx)`` kept here), ``send_buf``,
+        per-rank byte ``send_splits`` / ``recv_splits``, and ``recv_schedule``
+        (``{src_rank: [(dst_slot, canonical_pos, src_local_idx)]}`` in receive order).
+
+    Raises:
+        ValueError: If a ``dst_slot`` is outside ``[0, window_size)``.
     """
-    # Map global index -> (current owner rank, current local index) from the all-gather.
     location: Dict[int, Tuple[int, int]] = {}
     for r, gidxs in enumerate(all_global_indices):
         for i, g in enumerate(gidxs):
             location[g] = (r, i)
 
-    # Samples this rank must end up with: every global index whose owner is dp_rank.
     local_samples: List[Tuple[int, int, int]] = []
     send_schedule: Dict[int, List[Tuple[int, int, int]]] = {r: [] for r in range(dp_size)}
     recv_schedule: Dict[int, List[Tuple[int, int, int]]] = {r: [] for r in range(dp_size)}
@@ -522,7 +414,6 @@ def prepare_sample_exchange(
             raise ValueError(f"dst_slot ({dst_slot}) for global sample {global_idx} out of range [0, {window_size}).")
         src_rank, src_local_idx = location[global_idx]
         if owner_rank == src_rank:
-            # Stays put; only this rank records it (when it is the owner/holder).
             if owner_rank == dp_rank:
                 local_samples.append((dst_slot, canonical_pos, local_pos[global_idx]))
             continue
@@ -531,13 +422,12 @@ def prepare_sample_exchange(
         if owner_rank == dp_rank:
             recv_schedule[src_rank].append((dst_slot, canonical_pos, src_local_idx))
 
-    # Deterministic order (by slot then canonical position) so sender and receiver agree.
+    # Sender and receiver must pack and decode in the same order.
     for r in range(dp_size):
         send_schedule[r].sort()
         recv_schedule[r].sort()
 
-    # Device of the (possibly GPU-resident) sample tensors, so the send buffer and any empty
-    # placeholders live on the same device for torch.cat / all_to_all_single.
+    # Empty placeholders must share the sample tensors' device for torch.cat / all_to_all_single.
     dev = torch.device("cpu")
     for f in local_flats:
         t = next((v for v in f.values() if isinstance(v, torch.Tensor)), None)
@@ -545,7 +435,6 @@ def prepare_sample_exchange(
             dev = t.device
             break
 
-    # Build the contiguous send buffer ordered by destination rank.
     send_parts: List[torch.Tensor] = []
     send_splits: List[int] = []
     for dst in range(dp_size):
@@ -560,7 +449,6 @@ def prepare_sample_exchange(
         send_parts.append(chunk)
         send_splits.append(int(chunk.numel()))
 
-    # Recv byte counts from metadata alone.
     recv_splits: List[int] = []
     for src in range(dp_size):
         if src == dp_rank or not recv_schedule[src]:
@@ -583,37 +471,24 @@ def prepare_sample_exchange(
 
 
 # ---------------------------------------------------------------------------
-# MIMO data plane: micro-batch <-> per-sample flat dicts (flatten_fn / rewrap_fn)
+# MIMO data plane: micro-batch <-> per-sample flat dicts
 # ---------------------------------------------------------------------------
-#
-# The exchange unit is a single sample. A MegatronMIMO micro-batch is nested:
-#
-#   {input_ids: [B,S], position_ids: [3,B,S] (MRoPE), labels/loss_mask: [B,S] | None,
-#    attention_mask: None, modality_inputs: {modality: {encoder: {hidden_states: [ΣP,d],
-#    grid_thw: [n_img,3]}}}}
-#
-# ``split_microbatch`` turns it into B per-sample **flat** dicts (nesting flattened to
-# dotted keys) so the serializer/all-to-all can move individual samples; after the
-# exchange ``merge_samples`` rebuilds the (rebalanced) micro-batch. Sample slicing/vision
-# attribution uses :func:`_apply_sample_dispatch` (LM by batch dim, vision by image via
-# ``image_counts``).
 
 
 def _flatten_nested(d: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
-    """Flatten a (possibly nested) batch dict to dotted keys; tensors and ``None`` preserved."""
+    """Flatten a nested batch dict to dotted keys, preserving tensors and ``None``."""
     flat: Dict[str, Any] = {}
     for key, val in d.items():
         path = f"{prefix}{key}"
         if isinstance(val, dict):
             flat.update(_flatten_nested(val, prefix=f"{path}."))
         else:
-            # tensors and None pass through; the buffer's batch has no per-sample list fields.
             flat[path] = val
     return flat
 
 
 def _unflatten_nested(flat: Dict[str, Any]) -> Dict[str, Any]:
-    """Inverse of :func:`_flatten_nested`: rebuild the nested dict from dotted keys."""
+    """Rebuild the nested dict from dotted keys (inverse of :func:`_flatten_nested`)."""
     out: Dict[str, Any] = {}
     for path, val in flat.items():
         parts = path.split(".")
@@ -625,11 +500,7 @@ def _unflatten_nested(flat: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _cu_img_from_counts(image_counts: "Any") -> List[int]:
-    """Cumulative per-sample image-offset table from per-sample image counts.
-
-    ``image_counts`` is a length-``B`` int tensor/sequence; returns ``[0, c0, c0+c1, ...]`` (length
-    ``B + 1``) so sample ``s`` owns ``grid_thw`` rows ``[cu_img[s], cu_img[s + 1])``.
-    """
+    """Return the cumulative image-offset table ``[0, c0, c0+c1, ...]`` from per-sample image counts."""
     counts = image_counts.tolist() if isinstance(image_counts, torch.Tensor) else list(image_counts)
     cu = [0]
     for c in counts:
@@ -640,12 +511,17 @@ def _cu_img_from_counts(image_counts: "Any") -> List[int]:
 def empty_like_vision(
     ref_hidden_states: torch.Tensor, ref_grid_thw: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Empty vision tensors matching a reference sample's dtype/device.
+    """Return empty ``[0, d]`` hidden states and ``[0, 3]`` grid matching a reference sample's dtype and device.
 
-    Returns ``([0, d] hidden_states, [0, 3] grid_thw)`` — the placeholder a **text-only** sample
-    (0 images) contributes so the per-sample reorder/merge keeps uniform vision keys across samples
-    and ranks (the merge concat and the cross-rank byte-split metadata both stay symmetric). Used by
-    :func:`merge_samples`.
+    Text-only samples contribute these placeholders so every sample carries the same vision
+    keys and the merge concat and byte-split metadata stay symmetric across ranks.
+
+    Args:
+        ref_hidden_states: A ``[patches, d]`` hidden-states tensor to match.
+        ref_grid_thw: A ``[n_images, 3]`` grid tensor to match.
+
+    Returns:
+        ``(hidden_states, grid_thw)`` with zero rows.
     """
     empty_hidden_states = ref_hidden_states.new_empty((0, ref_hidden_states.shape[1]))
     empty_grid_thw = ref_grid_thw.new_empty((0, ref_grid_thw.shape[1]))
@@ -653,10 +529,13 @@ def empty_like_vision(
 
 
 def patches_per_image(grid_thw: torch.Tensor) -> torch.Tensor:
-    """Per-image vision patch count ``prod(t, h, w)`` for a ``[n_images, 3]`` grid.
+    """Return the per-image patch count ``prod(t, h, w)`` for a ``[n_images, 3]`` grid.
 
-    Centralizes the Qwen-VL "patches per image = ``prod(grid_thw[i])``" convention shared by
-    the vision reorder and cost paths so a future grid layout change is a single edit.
+    Args:
+        grid_thw: Per-image ``(t, h, w)`` grid.
+
+    Returns:
+        ``[n_images]`` patch counts.
     """
     return torch.prod(grid_thw, dim=1)
 
@@ -666,28 +545,12 @@ def _reorder_vision_by_images(
     grid_thw: torch.Tensor,
     image_perm: list[int],
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Permute vision ``hidden_states`` (patch-dim) and ``grid_thw`` (image-dim) by image.
-
-    The patch block of image ``i`` (rows ``cu[i]:cu[i+1]`` where ``cu`` is the cumulative
-    patch count from ``prod(grid_thw[i])``) is gathered in ``image_perm`` order so the two
-    stay aligned — the patch-dim equivalent of ``grid_thw[image_perm]``. Reorders whole images
-    (keeping each image's patch block intact) rather than slicing across image boundaries.
-
-    Args:
-        hidden_states: Vision patch features ``[Σ patches, dim]``.
-        grid_thw: Per-image grid ``[n_images, 3]``.
-        image_perm: Permutation of ``range(n_images)``.
-
-    Returns:
-        ``(hidden_states_perm, grid_thw_perm)``.
-    """
+    """Permute ``hidden_states`` (patch dim) and ``grid_thw`` (image dim) by whole image."""
     if not image_perm:
-        # No images selected (e.g. a text-only sample): return empty ``[0, d]`` / ``[0, 3]`` views
-        # (avoids ``torch.cat([])`` and preserves dtype/device/requires_grad).
+        # Avoid torch.cat([]) for a text-only sample while keeping dtype/device/requires_grad.
         return hidden_states[:0], grid_thw[:0]
-    patches = patches_per_image(grid_thw)  # [n_images]
-    # Single host copy of the cumulative offsets: materialize the cumsum once with one
-    # .tolist(), then index with plain Python ints — no per-image .item() D2H sync in the loop.
+    patches = patches_per_image(grid_thw)
+    # One host copy of the offsets instead of a per-image .item() sync inside the loop.
     cu = torch.cat([patches.new_zeros(1), patches.cumsum(0)]).tolist()
     blocks = [hidden_states[cu[i] : cu[i + 1]] for i in image_perm]
     perm_idx = torch.as_tensor(image_perm, dtype=torch.long, device=grid_thw.device)
@@ -701,32 +564,7 @@ def _gather_vision_subdict(
     *,
     cu_img: "list[int] | None" = None,
 ) -> Dict[str, Any]:
-    """Reorder/gather a vision ``{hidden_states, grid_thw}`` sub-dict by sample.
-
-    Supports a **variable number of images per sample** (0 = text-only, 1, or N). ``cu_img`` is the
-    cumulative per-sample image-offset table (length ``n_samples + 1``), so sample ``s`` owns
-    ``grid_thw`` rows ``[cu_img[s], cu_img[s + 1])``. The image permutation for ``sample_indices`` is
-    the concatenation of each selected sample's image range, gathered by
-    :func:`_reorder_vision_by_images` (which keeps ``hidden_states`` patch-dim and ``grid_thw``
-    image-dim aligned). A text-only sample contributes an empty ``[0, d]`` / ``[0, 3]`` block.
-
-    When ``cu_img`` is ``None`` the one-image-per-sample fallback (image ``i`` ↔ sample ``i``)
-    is used and requires ``n_images == n_samples``.
-
-    Args:
-        value: A sub-dict carrying ``hidden_states`` and ``grid_thw``.
-        sample_indices: Per-sample permutation/selection (global sample ids).
-        n_samples: Global batch sample count ``B``.
-        cu_img: Cumulative per-sample image offsets (length ``B + 1``), or ``None`` for the
-            one-image-per-sample fallback.
-
-    Returns:
-        A new sub-dict with permuted ``hidden_states`` / ``grid_thw`` (other keys carried).
-
-    Raises:
-        ValueError: If ``cu_img`` is ``None`` and the batch is not one-image-per-sample, or if
-            ``cu_img`` does not sum to ``n_images`` (mis-sourced image counts).
-    """
+    """Gather a vision ``{hidden_states, grid_thw}`` sub-dict by sample, supporting 0..N images per sample."""
     hidden_states, grid_thw = value["hidden_states"], value["grid_thw"]
     n_images = grid_thw.shape[0]
     if cu_img is None:
@@ -758,13 +596,7 @@ def _apply_sample_dispatch(
     n_samples: int,
     cu_img: "list[int] | None" = None,
 ) -> Dict[str, Any]:
-    """Shared per-sample gather/permute visitor for tensors, vision sub-dicts, and lists.
-
-    Used by :func:`split_microbatch` (per-sample local-shard selection); ``n_samples`` is the
-    canonical global batch size ``B`` so list/vision per-sample detection is consistent. ``cu_img``
-    (cumulative per-sample image offsets) is forwarded to :func:`_gather_vision_subdict` for the
-    variable-images-per-sample reorder; ``None`` selects the one-image-per-sample fallback.
-    """
+    """Gather ``sample_indices`` from every tensor, vision sub-dict, and per-sample list in a batch."""
     idx = torch.as_tensor(sample_indices, dtype=torch.long)
     out: Dict[str, Any] = {}
     for key, value in batch.items():
@@ -777,7 +609,7 @@ def _apply_sample_dispatch(
             else:
                 out[key] = _apply_sample_dispatch(value, sample_indices, n_samples=n_samples, cu_img=cu_img)
         elif isinstance(value, list):
-            # Per-sample list -> permuted gather; global-metadata / empty list -> passthrough.
+            # A list of exactly n_samples entries is per-sample; any other length is global metadata.
             if len(value) == n_samples:
                 out[key] = [value[i] for i in sample_indices]
             else:
@@ -788,15 +620,14 @@ def _apply_sample_dispatch(
 
 
 def split_microbatch(batch: Dict[str, Any], *, cu_img: "List[int] | None" = None) -> List[Dict[str, Any]]:
-    """Split a micro-batch into ``B`` per-sample flat (dotted-key) dicts.
+    """Split a micro-batch into ``B`` per-sample flat (dotted-key) dicts with size-1 batch dims.
 
-    Each sample is gathered with :func:`_apply_sample_dispatch` (so its image travels with it)
-    and then flattened to dotted keys for serialization. Leading batch dims are kept (size 1),
-    so :func:`merge_samples` is a plain concat.
+    Args:
+        batch: Nested micro-batch.
+        cu_img: Cumulative per-sample image offsets (length ``B + 1``); ``None`` assumes one image per sample.
 
-    ``cu_img`` (cumulative per-sample image offsets, length ``B + 1``) lets the vision gather support
-    a variable number of images per sample (0 = text-only, 1, or N). When ``None``, the
-    one-image-per-sample fallback is used.
+    Returns:
+        ``B`` flat sample dicts in batch order.
     """
     b = _batch_size(batch)
     return [_flatten_nested(_apply_sample_dispatch(batch, [i], n_samples=b, cu_img=cu_img)) for i in range(b)]
@@ -805,9 +636,14 @@ def split_microbatch(batch: Dict[str, Any], *, cu_img: "List[int] | None" = None
 def merge_samples(flats: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Rebuild a micro-batch from per-sample flat dicts (inverse of :func:`split_microbatch`).
 
-    LM tensors concat on their batch dim (:func:`dp_utils._batch_dim_for_tensor`); vision
-    ``hidden_states`` concat on the patch dim and ``grid_thw`` on the image dim; ``None`` and
-    scalar/global fields are taken from the first sample.
+    Args:
+        flats: Per-sample flat dicts in the desired batch order.
+
+    Returns:
+        The nested micro-batch, tensors concatenated on their batch, patch, or image dim.
+
+    Raises:
+        ValueError: If ``flats`` is empty.
     """
     if not flats:
         raise ValueError("merge_samples requires at least one sample.")
@@ -816,11 +652,8 @@ def merge_samples(flats: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _merge_nested(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
-    # Iterate the union of keys (not just ``samples[0]``) and classify a vision sub-dict by scanning
-    # *all* samples: a text-only sample (0 images) carries the sub-dict as empty/None, so keying off
-    # ``samples[0]`` alone would misclassify it as a plain nested dict and silently drop the other
-    # samples' vision. With the empty-tensor convention every sample presents the sub-dict as a
-    # tensor, so the empty substitution below is a defensive backstop.
+    # Walk the union of keys and classify a vision sub-dict from any sample: a text-only sample
+    # may carry it as None, and keying off samples[0] would drop the other samples' vision.
     keys: List[str] = []
     seen = set()
     for s in samples:
@@ -834,8 +667,6 @@ def _merge_nested(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         vals = [s.get(key) for s in samples]
         vis_ref = next((v for v in vals if _is_patch_packed_visual_dict(v)), None)
         if vis_ref is not None:
-            # Vision sub-dict: concat hidden_states (patch dim) + grid_thw (image dim), substituting
-            # an empty [0,d]/[0,3] for any text-only sample (None/absent) so the concat stays aligned.
             ref_hidden_states, ref_grid_thw = vis_ref["hidden_states"], vis_ref["grid_thw"]
             hidden_parts: List[torch.Tensor] = []
             grid_parts: List[torch.Tensor] = []
@@ -859,12 +690,12 @@ def _merge_nested(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         elif isinstance(rep, torch.Tensor):
             out[key] = torch.cat(vals, dim=_batch_dim_for_tensor(key, rep))
         else:
-            out[key] = rep  # None / scalar / global metadata
+            out[key] = rep
     return out
 
 
 def _batch_to_cuda(batch: Dict[str, Any]) -> Dict[str, Any]:
-    """Recursively move a (possibly nested) batch dict's tensors to CUDA (non-blocking)."""
+    """Move a nested batch dict's tensors to CUDA (non-blocking)."""
     out: Dict[str, Any] = {}
     for key, val in batch.items():
         if isinstance(val, torch.Tensor):
@@ -877,7 +708,7 @@ def _batch_to_cuda(batch: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _batch_size(batch: Dict[str, Any]) -> int:
-    """Sample count of a micro-batch from a known LM tensor (handles MRoPE position_ids)."""
+    """Return the sample count of a micro-batch from one of its LM tensors."""
     for key in ("input_ids", "labels", "loss_mask", "position_ids"):
         t = batch.get(key)
         if isinstance(t, torch.Tensor):
@@ -898,43 +729,21 @@ def sample_cost(
     image_token_id: "int | None" = None,
     square_merge_size: int = 1,
 ) -> float:
-    """Joint per-sample cost: ``encoder_cost_weight·p + language_cost_weight·t``.
+    """Return ``encoder_cost_weight * patches + language_cost_weight * real_tokens`` for one sample.
 
-    Only the ratio of the two weights matters. Each term is linear in a per-sample count:
-
-    - ``p`` is the vision patch count (mirrors vision-encoder FLOPs).
-    - ``t`` is the **real (non-pad) token count** of ``input_ids`` (mirrors LM FLOPs), counted
-      via :func:`real_token_lengths` (from the batch's ``attention_mask``), image placeholder
-      tokens included.
-
-    Both terms must be **collation-independent** so vision and language derive an identical
-    assignment with no cross-module communication: the patch count is intrinsic to the image,
-    and the real token count is intrinsic to the sample (invariant to how each module's collator
-    pads). The *padded* sequence length is collation-dependent and is deliberately **not** used —
-    it would differ between the two shards and mispair the ``BridgeCommunicator`` fan-out.
-
-    Patch-count source (must be **module-independent**):
-
-    - When ``image_token_id`` is given, ``p`` is the image-placeholder token count in ``input_ids``
-      scaled by ``square_merge_size`` (each placeholder token stands for ``spatial_merge_size²``
-      patches in Qwen-VL). ``input_ids`` is present and identical on **every** module/PP stage when
-      reorder is active, so vision and language derive the same cost. This is the correct source:
-      the rank-aware metadata collate (#4442) nulls ``modality_inputs``/``grid_thw`` on language
-      shards, so reading ``grid_thw`` there yields ``p = 0`` and mispairs the vision↔language fan-out.
-    - Otherwise ``p = Σ prod(grid_thw)`` (the ``grid_thw`` fallback, used by mock/tests where no
-      ``image_token_id`` is wired and ``grid_thw`` is present on the sample).
-
-    With the default ``language_cost_weight=0.0`` the cost is patch-only.
+    Both terms must be collation-independent so vision and language derive the same cost without
+    communicating: with ``image_token_id`` the patch count comes from ``input_ids``, which every
+    module holds (``grid_thw`` is nulled on language shards), and tokens come from ``attention_mask``.
 
     Args:
         flat: One per-sample flat (dotted-key) dict.
         encoder_cost_weight: Weight per vision patch.
         language_cost_weight: Weight per real token; ``0.0`` disables the term.
-        image_token_id: Placeholder token id whose count in ``input_ids`` is the module-independent
-            patch proxy. ``None`` falls back to the ``grid_thw`` patch sum.
-        square_merge_size: ``spatial_merge_size²`` — patches represented by one placeholder token.
-            Recovers the true patch count from the placeholder-token count (only used with
-            ``image_token_id``).
+        image_token_id: Placeholder token id counted in ``input_ids``; ``None`` sums ``grid_thw`` instead.
+        square_merge_size: Patches represented by one placeholder token (``spatial_merge_size**2``).
+
+    Returns:
+        The weighted per-sample cost.
     """
     patches = 0
     if image_token_id is not None:
@@ -975,29 +784,23 @@ def reassemble_window(
     window_size: int,
     local: int,
 ) -> List[Dict[str, Any]]:
-    """Rebuild this rank's ``W`` micro-batches from kept-local + received samples.
-
-    Generalizes the single-micro-batch reassembler to ``W`` slot-buckets: kept-local samples and
-    deserialized received samples are binned by ``dst_slot``, sorted **within each slot** by
-    ``canonical_pos`` (the paired-module-identical order), and merged into one micro-batch per slot
-    via :func:`merge_samples`. ``deserialize_sample`` / ``merge_samples`` are reused verbatim — the
-    only new step is the per-slot binning.
-
-    The slot invariant asserts are baked in (cheap, always on): they turn a silent slot mispair or
-    a dropped/duplicated sample into a loud failure at the exact rank.
+    """Rebuild this rank's ``W`` micro-batches from kept-local and received samples.
 
     Args:
-        local_flats: This rank's input samples (the kept-local ones are indexed by ``local_idx``).
-        plan: Output of :func:`prepare_sample_exchange` (carries ``local_samples`` / ``recv_schedule``
-            with ``dst_slot``).
-        recv_buf: The ``all_to_all_single`` output buffer (samples this rank received).
-        all_tensor_meta: All-gathered per-rank tensor metadata (to decode ``recv_buf``).
+        local_flats: This rank's input samples; kept-local ones are indexed by ``local_idx``.
+        plan: Output of :func:`prepare_sample_exchange`.
+        recv_buf: The ``all_to_all_single`` output buffer.
+        all_tensor_meta: All-gathered per-rank tensor metadata used to decode ``recv_buf``.
         dp_size: This module's DP size.
-        window_size: Number of micro-batch slots ``W`` to rebuild.
-        local: Expected samples per (slot) bucket for this rank (``B/dp`` per slot).
+        window_size: Number of micro-batch slots ``W``.
+        local: Expected samples per slot on this rank.
 
     Returns:
-        ``W`` rebuilt micro-batches, slot ``s`` at index ``s``.
+        ``W`` micro-batches, slot ``s`` at index ``s``, each in canonical order.
+
+    Raises:
+        RuntimeError: If the received byte count, a slot's sample count, or the canonical positions
+            do not match ``plan``.
     """
     buckets: List[List[Tuple[int, Dict[str, Any]]]] = [[] for _ in range(window_size)]
     for dst_slot, canonical_pos, local_idx in plan["local_samples"]:
@@ -1010,17 +813,15 @@ def reassemble_window(
             flat, offset = deserialize_sample(recv_buf, offset, meta, sample_keys(meta))
             buckets[dst_slot].append((canonical_pos, flat))
 
-    # Byte accounting: the deserialize cursor must consume exactly the received bytes.
     if offset != recv_buf.numel():
         raise RuntimeError(f"MegatronMIMO reassembly consumed {offset} bytes but received {recv_buf.numel()}.")
 
     out: List[Dict[str, Any]] = []
     for slot, bucket in enumerate(buckets):
-        # Slot shape: each slot bucket must hold exactly `local` samples.
         if len(bucket) != local:
             raise RuntimeError(f"MegatronMIMO slot {slot} reassembled {len(bucket)} samples, expected {local}.")
         bucket.sort(key=lambda x: x[0])
-        # Order: canonical positions within a slot must be unique (no dropped/duplicated sample).
+        # Duplicate canonical positions mean a sample was dropped or duplicated in transit.
         positions = [p for p, _ in bucket]
         if len(set(positions)) != len(positions):
             raise RuntimeError(f"MegatronMIMO slot {slot} has duplicate canonical positions: {positions}.")
@@ -1041,27 +842,22 @@ def exchange_by_route(
     dp_group_nccl: "Any",
     nccl_stream: "Any" = None,
 ) -> List[Dict[str, Any]]:
-    """Transport-only per-sample exchange: route -> one ``all_to_all_single`` -> ``W`` micro-batches.
-
-    Given a 3D ``route`` and the all-gathered layout/metadata, build the
-    plan (:func:`prepare_sample_exchange`), run **one** ragged ``all_to_all_single``, and reassemble
-    ``W`` micro-batches per slot (:func:`reassemble_window`). Knows nothing about the balancer — an
-    intra route (``dst_slot == src_slot``, see :func:`intra_route`) and a future inter route flow
-    through unchanged.
+    """Run one ragged ``all_to_all_single`` for ``route`` and reassemble ``W`` micro-batches.
 
     Args:
-        local_flats: This rank's input samples (GPU-resident when CUDA is available).
+        local_flats: This rank's input samples.
         route: ``(dst_slot, owner_rank, canonical_pos)`` per global sample index.
-        all_global_indices: ``all_global_indices[r]`` = global indices currently held by rank ``r``.
+        all_global_indices: Global indices held by each rank, all-gathered.
         all_tensor_meta: All-gathered per-rank tensor metadata.
-        dp_rank, dp_size: Module-local DP coordinates.
-        window_size: Number of micro-batch slots ``W`` in the window.
-        local: Samples per (slot) bucket for this rank.
-        dp_group_nccl: NCCL PG for the sample all-to-all.
-        nccl_stream: Optional CUDA stream to run the all-to-all on (cross-step overlap).
+        dp_rank: This rank's module-local DP rank.
+        dp_size: This module's DP size.
+        window_size: Number of micro-batch slots ``W``.
+        local: Samples per slot on this rank.
+        dp_group_nccl: NCCL process group for the sample all-to-all.
+        nccl_stream: Optional CUDA stream to run the all-to-all on.
 
     Returns:
-        ``W`` rebuilt micro-batches for this rank, slot ``s`` at index ``s``.
+        ``W`` micro-batches for this rank, slot ``s`` at index ``s``.
     """
     import torch.distributed as dist
 
@@ -1076,7 +872,6 @@ def exchange_by_route(
         window_size=window_size,
     )
 
-    # send_buf is already on GPU (built from GPU-resident sample tensors); no H2D copy.
     send_buf = plan["send_buf"]
     recv_buf = torch.empty(sum(plan["recv_splits"]), dtype=torch.uint8, device=send_buf.device)
     if nccl_stream is not None:
@@ -1114,36 +909,28 @@ def exchange_window(
     image_count_of: "Any" = None,
     probe: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Cost-balance a **window** of ``W`` micro-batches across a module DP group in one exchange.
+    """Cost-balance a window of ``W`` micro-batches across a module DP group in one exchange.
 
-    Collects this rank's ``W`` disjoint shards, all-gathers their per-sample costs + tensor metadata
-    over Gloo **once**, builds the slot-major window route (:func:`build_window_route` — the intra
-    balancer run independently per slot), and runs **one** ragged ``all_to_all_single`` over the
-    whole window, reassembling ``W`` balanced micro-batches per slot (:func:`reassemble_window`).
-    The single collective lands once per window (≈ once per optimizer step when ``W == GA``).
-
-    The window global index of slot ``s``'s slot-local sample ``j`` is ``g = s · B_global + j``; this
-    rank holds, in ``local_flats`` order, its slot-0 shard then slot-1 shard … (``local = B/dp`` per
-    slot). Both modules feed identical ``n_groups`` and per-slot costs, so paired replicas end with
-    the same samples in canonical order in every slot.
+    Costs and metadata are all-gathered over Gloo once per window and the samples move in one
+    ``all_to_all_single``; paired modules must pass the same ``n_groups`` and ``cost_of``.
 
     Args:
-        batches: This rank's ``W`` disjoint micro-batch shards (each ``local = B/dp`` samples, same
-            ``local`` across slots).
-        dp_rank, dp_size: Module-local DP coordinates.
+        batches: This rank's ``W`` micro-batch shards, each with the same local sample count.
+        dp_rank: This rank's module-local DP rank.
+        dp_size: This module's DP size.
         n_groups: Canonical group count (LCM of the module DP sizes).
-        cost_of: ``callable(flat) -> float`` per-sample patch cost (see :func:`sample_cost`).
-        dp_group_gloo: Gloo PG for the metadata all-gather.
-        dp_group_nccl: NCCL PG for the sample all-to-all.
-        nccl_stream: Optional CUDA stream to run the all-to-all on (cross-step overlap).
-        image_count_of: Optional ``callable(batch) -> LongTensor[local]`` giving a shard's per-sample
-            image count, enabling a variable number of images per sample (0/1/N). When ``None``, the
-            one-image-per-sample fallback is used.
-        probe: When ``True``, log a one-line per-slot cost-spread digest (:func:`window_cost_spread`)
-            on ``dp_rank == 0`` (the balance probe). Off by default (the caller throttles it).
+        cost_of: ``callable(flat) -> float`` per-sample cost (see :func:`sample_cost`).
+        dp_group_gloo: Gloo process group for the metadata all-gather.
+        dp_group_nccl: NCCL process group for the sample all-to-all.
+        nccl_stream: Optional CUDA stream to run the all-to-all on.
+        image_count_of: Optional ``callable(batch) -> LongTensor`` per-sample image counts.
+        probe: When ``True``, log the per-slot cost spread on ``dp_rank == 0``.
 
     Returns:
         ``W`` rebalanced micro-batches for this rank, slot ``s`` at index ``s``.
+
+    Raises:
+        ValueError: If ``batches`` is empty or the shards differ in local size.
     """
     import torch.distributed as dist
 
@@ -1151,9 +938,8 @@ def exchange_window(
     if window_size == 0:
         raise ValueError("exchange_window requires at least one micro-batch.")
 
-    # Cost and metadata are computed on the CPU batches before the optional CUDA move, avoiding
-    # per-sample .item() synchronizations on the training stream. Per-slot image-count offset tables
-    # are derived once and reused for both the CPU-meta and GPU-payload splits.
+    # Costs and metadata come from the CPU batches so the per-sample .item() calls do not
+    # synchronize the training stream.
     cu_imgs = [_cu_img_from_counts(image_count_of(b)) if image_count_of is not None else None for b in batches]
     cpu_flats_per_slot = [split_microbatch(b, cu_img=cu) for b, cu in zip(batches, cu_imgs)]
     local = len(cpu_flats_per_slot[0])
@@ -1162,15 +948,13 @@ def exchange_window(
             f"All micro-batches in a window must have the same local size; got {[len(s) for s in cpu_flats_per_slot]}."
         )
 
-    # Window-local order is slot-major: this rank's slot-0 shard, then slot-1, … (matches the
-    # g = s·B_global + j layout build_window_route assumes).
+    # Slot-major local order matches the g = s * B_global + j layout build_window_route assumes.
     cpu_local_flats = [f for slot in cpu_flats_per_slot for f in slot]
     local_meta = [tensor_metadata(f) for f in cpu_local_flats]
     local_costs_per_slot = [[cost_of(f) for f in slot] for slot in cpu_flats_per_slot]
 
-    # Keep the exchange GPU-resident after cost calculation: move this rank's (small) shards to the
-    # device once, then split / serialize / all_to_all / deserialize / merge all run on GPU and the
-    # returned batches are already on GPU for the forward pass.
+    # Move the shards to the device once so serialize / all_to_all / merge stay GPU-resident and
+    # the returned batches need no further copy before the forward pass.
     if torch.cuda.is_available():
         gpu_flats_per_slot = [split_microbatch(_batch_to_cuda(b), cu_img=cu) for b, cu in zip(batches, cu_imgs)]
         local_flats = [f for slot in gpu_flats_per_slot for f in slot]
@@ -1182,21 +966,16 @@ def exchange_window(
     dist.all_gather_object(gathered, payload, group=dp_group_gloo)
 
     b_global = local * dp_size
-    # Window global index layout: g = slot·b_global + (src_rank·local + i); rank r's local_flats are
-    # ordered slot-major so its window samples are at all_global_indices[r] (same order).
     all_global_indices = [
         [slot * b_global + r * local + i for slot in range(window_size) for i in range(local)] for r in range(dp_size)
     ]
     all_tensor_meta = [g["meta"] for g in gathered]
-    # Per-slot global costs indexed by slot-local position j = r·local + i (contiguous sharding).
     costs_per_slot: List[List[float]] = [[0.0] * b_global for _ in range(window_size)]
     for r, g in enumerate(gathered):
         for slot in range(window_size):
             for i, c in enumerate(g["costs_per_slot"][slot]):
                 costs_per_slot[slot][r * local + i] = c
 
-    # Balancing is driven by the patch-only cost (see sample_cost): identical across modules, so both
-    # compute the same per-slot canonical order with no cross-module communication.
     route = build_window_route(costs_per_slot, n_groups, dp_size)
 
     if probe and dp_rank == 0:
@@ -1228,15 +1007,13 @@ def reorder_window_local(
     cost_of: "Any",
     image_count_of: "Any" = None,
 ) -> List[Dict[str, Any]]:
-    """Reorder a window into canonical order on a ``dp_size == 1`` module (no exchange needed).
-
-    Uses the same costs and ``n_groups`` as the paired dp>1 module, so both end in the same order.
+    """Permute a window into canonical order on a ``dp_size == 1`` module without any exchange.
 
     Args:
         batches: This rank's ``W`` whole micro-batches.
-        n_groups: Canonical group count (LCM of the module DP sizes).
-        cost_of: ``callable(flat) -> float`` per-sample cost.
-        image_count_of: Optional ``callable(batch) -> LongTensor[B]`` per-sample image counts.
+        n_groups: Canonical group count (LCM of the module DP sizes), same as the paired module.
+        cost_of: ``callable(flat) -> float`` per-sample cost, same as the paired module.
+        image_count_of: Optional ``callable(batch) -> LongTensor`` per-sample image counts.
 
     Returns:
         ``W`` micro-batches permuted into canonical order.
@@ -1261,14 +1038,14 @@ _SENTINEL = object()
 
 
 class _WorkerException:
-    """Container used to re-raise overlap-worker failures on the consumer thread."""
+    """Carry an overlap-worker exception across the queue for re-raising on the consumer thread."""
 
     def __init__(self, exc: BaseException) -> None:
         self.exc = exc
 
 
 def _record_stream_for_batch(value: Any, stream: torch.cuda.Stream) -> None:
-    """Recursively tie CUDA tensors in ``value`` to ``stream`` before cross-thread handoff."""
+    """Tie every CUDA tensor in ``value`` to ``stream`` before a cross-thread handoff."""
     if isinstance(value, torch.Tensor) and value.is_cuda:
         value.record_stream(stream)
     elif isinstance(value, dict):
@@ -1282,32 +1059,27 @@ def _record_stream_for_batch(value: Any, stream: torch.cuda.Stream) -> None:
 class ReorderingBuffer:
     """Wrap a MegatronMIMO data iterator so each yielded micro-batch is cost-balanced.
 
-    Each item this rank consumes is its disjoint scalable-data-parallel shard rebalanced by
-    :func:`exchange_window` (per-sample cost all-gather + ragged all-to-all over the module
-    DP group); at ``dp_size == 1`` it is permuted locally instead (:func:`reorder_window_local`).
+    ``window_size`` micro-batches are balanced in one :func:`exchange_window` call and served one
+    at a time; at ``dp_size == 1`` they are permuted locally. With ``overlap=True`` a background
+    thread exchanges the next window on a dedicated CUDA stream and the side ``dp_group_nccl``
+    while the main thread computes the current one, so up to three windows are resident at once.
+    ``CUDA_DEVICE_MAX_CONNECTIONS=1`` is rejected with ``overlap=True`` because the side
+    all-to-all and the DDP all-reduce then share one hardware queue and can deadlock.
 
-    **Window buffering** (``window_size = W``): collect ``W`` micro-batches, cost-balance them in one
-    exchange over the window (:func:`exchange_window`), and serve the ``W`` rebalanced micro-batches
-    one at a time from a cursor. ``W = 1`` (default) exchanges every micro-batch on its own.
-    ``W == GA`` (the gradient-accumulation count) is the desired setting — the single
-    window collective then lands once per optimizer step.
+    Args:
+        data_iterator: Source iterator yielding this rank's micro-batch shards.
+        dp_rank: This rank's module-local DP rank.
+        dp_size: This module's DP size.
+        n_groups: Canonical group count (LCM of the module DP sizes).
+        cost_of: ``callable(flat) -> float`` per-sample cost.
+        dp_group_gloo: Gloo process group for the metadata all-gather.
+        dp_group_nccl: NCCL process group for the sample all-to-all.
+        overlap: Exchange the next window on a background thread.
+        image_count_of: Optional ``callable(batch) -> LongTensor`` per-sample image counts.
+        window_size: Micro-batches balanced per exchange.
 
-    **Cross-window prefetch overlap** (``overlap=True``): a background thread runs the *entire next
-    window's* exchange — the blocking Gloo metadata all-gather *and* the NCCL all-to-all (on a
-    dedicated CUDA stream) — while the main thread computes the current window's ``W`` micro-batches.
-    This is what turns the scalable-data-parallel read win into a net throughput win: one big
-    all-to-all is hidden behind ``W`` micro-batches of compute instead of sitting on the critical
-    path (for ``W = 1`` this is the one-step-ahead per-micro-batch overlap). The exchange's GPU work
-    is synchronized inside the worker before hand-off, so the main thread consumes fully materialized
-    GPU batches with no further wait. A ``maxsize=1`` queue keeps every rank exactly one *window*
-    ahead, so all ranks' Gloo/NCCL collectives stay in lockstep — re-synced each window by the
-    optimizer/DDP all-reduce barrier between consumptions. The worker uses the (separate)
-    ``dp_group_nccl`` exclusively, so its all-to-all never races the main thread's bridge/DDP
-    collectives on their own PGs. ``CUDA_DEVICE_MAX_CONNECTIONS=1`` is refused for ``overlap=True``:
-    it serializes both onto one hardware queue and the rank-dependent issue order deadlocks. Up to three windows
-    stay resident (consuming + queued + being exchanged) ≈ ``3·W`` micro-batches — the headline memory cost.
-
-    With ``overlap=False`` the window exchange runs synchronously in ``__next__`` (no thread).
+    Raises:
+        ValueError: If ``window_size < 1`` or ``overlap=True`` under ``CUDA_DEVICE_MAX_CONNECTIONS=1``.
     """
 
     def __init__(
@@ -1338,22 +1110,13 @@ class ReorderingBuffer:
         self._cuda = torch.cuda.is_available()
         self._stream = torch.cuda.Stream() if self._cuda else None
         self._thread = None
-        # Sync window state (used whenever the prefetch thread is not running): the active window's
-        # rebalanced micro-batches and the cursor serving them one at a time.
         self._active: List[Dict[str, Any]] = []
         self._cursor = 0
-        # Count of window exchanges run, for throttling the balance probe (first few + every 50th).
         self._exchanges = 0
-        # Cross-window prefetch: a thread exchanges window t+1 while the main thread computes
-        # window t. Started for any window_size (W == 1 is the one-step-ahead per-micro-batch case).
         if overlap and dp_size > 1 and os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") == "1":
-            # With CUDA_DEVICE_MAX_CONNECTIONS=1 every stream maps onto one hardware queue, so the
-            # worker's side-PG all-to-all and the main thread's DDP all-reduce execute strictly in
-            # issue order. The two threads issue in rank-dependent order, so one rank can queue
-            # [a2a, all-reduce] while a peer queues [all-reduce, a2a]; each NCCL kernel then waits
-            # for a peer kernel that cannot start, and training deadlocks (reproduced at iteration
-            # 290 on 4 ranks and at iteration 33 with TP=2 on 6 ranks). Refuse rather than degrade;
-            # the overlap=False path issues both collectives from one thread and is safe.
+            # With one hardware queue the worker's all-to-all and the main thread's all-reduce run
+            # in issue order, which differs per rank, so peers can each wait on a kernel that cannot
+            # start. Refuse rather than degrade; overlap=False issues both from one thread.
             raise ValueError(
                 "ReorderingBuffer overlap=True deadlocks under CUDA_DEVICE_MAX_CONNECTIONS=1 (single "
                 "hardware queue: the side-PG all-to-all and the DDP all-reduce can wait on each other). "
@@ -1377,14 +1140,14 @@ class ReorderingBuffer:
         self._thread.join(timeout=1.0)
 
     def __del__(self) -> None:
-        """Best-effort cleanup for runs that drop the iterator without closing it."""
+        """Shut down the worker for runs that drop the iterator without closing it."""
         try:
             self.shutdown()
         except Exception:
             logger.debug("Ignoring exception while shutting down ReorderingBuffer.", exc_info=True)
 
     def _exchange_window(self, batches: List[Dict[str, Any]], stream: "Any") -> List[Dict[str, Any]]:
-        # Throttle the balance probe: log the first few windows, then every 50th.
+        # Probe the first few windows, then every 50th, to keep the log quiet.
         self._exchanges += 1
         probe = self._exchanges <= 3 or self._exchanges % 50 == 0
         return exchange_window(
@@ -1401,7 +1164,7 @@ class ReorderingBuffer:
         )
 
     def _collect_window(self) -> List[Dict[str, Any]]:
-        """Pull up to ``window_size`` micro-batches from the source iterator (fewer at the tail)."""
+        """Pull up to ``window_size`` micro-batches from the source iterator."""
         batches: List[Dict[str, Any]] = []
         for _ in range(self._window_size):
             try:
@@ -1411,16 +1174,11 @@ class ReorderingBuffer:
         return batches
 
     def _refill_window(self) -> None:
-        """Collect up to ``window_size`` micro-batches, exchange the window, reset the cursor.
-
-        A short final window (fewer than ``window_size`` micro-batches before ``StopIteration``) is
-        exchanged at its actual size. ``self._active`` is left empty when the iterator is exhausted.
-        """
+        """Collect and exchange the next window synchronously; leave ``_active`` empty when exhausted."""
         batches = self._collect_window()
         if not batches:
             self._active = []
         elif self._dp_size <= 1:
-            # dp_size == 1: nothing to exchange, apply the canonical order locally.
             self._active = reorder_window_local(
                 batches, n_groups=self._n_groups, cost_of=self._cost_of, image_count_of=self._image_count_of
             )
@@ -1429,7 +1187,7 @@ class ReorderingBuffer:
         self._cursor = 0
 
     def _put_worker_item(self, item: Any) -> None:
-        """Put an item unless shutdown was requested while the bounded queue was full."""
+        """Put an item on the bounded queue unless shutdown is requested while it is full."""
         while not self._stop.is_set():
             try:
                 self._queue.put(item, timeout=0.1)
@@ -1438,10 +1196,8 @@ class ReorderingBuffer:
                 continue
 
     def _worker(self) -> None:
-        # Cross-window prefetch: exchange window t+1 while the main thread computes window t.
-        # Each queue item is the LIST of W rebalanced micro-batches for one window. Everything
-        # (Gloo metadata all-gather + NCCL all-to-all + deserialize/merge) runs here on self._stream;
-        # we synchronize that stream before queuing so the consumer gets ready GPU batches.
+        # The whole exchange runs on self._stream; it is synchronized here, on the worker, so the
+        # consumer receives materialized GPU batches without waiting.
         torch.cuda.set_device(self._device)
         try:
             while not self._stop.is_set():
@@ -1449,8 +1205,8 @@ class ReorderingBuffer:
                 if not batches:
                     break
                 with torch.cuda.stream(self._stream):
-                    out = self._exchange_window(batches, stream=None)  # a2a on the current (self._stream)
-                self._stream.synchronize()  # blocks the WORKER (not the main thread)
+                    out = self._exchange_window(batches, stream=None)
+                self._stream.synchronize()
                 self._put_worker_item(out)
         except BaseException as exc:
             self._put_worker_item(_WorkerException(exc))
@@ -1459,8 +1215,6 @@ class ReorderingBuffer:
 
     def __next__(self) -> Dict[str, Any]:
         if self._thread is None:
-            # Synchronous path (no prefetch thread): serve the active window from the cursor,
-            # refilling (collect W -> one exchange) when it is exhausted.
             if self._cursor >= len(self._active):
                 self._refill_window()
             if not self._active:
@@ -1468,8 +1222,6 @@ class ReorderingBuffer:
             out = self._active[self._cursor]
             self._cursor += 1
             return out
-        # Cross-window prefetch path: serve from the prefetched window; pull the next one (a list of
-        # W micro-batches) from the worker when the cursor is exhausted.
         if self._cursor >= len(self._active):
             item = self._queue.get()
             if item is _SENTINEL:
@@ -1486,18 +1238,14 @@ class ReorderingBuffer:
 
 
 def build_module_dp_process_groups(dp_group_nccl_main: "Any", *, overlap: bool) -> "Tuple[int, int, Any, Any]":
-    """Create the Gloo (metadata) and side NCCL (exchange) PGs for this rank's module DP group.
+    """Create the Gloo and side NCCL process groups for this rank's module DP group.
 
-    ``dist.new_group`` is collective over the world PG, so every rank must create every module's
-    DP groups in the same order. We all-gather each rank's DP-group global ranks, deduplicate and
-    sort, then create a Gloo group (and, for overlap, a **separate** NCCL group so the exchange
-    all-to-all does not serialize against the gradient all-reduce) for each, keeping the ones this
-    rank belongs to.
+    ``dist.new_group`` is collective over the world, so every rank creates every module's groups
+    in the same sorted order and keeps the ones it belongs to.
 
     Args:
         dp_group_nccl_main: This rank's main DP NCCL group (``grid.get_pg(["dp"])``).
-        overlap: When ``True``, allocate a separate NCCL PG for the side-stream exchange;
-            otherwise reuse the main DP NCCL group (sync mode).
+        overlap: Create a separate NCCL group for the side-stream exchange; otherwise reuse the main one.
 
     Returns:
         ``(dp_rank, dp_size, dp_group_gloo, dp_group_nccl)``.
