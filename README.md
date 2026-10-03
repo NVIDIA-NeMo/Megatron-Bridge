@@ -248,6 +248,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
 | [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
+| [**Shensi**](src/megatron/bridge/models/shensi/README.md) | Shensi (DeepSeek-V4-Flash style MoE: CSA/HCA sparse attention, mHC streams, AttnRes, MTP) |
 | [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash, Step-3.7-Flash |
 
 ### Launching Recipes
