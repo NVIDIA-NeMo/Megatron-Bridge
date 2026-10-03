@@ -25,6 +25,7 @@ import torch
 
 from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
+    DPODatasetConfig,
     EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
@@ -1437,6 +1438,43 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("tensor_size", "pipeline_size", "expected_pad_mult", "expected_variable_seq"),
+        [(4, 1, 4, False), (1, 2, 1, True)],
+        ids=["sequence-parallel", "pipeline-parallel"],
+    )
+    def test_dpo_dataset_adapts_to_sequence_and_pipeline_parallelism(
+        self, tensor_size, pipeline_size, expected_pad_mult, expected_variable_seq
+    ):
+        """DPO batches are padded dynamically: SP needs a TP-multiple collate width, PP stages must exchange shapes."""
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=tensor_size,
+            sequence_parallel=tensor_size > 1,
+            pipeline_model_parallel_size=pipeline_size,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = DPODatasetConfig(
+            tokenizer_name="org/some-model",
+            seq_length=512,
+            source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=tensor_size * pipeline_size,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_seq_length_to_mult == expected_pad_mult
+            assert gpt_model_cfg.variable_seq_lengths is expected_variable_seq
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
