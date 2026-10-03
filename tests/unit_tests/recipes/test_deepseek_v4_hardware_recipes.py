@@ -121,7 +121,9 @@ def test_flash_mxfp8_recipe_uses_activation_offload_to_fit() -> None:
 def test_flash_packed_sft_recipe_uses_gb200_training_contract() -> None:
     cfg = flash_packed_sft_config()
 
-    assert cfg.model.cp_partition_mode == "contiguous"
+    assert cfg.model.attention_cp_layout == "contiguous"
+    assert cfg.model.linear_cp_layout == "contiguous"
+    assert not hasattr(cfg.model, "cp_partition_mode")
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
     assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
     assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
