@@ -335,6 +335,16 @@ def _validate_mimo_batch_sizes(
             "--intra-microbatch-reorder requires --pad-to-seq-length true (exchanged samples must share one "
             "sequence length)."
         )
+    if (
+        args.intra_microbatch_reorder
+        and not args.no_overlap_intra_microbatch_reorder
+        and os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") == "1"
+    ):
+        raise ValueError(
+            "--intra-microbatch-reorder with overlap deadlocks under CUDA_DEVICE_MAX_CONNECTIONS=1 (single "
+            "hardware queue serializes the prefetch all-to-all and the DDP all-reduce in rank-dependent "
+            "order). Add --no-overlap-intra-microbatch-reorder or unset the variable."
+        )
 
     summaries = []
     for name, parallelism in parallelism_config.module_parallelisms.items():

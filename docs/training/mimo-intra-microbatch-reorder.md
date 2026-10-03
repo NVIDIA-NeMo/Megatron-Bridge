@@ -84,9 +84,16 @@ python examples/megatron_mimo/qwen35_vl/finetune_qwen35_vl.py \
   ...
 ```
 
-Overlap only hides the exchange when the side stream can run on its own
-hardware queue; with `CUDA_DEVICE_MAX_CONNECTIONS=1` the buffer logs a warning
-and the exchange runs serially behind compute.
+Overlap is refused under `CUDA_DEVICE_MAX_CONNECTIONS=1`: with a single
+hardware queue the prefetch thread's all-to-all and the DDP all-reduce execute
+in issue order, that order differs across ranks, and training deadlocks
+(reproduced on a 4-rank run and on a 6-rank TP=2 run). Use
+`--no-overlap-intra-microbatch-reorder` in that case; it issues both
+collectives from the training thread and completed 1500 iterations under the
+same setting. Megatron Bridge does not require the variable for tensor
+parallelism; it is a Megatron-LM sequence-parallel performance setting, so TP
+users choose between that setting with the non-overlapped reorder, or overlap
+with the variable unset.
 
 ## Stable Constraints
 

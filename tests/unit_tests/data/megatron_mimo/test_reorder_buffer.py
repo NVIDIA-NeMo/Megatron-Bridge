@@ -998,6 +998,29 @@ def test_reordering_buffer_window_size_validation():
         )
 
 
+def _buffer_kwargs():
+    return dict(dp_rank=0, dp_size=2, n_groups=2, cost_of=lambda f: 0.0, dp_group_gloo=None, dp_group_nccl=None)
+
+
+def test_reordering_buffer_overlap_refuses_single_hardware_queue(monkeypatch):
+    # CUDA_DEVICE_MAX_CONNECTIONS=1 serializes the worker's all-to-all behind the DDP all-reduce in
+    # rank-dependent order (reproduced deadlock); overlap=True must be refused before any thread starts.
+    monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+    with pytest.raises(ValueError, match="CUDA_DEVICE_MAX_CONNECTIONS=1"):
+        ReorderingBuffer(iter([]), overlap=True, **_buffer_kwargs())
+
+
+def test_reordering_buffer_no_overlap_allowed_under_single_hardware_queue(monkeypatch):
+    monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+    buf = ReorderingBuffer(iter([]), overlap=False, **_buffer_kwargs())
+    assert buf._thread is None
+
+
+def test_reordering_buffer_overlap_allowed_without_single_hardware_queue(monkeypatch):
+    monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+    ReorderingBuffer(iter([]), overlap=True, **_buffer_kwargs())  # no raise (thread only starts on CUDA)
+
+
 # ---------------------------------------------------------------------------
 # Joint per-sample cost
 # ---------------------------------------------------------------------------

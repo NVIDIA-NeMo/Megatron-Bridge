@@ -1303,7 +1303,8 @@ class ReorderingBuffer:
     ahead, so all ranks' Gloo/NCCL collectives stay in lockstep — re-synced each window by the
     optimizer/DDP all-reduce barrier between consumptions. The worker uses the (separate)
     ``dp_group_nccl`` exclusively, so its all-to-all never races the main thread's bridge/DDP
-    collectives on their own PGs (requires ``CUDA_DEVICE_MAX_CONNECTIONS != 1``). Up to three windows
+    collectives on their own PGs. ``CUDA_DEVICE_MAX_CONNECTIONS=1`` is refused for ``overlap=True``:
+    it serializes both onto one hardware queue and the rank-dependent issue order deadlocks. Up to three windows
     stay resident (consuming + queued + being exchanged) ≈ ``3·W`` micro-batches — the headline memory cost.
 
     With ``overlap=False`` the window exchange runs synchronously in ``__next__`` (no thread).
@@ -1345,19 +1346,20 @@ class ReorderingBuffer:
         self._exchanges = 0
         # Cross-window prefetch: a thread exchanges window t+1 while the main thread computes
         # window t. Started for any window_size (W == 1 is the one-step-ahead per-micro-batch case).
+        if overlap and dp_size > 1 and os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") == "1":
+            # With CUDA_DEVICE_MAX_CONNECTIONS=1 every stream maps onto one hardware queue, so the
+            # worker's side-PG all-to-all and the main thread's DDP all-reduce execute strictly in
+            # issue order. The two threads issue in rank-dependent order, so one rank can queue
+            # [a2a, all-reduce] while a peer queues [all-reduce, a2a]; each NCCL kernel then waits
+            # for a peer kernel that cannot start, and training deadlocks (reproduced at iteration
+            # 290 on 4 ranks and at iteration 33 with TP=2 on 6 ranks). Refuse rather than degrade;
+            # the overlap=False path issues both collectives from one thread and is safe.
+            raise ValueError(
+                "ReorderingBuffer overlap=True deadlocks under CUDA_DEVICE_MAX_CONNECTIONS=1 (single "
+                "hardware queue: the side-PG all-to-all and the DDP all-reduce can wait on each other). "
+                "Pass overlap=False (--no-overlap-intra-microbatch-reorder) or unset the variable."
+            )
         if overlap and self._cuda and dp_size > 1:
-            # The side-stream exchange only overlaps compute when it can use a separate hardware
-            # queue. With CUDA_DEVICE_MAX_CONNECTIONS=1 every stream serializes onto one queue, so
-            # the prefetch a2a runs *behind* the window's compute instead of beside it — correct, but
-            # silently no faster (often slower, for the extra thread + side PG). Warn loudly rather
-            # than appear to overlap. Not a hard error: a user may set =1 for TP/SP comm overlap and
-            # still want the (degraded) reorder to run.
-            if os.environ.get("CUDA_DEVICE_MAX_CONNECTIONS") == "1":
-                logger.warning(
-                    "ReorderingBuffer overlap is enabled but CUDA_DEVICE_MAX_CONNECTIONS=1; the "
-                    "exchange will serialize behind compute and give no overlap speedup. Unset it "
-                    "or set it != 1 to get overlap, or pass overlap=False to skip the prefetch thread."
-                )
             self._device = torch.cuda.current_device()
             self._queue: "queue.Queue" = queue.Queue(maxsize=1)
             self._stop = threading.Event()

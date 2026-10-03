@@ -326,3 +326,39 @@ def test_batch_spec_encoder_ships_inputs_and_pixels(monkeypatch):
         assert spec.labels is False and spec.loss_mask is False and spec.position_ids is False
     finally:
         sys.modules.pop(name, None)
+
+
+def _reorder_args(**overrides):
+    args = SimpleNamespace(
+        micro_batch_size=4,
+        global_batch_size=8,
+        intra_microbatch_reorder=True,
+        no_overlap_intra_microbatch_reorder=False,
+        pad_to_seq_length=True,
+    )
+    for key, value in overrides.items():
+        if not hasattr(args, key):
+            raise ValueError(f"args has no field '{key}'")
+        setattr(args, key, value)
+    return args
+
+
+@pytest.mark.parametrize("no_overlap", [False, True])
+def test_validate_rejects_reorder_overlap_under_single_hardware_queue(monkeypatch, no_overlap):
+    # Overlapped reorder deadlocks under CUDA_DEVICE_MAX_CONNECTIONS=1; validate must refuse it on
+    # every rank before model build. The non-overlapped path stays allowed.
+    name = "qwen35_vl_mimo_finetune_validate_under_test"
+    module = _load_example_module(name)
+    try:
+        monkeypatch.setenv("CUDA_DEVICE_MAX_CONNECTIONS", "1")
+        empty = SimpleNamespace(module_parallelisms={})
+        args = _reorder_args(no_overlap_intra_microbatch_reorder=no_overlap)
+        if no_overlap:
+            assert module._validate_mimo_batch_sizes(empty, args) == []
+        else:
+            with pytest.raises(ValueError, match="CUDA_DEVICE_MAX_CONNECTIONS=1"):
+                module._validate_mimo_batch_sizes(empty, args)
+        monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS")
+        assert module._validate_mimo_batch_sizes(empty, _reorder_args()) == []
+    finally:
+        sys.modules.pop(name, None)
