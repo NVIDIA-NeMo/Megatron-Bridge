@@ -1716,7 +1716,7 @@ class TestAutoBridge:
                     )
 
     def test_export_with_megatron_names_rejects_streamers_without_the_flag(self):
-        """A bridge whose streaming overrides lack ``with_megatron_names`` fails before streaming."""
+        """A bridge whose streaming overrides lack an opt-in flag fails before streaming."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
@@ -1764,6 +1764,8 @@ class TestAutoBridge:
                         bridge.export_hf_weights([object()], cpu=True, with_megatron_names=True)
                     with pytest.raises(TypeError, match="stream_adapter_weights_megatron_to_hf does not accept"):
                         bridge.export_adapter_weights([object()], with_megatron_names=True)
+                    with pytest.raises(TypeError, match="does not accept 'moe_shared_loras'"):
+                        bridge.export_adapter_weights([object()], moe_shared_loras=True)
 
     def test_export_adapter_weights(self):
         """Test exporting adapter weights from Megatron to HF format."""
@@ -1802,8 +1804,9 @@ class TestAutoBridge:
                         stack_3d_moe=False,
                     )
 
-    def test_export_adapter_weights_forwards_expand_shared_outer(self):
-        """A non-default expand_shared_outer must reach the model bridge."""
+    @pytest.mark.parametrize("flag", ["expand_shared_outer", "moe_shared_loras"])
+    def test_export_adapter_weights_forwards_layout_flag(self, flag):
+        """A non-default adapter layout flag must reach the model bridge."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
         mock_hf_model.config.architectures = ["LlamaForCausalLM"]
@@ -1824,10 +1827,10 @@ class TestAutoBridge:
 
                 with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
                     mock_prop.return_value = mock_arch_class
-                    list(bridge.export_adapter_weights(mock_megatron_model, expand_shared_outer=True))
+                    list(bridge.export_adapter_weights(mock_megatron_model, **{flag: True}))
 
         call_kwargs = mock_model_bridge.stream_adapter_weights_megatron_to_hf.call_args.kwargs
-        assert call_kwargs["expand_shared_outer"] is True
+        assert call_kwargs[flag] is True
 
     def test_get_causal_lm_architecture(self):
         """Test getting the CausalLM architecture class."""

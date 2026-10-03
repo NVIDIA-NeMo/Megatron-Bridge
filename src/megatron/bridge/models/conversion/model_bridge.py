@@ -2637,6 +2637,7 @@ def stream_adapter_weights_megatron_to_hf(
     exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
     expand_shared_outer: bool = False,
     stack_3d_moe: bool = False,
+    moe_shared_loras: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge only adapter weights from Megatron to HuggingFace format."""
     ...
@@ -2731,6 +2732,7 @@ def register_bridge_implementation(
         exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
         expand_shared_outer: bool = False,
         stack_3d_moe: bool = False,
+        moe_shared_loras: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_adapter_weights_megatron_to_hf(
@@ -2740,6 +2742,8 @@ def register_bridge_implementation(
             exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             expand_shared_outer=expand_shared_outer,
             stack_3d_moe=stack_3d_moe,
+            # Only forward the opt-in flag when set so bridges with a custom adapter streamer keep working by default.
+            **({"moe_shared_loras": True} if moe_shared_loras else {}),
         )
 
     # Set meaningful names for debugging
