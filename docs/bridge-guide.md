@@ -344,7 +344,7 @@ AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | No
 AutoBridge.load_hf_weights(model: list[MegatronModule], hf_path: str | Path | None = None) -> None
 
 # Megatron → HF conversion
-AutoBridge.export_hf_weights(model: list[MegatronModule], cpu: bool = False, show_progress: bool = True, conversion_tasks: Optional[list[WeightConversionTask]] = None) -> Iterable[HFWeightTuple]
+AutoBridge.export_hf_weights(model: list[MegatronModule], cpu: bool = False, show_progress: bool = True, conversion_tasks: Optional[list[WeightConversionTask]] = None, current_pp_stage_only: bool = False) -> Iterable[HFWeightTuple]
 AutoBridge.save_hf_pretrained(model: list[MegatronModule], path: str | Path, show_progress: bool = True) -> None
 AutoBridge.save_hf_weights(model: list[MegatronModule], path: str | Path, show_progress: bool = True) -> None
 

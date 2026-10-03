@@ -352,7 +352,28 @@ for name, weight in bridge.export_hf_weights(megatron_model, cpu=True, show_prog
 
 Point your inference engine (e.g., vLLM) to `"/path/to/hf_export"`.
 
-### B) Zero-copy streaming via ZMQ (fast refit, colocated)
+### B) Pipeline-stage-local streaming for RL weight synchronization
+
+When inference workers collectively receive shards from every training pipeline stage, avoid replicating the full
+HF stream across PP ranks:
+
+```python
+for name, weight in bridge.export_hf_weights(
+    megatron_model,
+    show_progress=False,
+    current_pp_stage_only=True,
+):
+    send_to_inference_workers(name, weight)
+```
+
+- `current_pp_stage_only` changes ownership only across the PP axis.
+- TP/EP ranks in the owning stage still gather shards and perform normal HF layout conversion.
+- Combining one representative stream from every PP stage reconstructs the normal complete export.
+- Source-only HF passthrough tensors are assigned to PP stage 0; duplicate Megatron parameters use the lowest PP owner.
+
+This mode is opt-in. Omitting the flag preserves the complete stream on every rank.
+
+### C) Zero-copy streaming via ZMQ (fast refit, colocated)
 
 Stream tensors from the training side to your inference runtime without writing to disk. The transport is ZMQ peer-to-peer with async send/recv and ping‑pong buffers for overlap; Ray is used only for lightweight coordination. This replaces the earlier ad‑hoc per‑tensor IPC handle passing and aligns with the refactor in [NVIDIA-NeMo/RL#1267](https://github.com/NVIDIA-NeMo/RL/pull/1267).
 
