@@ -23,6 +23,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_ultra_fsdp_hsdp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
+    _enable_nemotron_3_5_lightning_full_iteration,
     _enable_nemotron_3_super_full_iteration,
     _nemotron_3_super_nvfp4_precision,
     _nemotron_3_ultra_nvfp4_precision,
@@ -694,21 +695,19 @@ def _build_nemotron_3_5_lightning_gb300_mxfp8() -> ConfigContainer:
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× GB300, MXFP8."""
+    """Nemotron 3.5 Lightning pretrain: 8× GB300, MXFP8 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
     cfg.model.recompute_modules = []
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
+    _enable_nemotron_3_5_lightning_full_iteration(cfg)
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
