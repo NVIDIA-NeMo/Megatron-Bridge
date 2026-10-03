@@ -10,6 +10,7 @@ glm-45v.md
 glm47.md
 glm5.md
 glm5-2.md
+glm5-3-flash.md
 ```
 
 | Variant | Guide |
@@ -19,3 +20,4 @@ glm5-2.md
 | GLM-4.7 / GLM-4.7-Flash | [glm47.md](glm47.md) |
 | GLM-5 | [glm5.md](glm5.md) |
 | GLM-5.2 / GLM-5.3 | [glm5-2.md](glm5-2.md) |
+| GLM-5.3-Flash | [glm5-3-flash.md](glm5-3-flash.md) |
