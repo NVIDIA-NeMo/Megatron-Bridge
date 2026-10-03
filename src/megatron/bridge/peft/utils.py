@@ -1114,6 +1114,22 @@ def finalize_model_grads_with_expert_adapter_sync(
     allreduce_expert_parallel_replicated_grads(model, ep_group=_get_process_group(pg_collection, "ep"))
 
 
+class _ScaleForward(torch.autograd.Function):
+    """Scale a TP-replicated forward contribution without scaling its gradient."""
+
+    @staticmethod
+    def forward(ctx, input_: torch.Tensor, scale: float) -> torch.Tensor:
+        """Scale the forward value consumed by a later external TP reduction."""
+        del ctx
+        return input_ * scale
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> tuple[torch.Tensor, None]:
+        """Preserve the gradient of the equivalent non-overlapped adapter."""
+        del ctx
+        return grad_output, None
+
+
 class ParallelLinearAdapter(nn.Module):
     """Parallel Linear Adapter for Parameter-Efficient Fine-Tuning (PEFT) in distributed settings.
 
@@ -1218,6 +1234,14 @@ class ParallelLinearAdapter(nn.Module):
             required_pgs=["ep", "expt_tp", "expt_dp"] if is_expert else ["tp"],
         )
         self.tp_group = _get_tensor_parallel_group(self.pg_collection, is_expert=is_expert)
+        tp_size = _process_group_size(
+            self.tp_group,
+            model_parallel_config.tensor_model_parallel_size or 1,
+        )
+        shared_expert_fc2_uses_external_tp_reduce = (
+            disable_tensor_parallel_comm and input_is_parallel and ".shared_experts." in base_linear_name
+        )
+        self._external_tp_reduce_scale = 1.0 / tp_size if shared_expert_fc2_uses_external_tp_reduce else 1.0
         self.ep_group = _get_process_group(self.pg_collection, "ep")
         self.expert_dp_group = _get_process_group(self.pg_collection, "expt_dp")
         _sequence_parallel = model_parallel_config.sequence_parallel
@@ -1504,6 +1528,11 @@ class ParallelLinearAdapter(nn.Module):
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             x.activation_offloading = True
         x, _ = self.linear_out(x)
+
+        if self._external_tp_reduce_scale != 1.0:
+            # Shared-expert overlap externally reduces FC2. The row-parallel adapter
+            # already returns a full TP-replicated value, so contribute 1 / TP per rank.
+            x = _ScaleForward.apply(x, self._external_tp_reduce_scale)
 
         if not self.disable_sequence_parallel_comm and self.input_is_parallel and not self.is_expert:
             # for attention_dense and linear_fc2
