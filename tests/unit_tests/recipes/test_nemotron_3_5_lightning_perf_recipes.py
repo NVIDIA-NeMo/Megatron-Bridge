@@ -57,7 +57,7 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 
 
 pytestmark = pytest.mark.unit
@@ -590,7 +590,7 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
 
     if recipe_factory is nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config:
         assert cfg.model.cuda_graph_impl == "transformer_engine"
-        assert cfg.model.cuda_graph_modules == ["attn", "mamba", "moe_router", "moe_preprocess"]
+        assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
         assert cfg.model.moe_expert_rank_capacity_factor is None
         assert cfg.model.moe_paged_stash is False
         assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
