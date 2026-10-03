@@ -2037,14 +2037,24 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             path=("verification_environment",),
             errors=errors,
         )
+        # An unverified card may not yet have publishable, exact provenance.
+        # Never force an invented image/commit, or relax provenance for verified runs.
+        item_values = card.get("items")
+        has_verified_item = isinstance(item_values, Mapping) and any(
+            item.get("status") == "verified" for _, _, item, _ in _iter_item_leaves(item_values)
+        )
         base_container = environment.get("base_container")
-        if not isinstance(base_container, str) or PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is None:
+        if not (base_container is None and not has_verified_item) and (
+            not isinstance(base_container, str) or PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is None
+        ):
             errors.append(
                 f"{_pointer('verification_environment', 'base_container')}: "
                 "expected a public NVIDIA NeMo or PyTorch container"
             )
         bridge_commit = environment.get("bridge_commit")
-        if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
+        if not (bridge_commit is None and not has_verified_item) and (
+            not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None
+        ):
             errors.append(
                 f"{_pointer('verification_environment', 'bridge_commit')}: expected an immutable 40-hex commit"
             )
