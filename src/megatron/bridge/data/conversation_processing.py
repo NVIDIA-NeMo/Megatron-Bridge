@@ -1983,6 +1983,9 @@ def apply_assistant_labels_to_batch(
     loss_mask_t = torch.stack(loss_masks).to(device=batch["input_ids"].device, dtype=torch.float32)
     if unmask_last_token and loss_mask_t.numel() > 0:
         loss_mask_t[:, -1] = 1.0
+    attention_mask = batch.get("attention_mask")
+    if attention_mask is not None and attention_mask.dim() == 2:
+        loss_mask_t = loss_mask_t.masked_fill(attention_mask.to(device=loss_mask_t.device) == 0, 0)
     labels, shifted_loss_mask = build_shifted_labels_and_loss_mask(batch["input_ids"], loss_mask_t, skipped_tokens)
     batch["labels"] = labels
     batch["loss_mask"] = shifted_loss_mask

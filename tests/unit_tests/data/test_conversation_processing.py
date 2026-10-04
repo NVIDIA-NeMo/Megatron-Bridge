@@ -2478,6 +2478,42 @@ def test_apply_assistant_labels_to_batch_mutates_batch_with_shared_masking():
     assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, IGNORE_INDEX, IGNORE_INDEX]]
 
 
+@pytest.mark.parametrize("padding_side", ["left", "right"])
+@pytest.mark.parametrize("pad_id", [0, 99])
+@pytest.mark.parametrize("unmask_last_token", [False, True])
+def test_apply_assistant_labels_to_batch_masks_glm_padding(padding_side, pad_id, unmask_last_token):
+    processor = _GlmBoundaryProcessor()
+    processor.tokenizer.pad_token_id = pad_id
+    example = {"conversation": [{"role": "user", "content": "question"}, {"role": "assistant", "content": "answer"}]}
+    # Keep a real EOS in the assistant response even when padding uses the same ID.
+    content = [105, 50, 100, 20, 102, 55, 56, 3, 4, 99]
+    padding = [pad_id] * 3
+    if padding_side == "right":
+        input_ids = content + padding
+        attention_mask = [1] * len(content) + [0] * len(padding)
+        eos_position = len(content) - 1
+    else:
+        input_ids = padding + content
+        attention_mask = [0] * len(padding) + [1] * len(content)
+        eos_position = len(input_ids) - 1
+    batch = {"input_ids": torch.tensor([input_ids]), "attention_mask": torch.tensor([attention_mask])}
+
+    apply_assistant_labels_to_batch(
+        batch,
+        [example],
+        processor,
+        skipped_tokens=torch.tensor([], dtype=torch.long),
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+        unmask_last_token=unmask_last_token,
+    )
+
+    padded_targets = torch.tensor(attention_mask[1:] + [0]) == 0
+    assert torch.all(batch["loss_mask"][0, padded_targets] == 0)
+    assert torch.all(batch["labels"][0, padded_targets] == IGNORE_INDEX)
+    assert batch["loss_mask"][0, eos_position - 1].item() == 1
+    assert batch["labels"][0, eos_position - 1].item() == 99
+
+
 def test_apply_assistant_labels_to_batch_unmask_last_token_affects_shifted_loss_mask():
     examples = [
         {

@@ -229,7 +229,9 @@ def _packing_fingerprint(
         "dataset_kwargs": dataset_kwargs,
         "tokenizer": tokenizer_identity,
         "chat_template": chat_template,
-        "chat_eos_policy": "append_if_missing" if isinstance(preprocessing, ChatSFTPreprocessingConfig) else None,
+        "chat_eos_policy": "append_unless_eos_before_whitespace"
+        if isinstance(preprocessing, ChatSFTPreprocessingConfig)
+        else None,
         "max_single_sequence_length": (
             config.offline_packing_specs.max_single_sequence_length
             if config.offline_packing_specs is not None

@@ -271,6 +271,33 @@ class TestChatPreprocess:
         assert result["input_ids"].tolist() == [1, 10, 20, 999]
         assert result["loss_mask"].tolist() == [False, False, True, True]
 
+    @pytest.mark.parametrize("loss_mode", ["assistant", "last_turn", "full"])
+    @pytest.mark.parametrize("suffix", [" \n\t", "content", "<control>", ""])
+    def test_chat_preprocess_only_reuses_eos_before_whitespace(self, suffix, loss_mode):
+        tokenizer = MagicMock()
+        tokenizer.eos_id = 999
+        tokenizer.legacy = False
+        tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 999, 30],
+            "assistant_masks": [0, 0, 1, 0, 0],
+        }
+        tokenizer.decode.return_value = suffix
+        source = {"messages": [{"role": "user", "content": "Question"}, {"role": "assistant", "content": "Answer"}]}
+
+        result = _chat_preprocess(source, tokenizer, add_eos=True, loss_mode=loss_mode)
+
+        if suffix.isspace():
+            assert result["input_ids"].tolist() == [1, 10, 20, 999, 30]
+            assert result["loss_mask"][3].item() is True
+            if loss_mode != "full":
+                assert result["loss_mask"].tolist() == [False, False, True, True, False]
+        else:
+            assert result["input_ids"].tolist() == [1, 10, 20, 999, 30, 999]
+            assert result["loss_mask"][-1].item() is True
+            if loss_mode != "full":
+                assert result["loss_mask"].tolist() == [False, False, True, False, False, True]
+
     def test_chat_preprocess_does_not_append_eos_when_disabled(self):
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 999

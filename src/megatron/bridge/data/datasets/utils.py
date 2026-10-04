@@ -969,7 +969,7 @@ def _chat_preprocess(
         tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
            by tools supplied with the message
         loss_mode - Assistant-only, final-assistant-turn, or full-sequence loss
-        add_eos - Append the tokenizer EOS when the rendered template does not already end with it
+        add_eos - Append EOS unless the template ends with EOS and optional whitespace
         max_length - Maximum rendered-template length before an optional EOS is appended
 
     Output:
@@ -1034,11 +1034,24 @@ def _chat_preprocess(
             raise ValueError("Chat preprocessing with add_eos=True requires a tokenizer EOS token ID.")
         eos_id = int(eos_id)
         eos_in_loss = tokenized.truncation_side != "right" and (loss_mode == "full" or terminal_assistant)
-        if not input_ids or input_ids[-1] != eos_id:
+        eos_position = next((i for i in range(len(input_ids) - 1, -1, -1) if input_ids[i] == eos_id), None)
+        if eos_position is not None and eos_position != len(input_ids) - 1:
+            # Some templates emit formatting whitespace after their terminal EOS.
+            # Preserve that suffix, but do not mistake an earlier turn's EOS for
+            # the end of content or hide trailing special tokens while decoding.
+            decode = getattr(get_processor_tokenizer(tokenizer), "decode", None)
+            suffix = (
+                decode(input_ids[eos_position + 1 :], skip_special_tokens=False, clean_up_tokenization_spaces=False)
+                if callable(decode)
+                else None
+            )
+            if not isinstance(suffix, str) or not suffix.isspace():
+                eos_position = None
+        if eos_position is None:
             input_ids.append(eos_id)
             mask.append(eos_in_loss)
         elif eos_in_loss:
-            mask[-1] = True
+            mask[eos_position] = True
 
         if not terminal_assistant_complete:
             context_end_idx = len(input_ids)
