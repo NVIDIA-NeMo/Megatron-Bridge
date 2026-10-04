@@ -2,7 +2,7 @@
 
 The model components live in Bridge and use the existing Megatron-Core GPT,
 GDN, attention, MoE, and hyper-connection interfaces. They do not require the
-model-specific Core changes proposed in NVIDIA/Megatron-LM#7393.
+model-specific changes to the pinned Core revision.
 
 `Qwen4ExpModelProvider` declares the checkpoint's QSA, gated residual, and PLE
 fields. Its GPT subclass prepares raw token IDs for PLE and expands residual
@@ -22,6 +22,12 @@ learned gates; Core's generic mHC expansion and mean contraction stay disabled.
   reduction. The 64 MiB chunk budget excludes required outputs, input gradients,
   and saved statistics. A single row is the minimum chunk. Chunking can change
   FP32 reduction order; it does not provide higher-order gradients.
+
+The grouped norm uses separate RMS statistics and zero-centered gains for
+each residual stream while keeping the flat checkpoint parameter layout.
+Normalizing the full flattened width would mix statistics across streams;
+reshaping streams into the batch dimension would share gains between them.
+The local implementation preserves both contracts and bounds reduction memory.
 
 ## Supported scope
 

@@ -31,12 +31,13 @@ bridged, to :class:`~megatron.core.models.gpt.gpt_model.GPTModel`. The vision to
 """
 
 import re
-from typing import Callable, Dict, Mapping, Optional
+from typing import Callable, Dict, Iterator, Mapping, Optional
 
 import torch
 import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -51,6 +52,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.modeling_qwen4_exp.layer_specs import get_qwen4_exp_block_spec
 from megatron.bridge.models.qwen.modeling_qwen4_exp.provider import Qwen4ExpModelProvider
 from megatron.bridge.models.qwen.qwen35_bridge import _moe_routed_expert_mappings
@@ -60,7 +62,7 @@ _LAYER_TYPE_TO_LINEAR = {"linear_attention": 1, "full_attention": 0, "qwen_spars
 _PLE_SHARD_RE = re.compile(r"\.ple\.ple_embedding\.ngram_embedding\.shard_(\d+)\.weight$")
 
 
-def linear_attention_pattern_from_hf(text_config) -> list[int]:
+def linear_attention_pattern_from_hf(text_config: PretrainedConfig) -> list[int]:
     """Per-layer pattern (1 = Gated DeltaNet, 0 = (sparse) softmax attention).
 
     ``Qwen4ExpTextConfig.__post_init__`` rewrites the checkpoint's ``full_attention`` entries to
@@ -76,12 +78,12 @@ def linear_attention_pattern_from_hf(text_config) -> list[int]:
     return [0 if (i + 1) % interval == 0 else 1 for i in range(text_config.num_hidden_layers)]
 
 
-def get_qwen4_exp_text_config(hf_config):
+def get_qwen4_exp_text_config(hf_config: PretrainedConfig) -> PretrainedConfig:
     """The language-model config of a unified (VL) or text-only Qwen4-Exp config."""
     return hf_config.text_config if getattr(hf_config, "text_config", None) is not None else hf_config
 
 
-def get_qwen4_exp_hf_lm_prefix(hf_config) -> str:
+def get_qwen4_exp_hf_lm_prefix(hf_config: PretrainedConfig) -> str:
     """``model.language_model.`` for the VL checkpoint layout, ``model.`` for text-only ones."""
     return "model.language_model." if getattr(hf_config, "text_config", None) is not None else "model."
 
@@ -222,7 +224,7 @@ class _PLEShardExport(Mapping[str, torch.Tensor]):
     def __getitem__(self, name: str) -> torch.Tensor:
         return self._mapping.gather_shard(self._local_rows, self._index[name])
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[str]:
         return iter(self._names)
 
     def __len__(self) -> int:
@@ -249,7 +251,7 @@ class Qwen4ExpBridge(MegatronModelBridge):
     # Legacy provider construction path only (see MegatronModelBridge.MODEL_CONFIG_CLASS).
     MODEL_CONFIG_CLASS = None
 
-    def provider_bridge(self, hf_pretrained) -> Qwen4ExpModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen4ExpModelProvider:
         """Convert the HuggingFace Qwen4-Exp config into a GPTModelProvider."""
         hf_config = hf_pretrained.config
         text_config = get_qwen4_exp_text_config(hf_config)
@@ -358,14 +360,16 @@ class Qwen4ExpBridge(MegatronModelBridge):
 
     # ------------------------------------------------------------------ mappings
     @staticmethod
-    def _hyper_connection_mappings(megatron_prefix: str, hf_prefix: str, with_inject: bool) -> list:
+    def _hyper_connection_mappings(megatron_prefix: str, hf_prefix: str, with_inject: bool) -> list[ReplicatedMapping]:
         names = ["hc_norm.weight", "input_mix_weight_down.weight", "input_mix_weight_up.weight"]
         if with_inject:
             names.append("block_inject_weight.weight")
         return [ReplicatedMapping(f"{megatron_prefix}{n}", f"{hf_prefix}{n}") for n in names]
 
     @staticmethod
-    def get_lm_mappings(hf_prefix: str, experts_packed: bool, text_config, num_ple_shards: int) -> list:
+    def get_lm_mappings(
+        hf_prefix: str, experts_packed: bool, text_config: PretrainedConfig, num_ple_shards: int
+    ) -> list[MegatronParamMapping[torch.Tensor] | MegatronParamMapping[dict[str, torch.Tensor]]]:
         """Parameter mappings of the language model (``megatron_prefix`` is empty for GPTModel)."""
         mp = ""
         simple = {
@@ -485,7 +489,7 @@ class Qwen4ExpBridge(MegatronModelBridge):
             )
         return mappings
 
-    def _num_ple_shards(self, text_config) -> int:
+    def _num_ple_shards(self, text_config: PretrainedConfig) -> int:
         """Number of ``shard_<i>`` tensors per PLE table, from the checkpoint keys when available."""
         source = getattr(getattr(getattr(self, "hf_pretrained", None), "state", None), "source", None)
         if source is not None and hasattr(source, "get_all_keys"):

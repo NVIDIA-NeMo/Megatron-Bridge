@@ -94,6 +94,10 @@ class Qwen4ExpModelProvider(GPTModelProvider):
                     raise ValueError(f"Qwen4-Exp requires a positive {name}.")
             if self.qsa_indexer_kv_heads != 1:
                 raise ValueError("QSA requires one indexer key head.")
+            # Narrow optional checkpoint fields after validating them above.
+            assert self.qsa_indexer_budget is not None
+            assert self.qsa_indexer_compress_ratio is not None
+            assert self.qsa_indexer_head_dim is not None
             if self.qsa_indexer_budget % self.qsa_indexer_compress_ratio:
                 raise ValueError("QSA budget must be divisible by its compression ratio.")
             if int(self.kv_channels * self.rotary_percent) > self.qsa_indexer_head_dim:

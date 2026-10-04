@@ -15,7 +15,7 @@
 """Qwen4-Exp integration with the unmodified Megatron-Core GPT decoder."""
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 import torch
 from megatron.core.inference.contexts import BaseInferenceContext
@@ -36,13 +36,19 @@ if TYPE_CHECKING:
 class Qwen4ExpLayerSubmodules(TransformerLayerSubmodules):
     """Core layer submodules plus the model-specific lexical embedding."""
 
-    per_layer_embedding: Union[ModuleSpec, type] = IdentityOp
+    per_layer_embedding: ModuleSpec | type = IdentityOp
 
 
 class Qwen4ExpTransformerLayer(HyperConnectionTransformerLayer):
     """Inject PLE before reading the gated residual streams."""
 
-    def __init__(self, config: "Qwen4ExpModelProvider", submodules: Qwen4ExpLayerSubmodules, *args, **kwargs):
+    def __init__(
+        self,
+        config: "Qwen4ExpModelProvider",
+        submodules: Qwen4ExpLayerSubmodules,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
         super().__init__(config, submodules, *args, **kwargs)
         self.per_layer_embedding = None
         if submodules.per_layer_embedding is not IdentityOp:
@@ -53,7 +59,9 @@ class Qwen4ExpTransformerLayer(HyperConnectionTransformerLayer):
                 pg_collection=self.pg_collection,
             )
 
-    def _forward_attention(self, hidden_states, *args, **kwargs):
+    def _forward_attention(
+        self, hidden_states: torch.Tensor, *args: object, **kwargs: object
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         if self.per_layer_embedding is not None:
             hidden_states = hidden_states + self.per_layer_embedding(hidden_states)
         return super()._forward_attention(hidden_states, *args, **kwargs)
@@ -62,7 +70,7 @@ class Qwen4ExpTransformerLayer(HyperConnectionTransformerLayer):
 class Qwen4ExpGatedDeltaNet(GatedDeltaNet):
     """Keep the SiLU convolution while using a separate sigmoid output gate."""
 
-    def _apply_gated_norm(self, x, gate):
+    def _apply_gated_norm(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
         x_dtype = x.dtype
         normalized = self.out_norm(x.reshape(-1, x.shape[-1]))
         gate = gate.reshape(-1, gate.shape[-1]).float()
@@ -90,7 +98,7 @@ class Qwen4ExpGPTModel(GPTModel):
         inference_context: BaseInferenceContext | None = None,
         packed_seq_params: PackedSeqParams | None = None,
         padding_mask: torch.Tensor | None = None,
-    ):
+    ) -> tuple[torch.Tensor | WrappedTensor | None, ...]:
         if padding_mask is not None:
             raise NotImplementedError("Qwen4-Exp padding masks are not supported yet; use packed inputs.")
         if inference_context is not None:

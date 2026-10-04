@@ -14,9 +14,11 @@
 
 """Grouped RMSNorm with bounded FP32 reduction workspaces."""
 
+from typing import cast
+
 import torch
 from torch import Tensor
-from torch.autograd.function import once_differentiable
+from torch.autograd.function import FunctionCtx, once_differentiable
 
 
 _WORKSPACE_BYTES = 64 * 1024 * 1024
@@ -34,7 +36,7 @@ def norm_chunk_rows(width: int, workspace_bytes: int) -> int:
 
 class _GroupedRMSNorm(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, weight, groups, eps, workspace_bytes):
+    def forward(ctx: FunctionCtx, x: Tensor, weight: Tensor, groups: int, eps: float, workspace_bytes: int) -> Tensor:
         width = x.shape[-1]
         rows = x.reshape(-1, width)
         channels = width // groups
@@ -55,7 +57,7 @@ class _GroupedRMSNorm(torch.autograd.Function):
 
     @staticmethod
     @once_differentiable
-    def backward(ctx, grad_output):
+    def backward(ctx: FunctionCtx, grad_output: Tensor) -> tuple[Tensor, Tensor, None, None, None]:
         x, weight, rstd = ctx.saved_tensors
         width = x.shape[-1]
         rows = x.reshape(-1, width)
@@ -93,4 +95,5 @@ def grouped_rmsnorm(
         raise ValueError("Input width must be positive and divisible by the residual stream count.")
     if weight.ndim != 1 or weight.numel() != x.shape[-1] or eps <= 0:
         raise ValueError("Grouped RMSNorm requires one gain per channel and positive epsilon.")
-    return _GroupedRMSNorm.apply(x, weight, groups, eps, workspace_bytes)
+    # Function.apply has an untyped return in PyTorch; forward returns one Tensor.
+    return cast(Tensor, _GroupedRMSNorm.apply(x, weight, groups, eps, workspace_bytes))

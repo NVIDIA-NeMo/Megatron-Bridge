@@ -85,6 +85,7 @@ class GatedResidualHyperConnection(MegatronModule):
         self.hc_norm.weight = nn.Parameter(torch.zeros(hc_hidden_size, dtype=dtype))
         self.input_mix_weight_down = nn.Linear(hc_hidden_size, self.rank, bias=False, dtype=dtype)
         self.input_mix_weight_up = nn.Linear(self.rank, hc_hidden_size, bias=False, dtype=dtype)
+        self.block_inject_weight: nn.Linear | None
         if use_combine:
             self.block_inject_weight = nn.Linear(hc_hidden_size, self.n, bias=False, dtype=dtype)
         else:
@@ -112,7 +113,9 @@ class GatedResidualHyperConnection(MegatronModule):
         inject = 2.0 * torch.sigmoid(self.block_inject_weight(xn) / n)  # [s, b, n]
         return block_input, inject
 
-    def forward(self, hidden_states: Tensor, mhc_recompute_manager=None, return_residual: bool = False):
+    def forward(
+        self, hidden_states: Tensor, mhc_recompute_manager: object | None = None, return_residual: bool = False
+    ) -> tuple[Tensor, None, Tensor | None] | tuple[Tensor, None, Tensor | None, Tensor]:
         """Read the streams.
 
         Args:
@@ -153,7 +156,7 @@ class GatedResidualHyperConnection(MegatronModule):
         dropout_prob: float,
         training: bool,
         fused: bool,
-        manager=None,
+        manager: object | None = None,
     ) -> Tensor:
         """Write the sub-layer output back to every stream: ``x + inject_j * (F(x) + bias)``.
 
@@ -205,7 +208,7 @@ class GatedResidualOutputMixer(GatedResidualHyperConnection):
         config: TransformerConfig,
         hidden_size: Optional[int] = None,
         eps: Optional[float] = None,
-    ):
+    ) -> None:
         super().__init__(config, layer_number=0, use_combine=False)
         if hidden_size is not None:
             assert hidden_size == config.hidden_size, "GatedResidualOutputMixer mixes full hidden streams."

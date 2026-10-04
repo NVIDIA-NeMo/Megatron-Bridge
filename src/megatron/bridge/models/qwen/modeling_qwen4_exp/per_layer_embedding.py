@@ -346,6 +346,8 @@ class PerLayerEmbedding(MegatronModule):
 
     def _local_positions(self, seq_len_local: int) -> Tensor:
         """[s_local, b] positions (within their document) of this rank's tokens."""
+        if self._position_in_sequence is None:
+            raise RuntimeError("Call PLE.prepare() before running the decoder layer.")
         positions = self._position_in_sequence.transpose(0, 1)  # [s, b]
         if self.config.sequence_parallel and self.tp_group.size() > 1:
             rank = self.tp_group.rank()
@@ -373,6 +375,8 @@ class PerLayerEmbedding(MegatronModule):
             # rank r-1's. Rank 0 has no predecessor but must keep the gathered tensors in its
             # autograd graph (multiplied by zero): the all-gather backward is a collective, so
             # every rank has to reach it or the tensor-parallel group deadlocks in backward.
+            if dist_nn_functional is None:
+                raise RuntimeError("PLE sequence parallelism requires differentiable distributed collectives.")
             tails = dist_nn_functional.all_gather(x[-self.halo :].contiguous(), group=self.tp_group)
             rank = self.tp_group.rank()
             prev = tails[rank - 1] if rank > 0 else tails[-1] * 0.0

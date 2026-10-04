@@ -42,10 +42,11 @@ import math
 import os
 import warnings
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
+from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rope_utils import _rotate_half, apply_rotary_pos_emb
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
@@ -116,7 +117,7 @@ class QwenSparseSelfAttentionSubmodules(SelfAttentionSubmodules):
 
 
 def _sequence_layout(
-    batch_size: int, seq_len: int, packed_seq_params: Optional[PackedSeqParams], device
+    batch_size: int, seq_len: int, packed_seq_params: Optional[PackedSeqParams], device: torch.device
 ) -> Tuple[Tensor, Tensor, int]:
     """Document ids and in-document positions for every token.
 
@@ -315,6 +316,7 @@ class QSAIndexer(MegatronModule):
         q = self.q_layernorm(q.reshape(s, b, self.n_heads, self.head_dim).reshape(-1, self.head_dim))
         q = q.view(s, b, self.n_heads, self.head_dim)
         if is_thd:
+            assert packed_seq_params is not None
             q = apply_rotary_pos_emb(
                 q.squeeze(1),
                 rotary_pos_emb,
@@ -354,7 +356,7 @@ class QSAIndexer(MegatronModule):
 # ---------------------------------------------------------------------------- core attention
 
 
-def _qsa_mask_mod_factory(selection: QSASelection):
+def _qsa_mask_mod_factory(selection: QSASelection) -> Callable[[Tensor, Tensor, Tensor, Tensor], Tensor]:
     """Build the FlexAttention ``mask_mod`` for a :class:`QSASelection`."""
     doc_ids, positions = selection.doc_ids, selection.positions
     selected_bits, nbytes_t, ratio = (
@@ -365,7 +367,7 @@ def _qsa_mask_mod_factory(selection: QSASelection):
     # Tensor scalar (not a python int) so a new sequence length does not trigger a recompile.
     seq_len = torch.tensor(positions.shape[1], device=positions.device, dtype=torch.int64)
 
-    def mask_mod(b, h, q_idx, kv_idx):
+    def mask_mod(b: Tensor, h: Tensor, q_idx: Tensor, kv_idx: Tensor) -> Tensor:
         same_doc = doc_ids[b, q_idx] == doc_ids[b, kv_idx]
         qp = positions[b, q_idx].to(torch.int64)
         kp = positions[b, kv_idx].to(torch.int64)
@@ -381,7 +383,7 @@ def _qsa_mask_mod_factory(selection: QSASelection):
 
 
 @functools.lru_cache(maxsize=1)
-def _compiled_flex_attention():
+def _compiled_flex_attention() -> Callable[..., Tensor]:
     return torch.compile(flex_attention, dynamic=True)
 
 
@@ -402,12 +404,12 @@ class QSACoreAttention(torch.nn.Module):
         layer_number: int,
         attn_mask_type: AttnMaskType,
         attention_type: str,
-        dense_core_attention: type,
+        dense_core_attention: type[torch.nn.Module],
         cp_comm_type: Optional[str] = None,
         softmax_scale: Optional[float] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> None:
         super().__init__()
         self.config = config
         self.layer_number = layer_number
@@ -566,8 +568,8 @@ class QwenSparseSelfAttention(SelfAttention):
         attn_mask_type: AttnMaskType = AttnMaskType.causal,
         cp_comm_type: Optional[str] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> None:
         super().__init__(
             config=config,
             submodules=submodules,
@@ -593,7 +595,7 @@ class QwenSparseSelfAttention(SelfAttention):
         hidden_states: Tensor,
         attention_mask: Tensor,
         key_value_states: Optional[Tensor] = None,
-        inference_context=None,
+        inference_context: BaseInferenceContext | None = None,
         rotary_pos_emb: Optional[Union[Tensor, Tuple[Tensor, Tensor]]] = None,
         rotary_pos_cos: Optional[Tensor] = None,
         rotary_pos_sin: Optional[Tensor] = None,
@@ -602,8 +604,8 @@ class QwenSparseSelfAttention(SelfAttention):
         packed_seq_params: Optional[PackedSeqParams] = None,
         sequence_len_offset: Optional[int] = None,
         *,
-        inference_params=None,
-    ):
+        inference_params: BaseInferenceContext | None = None,
+    ) -> tuple[Tensor, Tensor | None]:
         """Run the indexer, register its selection, then the regular attention forward."""
         if inference_context is not None or inference_params is not None:
             raise NotImplementedError("QwenSparseSelfAttention does not support inference contexts yet.")
