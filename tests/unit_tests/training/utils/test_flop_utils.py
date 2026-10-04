@@ -1557,7 +1557,7 @@ class TestHybridGDNFlops:
 
 @pytest.mark.unit
 class TestAttentionOutputGateFlops:
-    """Tests for attention_output_gate FLOPs in transformer_flops path."""
+    """Tests for attention_output_gate FLOPs in Transformer and Hybrid paths."""
 
     def test_gate_increases_flops(self):
         """attention_output_gate=True should add extra FLOPs for the gate projection."""
@@ -1614,6 +1614,47 @@ class TestAttentionOutputGateFlops:
         actual_delta = flops_gate - flops_no_gate
 
         assert actual_delta == expected_delta, f"Expected gate delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+    @pytest.mark.parametrize("pattern", ["**", "*-*E", "-E"])
+    @pytest.mark.parametrize("window_mode", ["full", "sliding", "mixed"])
+    @pytest.mark.parametrize("kv_channels", [16, 24])
+    def test_hybrid_gate_exact_delta(self, pattern, window_mode, kv_channels):
+        """Only attention layers pay for the full-width gate, independently of their window."""
+        batch_size = 2
+        model = MockModelConfig(
+            hybrid_layer_pattern=pattern,
+            num_layers=len(pattern),
+            hidden_size=64,
+            seq_length=128,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=kv_channels,
+            ffn_hidden_size=128,
+            num_moe_experts=4,
+            moe_ffn_hidden_size=64,
+            moe_router_topk=2,
+            vocab_size=256,
+            window_size=None if window_mode == "full" else (15, 0),
+            window_attn_skip_freq=[
+                int(symbol == "*" and (window_mode == "sliding" or index == 0)) for index, symbol in enumerate(pattern)
+            ],
+        )
+        without_gate = num_floating_point_operations(MockConfigContainer(model=model), batch_size=batch_size)
+        with_gate = num_floating_point_operations(
+            MockConfigContainer(model=replace(model, attention_output_gate=True)), batch_size=batch_size
+        )
+        # One H -> (heads * head_dim) GEMM per attention layer; training counts forward + backward.
+        expected_delta = (
+            3
+            * 2
+            * batch_size
+            * model.seq_length
+            * pattern.count("*")
+            * model.hidden_size
+            * model.num_attention_heads
+            * kv_channels
+        )
+        assert with_gate - without_gate == expected_delta
 
 
 @pytest.mark.unit

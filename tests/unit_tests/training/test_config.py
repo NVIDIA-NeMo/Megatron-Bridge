@@ -716,6 +716,37 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("expert_gtp", [False, True])
+    @pytest.mark.parametrize("fully_reshardable,memory_efficient", [(True, True), (True, False), (False, True)])
+    def test_gtp_rejects_memory_efficient_fully_reshardable_optimizer_checkpoint(
+        self, expert_gtp, fully_reshardable, memory_efficient
+    ):
+        model = create_test_gpt_config(
+            tensor_parallel_num_weight_shards=1 if expert_gtp else 2,
+            expert_tensor_parallel_size=1,
+            expert_tensor_parallel_num_weight_shards=2 if expert_gtp else 1,
+            num_moe_experts=4 if expert_gtp else None,
+        )
+        container, original_world_size, config_module = create_test_config_container(
+            world_size_override=2,
+            model_config=model,
+            dist_config=create_test_distributed_init_config(use_gloo_process_groups=True),
+            optimizer_config=create_test_optimizer_config(use_distributed_optimizer=True),
+            ddp_config=create_test_ddp_config(use_distributed_optimizer=True),
+            checkpoint_config=create_test_checkpoint_config(
+                dist_ckpt_optim_fully_reshardable=fully_reshardable,
+                distrib_optim_fully_reshardable_mem_efficient=memory_efficient,
+            ),
+        )
+        try:
+            if fully_reshardable and memory_efficient:
+                with pytest.raises(ValueError, match="GTP does not support memory-efficient fully reshardable"):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(original_world_size, config_module)
+
     def test_scheduler_lr_decay_iters_default(self, monkeypatch):
         """Test `lr_decay_iters` defaults to `train_iters` and `lr_decay_steps` calculation."""
         gpt_model_cfg = create_test_gpt_config()
