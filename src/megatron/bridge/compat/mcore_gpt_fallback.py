@@ -70,7 +70,6 @@ from dataclasses import dataclass
 
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_decoder_block_spec,
-    get_gpt_decoder_layer_specs,
     get_gpt_layer_local_spec,
     get_gpt_layer_with_inference_spec,
     get_gpt_layer_with_transformer_engine_spec,
@@ -457,19 +456,15 @@ def mtp_block_spec(
     if config.transformer.mtp_num_layers is not None:
         from megatron.core.models.gpt.gpt_layer_specs import get_gpt_mtp_block_spec
 
-        if hasattr(transformer_layer_spec, "layer_specs") and len(transformer_layer_spec.layer_specs) == 0:
-            # Get the decoder layer spec explicitly if no decoder layer in the last stage,
-            # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
-            spec = _te_or_local_layer_spec(config, vp_stage)
+        if isinstance(transformer_layer_spec, TransformerBlockSubmodules):
+            if transformer_layer_spec.layer_specs:
+                # Preserve the resolved attention and MLP choices for the MTP layer.
+                spec = transformer_layer_spec.layer_specs[-1]
+            else:
+                # A pipeline stage with no decoder layers still needs an MTP spec.
+                spec = _te_or_local_layer_spec(config, vp_stage)
         else:
-            decoder_specs = get_gpt_decoder_layer_specs(
-                transformer_cfg,
-                use_transformer_engine=use_te,
-                normalization=transformer_cfg.normalization,
-                qk_l2_norm=transformer_cfg.qk_l2_norm,
-                vp_stage=vp_stage,
-            )
-            spec = decoder_specs[-1]
+            spec = transformer_layer_spec
 
         mtp_kwargs = {"use_transformer_engine": use_te, "vp_stage": vp_stage}
         if "pp_rank" in inspect.signature(get_gpt_mtp_block_spec).parameters:

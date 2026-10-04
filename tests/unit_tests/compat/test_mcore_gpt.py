@@ -24,6 +24,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.base import ModelConfig
 
@@ -264,7 +265,49 @@ def test_fallback_mtp_forwards_pipeline_rank_when_supported(monkeypatch, support
     monkeypatch.setattr(gpt_layer_specs, "get_gpt_mtp_block_spec", new_mtp_spec if supports_pp_rank else old_mtp_spec)
     config = SimpleNamespace(transformer=SimpleNamespace(transformer_impl="transformer_engine", mtp_num_layers=1))
 
-    result = mcore_gpt_fallback.mtp_block_spec(config, SimpleNamespace(layer_specs=[]), vp_stage=2, pp_rank=3)
+    result = mcore_gpt_fallback.mtp_block_spec(
+        config, TransformerBlockSubmodules(layer_specs=[]), vp_stage=2, pp_rank=3
+    )
 
     assert result is expected_spec
     assert calls == [(layer_spec, 2, 3 if supports_pp_rank else None)]
+
+
+@pytest.mark.parametrize("supports_pp_rank", [False, True])
+@pytest.mark.parametrize("use_block_spec", [False, True])
+def test_fallback_mtp_preserves_resolved_decoder_spec(monkeypatch, supports_pp_rank, use_block_spec):
+    from megatron.core.models.gpt import gpt_layer_specs
+
+    calls = []
+
+    def old_mtp_spec(config, spec, *, use_transformer_engine, vp_stage):
+        calls.append((spec, vp_stage, None))
+        return spec
+
+    def new_mtp_spec(config, spec, *, use_transformer_engine, vp_stage, pp_rank):
+        calls.append((spec, vp_stage, pp_rank))
+        return spec
+
+    monkeypatch.setattr(gpt_layer_specs, "get_gpt_mtp_block_spec", new_mtp_spec if supports_pp_rank else old_mtp_spec)
+    selected_spec = ModuleSpec(module=object)
+    resolved_spec = TransformerBlockSubmodules(layer_specs=[selected_spec]) if use_block_spec else selected_spec
+    transformer = TransformerConfig(
+        num_layers=1, hidden_size=16, num_attention_heads=1, transformer_impl="local", mtp_num_layers=1
+    )
+    config = mcore_gpt_fallback.GPTModelConfig(transformer=transformer)
+
+    result = mcore_gpt_fallback.mtp_block_spec(config, resolved_spec, vp_stage=None, pp_rank=0)
+
+    assert result is selected_spec
+    assert calls == [(selected_spec, None, 0 if supports_pp_rank else None)]
+
+
+def test_fallback_mtp_is_disabled_without_mtp_layers(monkeypatch):
+    from megatron.core.models.gpt import gpt_layer_specs
+
+    mtp_factory = Mock(side_effect=AssertionError("MTP construction must be skipped"))
+    monkeypatch.setattr(gpt_layer_specs, "get_gpt_mtp_block_spec", mtp_factory)
+    config = SimpleNamespace(transformer=SimpleNamespace(transformer_impl="local", mtp_num_layers=None))
+
+    assert mcore_gpt_fallback.mtp_block_spec(config, ModuleSpec(module=object)) is None
+    mtp_factory.assert_not_called()
