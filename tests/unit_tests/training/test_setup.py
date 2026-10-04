@@ -32,6 +32,7 @@ from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
 from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.checkpointing import load_checkpoint
+from megatron.bridge.training.config import DistributedInitConfig
 from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,
@@ -622,7 +623,7 @@ class TestBuildDistributedModel:
             model=provider,
             ddp=MagicMock(),
             optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
-            dist=SimpleNamespace(use_megatron_fsdp=False, use_torch_fsdp2=False),
+            dist=DistributedInitConfig(use_megatron_fsdp=False, use_torch_fsdp2=False),
             rng=SimpleNamespace(data_parallel_random_init=False),
         )
 

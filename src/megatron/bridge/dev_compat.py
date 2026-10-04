@@ -38,6 +38,30 @@ if TYPE_CHECKING:
 logger = getLogger(__name__)
 
 try:
+    from megatron.core.process_groups_config import resolve_gtp_remat_group as _resolve_gtp_remat_group
+except ImportError:
+    _resolve_gtp_remat_group = None
+
+
+def resolve_gtp_remat_group(pg_collection: Any | None, is_expert: bool) -> torch.distributed.ProcessGroup:
+    """Resolve a GTP rematerialization group across pinned MCore revisions."""
+    if _resolve_gtp_remat_group is not None:
+        return _resolve_gtp_remat_group(pg_collection, is_expert)
+
+    attr = "expt_gtp_remat" if is_expert else "gtp_remat"
+    if pg_collection is not None and attr in vars(pg_collection):
+        return getattr(pg_collection, attr)
+
+    from megatron.core import parallel_state
+
+    getter_name = "get_expert_gtp_weight_remat_group" if is_expert else "get_gtp_weight_remat_group"
+    getter = getattr(parallel_state, getter_name, None)
+    if getter is None:
+        raise RuntimeError("The selected Megatron Core revision does not support GTP NCCL user buffers.")
+    return getter()
+
+
+try:
     from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
         FullyShardedDataParallelV1,
         FullyShardedDataParallelV2,
