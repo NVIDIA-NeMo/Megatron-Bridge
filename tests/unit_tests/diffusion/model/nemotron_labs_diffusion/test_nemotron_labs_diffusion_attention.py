@@ -287,6 +287,24 @@ class TestMinistral3RotaryEmbedding:
         assert cos.dtype == x.dtype
         assert sin.dtype == x.dtype
 
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16])
+    @pytest.mark.parametrize("device", ["cpu", "cuda"])
+    def test_model_dtype_cast_preserves_rotary_frequencies(self, dtype, device):
+        if device == "cuda" and not torch.cuda.is_available():
+            pytest.skip("CUDA is unavailable")
+        rope = Ministral3RotaryEmbedding(self._make_hf_config(seq_len=32768, head_dim=64), device=device)
+        position_ids = torch.tensor([[0, 1, 127, 1023, 4095, 16383]], device=device)
+        x = torch.empty(1, 4, position_ids.shape[1], 64, dtype=dtype, device=device)
+        expected_cos, expected_sin = rope(x, position_ids)
+
+        # Simulate casting the complete model, including its registered buffers.
+        rope.to(dtype=dtype)
+        assert rope.inv_freq.dtype == dtype
+        actual_cos, actual_sin = rope(x, position_ids)
+
+        torch.testing.assert_close(actual_cos, expected_cos, rtol=0, atol=0)
+        torch.testing.assert_close(actual_sin, expected_sin, rtol=0, atol=0)
+
     def test_default_rope_type_initializes(self):
         hf_cfg = self._make_hf_config()
         rope = Ministral3RotaryEmbedding(hf_cfg)

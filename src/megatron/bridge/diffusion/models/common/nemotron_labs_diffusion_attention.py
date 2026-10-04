@@ -109,7 +109,8 @@ class Ministral3RotaryEmbedding(nn.Module):
         inv_freq, self.attention_scaling = rope_init_fn(config, device)
 
         self.register_buffer("inv_freq", inv_freq, persistent=False)
-        self.original_inv_freq = inv_freq
+        # Keep a non-buffer fp32 copy: model dtype casts convert buffers to bf16.
+        self.original_inv_freq = inv_freq.detach().clone().to(dtype=torch.float32)
 
     @staticmethod
     def _compute_default_rope_parameters(config=None, device=None, seq_len=None):
@@ -122,7 +123,10 @@ class Ministral3RotaryEmbedding(nn.Module):
 
     @torch.no_grad()
     def forward(self, x, position_ids):
-        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+        inv_freq = getattr(self, "original_inv_freq", self.inv_freq)
+        inv_freq_expanded = (
+            inv_freq[None, :, None].to(device=x.device, dtype=torch.float32).expand(position_ids.shape[0], -1, 1)
+        )
         position_ids_expanded = position_ids[:, None, :].float()
 
         device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != "mps" else "cpu"
