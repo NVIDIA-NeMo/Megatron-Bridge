@@ -247,6 +247,8 @@ class GPTSFTDatasetConfig(DataloaderConfig):
 
     def validate(self) -> None:
         """Validate source selection and text-only SFT settings."""
+        if self.offline_packing_specs is not None:
+            self.offline_packing_specs.validate()
         has_local_source = self.dataset_root is not None
         has_blend_source = self.per_split_data_source_manifest_path is not None
         has_hf_source = self.hf_dataset is not None

@@ -191,6 +191,60 @@ def test_packed_train_data_blend_rejects_padded_cu_seqlens(tmp_path):
         )
 
 
+@pytest.mark.parametrize("use_builder", [False, True])
+@pytest.mark.parametrize("mutation", ["padded_boundaries", "competing_path", "invalid_weights"])
+def test_packed_train_data_blend_revalidates_mutated_specs(tmp_path, mutation, use_builder):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+    specs = PackedSequenceSpecs(
+        packed_sequence_size=128,
+        packed_train_data_blend=(source_paths, [0.5, 0.5]),
+    )
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+        do_validation=False,
+        do_test=False,
+    )
+    if mutation == "padded_boundaries":
+        specs.pad_cu_seqlens = True
+        error_match = "each source requires its own packing metadata"
+    elif mutation == "competing_path":
+        specs.packed_train_data_path = source_paths[0]
+        error_match = "either packed_train_data_path or packed_train_data_blend"
+    else:
+        specs.packed_train_data_blend = (source_paths, [1.0, 0.0])
+        error_match = "greater than 0"
+
+    with pytest.raises(ValueError, match=error_match):
+        if use_builder:
+            GPTSFTDatasetBuilder(config, tokenizer=object())
+        else:
+            config.validate()
+
+
+def test_packed_train_data_blend_normalizes_valid_mutation(tmp_path):
+    source_paths = [tmp_path / "source_a.idx.parquet", tmp_path / "source_b.idx.parquet"]
+    for source_path in source_paths:
+        source_path.touch()
+    specs = PackedSequenceSpecs(packed_sequence_size=128)
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+        do_validation=False,
+        do_test=False,
+    )
+    specs.packed_train_data_blend = (source_paths, [3, 1])
+
+    config.validate()
+    config.validate()
+
+    assert specs.packed_train_data_blend == ([str(path) for path in source_paths], [3.0, 1.0])
+
+
 def test_in_batch_config_round_trip_is_declarative_and_serializable(tmp_path):
     config = GPTSFTDatasetConfig(
         seq_length=128,

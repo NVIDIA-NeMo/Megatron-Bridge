@@ -42,6 +42,9 @@ class PackedSequenceSpecs:
     pad_seq_to_mult: int | None = 1
 
     def __post_init__(self) -> None:
+        self.validate()
+
+    def validate(self) -> None:
         """Validate alignment settings and any explicitly supplied artifacts."""
         if self.packed_train_data_path is not None and self.packed_train_data_blend is not None:
             raise ValueError("Set either packed_train_data_path or packed_train_data_blend, not both.")
