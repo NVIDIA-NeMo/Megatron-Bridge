@@ -132,6 +132,20 @@ class TestTokenizerConfigFromArgs:
 class TestTransformerConfigFromArgs:
     """Test extracting TransformerConfig from argparse args."""
 
+    @pytest.mark.parametrize("public_shards", [False, True])
+    def test_init_false_gtp_sizes_are_preserved_through_constructor_shards(self, basic_args, public_shards):
+        from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
+
+        basic_args.tensor_model_parallel_size = 2
+        basic_args.expert_tensor_parallel_size = 1
+        basic_args.gtp_weight_remat_size = 2
+        basic_args.expert_gtp_weight_remat_size = 4
+        basic_args.tensor_parallel_num_weight_shards = 8 if public_shards else None
+        basic_args.expert_tensor_parallel_num_weight_shards = 2 if public_shards else None
+        cfg = _transformer_config_from_args(basic_args, BridgeTransformerConfig)
+        assert cfg.tensor_parallel_num_weight_shards == (8 if public_shards else 4)
+        assert cfg.expert_tensor_parallel_num_weight_shards == (2 if public_shards else 4)
+
     @pytest.fixture
     def basic_args(self):
         """Mock basic args namespace for testing."""
@@ -172,6 +186,51 @@ class TestTransformerConfigFromArgs:
         setattr(args, "heterogeneous_layers_config_path", None)
 
         return args
+
+    @pytest.mark.parametrize(
+        ("missing_arg", "config_attr", "expected"),
+        [
+            ("multi_latent_attention", "multi_latent_attention", False),
+            ("rotary_interleaved", "rotary_interleaved", False),
+            ("fp8_param_gather", "fp8_param", False),
+            ("config_logger_dir", "config_logger_dir", ""),
+            ("cp_comm_type", "cp_comm_type", "p2p"),
+            ("is_hybrid_model", "is_hybrid_model", False),
+        ],
+    )
+    def test_missing_newer_arg_uses_legacy_default(self, basic_args, missing_arg, config_attr, expected):
+        delattr(basic_args, missing_arg)
+
+        cfg = _transformer_config_from_args(basic_args)
+
+        assert getattr(cfg, config_attr) == expected
+
+    def test_missing_heterogeneous_layers_config_path_uses_default(self, basic_args):
+        delattr(basic_args, "heterogeneous_layers_config_path")
+
+        cfg = _transformer_config_from_args(basic_args)
+
+        assert type(cfg) is TransformerConfig
+
+    def test_missing_uneven_pipeline_args_uses_legacy_defaults(self, basic_args):
+        delattr(basic_args, "decoder_first_pipeline_num_layers")
+        delattr(basic_args, "decoder_last_pipeline_num_layers")
+
+        cfg = _transformer_config_from_args(basic_args)
+
+        assert cfg.num_layers_in_first_pipeline_stage is None
+        assert cfg.num_layers_in_last_pipeline_stage is None
+
+    def test_preserves_explicit_newer_args(self, basic_args):
+        basic_args.rotary_interleaved = True
+        basic_args.config_logger_dir = "/tmp/config-logger"
+        basic_args.is_hybrid_model = True
+
+        cfg = _transformer_config_from_args(basic_args)
+
+        assert cfg.rotary_interleaved is True
+        assert cfg.config_logger_dir == "/tmp/config-logger"
+        assert cfg.is_hybrid_model is True
 
     def test_basic_transformer_config(self, basic_args):
         """Test basic transformer config creation."""

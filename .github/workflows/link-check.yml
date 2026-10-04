@@ -21,7 +21,8 @@ name: Link check
 # cross-page links in the Fern docs use a `.md` extension while the source files
 # are `.mdx`, so filesystem-level checking of relative links would report ~600
 # false positives; that convention is out of scope here. GitHub links are NOT
-# excluded (GITHUB_TOKEN is supplied to avoid rate limits).
+# excluded. File links are checked through GitHub's raw-content endpoint to
+# avoid transient 503s from HTML pages; GITHUB_TOKEN supports API fallback.
 
 on:
   pull_request:
@@ -46,20 +47,24 @@ jobs:
           fail: true
           # TODO(kimi-k3): drop the two kimi_k3 / kimi-k3 excludes below once this PR is
           # merged. They point at files added by the same PR, so blob/main 404s until then.
+          # Keep requests bounded and check file availability without GitHub HTML rendering.
           args: >-
             --no-progress
+            --max-concurrency 8
+            --host-concurrency 2
             --max-retries 3
             --retry-wait-time 10
             --scheme https
             --scheme http
             --accept '200..=299,401,403,429'
             --root-dir docs/fern
-            --exclude 'github\.com/deepseek-ai/DeepSeek-V4'
+            --remap '^https://github\.com/([^/]+/[^/]+)/blob/(.+)$ https://raw.githubusercontent.com/$1/$2'
+            --exclude '(github\.com|raw\.githubusercontent\.com)/deepseek-ai/DeepSeek-V4'
             --exclude 'github\.com/NVIDIA-NeMo/Megatron-Bridge/stargazers'
             --exclude 'sched\.com'
             --exclude 'llama\.com'
-            --exclude 'Megatron-Bridge/blob/main/src/megatron/bridge/models/kimi/kimi_k3_'
-            --exclude 'Megatron-Bridge/blob/main/examples/model_verification_cards/kimi-k3/'
+            --exclude 'Megatron-Bridge/(blob/)?main/src/megatron/bridge/models/kimi/kimi_k3_'
+            --exclude 'Megatron-Bridge/(blob/)?main/examples/model_verification_cards/kimi-k3/'
             "docs/fern/**/*.mdx"
             "docs/**/*.md"
         env:
