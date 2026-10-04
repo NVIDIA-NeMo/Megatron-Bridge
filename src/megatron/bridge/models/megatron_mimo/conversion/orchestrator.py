@@ -28,6 +28,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import (
@@ -649,6 +650,24 @@ class MegatronMIMOBridge(AutoBridge):
         hf_tokenizer_kwargs: Optional[dict] = None,
     ) -> None:
         """Import HF weights and write a MegatronMIMO checkpoint."""
+        provider = self.to_megatron_mimo_provider(load_weights=False)
+        standard_provider = getattr(provider, "standard_provider", None)
+        if getattr(standard_provider, "gradient_accumulation_fusion", False):
+            # Checkpoint conversion has no backward pass. Non-TE layers otherwise
+            # require the optional Apex wgrad extension even at construction time.
+            standard_provider.gradient_accumulation_fusion = False
+            specs = [provider.language_model_spec]
+            for modality_spec in provider.modality_submodules_spec.values():
+                submodules = modality_spec.submodules or {}
+                specs.extend((submodules.get("encoders") or {}).values())
+                specs.extend((submodules.get("decoders") or {}).values())
+                specs.extend(submodules.get("input_projections") or [])
+                specs.extend(submodules.get("output_projections") or [])
+            for spec in specs:
+                if spec is not None:
+                    for value in (spec.params or {}).values():
+                        if isinstance(value, TransformerConfig):
+                            value.gradient_accumulation_fusion = False
         model = self.to_megatron_model(
             load_weights=True,
             wrap_with_ddp=False,

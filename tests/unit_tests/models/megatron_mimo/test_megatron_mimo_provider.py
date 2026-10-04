@@ -954,3 +954,38 @@ class TestStandardProviderMTPHandling:
             ),
         )
         assert standard_provider.mtp_num_layers == 2
+
+
+class TestCastModelDtypeExceptFp32Marked:
+    @pytest.mark.parametrize("dtype_name", ["float16", "bfloat16"])
+    def test_router_expert_bias_and_marked_tensors_stay_fp32(self, dtype_name):
+        import torch
+        from megatron.core.transformer.module import mark_keep_in_fp32
+
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import _cast_model_dtype_except_fp32_marked
+
+        class _Router(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones(4, 8))
+                self.register_buffer("expert_bias", torch.full((4,), 33.1473))
+
+            def _maintain_float32_expert_bias(self):
+                pass
+
+        model = torch.nn.Module()
+        model.router = _Router()
+        model.linear = torch.nn.Linear(8, 8)
+        model.marked = torch.nn.Parameter(torch.ones(3))
+        mark_keep_in_fp32(model.marked)
+        expected_bias = model.router.expert_bias.clone()
+
+        dtype = getattr(torch, dtype_name)
+        (cast,) = _cast_model_dtype_except_fp32_marked([model], dtype)
+
+        assert cast is model
+        assert model.router.weight.dtype == dtype
+        assert model.linear.weight.dtype == dtype
+        assert model.marked.dtype == torch.float32
+        assert model.router.expert_bias.dtype == torch.float32
+        assert torch.equal(model.router.expert_bias, expected_bias)

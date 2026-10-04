@@ -36,7 +36,11 @@ from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.megatron_mimo.conversion import get_mimo_conversion_spec, validate_route_table
+from megatron.bridge.models.megatron_mimo.conversion import (
+    MegatronMIMOBridge,
+    get_mimo_conversion_spec,
+    validate_route_table,
+)
 from megatron.bridge.models.megatron_mimo.conversion.orchestrator import build_route_local_registry
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
@@ -997,7 +1001,7 @@ def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
 
 
 @pytest.mark.unit
-def test_super_vl_mimo_conversion_specs_and_routes():
+def test_super_vl_mimo_conversion_specs_and_routes(monkeypatch):
     hf_config = _mock_nemotron_35_super_vl_hf_config()
     hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = hf_config
@@ -1047,6 +1051,30 @@ def test_super_vl_mimo_conversion_specs_and_routes():
         if not any(mapping.megatron_param.startswith(route.source_prefix) for route in routes)
     ]
     assert all(name.startswith(("sound_model.", "sound_projection.")) for name in unrouted)
+
+    # Import must disable backward-only fusion in every derived component before
+    # construction, including when TE is available but the Apex extension is not.
+    provider.standard_provider.gradient_accumulation_fusion = True
+    encoder_spec.params["force_eval_mode"] = False
+    bridge = MegatronMIMOBridge(hf_pretrained, parallelism_config=parallelism_config, source_bridge=source_bridge)
+    monkeypatch.setattr(bridge, "to_megatron_mimo_provider", lambda **kwargs: provider)
+    model = Mock()
+
+    def build_model(**kwargs):
+        assert provider.standard_provider.gradient_accumulation_fusion is False
+        assert provider.language_model_spec.params["config"].gradient_accumulation_fusion is False
+        images = provider.modality_submodules_spec["images"].submodules
+        assert images["encoders"]["radio"] is encoder_spec
+        assert images["encoders"]["radio"].params["force_eval_mode"] is False
+        assert images["encoders"]["radio"].params["transformer_config"].gradient_accumulation_fusion is False
+        assert images["input_projections"][0].params["config"].gradient_accumulation_fusion is False
+        return [model]
+
+    monkeypatch.setattr(bridge, "to_megatron_model", build_model)
+    save_model = Mock()
+    monkeypatch.setattr(bridge, "save_megatron_model", save_model)
+    bridge.import_ckpt("/checkpoint", hf_tokenizer_path="hf")
+    save_model.assert_called_once_with(model, "/checkpoint", hf_tokenizer_path="hf", hf_tokenizer_kwargs=None)
 
 
 @pytest.mark.unit
