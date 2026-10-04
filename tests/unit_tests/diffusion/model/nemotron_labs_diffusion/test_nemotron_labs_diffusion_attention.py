@@ -49,18 +49,11 @@ def _make_config(
     apply_qk_scaling: bool = False,
 ) -> TransformerConfig:
     """Build a minimal TransformerConfig for NemotronLabsDiffusionAttention."""
-    hf_text_config = types.SimpleNamespace(
-        max_position_embeddings=seq_len,
-        rope_parameters={
-            "rope_type": "default",
-            "rope_theta": 10000.0,
-            "llama_4_scaling_beta": 0.1,
-            "original_max_position_embeddings": seq_len,
-        },
-        num_attention_heads=num_heads,
-        hidden_size=num_heads * head_dim,
+    from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+        NemotronLabsDiffusionModelProvider,
     )
-    cfg = TransformerConfig(
+
+    cfg = NemotronLabsDiffusionModelProvider(
         num_layers=1,
         hidden_size=num_heads * head_dim,
         num_attention_heads=num_heads,
@@ -69,14 +62,16 @@ def _make_config(
         context_parallel_size=1,
         tensor_model_parallel_size=1,
         use_cpu_initialization=True,
+        seq_length=seq_len,
+        block_size=block_size,
+        apply_llama4_style_query_key_layer_scaling=apply_llama4,
+        llama4_scaling_beta=0.1 if apply_llama4 else None,
+        yarn_original_max_position_embeddings=seq_len,
+        sequence_parallel=False,
+        apply_query_key_layer_scaling=apply_qk_scaling,
+        attention_dropout=0.0,
+        rotary_base=10000.0,
     )
-    cfg.seq_length = seq_len
-    cfg.block_size = block_size
-    cfg.apply_llama4_style_query_key_layer_scaling = apply_llama4
-    cfg.hf_config = types.SimpleNamespace(text_config=hf_text_config)
-    cfg.sequence_parallel = False
-    cfg.apply_query_key_layer_scaling = apply_qk_scaling
-    cfg.attention_dropout = 0.0
     return cfg
 
 
