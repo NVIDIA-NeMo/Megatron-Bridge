@@ -597,6 +597,7 @@ def get_model(
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
     *,
     pg_collection: ProcessGroupCollection,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> list[MegatronModule]:
     """Create and configure a model for distributed training.
 
@@ -619,6 +620,7 @@ def get_model(
         bf16: Enable BF16 mixed precision training. If None, uses model config
         use_megatron_fsdp: Use Megatron's Fully Sharded Data Parallel
         use_torch_fsdp2: Use PyTorch's Fully Sharded Data Parallel v2
+        use_layer_wise_distributed_optimizer: Build shard-aligned DDP layouts for layer-wise optimizers.
         wrap_with_ddp: Whether to wrap the model with DDP
         data_parallel_random_init: Whether to use random initialization for
             data parallel ranks (vs broadcasting from rank 0)
@@ -723,6 +725,7 @@ def get_model(
             overlap_param_gather_with_optimizer_step,
             use_megatron_fsdp=use_megatron_fsdp,
             use_torch_fsdp2=use_torch_fsdp2,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
             pg_collection=pg_collection,
         )
 
