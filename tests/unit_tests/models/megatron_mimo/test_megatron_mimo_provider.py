@@ -908,3 +908,49 @@ def test_build_infra_selects_language_representative_log_rank(offset):
         assert get_default_log_ranks() == (0,)
     finally:
         set_default_log_ranks(original)
+
+
+class TestStandardProviderMTPHandling:
+    """MIMO keeps MTP only for standard providers that advertise MIMO MTP support."""
+
+    @staticmethod
+    def _standard_provider(*, supports_mtp: bool):
+        provider = Mock()
+        provider.mtp_num_layers = 2
+        provider.modality_keys = {"images": "enc"}
+        provider.special_token_ids = {"images": 7}
+        provider.build_language_model_spec = Mock(return_value=ModuleSpec(module=object, params={}))
+        provider.build_mimo_modality_submodules_spec = Mock(
+            return_value={"images": ModuleSpec(module=object, params={}, submodules={"encoders": {}})}
+        )
+        if supports_mtp:
+            provider.mimo_supports_mtp = True
+        else:
+            del provider.mimo_supports_mtp
+        return provider
+
+    def test_mtp_disabled_without_opt_in(self):
+        standard_provider = self._standard_provider(supports_mtp=False)
+        MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                    "images": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                }
+            ),
+        )
+        assert standard_provider.mtp_num_layers is None
+
+    def test_mtp_kept_with_opt_in(self):
+        standard_provider = self._standard_provider(supports_mtp=True)
+        MegatronMIMOProvider.from_standard_provider(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=MegatronMIMOParallelismConfig(
+                module_parallelisms={
+                    "language": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                    "images": ModuleParallelismConfig(tensor_model_parallel_size=1),
+                }
+            ),
+        )
+        assert standard_provider.mtp_num_layers == 2

@@ -184,9 +184,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
         self._sync_standard_provider_language_parallelism()
 
-        # MIMO conversion does not import/export MTP routes yet.
-        # TODO: Remove this override once Megatron-LM's MegatronMIMO path supports MTP.
-        if hasattr(standard_provider, "mtp_num_layers"):
+        # MimoModel forwards MTP token metadata to the language model, but only
+        # providers whose ``build_language_model_spec`` actually wires the MTP
+        # block advertise ``mimo_supports_mtp``. Others keep MTP disabled so the
+        # constructed model and the HF export agree on the absence of MTP weights.
+        if hasattr(standard_provider, "mtp_num_layers") and not getattr(standard_provider, "mimo_supports_mtp", False):
             setattr(standard_provider, "mtp_num_layers", None)
 
         if self.language_model_spec is None:
