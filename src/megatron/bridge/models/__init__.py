@@ -309,6 +309,8 @@ __all__ = [
     "Qwen3VLMoEModelProvider",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
+    "Qwen4ExpBridge",
+    "Qwen4ExpTextBridge",
     "Qwen35VLBridge",
     "Qwen35TokenClassificationBridge",
     "Qwen35TokenClassificationModelProvider",
