@@ -233,11 +233,9 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self.block_size = getattr(config, "block_size", 16)
         self._asymmetric_ar_metadata: AsymmetricARMetadata | None = None
 
-        # Pre-compute the sbd_block_diff block mask
-        self.mask = compute_block_mask(
-            block_size=getattr(config, "block_size", 16),
-            max_seq_length=config.seq_length,
-        )
+        # AR attention does not use the doubled-sequence diffusion mask.
+        # Build it only when the diffusion forward path is first used.
+        self.mask = None
 
         import torch._dynamo.config as dcfg
 
@@ -426,7 +424,11 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         key = repeat_kv(key, n_rep)
         value = repeat_kv(value, n_rep)
 
-        # NemotronLabsDiffusionAttention with pre-computed block mask
+        if self.mask is None:
+            self.mask = compute_block_mask(
+                block_size=self.block_size,
+                max_seq_length=self.config.seq_length,
+            )
         context = fused_flex_attention(query, key, value, block_mask=self.mask)
 
         # Dropout
