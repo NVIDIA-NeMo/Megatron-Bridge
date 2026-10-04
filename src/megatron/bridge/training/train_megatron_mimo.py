@@ -308,10 +308,12 @@ def train_megatron_mimo(
     while train_state.step < train_config.train_iters:
         # Finalize any pending async saves (non-blocking). Placed at the top
         # of the loop so async saves get a full iteration to complete.
+        fault_tolerance.on_checkpointing_start(global_state)
         checkpoint_manager.finalize_async_saves(
             state=global_state,
             blocking=False,
         )
+        fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Handle profiling
         nsys_ctx = handle_profiling_step(

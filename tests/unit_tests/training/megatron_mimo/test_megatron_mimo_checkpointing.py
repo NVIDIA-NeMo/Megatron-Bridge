@@ -605,6 +605,63 @@ def test_iteration_time_is_logged_once_by_shared_training_logger():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.unit
+def test_async_checkpoint_finalization_uses_checkpoint_timeout_section():
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(save_dir=None, train_iters=2)
+    state.cfg.ft = SimpleNamespace(enable_ft_package=True)
+    state.cfg.checkpoint.async_save = True
+    state.fault_tolerance_state = SimpleNamespace(
+        is_setup_section_open=False,
+        seen_tr_iters_cnt=1,
+        curr_eval_iter_idx=0,
+        seen_checkpoints_cnt=0,
+    )
+    active_sections = set()
+    state.rank_monitor_client = Mock()
+    state.rank_monitor_client.start_section.side_effect = active_sections.add
+    state.rank_monitor_client.end_section.side_effect = active_sections.remove
+    checkpoint_manager = MagicMock()
+
+    def finalize(*, state, blocking):
+        assert not blocking
+        assert "checkpointing" in active_sections
+        assert "step" not in active_sections
+
+    def train_step(**kwargs):
+        assert "step" in active_sections
+        assert "checkpointing" not in active_sections
+        return {}, 0, 0.0, 0
+
+    checkpoint_manager.finalize_async_saves.side_effect = finalize
+    with (
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo", side_effect=train_step),
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=iter([object(), object()]),
+            valid_data_iterator=None,
+            global_state=state,
+            megatron_mimo_infra=_make_megatron_mimo_infra(),
+            multimodule_communicator=Mock(),
+            checkpoint_manager=checkpoint_manager,
+            multimodule_pg_collection=Mock(spec=[]),
+            module_to_grid_tuple=[],
+        )
+
+    assert checkpoint_manager.finalize_async_saves.call_count == 2
+    assert not active_sections
+    assert state.fault_tolerance_state.seen_checkpoints_cnt == 0
+
+
 class TestTrainMegatronMIMOCheckpointIntegration:
     """Verify train_megatron_mimo calls checkpoint_and_decide_exit with the right args."""
 
