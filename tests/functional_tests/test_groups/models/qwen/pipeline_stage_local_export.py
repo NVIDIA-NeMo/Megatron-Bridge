@@ -61,9 +61,7 @@ def _verify(bridge: AutoBridge, megatron_model, baseline: dict) -> None:
     if rank == 0:
         reference = baselines[0]
         errors.extend(
-            f"full export differs on rank {idx}"
-            for idx, candidate in enumerate(baselines)
-            if candidate != reference
+            f"full export differs on rank {idx}" for idx, candidate in enumerate(baselines) if candidate != reference
         )
         stage_replicas = {}
         for world_rank, (pp_rank, signatures) in enumerate(records):
@@ -123,8 +121,7 @@ def main(hf_model_id: str, tp: int, pp: int, ep: int, etp: int) -> None:
     provider.initialize_model_parallel(seed=0)
     megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
     baseline = {
-        name: _signature(weight)
-        for name, weight in bridge.export_hf_weights(megatron_model, show_progress=False)
+        name: _signature(weight) for name, weight in bridge.export_hf_weights(megatron_model, show_progress=False)
     }
     _verify(bridge, megatron_model, baseline)
 
