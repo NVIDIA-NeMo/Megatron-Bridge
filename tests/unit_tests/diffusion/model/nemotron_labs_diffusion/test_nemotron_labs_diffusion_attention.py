@@ -299,6 +299,48 @@ class TestMinistral3RotaryEmbedding:
 # ---------------------------------------------------------------------------
 
 
+class TestLazyDiffusionMask:
+    def test_ar_forward_backward_never_builds_diffusion_mask(self):
+        from megatron.bridge.diffusion.models.common import nemotron_labs_diffusion_attention as module
+
+        with patch.object(module, "compute_block_mask", side_effect=AssertionError("unused diffusion mask")):
+            attn = module.NemotronLabsDiffusionAttention(
+                _make_config(seq_len=49152),
+                1,
+                AttnMaskType.causal,
+                "self",
+                pg_collection=_make_pg_collection(),
+            )
+            attn.set_inference_mode(True)
+            attn.set_inference_params(causal=True, cache_enabled=False)
+            q = torch.randn(8, 1, 4, 8, requires_grad=True)
+            k = torch.randn(8, 1, 2, 8, requires_grad=True)
+            v = torch.randn(8, 1, 2, 8, requires_grad=True)
+            attn(q, k, v).square().mean().backward()
+            assert attn.mask is None
+            for tensor in (q, k, v):
+                assert tensor.grad is not None and torch.isfinite(tensor.grad).all()
+
+    def test_diffusion_forward_builds_mask_once(self):
+        from megatron.bridge.diffusion.models.common import nemotron_labs_diffusion_attention as module
+
+        attn = _make_attention(apply_llama4=False)
+        attn.config.sequence_parallel = True
+        q = torch.randn(16, 1, 4, 8)
+        k = torch.randn(16, 1, 2, 8)
+        v = torch.randn(16, 1, 2, 8)
+        sentinel = object()
+        with (
+            patch.object(module, "compute_block_mask", return_value=sentinel) as build,
+            patch.object(module, "fused_flex_attention", side_effect=lambda q, k, v, **kw: q) as forward,
+        ):
+            attn(q, k, v)
+            attn(q, k, v)
+        build.assert_called_once_with(block_size=4, max_seq_length=16)
+        assert attn.mask is sentinel
+        assert all(call.kwargs["block_mask"] is sentinel for call in forward.call_args_list)
+
+
 class TestNemotronLabsDiffusionAttentionInit:
     def test_softmax_scale_computed_correctly(self):
         head_dim = 8
