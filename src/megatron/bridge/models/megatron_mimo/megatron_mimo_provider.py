@@ -382,6 +382,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     ) -> ModuleSpec:
         """Inject pg_collection into encoder specs within a modality submodule."""
         spec = copy.deepcopy(spec)
+        if spec.params is None:
+            spec.params = {}
+        spec.params["pg_collection"] = pg_collection
 
         # Inject into encoders
         if spec.submodules and "encoders" in spec.submodules:
@@ -389,9 +392,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 if encoder_spec.params is None:
                     encoder_spec.params = {}
                 encoder_spec.params["pg_collection"] = pg_collection
-                transformer_config = encoder_spec.params.get("transformer_config")
-                if transformer_config is not None and getattr(pg_collection, "tp", None) is not None:
-                    transformer_config.tensor_model_parallel_size = pg_collection.tp.size()
+                _align_component_config_parallelism(encoder_spec.params.get("transformer_config"), pg_collection)
 
         # Inject tp_group into projections
         if spec.submodules and "input_projections" in spec.submodules:
@@ -401,6 +402,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                         proj_spec.params = {}
                     if "tp_group" not in proj_spec.params:
                         proj_spec.params["tp_group"] = pg_collection.tp
+                    _align_component_config_parallelism(proj_spec.params.get("config"), pg_collection)
 
         return spec
 
@@ -749,6 +751,24 @@ def _cast_model_dtype_except_fp32_marked(model_list: List[MegatronModule], dtype
         None,
         lambda _config, module: convert_module_to_dtype_except_fp32_marked(module, dtype),
     )
+
+
+def _align_component_config_parallelism(config: object, pg_collection: ProcessGroupCollection) -> None:
+    """Make a modality config's parallel sizes match the component's process groups.
+
+    Standard VLM providers derive encoder/projector configs by copying the
+    language config, so they inherit the language component's TP/EP sizes. MIMO
+    encoders run under their own (dense) grid, so TP follows the component's TP
+    group and expert parallelism collapses to 1.
+    """
+    if config is None:
+        return
+    tp_group = getattr(pg_collection, "tp", None)
+    if tp_group is not None and hasattr(config, "tensor_model_parallel_size"):
+        config.tensor_model_parallel_size = tp_group.size()
+    for attr in ("expert_model_parallel_size", "expert_tensor_parallel_size"):
+        if hasattr(config, attr):
+            setattr(config, attr, 1)
 
 
 def _build_default_mimo_modality_submodules_spec(standard_provider: object) -> Dict[str, ModuleSpec]:
