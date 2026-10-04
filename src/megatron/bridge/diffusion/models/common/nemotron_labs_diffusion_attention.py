@@ -30,7 +30,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import divide
 from torch import Tensor
 from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
-from transformers import ROPE_INIT_FUNCTIONS
+from transformers import ROPE_INIT_FUNCTIONS, PretrainedConfig
 
 from megatron.bridge.diffusion.common.dllm import asymmetric_semi_ar_mask_mod, compute_block_mask
 
@@ -87,7 +87,7 @@ def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_positio
 
 
 class Ministral3RotaryEmbedding(nn.Module):
-    """RoPE with YARN support, driven by HF ``rope_parameters`` config."""
+    """RoPE with YARN support; resolved parameters are used without retaining the config."""
 
     inv_freq: torch.Tensor
 
@@ -95,7 +95,6 @@ class Ministral3RotaryEmbedding(nn.Module):
         super().__init__()
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
-        self.config = config
 
         self.rope_type = config.rope_parameters["rope_type"]
         rope_init_fn = self._compute_default_rope_parameters
@@ -111,6 +110,42 @@ class Ministral3RotaryEmbedding(nn.Module):
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         # Keep a non-buffer fp32 copy: model dtype casts convert buffers to bf16.
         self.original_inv_freq = inv_freq.detach().clone().to(dtype=torch.float32)
+
+    @classmethod
+    def from_megatron_config(cls, config: TransformerConfig) -> "Ministral3RotaryEmbedding":
+        """Build RoPE from resolved native fields, without reading or mutating HF metadata."""
+        if getattr(config, "hf_config", None) is not None:
+            raise ValueError(
+                "Legacy NemotronLabsDiffusion provider contains hf_config. Reconvert HF initializers; "
+                "existing training checkpoints need their provider config migrated before resuming."
+            )
+        if config.rope_type not in ("default", "yarn"):
+            raise ValueError(f"Unsupported NemotronLabsDiffusion RoPE type: {config.rope_type}")
+        rope = {"rope_type": config.rope_type, "rope_theta": config.rotary_base}
+        if config.rope_type == "yarn":
+            if config.yarn_rotary_scaling_factor <= 0 or config.yarn_original_max_position_embeddings <= 0:
+                raise ValueError("YaRN factor and original context length must be positive")
+            rope.update(
+                factor=config.yarn_rotary_scaling_factor,
+                original_max_position_embeddings=config.yarn_original_max_position_embeddings,
+                beta_fast=config.yarn_beta_fast,
+                beta_slow=config.yarn_beta_slow,
+                mscale=config.yarn_mscale,
+                mscale_all_dim=config.yarn_mscale_all_dim,
+                attention_factor=config.yarn_attention_factor,
+                truncate=config.yarn_correction_range_round_to_int,
+            )
+        # Transformers implements the frequency calculation. This private adapter
+        # is derived from native values; it is not the checkpoint's HF config.
+        rotary_config = PretrainedConfig(
+            rope_parameters=rope,
+            rope_theta=config.rotary_base,
+            max_position_embeddings=config.seq_length,
+            hidden_size=config.hidden_size,
+            num_attention_heads=config.num_attention_heads,
+            head_dim=config.kv_channels,
+        )
+        return cls(rotary_config)
 
     @staticmethod
     def _compute_default_rope_parameters(config=None, device=None, seq_len=None):
@@ -182,6 +217,7 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         softmax_scale: float = None,
         cp_comm_type: str = None,
         pg_collection: ProcessGroupCollection = None,
+        rope_module: Ministral3RotaryEmbedding | None = None,
     ):
         super().__init__(config=config)
         self.config = config
@@ -217,22 +253,17 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             config.attention_dropout if attention_dropout is None else attention_dropout
         )
 
-        # RoPE setup (always required)
-        hf_text_config = getattr(config.hf_config, "text_config", config.hf_config)
-        hf_text_config.max_position_embeddings = config.seq_length
-        self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
+        self.rope_embedding_module = (
+            rope_module if rope_module is not None else Ministral3RotaryEmbedding.from_megatron_config(config)
+        )
 
-        # Llama-4 style query scaling (optional)
         self.beta = None
         self.max_position_embeddings = None
-        if getattr(config, "apply_llama4_style_query_key_layer_scaling", False):
-            self.beta = hf_text_config.rope_parameters["llama_4_scaling_beta"]
-            self.max_position_embeddings = hf_text_config.rope_parameters["original_max_position_embeddings"]
-            if (
-                hasattr(config, "yarn_rotary_scaling_factor")
-                and config.yarn_rotary_scaling_factor != hf_text_config.rope_parameters["factor"]
-            ):
-                hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
+        if config.apply_llama4_style_query_key_layer_scaling:
+            if config.llama4_scaling_beta is None or config.yarn_original_max_position_embeddings <= 0:
+                raise ValueError("Llama-4 query scaling requires beta and a positive original context length")
+            self.beta = config.llama4_scaling_beta
+            self.max_position_embeddings = config.yarn_original_max_position_embeddings
 
         self.block_size = getattr(config, "block_size", 16)
         self._asymmetric_ar_metadata: AsymmetricARMetadata | None = None
