@@ -4,7 +4,7 @@
 
 Choose a model to open its interactive import/export and training configurations. Every option comes directly from an authoritative YAML verification card; independent fields are never combined into synthetic commands.
 
-Current inventory: **28 model cards** and **406 concrete configurations**.
+Current inventory: **29 model cards** and **418 concrete configurations**.
 
 Each model page lets you select import/export, pretraining, benchmarking, SFT, LoRA, or long-context SFT and immediately see the exact command and expected result for the recorded precision and GPU.
 
@@ -168,7 +168,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
   <section class="verification-provider-card">
     <header class="verification-provider-heading">
       <strong>Qwen</strong>
-      <span>5 models</span>
+      <span>6 models</span>
     </header>
     <div class="verification-provider-models">
       <a class="verification-model-link" href="qwen/qwen3-235b-a22b.html#verified-qwen3-235b-a22b">
@@ -182,6 +182,10 @@ Choose a model to inspect its recorded import/export, training, and precision co
       <a class="verification-model-link" href="qwen/qwen3-8b.html#verified-qwen3-8b">
         <strong title="Qwen/Qwen3-8B">Qwen3-8B</strong>
         <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </a>
+      <a class="verification-model-link" href="qwen/qwen3.5-35b-a3b-text.html#verified-qwen3.5-35b-a3b-text">
+        <strong title="Qwen/Qwen3.5-35B-A3B">Qwen3.5-35B-A3B</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </a>
       <a class="verification-model-link" href="qwen/qwen3.6-35b-a3b.html#verified-qwen3.6-35b-a3b">
         <strong title="Qwen/Qwen3.6-35B-A3B">Qwen3.6-35B-A3B</strong>

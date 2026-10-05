@@ -97,16 +97,19 @@ class _FakeMoeBridge(_FakeBridge):
 
 class _FakeTextConfig:
     architectures = None
+    model_type = "qwen3_5_moe_text"
+    max_position_embeddings = 262144
 
 
 class _FakeRootConfig:
     text_config = _FakeTextConfig()
+    tie_word_embeddings = False
 
 
 class _FakeAutoConfig:
     @staticmethod
-    def from_pretrained(hf_path: str):
-        # Ignore hf_path; return a unified config with a nested text config.
+    def from_pretrained(hf_path: str, *, revision: str | None = None):
+        # Match the pinned-config API without downloading a model configuration.
         return _FakeRootConfig()
 
 

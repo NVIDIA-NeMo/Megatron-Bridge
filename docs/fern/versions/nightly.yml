@@ -164,6 +164,8 @@ navigation:
       path: ./nightly/pages/models/qwen/qwen2.5-vl.mdx
     - page: Qwen3-VL
       path: ./nightly/pages/models/qwen/qwen3-vl.mdx
+    - page: Qwen3.5-35B-A3B Text
+      path: ./nightly/pages/models/qwen/qwen3.5-35b-a3b-text.mdx
     - page: Qwen3.6-35B-A3B
       path: ./nightly/pages/models/qwen/qwen3.6-35b-a3b.mdx
     - page: Qwen3.8-27B

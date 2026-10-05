@@ -261,7 +261,14 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     def load_offline_auto_config(*args: object, **kwargs: object) -> SimpleNamespace:
         del args, kwargs
-        return SimpleNamespace(text_config=SimpleNamespace(architectures=None))
+        return SimpleNamespace(
+            tie_word_embeddings=False,
+            text_config=SimpleNamespace(
+                architectures=None,
+                model_type="qwen3_5_moe_text",
+                max_position_embeddings=262144,
+            ),
+        )
 
     monkeypatch.setattr(
         AutoConfig,
