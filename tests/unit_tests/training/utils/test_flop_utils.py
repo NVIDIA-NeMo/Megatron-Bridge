@@ -2904,10 +2904,10 @@ class TestAccumulateFlopsMetadata:
     def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self, cp_size):
         # Dense GPT batches are sliced along sequence dimension before the
         # forward step under context parallelism. FLOPS should still be based on
-        # the full model sequence length, not the CP-local token length.
+        # the full sequence length (CP-local length times CP size).
         state = _State()
         tokens = torch.zeros(1, 4096 // cp_size)
-        accumulate_flops_metadata(state, tokens, config_seq_len=4096, context_parallel_size=cp_size)
+        accumulate_flops_metadata(state, tokens, context_parallel_size=cp_size)
         assert state._flops_seqlen_sum == 4096
         assert state._flops_seqlen_sq_sum == 4096**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
@@ -2929,18 +2929,6 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
         assert state._flops_seqlen_sum == 1 * 4096
         assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
-        assert state._flops_requires_global_reduce
-
-    def test_config_seq_len_does_not_override_thd_cu_seqlens(self):
-        # config_seq_len is only a dense/non-packed fallback. THD still uses
-        # the actual packed tensor length for linear terms and cu_seqlens for
-        # attention work.
-        state = _State()
-        tokens = torch.zeros(1, 2048)
-        cu_seqlens = torch.tensor([0, 512, 2048])
-        accumulate_flops_metadata(state, tokens, config_seq_len=4096, cu_seqlens=cu_seqlens)
-        assert state._flops_seqlen_sum == 2048
-        assert state._flops_seqlen_sq_sum == 512**2 + 1536**2
         assert state._flops_requires_global_reduce
 
     def test_thd_padded_cu_seqlens_with_argmin(self):
@@ -2980,7 +2968,6 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(
             state,
             tokens,
-            config_seq_len=128,
             context_parallel_size=cp_size,
             cu_seqlens=torch.tensor([0, 16, 32]),
             cu_seqlens_unpadded=torch.tensor([0, 5, 16]) if use_unpadded else None,

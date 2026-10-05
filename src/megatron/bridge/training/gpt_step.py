@@ -524,10 +524,11 @@ def _forward_step_common(
         )
     timers("batch-generator").stop()
 
-    # Packed CP partitions tokens but preserves full-sequence cu_seqlens.
-    # Restore the physical token count for linear FLOPS; attention uses the
-    # unchanged sub-sequence boundaries. train.py reduces over pure DP, not CP.
-    # A post-process-only PP stage has labels but no input token ids.
+    # CP shards both dense and packed tokens; packed cu_seqlens still describe
+    # the full sequences. Restore the full length from the sharded shape (not the
+    # configured seq_length, which overstates variable-length batches); attention
+    # uses the unchanged sub-sequence boundaries. train.py reduces over pure DP,
+    # not CP. A post-process-only PP stage has labels but no input token ids.
     flops_tokens = tokens if tokens is not None else labels
     cu_seqlens = None
     cu_seqlens_argmin = None
@@ -544,13 +545,10 @@ def _forward_step_common(
             cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
             cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
             cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
-    # Read seq_length from the run config: builder-path models expose only a nested
-    # TransformerConfig (no seq_length), and dense tokens here are already CP-sliced.
     accumulate_flops_metadata(
         state,
         flops_tokens,
         vp_stage=vp_stage,
-        config_seq_len=getattr(state.cfg.model, "seq_length", None),
         context_parallel_size=pg_collection.cp.size(),
         cu_seqlens=cu_seqlens,
         cu_seqlens_argmin=cu_seqlens_argmin,

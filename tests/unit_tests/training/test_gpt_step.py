@@ -812,30 +812,37 @@ class TestGetBatch:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("cp_size", [1, 2, 8])
-    def test_forward_common_counts_dense_flops_from_run_config_seq_length(self, monkeypatch, cp_size):
-        """Dense CP-sliced batches use the run config seq_length, not the built model's config.
+    @pytest.mark.parametrize("model_config_has_seq_length", [False, True])
+    def test_forward_common_counts_dense_flops_from_cp_sliced_shape(
+        self, monkeypatch, cp_size, model_config_has_seq_length
+    ):
+        """Dense CP-sliced batches restore the full length from the actual shape times CP.
 
-        Builder-path models expose a nested TransformerConfig without ``seq_length``,
-        so reading it from ``get_model_config(model)`` silently fell back to the
-        CP-local token count and under-reported FLOPS by ~cp_size.
+        The configured ``seq_length`` is not used: builder-path models expose a nested
+        TransformerConfig without it (which once dropped dense FLOPS to the CP-local
+        length), and for variable-length batches it overstates the padded length.
         """
-        seq_length = 32
-        tokens = torch.arange(seq_length // cp_size).unsqueeze(0)
+        configured_seq_length = 128
+        padded_seq_length = 32
+        tokens = torch.arange(padded_seq_length // cp_size).unsqueeze(0)
         labels = tokens + 1
         loss_mask = torch.ones_like(tokens, dtype=torch.float32)
         model = _RecordingModel(vp_stage=None)
         state = Mock()
-        state.cfg = _make_cfg(seq_length=seq_length)
+        state.cfg = _make_cfg(seq_length=configured_seq_length)
         state.timers = _NoopTimer()
         state.straggler_timer = _NoopTimer()
         state._flops_seqlen_sum = 0
         state._flops_seqlen_sq_sum = 0
         state._flops_requires_global_reduce = False
-        transformer_config = type(
-            "TransformerConfig",
-            (),
-            {"is_hybrid_model": False, "mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False},
-        )()
+        model_config_fields = {
+            "is_hybrid_model": False,
+            "mtp_num_layers": 0,
+            "overlap_moe_expert_parallel_comm": False,
+        }
+        if model_config_has_seq_length:
+            model_config_fields["seq_length"] = configured_seq_length
+        transformer_config = type("TransformerConfig", (), model_config_fields)()
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: transformer_config)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
@@ -844,8 +851,8 @@ class TestGetBatch:
 
         _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
 
-        assert state._flops_seqlen_sum == seq_length
-        assert state._flops_seqlen_sq_sum == seq_length**2
+        assert state._flops_seqlen_sum == padded_seq_length
+        assert state._flops_seqlen_sq_sum == padded_seq_length**2
         assert state._flops_requires_global_reduce is False
 
     def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(self, monkeypatch):

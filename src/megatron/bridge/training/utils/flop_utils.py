@@ -358,7 +358,6 @@ def accumulate_flops_metadata(
     tokens: torch.Tensor | None,
     *,
     vp_stage: int | None = None,
-    config_seq_len: int | None = None,
     context_parallel_size: int = 1,
     cu_seqlens: torch.Tensor | None = None,
     cu_seqlens_argmin: torch.Tensor | None = None,
@@ -379,9 +378,8 @@ def accumulate_flops_metadata(
     Writes accumulators consumed by ``train.py`` at end of step:
 
     - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1] * context_parallel_size``
-      (padded total tokens this packed microbatch contributes), or
-      ``mbs * config_seq_len`` for dense non-packed batches whose tensors were
-      already context-parallel sliced.
+      (padded total tokens this microbatch contributes, restored to the full
+      sequence when ``tokens`` were already context-parallel sliced).
       Drives the linear MLP/proj/logit terms.
     - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ², computed inline from
       ``cu_seqlens`` (preferring ``cu_seqlens_unpadded``). The per-pack sub-sequence
@@ -390,9 +388,7 @@ def accumulate_flops_metadata(
       sync-free and the single host sync happens once per step in
       :func:`resolve_global_flops_seqlen_stats`. When ``cu_seqlens`` is absent
       (dense / non-packed) or degenerate, the host-int BSHD fallback
-      ``mbs * dense_seq_len²`` is accumulated instead (bit-exact with the
-      pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
-      otherwise ``tokens.shape[1]``.
+      ``mbs * (tokens.shape[1] * context_parallel_size)²`` is accumulated instead.
     - ``_flops_vision_patches``: legacy total patch-count approximation.
     - ``_flops_vision_patch_sum``, ``_flops_vision_patch_sq_sum``, and
       ``_flops_vision_merged_token_sum``: exact additive ViT statistics that
@@ -414,18 +410,19 @@ def accumulate_flops_metadata(
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
 
-    Set ``context_parallel_size`` only when packed ``tokens`` have already been
-    CP-sharded but ``cu_seqlens`` still describes the full sequences, as in
-    ``gpt_step``. Callers accumulating before CP slicing, such as VLM steps,
-    must leave it at 1. Only the token-linear count is rescaled; attention
-    statistics are already global within CP and are reduced over pure DP later.
+    Set ``context_parallel_size`` only when ``tokens`` have already been
+    CP-sharded, as in ``gpt_step``. Callers accumulating before CP slicing, such
+    as VLM steps, must leave it at 1. The full sequence length is restored from
+    the actual sharded shape rather than the configured ``seq_length``, which is
+    only an upper bound for variable-length batches. Packed attention statistics
+    come from ``cu_seqlens``, which already describes the full sequences, and
+    are reduced over pure DP later.
     """
     if vp_stage not in (None, 0) or tokens is None:
         return
 
     mbs = tokens.shape[0]
-    tensor_seq_len = tokens.shape[1]
-    dense_seq_len = config_seq_len if isinstance(config_seq_len, int) and config_seq_len > 0 else tensor_seq_len
+    full_seq_len = tokens.shape[1] * context_parallel_size
 
     # THD attention term Σᵢ sᵢ², computed inline from cu_seqlens. The squared
     # sub-sequence lengths stay on-device (``_scalar_sum_for_accumulator`` returns a
@@ -435,14 +432,14 @@ def accumulate_flops_metadata(
     # (which would force a data-dependent-size sync) is needed.
     sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
     if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * tensor_seq_len * context_parallel_size)
+        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * full_seq_len)
         setattr(state, "_flops_requires_global_reduce", True)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2))
     else:
         # No cu_seqlens (dense / non-packed) or a degenerate pack with no real
         # sub-sequences → BSHD fallback (single pack-length sequence).
-        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
-        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
+        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * full_seq_len)
+        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * full_seq_len**2)
 
     cross_sub_seq_lens = _real_subseq_lengths(
         cross_cu_seqlens,
