@@ -1669,6 +1669,7 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    @pytest.mark.parametrize("profile_ranks", [[7], []])
     def test_profiling_memory_snapshot(
         self,
         mock_report_runtime,
@@ -1686,6 +1687,7 @@ class TestTrainingLog:
         mock_config,
         mock_global_state,
         loss_dict,
+        profile_ranks,
     ):
         """Test memory snapshot functionality when profiling is enabled."""
         # Get fresh total_loss_dict for this test
@@ -1707,7 +1709,7 @@ class TestTrainingLog:
         mock_profiling_config = mock.MagicMock()
         mock_profiling_config.record_memory_history = True
         mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
-        mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_ranks = profile_ranks
         mock_profiling_config.profile_step_end = 10
         mock_config.profiling = mock_profiling_config
         mock_config.logger.tensorboard_dir = "/tmp/tb"
@@ -2018,6 +2020,19 @@ class TestTrainingLog:
         expected_keys = ["mem-reserved-gigabytes", "mem-max-reserved-gigabytes"]
         memory_report = report_memory(memory_keys=memory_keys)
         assert list(memory_report.keys()) == expected_keys
+
+    def test_report_memory_device_used(self):
+        """Total device memory (NVML) is appended only when requested, in rounded gigabytes."""
+        memory_keys = {"reserved_bytes.all.current": "mem-reserved-bytes"}
+        with mock.patch("torch.cuda.device_memory_used", return_value=123_456_789_012) as mocked:
+            memory_report = report_memory(memory_keys=memory_keys)
+            assert "mem-device-used-gigabytes" not in memory_report
+            mocked.assert_not_called()
+
+            memory_report = report_memory(memory_keys=memory_keys, log_device_memory_used=True)
+            assert list(memory_report.keys()) == ["mem-reserved-gigabytes", "mem-device-used-gigabytes"]
+            assert memory_report["mem-device-used-gigabytes"] == 123.46
+            mocked.assert_called_once()
 
     def test_report_runtime(self):
         """Test runtime metrics."""
@@ -3653,7 +3668,7 @@ class TestCalcParamsL2Norm:
         expected_norm = 5.0  # sqrt(25 * 1.0^2)
         assert result == pytest.approx(expected_norm, rel=1e-3)
 
-    # ==================== MoE BF16 main_param tests ====================
+    # ==================== MoE BF16 main_param tests =============
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -4196,6 +4211,13 @@ def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
     assert bias is None
 
 
+def test_linear_for_last_layer_reports_gathered_output() -> None:
+    """GPTModel._postprocess reads output_layer.gather_output for the observation hooks."""
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+
+    assert head.gather_output is True
+
+
 def test_value_head_apis_preserve_positional_call_compatibility() -> None:
     """The relocated value-head APIs must retain their established positional signatures."""
     head = LinearForLastLayer(2, 1, False)
@@ -4386,3 +4408,32 @@ def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
     assert router.bias.requires_grad is False
     assert shared_experts.gate_weight.requires_grad is False
     assert shared_experts.gate_bias.requires_grad is False
+
+
+@pytest.mark.parametrize("repeated, expected", [(False, 4), (True, 3)])
+def test_hybrid_provider_moe_count_without_legacy_flag(repeated, expected):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    provider = HybridModelProvider(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=2,
+        hybrid_layer_pattern="MEME/*E/*E",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated,
+    )
+    assert not provider.is_hybrid_model
+    assert _get_num_moe_layers(provider) == expected
+
+
+@pytest.mark.parametrize("rank", [0, 7])
+def test_empty_profile_ranks_records_on_every_rank(rank):
+    profiling = SimpleNamespace(record_memory_history=True, profile_ranks=[], memory_snapshot_path="snapshot.pkl")
+    with (
+        mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe", return_value=rank),
+        mock.patch("torch.cuda.memory._record_memory_history") as record,
+        mock.patch("torch._C._cuda_attach_out_of_memory_observer") as attach,
+    ):
+        start_memory_history_recording(profiling)
+    record.assert_called_once()
+    attach.assert_called_once()

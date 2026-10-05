@@ -155,6 +155,12 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     with external process managers that handle GPU visibility.
     """
 
+    gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
+    """Accumulate GTP remat reduce-scatter results locally in FP32."""
+
+    gtp_remat_nccl_ub: bool = False
+    """Register the dense GTP remat group with an NCCL symmetric-memory user buffer."""
+
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
@@ -757,8 +763,8 @@ class ProfilingConfig(MTrainProfilingConfig):
     profile_ranks: list[int] = field(default_factory=lambda: [0])
     """Ranks to capture in memory snapshots / nsys / pytorch profiler.
 
-    Memory-snapshot and recording-start guards use a strict membership check,
-    so an empty list disables capture. Default ``[0]`` gives rank-0 capture
+    An empty list captures on all ranks, including memory snapshots and
+    allocator history. Default ``[0]`` gives rank-0 capture
     whenever ``record_memory_history=True`` or an nsys/pytorch profiler is
     enabled, with no further override required.
     """
@@ -1136,7 +1142,14 @@ class ConfigContainer(Container):
         else:
             # Only compatible with NCCL UBR.
             assert not self.ddp.fsdp_manual_registration, "DDP.fsdp_manual_registration requires DDP.nccl_ub!"
-        if self.ddp.data_parallel_sharding_strategy == "optim_grads_params":
+        sharding_strategies = {self.ddp.data_parallel_sharding_strategy}
+        if self.ddp.expert_data_parallel_sharding_strategy is not None:
+            sharding_strategies.add(self.ddp.expert_data_parallel_sharding_strategy)
+        if sharding_strategies & {"optim_grads", "optim_grads_params"} and self.model.gradient_accumulation_fusion:
+            warn_rank_0("Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP.")
+        if self.model.init_model_with_meta_device and sharding_strategies == {"no_shard"}:
+            raise ValueError("Meta device initialization is not supported with only no_shard strategies.")
+        if "optim_grads_params" in sharding_strategies:
             assert self.train.check_weight_hash_across_dp_replicas_interval is None, (
                 "TrainingConfig.check_weight_hash_across_dp_replicas_interval is not "
                 "supported with the Megatron-FSDP optim_grads_params sharding strategy"
@@ -1148,7 +1161,7 @@ class ConfigContainer(Container):
 
         MFSDP V2 owns its sharded parameter and gradient storage, so it must use
         its dedicated optimizer rather than Bridge's distributed-optimizer path.
-        Checkpointing and model-parallel topologies remain intentionally unsupported
+        Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
         upstream and are rejected here before model construction.
         """
         if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
@@ -1159,7 +1172,6 @@ class ConfigContainer(Container):
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
             "pipeline_model_parallel_size",
-            "context_parallel_size",
         )
         configured_parallelisms = [
             f"{name}={getattr(self.model, name)}"
@@ -1167,9 +1179,7 @@ class ConfigContainer(Container):
             if getattr(self.model, name) != 1
         ]
         if configured_parallelisms:
-            raise ValueError(
-                "MFSDP V2 requires TP=PP=CP=1; unsupported settings: " + ", ".join(configured_parallelisms)
-            )
+            raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.expert_model_parallel_size > 1:
             if self.model.num_moe_experts is None:
                 raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
@@ -1424,6 +1434,16 @@ class ConfigContainer(Container):
                 )
             if self.ddp.average_in_collective:
                 raise ValueError("GTP requires ddp.average_in_collective=False.")
+            if (
+                self.checkpoint.dist_ckpt_optim_fully_reshardable
+                and self.checkpoint.distrib_optim_fully_reshardable_mem_efficient
+            ):
+                raise ValueError(
+                    "GTP does not support memory-efficient fully reshardable optimizer checkpoints: "
+                    "the GTP optimizer process groups do not provide the required Gloo group. "
+                    "Set checkpoint.distrib_optim_fully_reshardable_mem_efficient=False or "
+                    "checkpoint.dist_ckpt_optim_fully_reshardable=False."
+                )
             if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
                 if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
                     raise ValueError(
@@ -1517,6 +1537,19 @@ class ConfigContainer(Container):
             f"eval_micro_batch_size * eval_data_parallel_size ({self.validation.eval_micro_batch_size} * "
             f"{eval_data_parallel_size} = {eval_dp_product})"
         )
+
+        if getattr(self.model, "freeze_base_model_for_mtp", False):
+            if not self.model.mtp_num_layers:
+                raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
+        if getattr(self.model, "moe_shortcut_connection", False) and (
+            self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        ):
+            raise ValueError("moe_shortcut_connection is not supported with FSDP.")
+        # Core also enables LayerWise for legacy dist_* optimizer names.
+        if (
+            self.optimizer.use_layer_wise_distributed_optimizer or self.optimizer.optimizer.startswith("dist_")
+        ) and self.model.moe_single_grouped_weight:
+            raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:

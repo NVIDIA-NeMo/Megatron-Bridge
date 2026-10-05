@@ -758,6 +758,47 @@ class TestTargetPrefixValidation:
             instantiate(config)
 
     @pytest.mark.parametrize(
+        "target",
+        [
+            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
+            "transformers.dynamic_module_utils.get_class_in_module",
+            "transformers.dynamic_module_utils.os.system",
+            "transformers.utils.import_utils.direct_transformers_import",
+            "transformers.pipeline",
+            "transformers.pipelines.pipeline",
+            "transformers.AutoTokenizer.from_pretrained",
+            "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
+            "transformers.AutoModel.from_config",
+        ],
+    )
+    def test_rejects_transformers_target_families_without_resolution(self, target):
+        """Known code-loading targets are rejected before importing their modules."""
+        with patch("megatron.bridge.utils.instantiate_utils._mcore_resolve_target") as resolve:
+            with pytest.raises(InstantiationException, match="bypass target validation"):
+                _resolve_target(target, full_key="model.target", check_callable=False)
+        resolve.assert_not_called()
+
+    def test_allows_transformers_config_factory(self):
+        """Config data factories remain usable by serialized checkpoints."""
+        config = {
+            "_target_": "transformers.generation.configuration_utils.GenerationConfig.from_dict",
+            "config_dict": {"max_length": 32},
+        }
+        assert instantiate(config).max_length == 32
+
+    def test_rejects_transformers_loader_alias_after_resolution(self):
+        """An innocuous requested name cannot hide a Transformers loader."""
+
+        def loader_alias():
+            pass
+
+        loader_alias.__module__ = "transformers.models.auto.tokenization_auto"
+        loader_alias.__qualname__ = "AutoTokenizer.from_pretrained"
+        with patch("megatron.bridge.utils.instantiate_utils._mcore_resolve_target", return_value=loader_alias):
+            with pytest.raises(InstantiationException, match="bypass target validation"):
+                _resolve_target("transformers.some_alias", full_key="model.target", check_callable=False)
+
+    @pytest.mark.parametrize(
         "target,kwargs",
         [
             (
@@ -815,8 +856,6 @@ class TestTargetPrefixValidation:
         [
             "numpy.lib.npyio.load",
             "torch.serialization.load",
-            "transformers.dynamic_module_utils.get_class_in_module",
-            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
         ],
     )
     def test_instantiate_rejects_canonical_aliases_and_dynamic_code_helpers(self, target):
@@ -827,13 +866,24 @@ class TestTargetPrefixValidation:
     @pytest.mark.parametrize(
         "target",
         [
-            "torch.serialization.os.system",
-            "transformers.dynamic_module_utils.os.system",
+            "transformers.dynamic_module_utils.get_class_in_module",
+            "transformers.dynamic_module_utils.get_class_from_dynamic_module",
         ],
     )
-    def test_instantiate_rejects_imported_module_traversal(self, target):
+    def test_instantiate_rejects_dynamic_code_helpers_before_resolution(self, target):
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate({"_target_": target, "_call_": False})
+
+    @pytest.mark.parametrize(
+        "target,error",
+        [
+            ("torch.serialization.os.system", "is not in the allowlist"),
+            ("transformers.dynamic_module_utils.os.system", "bypass target validation"),
+        ],
+    )
+    def test_instantiate_rejects_imported_module_traversal(self, target, error):
         """Test that allowed modules cannot expose callables from disallowed modules."""
-        with pytest.raises(InstantiationException, match="is not in the allowlist"):
+        with pytest.raises(InstantiationException, match=error):
             instantiate({"_target_": target, "_call_": False})
 
     def test_instantiate_rejects_transformers_module_loader_before_execution(self, monkeypatch, tmp_path):
@@ -848,7 +898,7 @@ class TestTargetPrefixValidation:
             "module_path": module_path.name,
         }
 
-        with pytest.raises(InstantiationException, match="resolves to the unsafe target"):
+        with pytest.raises(InstantiationException, match="bypass target validation"):
             instantiate(config)
 
         assert not marker.exists()

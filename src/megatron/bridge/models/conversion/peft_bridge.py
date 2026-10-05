@@ -27,6 +27,7 @@ from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_rank, unwrap_model
 
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -803,12 +804,14 @@ class MegatronPeftBridge:
                 )
             else:
                 linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_in_task.param_weight),
+                    adapter_task.linear_in_task.megatron_module,
                 )
                 linear_in_tensor = next(iter(linear_in_dict.values()))
 
                 linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_out_task.param_weight),
+                    adapter_task.linear_out_task.megatron_module,
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
@@ -842,7 +845,9 @@ class MegatronPeftBridge:
         """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
 
         mapping = task.mapping
-        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        tensor = mapping.broadcast_from_pp_rank(
+            _gather_gtp_weight(task.param_weight), cache_key=task.global_param_name
+        )
         assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
         tensor = mapping.maybe_dequantize(tensor)
         if mapping.tp_size > 1:
@@ -1791,11 +1796,18 @@ def _pack_target_parameter_adapter_weights(
     lora_a: torch.Tensor,
     lora_b: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout."""
+    """Convert exported target-parameter LoRA tensors into PEFT's ParamWrapper layout.
+
+    Exported factors are ``lora_A [E, r, in]`` and ``lora_B [E, out, r]``. ParamWrapper
+    reads ``lora_A`` as ``(E, r, in)`` and ``lora_B`` as ``(out, r, E)``, so the columns
+    of the packed ``lora_B`` must be expert-fastest.
+    """
 
     if lora_a.ndim == 3 and lora_b.ndim == 3:
-        packed_lora_a = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_b], dim=0)
-        packed_lora_b = torch.cat([chunk.transpose(0, 1).contiguous() for chunk in lora_a], dim=1)
+        num_experts, rank, in_features = lora_a.shape
+        out_features = lora_b.shape[1]
+        packed_lora_a = lora_a.reshape(num_experts * rank, in_features).contiguous()
+        packed_lora_b = lora_b.permute(1, 2, 0).reshape(out_features, rank * num_experts).contiguous()
         return packed_lora_a, packed_lora_b
 
     return lora_a, lora_b

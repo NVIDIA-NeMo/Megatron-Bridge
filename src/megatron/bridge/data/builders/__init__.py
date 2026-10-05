@@ -14,6 +14,7 @@ from megatron.bridge.data.builders.dpo import (
 from megatron.bridge.data.builders.energon import (
     EnergonDatasetBuilder,
     EnergonDatasetConfig,
+    EnergonTaskEncoderConfig,
     HFEnergonTaskEncoderConfig,
     NemotronOmniEnergonTaskEncoderConfig,
     QwenVLEnergonTaskEncoderConfig,
@@ -55,6 +56,7 @@ __all__ = [
     "DirectHFSFTDatasetConfig",
     "EnergonDatasetBuilder",
     "EnergonDatasetConfig",
+    "EnergonTaskEncoderConfig",
     "HFEnergonTaskEncoderConfig",
     "QwenVLEnergonTaskEncoderConfig",
     "NemotronOmniEnergonTaskEncoderConfig",

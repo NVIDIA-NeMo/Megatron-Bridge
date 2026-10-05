@@ -125,6 +125,8 @@ class _OfflineModelProvider:
 
     def __init__(self) -> None:
         self.apply_rope_fusion = False
+        self.batch_p2p_comm = False
+        self.bf16 = False
         self.context_parallel_size = 1
         self.cross_entropy_fusion_impl = "native"
         self.csa_compress_ratios = [0] * 33
@@ -132,12 +134,16 @@ class _OfflineModelProvider:
         self.cuda_graph_scope = None
         self.dsa_indexer_skip_topk_offset = 0
         self.dsa_indexer_topk_freq = 1
+        self.delay_wgrad_compute = False
         self.experimental_attention_variant = "dsa"
+        self.fp16 = False
         # Preconditions of the MXFP8 CuTe DSL fused grouped MLP, asserted by the
         # perf recipe tests: SwiGLU, and FC1/FC2 dims divisible by 64. Absent here
         # the assertions raise AttributeError rather than failing on the value.
         # Values mirror Qwen3.5-VL 35B-A3B.
         self.gated_linear_unit = True
+        # DeepSeek's bridge enables this before communication-overlap setup.
+        self.gradient_accumulation_fusion = True
         self.hidden_size = 2048
         self.make_vocab_size_divisible_by = 128
         self.moe_flex_dispatcher_backend = None
@@ -145,10 +151,13 @@ class _OfflineModelProvider:
         self.mtp_num_layers = 1
         self.num_layers = 32
         self.num_moe_experts = 8
+        self.overlap_moe_expert_parallel_comm = False
+        self.overlap_p2p_comm = False
         self.rotary_base = 10000.0
         self.rotary_scaling_factor = 1
         self.seq_length = 4096
         self.tensor_model_parallel_size = 1
+        self.tp_comm_overlap = False
         self.use_te_rng_tracker = False
         self.use_transformer_engine_op_fuser = False
         self.vocab_size = 256000
@@ -172,12 +181,26 @@ class _OfflineAutoBridge:
 
     @classmethod
     def from_hf_pretrained(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
-        del args, kwargs
-        return cls()
+        bridge = cls()
+        bridge._model_id = str(args[0]) if args else str(kwargs.get("pretrained_model_name_or_path", ""))
+        return bridge
 
     def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
         del args, kwargs
-        return _OfflineModelProvider()
+        provider = _OfflineModelProvider()
+        model_id = getattr(self, "_model_id", "").lower()
+        if "deepseek-v4-" in model_id:
+            logical_layers = 61 if "deepseek-v4-pro" in model_id else 43
+            provider.hybrid_layer_pattern = "WEWE" + "".join(
+                "CE" if i % 2 == 0 else "HE" for i in range(logical_layers - 2)
+            )
+            provider.num_layers = 2 * logical_layers
+            provider.mtp_hybrid_override_pattern = "WE"
+            provider.moe_num_hash_layers = 3
+            provider.csa_compress_ratios = [
+                {"C": 4, "H": 128}.get(symbol, 0) for symbol in provider.hybrid_layer_pattern
+            ] + [0, 0]
+        return provider
 
     def get_model_config(self) -> _OfflineModelProvider:
         """Return a mutable stand-in for builder-backed recipe construction."""

@@ -444,6 +444,7 @@ class NemotronHBridge(MegatronModelBridge):
         # Megatron uses None="not set/disabled", but HF modeling code expects integers
         # and will crash on None (e.g. n_routed_experts // n_group → TypeError)
         mtp_num_layers = int(hf_cfg.get("num_nextn_predict_layers") or 0)
+        # HF serializes the physical shared block; recipes set its training repetitions.
         if mtp_num_layers > 0 and getattr(provider, "mtp_use_repeated_layer", False):
             mtp_num_layers = 1
         hf_cfg["num_nextn_predict_layers"] = mtp_num_layers

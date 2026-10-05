@@ -60,6 +60,7 @@ class LinearForLastLayer(nn.Linear):
         self.dropout = nn.Dropout(dropout)
         self.output_in_fp32 = output_in_fp32
         self.tp_group = tp_group
+        self.gather_output = True
         if sequence_parallel:
             setattr(self.weight, "sequence_parallel", True)
             if self.bias is not None:
