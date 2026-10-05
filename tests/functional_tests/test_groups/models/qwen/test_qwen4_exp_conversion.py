@@ -56,7 +56,7 @@ class TestQwen4ExpConversion:
         env = dict(os.environ)
         # NVLink SHARP multicast is not available in every container / fabric configuration.
         env.setdefault("NCCL_NVLS_ENABLE", "0")
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)
         assert result.returncode == 0, (
             f"Qwen4-Exp parity (tp={tp}, force_sparse={force_sparse}) failed\n"
             f"STDOUT: {result.stdout[-4000:]}\nSTDERR: {result.stderr[-4000:]}"

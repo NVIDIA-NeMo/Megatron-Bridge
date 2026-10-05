@@ -56,6 +56,12 @@ also requires a sequence beyond the indexer budget, rather than only the dense
 shortcut. Component tests alone do not establish full-model training parity or
 an end-to-end performance improvement.
 
+The H100 and GB200 L2 launch scripts run these three GPU cases with at most
+two ranks. They install Transformers 5.16.1 in a temporary reference
+environment and reuse the container's CUDA packages, leaving the project
+environment unchanged. Each distributed case has a ten-minute timeout. L2
+requires the `full-test-suite` label or an explicit L2 workflow dispatch.
+
 ## Sources
 
 The conversion mappings and base QSA/PLE/GR scaffolding are adapted from
