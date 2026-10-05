@@ -17,7 +17,7 @@
 import subprocess
 import sys
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -106,8 +106,8 @@ class MockModelConfig:
     qk_head_dim: int = 64
     qk_pos_emb_head_dim: int = 0
     v_head_dim: int = 64
-    o_lora_rank: int = 0
-    o_groups: int = 1
+    output_projection_lora_rank: int = 0
+    output_projection_groups: int = 1
     # Sliding window attention settings
     window_size: tuple | list | int | None = None
     window_attn_skip_freq: int | list | None = None
@@ -1048,9 +1048,10 @@ assert flop_utils._is_gated_delta_net_variant("gdn") is True
 
 
 class TestDeepSeekV4HybridFlops:
-    """Tests for DeepSeek-V4 hybrid attention FLOPs in the transformer path."""
+    """Tests for DeepSeek-V4 attention FLOPs in logical and physical layouts."""
 
-    def test_dsv4_hybrid_exact_flops(self):
+    @pytest.mark.parametrize("native_hybrid", [False, True])
+    def test_dsv4_hybrid_exact_flops(self, native_hybrid):
         """DSv4 hybrid FLOPs include sparse attention, compressor, and indexer terms."""
         batch_size = 1
         seq_len = 512
@@ -1083,8 +1084,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=qk_head_dim,
             qk_pos_emb_head_dim=qk_pos_emb_head_dim,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=[0, 4, 128],
             csa_window_size=window,
             dsa_indexer_n_heads=idx_n_heads,
@@ -1092,6 +1093,15 @@ class TestDeepSeekV4HybridFlops:
             dsa_indexer_topk=idx_topk,
             gated_linear_unit=False,
         )
+        if native_hybrid:
+            model_cfg = replace(
+                model_cfg,
+                num_layers=2 * num_layers,
+                hybrid_layer_pattern="W-C-H-",
+                # Ratios on native configs align with physical layers, including
+                # MLP slots. The W/C/H symbols determine the attention work.
+                csa_compress_ratios=[0, 0, 4, 0, 128, 0],
+            )
         cfg = MockConfigContainer(model=model_cfg)
 
         q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
@@ -1123,6 +1133,49 @@ class TestDeepSeekV4HybridFlops:
         actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
 
         assert actual_flops == expected_flops
+
+    @pytest.mark.parametrize("mtp_depth", [0, 1, 2])
+    @pytest.mark.parametrize("packed", [False, True])
+    def test_native_dsv4_moe_and_mtp_match_logical_layout(self, mtp_depth, packed):
+        """Physical W/C/H + E blocks count the same work as logical DSv4 blocks."""
+        logical = MockModelConfig(
+            num_layers=3,
+            hidden_size=128,
+            seq_length=512,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            vocab_size=1024,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=16,
+            qk_head_dim=24,
+            qk_pos_emb_head_dim=8,
+            v_head_dim=32,
+            output_projection_lora_rank=16,
+            output_projection_groups=2,
+            csa_compress_ratios=[0, 4, 128] + [4] * mtp_depth,
+            csa_window_size=64,
+            dsa_indexer_n_heads=2,
+            dsa_indexer_head_dim=8,
+            dsa_indexer_topk=32,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            moe_shared_expert_intermediate_size=128,
+            mtp_num_layers=mtp_depth,
+        )
+        physical = replace(
+            logical,
+            num_layers=6,
+            hybrid_layer_pattern="WE|CEHE" + "/CE" * mtp_depth,
+            csa_compress_ratios=[0, 0, 4, 0, 128, 0] + [4, 0] * mtp_depth,
+            # The unified pattern supplies MTP depth on native HybridModel.
+            mtp_num_layers=None,
+        )
+        runtime_stats = {"seqlen_sum": 768, "seqlen_squared_sum": 256**2 + 512**2} if packed else {}
+        expected = num_floating_point_operations(MockConfigContainer(model=logical), batch_size=2, **runtime_stats)
+        actual = num_floating_point_operations(MockConfigContainer(model=physical), batch_size=2, **runtime_stats)
+        assert actual == pytest.approx(expected)
 
     def test_dsv4_hybrid_packed_flops_match_mcore_split(self):
         """Packed DSv4 FLOPs split token-linear work from quadratic sparse work."""
@@ -1159,8 +1212,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=32,
             qk_pos_emb_head_dim=32,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=compress_ratios,
             csa_window_size=window,
             dsa_indexer_n_heads=idx_n_heads,
@@ -1223,7 +1276,7 @@ class TestDeepSeekV4HybridFlops:
             multi_latent_attention=True,
             experimental_attention_variant="dsv4_hybrid",
             q_lora_rank=16,
-            o_lora_rank=16,
+            output_projection_lora_rank=16,
             csa_compress_ratios=[0, 4],
             dsa_indexer_n_heads=2,
             dsa_indexer_head_dim=8,
@@ -1241,7 +1294,7 @@ class TestDeepSeekV4HybridFlops:
             multi_latent_attention=True,
             experimental_attention_variant="dsv4_hybrid",
             q_lora_rank=16,
-            o_lora_rank=16,
+            output_projection_lora_rank=16,
             csa_compress_ratios=[0, 8, 128],
             dsa_indexer_n_heads=2,
             dsa_indexer_head_dim=8,
@@ -1308,8 +1361,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=qk_head_dim,
             qk_pos_emb_head_dim=qk_pos_emb_head_dim,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=[0, 128],
             csa_window_size=window,
             gated_linear_unit=False,
@@ -1350,7 +1403,7 @@ class TestDeepSeekV4HybridFlops:
             "multi_latent_attention": True,
             "experimental_attention_variant": "dsv4_hybrid",
             "q_lora_rank": 16,
-            "o_lora_rank": 16,
+            "output_projection_lora_rank": 16,
             "csa_compress_ratios": [0, 4, 128],
             "dsa_indexer_n_heads": 2,
             "dsa_indexer_head_dim": 8,
@@ -1510,7 +1563,7 @@ class TestHybridGDNFlops:
 
 @pytest.mark.unit
 class TestAttentionOutputGateFlops:
-    """Tests for attention_output_gate FLOPs in transformer_flops path."""
+    """Tests for attention_output_gate FLOPs in Transformer and Hybrid paths."""
 
     def test_gate_increases_flops(self):
         """attention_output_gate=True should add extra FLOPs for the gate projection."""
@@ -1567,6 +1620,47 @@ class TestAttentionOutputGateFlops:
         actual_delta = flops_gate - flops_no_gate
 
         assert actual_delta == expected_delta, f"Expected gate delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+    @pytest.mark.parametrize("pattern", ["**", "*-*E", "-E"])
+    @pytest.mark.parametrize("window_mode", ["full", "sliding", "mixed"])
+    @pytest.mark.parametrize("kv_channels", [16, 24])
+    def test_hybrid_gate_exact_delta(self, pattern, window_mode, kv_channels):
+        """Only attention layers pay for the full-width gate, independently of their window."""
+        batch_size = 2
+        model = MockModelConfig(
+            hybrid_layer_pattern=pattern,
+            num_layers=len(pattern),
+            hidden_size=64,
+            seq_length=128,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=kv_channels,
+            ffn_hidden_size=128,
+            num_moe_experts=4,
+            moe_ffn_hidden_size=64,
+            moe_router_topk=2,
+            vocab_size=256,
+            window_size=None if window_mode == "full" else (15, 0),
+            window_attn_skip_freq=[
+                int(symbol == "*" and (window_mode == "sliding" or index == 0)) for index, symbol in enumerate(pattern)
+            ],
+        )
+        without_gate = num_floating_point_operations(MockConfigContainer(model=model), batch_size=batch_size)
+        with_gate = num_floating_point_operations(
+            MockConfigContainer(model=replace(model, attention_output_gate=True)), batch_size=batch_size
+        )
+        # One H -> (heads * head_dim) GEMM per attention layer; training counts forward + backward.
+        expected_delta = (
+            3
+            * 2
+            * batch_size
+            * model.seq_length
+            * pattern.count("*")
+            * model.hidden_size
+            * model.num_attention_heads
+            * kv_channels
+        )
+        assert with_gate - without_gate == expected_delta
 
 
 @pytest.mark.unit

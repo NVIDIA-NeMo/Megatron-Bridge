@@ -97,6 +97,7 @@ def _make_cfg(
     virtual_pipeline_model_parallel_size=None,
     mtp_num_layers=0,
     dataset_kwargs=None,
+    position_embedding_type=None,
 ):
     cfg = type("Cfg", (), {})()
     cfg.dataset = type(
@@ -117,6 +118,7 @@ def _make_cfg(
             "pipeline_model_parallel_size": pipeline_model_parallel_size,
             "virtual_pipeline_model_parallel_size": virtual_pipeline_model_parallel_size,
             "mtp_num_layers": mtp_num_layers,
+            "position_embedding_type": position_embedding_type,
         },
     )()
     return cfg
@@ -185,6 +187,61 @@ class _VpStageWrapper:
 
 class TestGetBatch:
     """Tests for the get_batch helper."""
+
+    def test_packed_cp_is_rejected_for_mrope(self):
+        """The THD partition shards position ids that the rotary embedding would shard again."""
+        seq = 8
+        batch = {
+            "tokens": _as_nocuda(torch.arange(seq).unsqueeze(0)),
+            "labels": _as_nocuda(torch.arange(seq).unsqueeze(0)),
+            "loss_mask": _as_nocuda(torch.ones(1, seq)),
+            "attention_mask": None,
+            "position_ids": _as_nocuda(torch.arange(seq).unsqueeze(0)),
+            "cu_seqlens_q": _as_nocuda(torch.tensor([[0, 4, 8]], dtype=torch.int32)),
+        }
+
+        with pytest.raises(ValueError, match="Packed sequences with context parallelism"):
+            get_batch(
+                _Iterator(batch),
+                _make_cfg(
+                    position_embedding_type="mrope", enable_offline_packing=True, offline_packing_specs=object()
+                ),
+                use_mtp=False,
+                pg_collection=_MockPGCollection(cp_size=2),
+            )
+
+    @pytest.mark.parametrize(
+        ("position_embedding_type", "position_ids_stay_full"),
+        [("mrope", True), ("rope", False)],
+    )
+    def test_cp_keeps_mrope_position_ids_full_length(
+        self, monkeypatch, position_embedding_type, position_ids_stay_full
+    ):
+        """mrope CP-shards its rotary embedding itself, so the batch must hand it whole-sequence ids."""
+        seq, cp_size = 8, 2
+        batch = {
+            "tokens": _as_nocuda(torch.arange(seq).unsqueeze(0)),
+            "labels": _as_nocuda(torch.arange(seq).unsqueeze(0)),
+            "loss_mask": _as_nocuda(torch.ones(1, seq)),
+            "attention_mask": None,
+            "position_ids": _as_nocuda(torch.arange(seq).unsqueeze(0)),
+        }
+
+        # Stand in for MCore's CP slicing, which needs a real process group.
+        def fake_cp_shard(b, *, is_hybrid_cp, cp_group):
+            return {k: (v[:, : v.size(1) // cp_group.size()] if v is not None else None) for k, v in b.items()}
+
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank", fake_cp_shard)
+
+        tokens, _, _, _, position_ids, _ = get_batch(
+            _Iterator(batch),
+            _make_cfg(position_embedding_type=position_embedding_type),
+            use_mtp=False,
+            pg_collection=_MockPGCollection(cp_size=cp_size),
+        )
+
+        assert tokens.size(1) == seq // cp_size, "hidden states are always CP-sharded"
+        assert position_ids.size(1) == (seq if position_ids_stay_full else seq // cp_size)
 
     @pytest.mark.parametrize("metadata_key", ["cu_seqlens_q", "cu_seqlens"])
     def test_packed_cp_partition_rejects_multiple_physical_thd_rows(self, metadata_key):

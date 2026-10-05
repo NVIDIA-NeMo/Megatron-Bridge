@@ -30,6 +30,7 @@ docker build \
 | Argument | Description |
 |---|---|
 | `BASE_IMAGE` | Base container |
+| `CUBLAS_VERSION` | CUDA 13 cuBLAS archive version; defaults to `13.8.1.7` for x86_64 and Arm SBSA |
 | `MCORE_TRIGGERED_TESTING` | When `true`, skips the uv lockfile check to allow testing against a different Megatron-LM version than the one pinned in the lockfile |
 | `INSTALL_DIFFUSION_DEPS` | When `true`, runs `scripts/install_diffusion_deps.sh` to add WAN codecs to a CI image; defaults to `false` so CVE-carrying codecs stay out of shipped Framework images |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments forwarded to `uv cache prune` after install |
@@ -58,7 +59,7 @@ For a base image with a validated, source-built Transformer Engine/PyTorch pairi
 to `Dockerfile.ci`. The default is `False`, preserving the normal installation path.
 
 When enabled, Bridge and FW-final dependency syncs skip installing Transformer
-Engine and cuDNN frontend, and Bridge skips its public CUTLASS DSL replacement.
+Engine and cuDNN frontend, and Bridge skips its public CUTLASS DSL and cuBLAS replacements.
 FW-final inherits the setting from the Bridge image; it does not need a second
 build argument. The build records the selected Torch, TE, cuDNN frontend, and
 CUTLASS distribution versions and installation locations in
@@ -186,7 +187,7 @@ docker build \
 | `CUBLAS_VER` | cuBLAS version for the TRT-LLM install scripts |
 | `NVRTC_VER` | NVRTC version for the TRT-LLM install scripts |
 | `REINSTALL_NSYS` | Set to `True` to reinstall Nsight Systems from the NVIDIA apt repo |
-| `NSYS_VERSION` | Nsight Systems version (e.g. `2026.1.0.1085`) |
+| `NSYS_VERSION` | Nsight Systems CLI version (default: `2026.5.1.161-265138896106v0`) |
 | `REINSTALL_CUDNN` | Set to `True` to reinstall cuDNN from the NVIDIA apt repo |
 | `CUDNN_VERSION` | cuDNN apt version (e.g. `9.18.1.3-1`) |
 | `REINSTALL_NCCL` | Set to `True` to reinstall NCCL from the NVIDIA apt repo |
@@ -199,6 +200,7 @@ docker build \
 | Argument | Description |
 |---|---|
 | `BASE_IMAGE` | Base container; set to the fw-base image when building the full stack |
+| `CUBLAS_VERSION` | CUDA 13 cuBLAS archive version; defaults to `13.8.1.7`. Installs cuBLAS/cuBLASLt and headers into the existing CUDA toolkit before native dependencies are built; skipped with `PRESERVE_BASE_RUNTIME=True` |
 | `APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH` | Set to `True` to apply the torch.library finalizer patch; `False` for base images it does not apply against (e.g. Rubin) |
 | `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
@@ -206,7 +208,7 @@ docker build \
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
 | `INSTALL_DIFFUSION_DEPS` | Install the test-only WAN diffusion dependencies; defaults to `false` for Framework/release images |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments for `uv cache prune` |
-| `PRESERVE_BASE_RUNTIME` | Keep validated base TE/cuDNN frontend/CUTLASS packages and verify package metadata; defaults to `False` |
+| `PRESERVE_BASE_RUNTIME` | Keep validated base TE/cuDNN frontend/CUTLASS/cuBLAS packages and verify package metadata; defaults to `False` |
 
 ### `Dockerfile.fw_final`
 

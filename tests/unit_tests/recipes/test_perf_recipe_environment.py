@@ -62,6 +62,7 @@ _VR200_CUDNN_LAYERNORM_RECIPES = {
     "nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config",
     "nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config",
     "nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config",
+    "nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config",
 }
 
 
@@ -222,16 +223,7 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
                 assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
             else:
-                # These VR200 MXFP8 recipes explicitly opt into this path.
-                expected_nondeterminism = int(
-                    function_name
-                    in {
-                        "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
-                        "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
-                        "deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config",
-                    }
-                )
-                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == expected_nondeterminism
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
             if "NCCL_EP_HT_EM_PULL_PUSH" in environment:
                 # NCCL EP recipes drop the HybridEP tuning that nothing reads on that backend.
                 assert not hybrid_ep_names
