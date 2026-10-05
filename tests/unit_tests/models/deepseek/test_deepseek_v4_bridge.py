@@ -702,9 +702,12 @@ class TestDeepSeekV4HybridProvider:
 
     def test_hybrid_provide_wins_in_mro(self):
         # HybridModelProvider must precede the GPT-model provider so provide()/finalize()
-        # build a HybridModel and derive num_layers from hybrid_layer_pattern.
+        # build a HybridModel and derive num_layers from hybrid_layer_pattern. The DSv4
+        # finalize() adds a pipeline-segment check, and its super() call must reach the
+        # hybrid finalize.
         assert DeepSeekV4HybridModelProvider.provide is HybridModelProvider.provide
-        assert DeepSeekV4HybridModelProvider.finalize is HybridModelProvider.finalize
+        next_finalize = super(DeepSeekV4HybridModelProvider, DeepSeekV4HybridModelProvider).finalize
+        assert next_finalize is HybridModelProvider.finalize
 
 
 class TestDeepSeekV4ProviderBridgeHybridConfig:
