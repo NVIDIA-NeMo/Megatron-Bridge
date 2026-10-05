@@ -217,10 +217,15 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300)."""
+def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300).
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
+    """
     cfg = _nemotron_3_ultra_gb300_fp8mx_config(
-        num_gpus=256,
+        num_gpus=num_gpus,
         expert_model_parallel_size=64,
         global_batch_size=256,
     )
@@ -254,9 +259,14 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× VR200, NVFP4 (alias of GB300)."""
-    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config()
+def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VR200, NVFP4 (alias of GB300).
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
+    """
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(num_gpus=num_gpus)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
