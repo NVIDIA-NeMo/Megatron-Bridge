@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -34,6 +35,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.conversion.quant_mapping import AmaxMapping
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import MiMoV2FlashQKVMapping
 
 
 def _task(
@@ -172,6 +175,108 @@ def test_build_plan_rejects_dimension_permutation():
 
     with pytest.raises(RuntimeError, match="dimension-permuting mappings"):
         modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
+
+
+@pytest.mark.parametrize("method", ["megatron_to_hf", "_megatron_to_hf"])
+def test_build_plan_rejects_custom_quantized_qkv_layout(monkeypatch, method):
+    class CustomQKVMapping(QKVMapping):
+        pass
+
+    monkeypatch.setattr(CustomQKVMapping, method, lambda *_args, **_kwargs: {})
+    for mapping_cls in (CustomQKVMapping, MiMoV2FlashQKVMapping):
+        mapping = mapping_cls("projection.weight", "q.weight", "k.weight", "v.weight")
+        module = _fp8_linear()
+        with pytest.raises(RuntimeError, match="custom row layout"):
+            modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
+
+
+def test_build_plan_accepts_inherited_standard_qkv_layout():
+    class StandardQKVMapping(QKVMapping):
+        pass
+
+    module = _fp8_linear(out_features=8)
+    module.tensor_model_parallel = True
+    module.partition_dim = 0
+    module.config = SimpleNamespace(num_attention_heads=2, num_query_groups=1, kv_channels=2, hidden_size=4)
+    mapping = StandardQKVMapping("projection.weight", "q.weight", "k.weight", "v.weight")
+
+    plan = modelopt_utils.build_modelopt_export_plan([_task(mapping, module)], model=[module])
+
+    assert plan.quantized_params == {"decoder.layers.0.projection.weight"}
+
+
+@pytest.mark.parametrize("weight_dtype", [None, torch.bfloat16])
+def test_source_dtype_skips_checkpoint_requantization_and_keeps_key_fixes(monkeypatch, weight_dtype):
+    quantized = _fp8_linear()
+    excluded = torch.nn.Linear(4, 4, bias=False)
+    tasks = [
+        _task(ColumnParallelMapping("quantized.weight", "layers.0.attn.wo.weight"), quantized),
+        _task(
+            ColumnParallelMapping("excluded.weight", "layers.0.attn.wq.weight"),
+            excluded,
+            global_name="excluded.weight",
+        ),
+    ]
+    tasks = [replace(task, weight_dtype=weight_dtype) for task in tasks]
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[quantized])
+    native_key = "layers.0.indexer.scorer.weights_proj.weight"
+    legacy_key = "layers.0.indexer.weights_proj.weight"
+    hf_source = {legacy_key: torch.ones(4, 4)}
+    for task in tasks:
+        hf_source[task.mapping.hf_param] = task.param_weight.to(torch.float8_e4m3fn)
+        hf_source[task.mapping.hf_param.removesuffix(".weight") + ".weight_scale_inv"] = torch.ones(1)
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.deepseek.deepseek_v4_bridge.quantization_utils.requantize_hf_weight_scale_pairs",
+        lambda *_args, **_kwargs: pytest.fail("ModelOpt export must not restore the source quantization format"),
+    )
+    bridge = object.__new__(DeepSeekV4Bridge)
+    for task in plan.conversion_tasks:
+        assert task.weight_dtype == (weight_dtype or task.param_weight.dtype)
+        hf_name = task.mapping.hf_param
+        result = bridge.maybe_modify_converted_hf_weight(
+            task, {hf_name: task.param_weight, native_key: hf_source[legacy_key]}, hf_source
+        )
+        assert result[hf_name] is task.param_weight
+        assert native_key not in result and legacy_key in result
+        assert not any(name.endswith("weight_scale_inv") for name in result)
+
+
+def test_source_dtype_reaches_non_owning_pp_task(monkeypatch):
+    module = _fp8_linear()
+    task = _task(ColumnParallelMapping("projection.weight", "projection.weight"), module)
+    remote_source = modelopt_utils._capture_source_spec(task)
+    task = replace(task, megatron_module=None, param_weight=None)
+    monkeypatch.setattr(modelopt_utils, "_sync_source_specs", lambda *_args: {task.global_param_name: remote_source})
+
+    plan = modelopt_utils.build_modelopt_export_plan([task], model=[module])
+
+    assert plan.conversion_tasks[0].weight_dtype == module.weight.dtype
+
+
+@pytest.mark.parametrize("quantized", [False, True])
+def test_legacy_renamed_weight_fails_closed_only_when_quantized(quantized):
+    module = _fp8_linear() if quantized else torch.nn.Linear(4, 4, bias=False)
+    dense = _fp8_linear()
+    native_key = "layers.0.attn.indexer.scorer.weights_proj.weight"
+    legacy_key = "layers.0.attn.indexer.weights_proj.weight"
+    task = _task(ColumnParallelMapping("scorer.weight", native_key), module)
+    plan = modelopt_utils.build_modelopt_export_plan(
+        [task, _task(ColumnParallelMapping("dense.weight", "dense.weight"), dense, global_name="dense.weight")],
+        model=[dense],
+    )
+    prepared = modelopt_utils.prepare_modelopt_export_tasks(plan)[0]
+    bridge = object.__new__(DeepSeekV4Bridge)
+    result = bridge.maybe_modify_converted_hf_weight(
+        prepared, {native_key: module.weight}, {legacy_key: module.weight}
+    )
+    output = HFWeightTuple(legacy_key, result[legacy_key]).iter_finalized(cpu=True, export_hook=prepared.export_hook)
+
+    if quantized:
+        with pytest.raises(RuntimeError, match=f"Missing ModelOpt export state for {legacy_key}"):
+            list(output)
+    else:
+        assert [weight.param_name for weight in output] == [legacy_key]
 
 
 def test_distributed_error_check_skips_object_gather_on_success(monkeypatch):
@@ -353,13 +458,15 @@ def test_quantized_expert_is_packed_before_ep_gather():
     }.issubset(exported)
 
 
-def test_grouped_hf_expert_mapping_exports_one_expert_before_ep_gather():
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_grouped_hf_expert_mapping_exports_one_expert_before_ep_gather(transpose_on_export):
     module = _GroupedWeights()
     module.tensor_model_parallel = True
     module.partition_dim = 1
     mapping = FusedExpertMapping(
         "decoder.layers.0.mlp.experts.linear_fc2.weight1",
         "model.layers.0.mlp.experts.down_proj.weight",
+        transpose_on_export=transpose_on_export,
     )
     task = _task(mapping, module, global_name=mapping.megatron_param, weight_name="weight1")
 
@@ -374,7 +481,11 @@ def test_grouped_hf_expert_mapping_exports_one_expert_before_ep_gather():
     assert not export_task.mapping.is_expert
     assert not getattr(export_task.mapping, "is_grouped_export", False)
     assert exported[hf_name].dtype == torch.float8_e4m3fn
-    assert f"{hf_name.removesuffix('.weight')}.weight_scale" in exported
+    expected = weight_export.export_quantized_weight_tensors(
+        module.weight1, weight_export.capture_quantized_weight_export_state(module, "weight1"), module.weight1.dtype
+    )
+    torch.testing.assert_close(exported[hf_name].float(), expected["weight"].float())
+    torch.testing.assert_close(exported[f"{hf_name.removesuffix('.weight')}.weight_scale"], expected["weight_scale"])
 
 
 def test_grouped_gated_expert_preserves_shared_fp8_input_scale():
@@ -399,11 +510,13 @@ def test_grouped_gated_expert_preserves_shared_fp8_input_scale():
     assert torch.equal(exported[f"{gate_prefix}.input_scale"], exported[f"{up_prefix}.input_scale"])
 
 
-def test_grouped_gated_expert_preserves_shared_nvfp4_weight_scale_2():
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_grouped_gated_expert_preserves_shared_nvfp4_weight_scale_2(transpose_on_export):
     module = _GroupedWeights(_nvfp4_linear)
     mapping = FusedGatedExpertMapping(
         "decoder.layers.0.mlp.experts.linear_fc1.weight1",
         "model.layers.0.mlp.experts.gate_up_proj.weight",
+        transpose_on_export=transpose_on_export,
     )
     task = _task(mapping, module, global_name=mapping.megatron_param, weight_name="weight1")
 
@@ -417,6 +530,12 @@ def test_grouped_gated_expert_preserves_shared_nvfp4_weight_scale_2():
     gate_prefix = "model.layers.0.mlp.experts.1.gate_proj"
     up_prefix = "model.layers.0.mlp.experts.1.up_proj"
     assert torch.equal(exported[f"{gate_prefix}.weight_scale_2"], exported[f"{up_prefix}.weight_scale_2"])
+    source_state = weight_export.capture_quantized_weight_export_state(module, "weight1")
+    for prefix, indices in ((gate_prefix, torch.arange(16)), (up_prefix, torch.arange(16, 32))):
+        state = weight_export.select_quantized_weight_export_state(source_state, 0, indices)
+        expected = weight_export.export_quantized_weight_tensors(module.weight1[indices], state, module.weight1.dtype)
+        for suffix, value in expected.items():
+            torch.testing.assert_close(exported[f"{prefix}.{suffix}"].float(), value.float())
 
 
 def test_grouped_expert_module_rejects_inconsistent_projection_specs():

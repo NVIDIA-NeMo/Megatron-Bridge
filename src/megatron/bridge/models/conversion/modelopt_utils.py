@@ -55,6 +55,7 @@ class _SourceState:
     weight_shape: tuple[int, ...]
     parallelism: str | None = None
     qkv_layout: tuple[int, int, int, int, bool] | None = None
+    weight_dtype: torch.dtype | None = None
 
 
 def _same_storage(left: object, right: object) -> bool:
@@ -116,6 +117,11 @@ def _validate_quantized_task(task: WeightConversionTask) -> None:
         )
     if isinstance(task.mapping, AutoMapping) and task.mapping.permute_dims is not None:
         raise NotImplementedError("ModelOpt export does not support dimension-permuting mappings")
+    if isinstance(task.mapping, QKVMapping) and (
+        type(task.mapping).megatron_to_hf is not QKVMapping.megatron_to_hf
+        or type(task.mapping)._megatron_to_hf is not QKVMapping._megatron_to_hf
+    ):
+        raise NotImplementedError("ModelOpt export does not support QKV mappings with a custom row layout")
 
 
 def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
@@ -126,7 +132,7 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
 
     weight_name = _direct_weight_name(task.megatron_module, task.param_weight)
     if weight_name is None:
-        return _SourceState(None, tuple(task.param_weight.shape))
+        return _SourceState(None, tuple(task.param_weight.shape), weight_dtype=task.param_weight.dtype)
 
     from modelopt.torch.export.quantized_weight_export import capture_quantized_weight_export_state
 
@@ -139,6 +145,7 @@ def _capture_source_state(task: WeightConversionTask) -> _SourceState | None:
         tuple(task.param_weight.shape),
         _mapping_parallelism(task.mapping, task.megatron_module),
         _qkv_layout(task.mapping, task.megatron_module),
+        task.param_weight.dtype,
     )
 
 
@@ -150,7 +157,7 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
 
     weight_name = _direct_weight_name(task.megatron_module, task.param_weight)
     if weight_name is None:
-        return _SourceState(None, tuple(task.param_weight.shape))
+        return _SourceState(None, tuple(task.param_weight.shape), weight_dtype=task.param_weight.dtype)
 
     from modelopt.torch.export.quantized_weight_export import get_quantized_weight_export_spec
 
@@ -162,6 +169,7 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
         tuple(task.param_weight.shape),
         _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
+        task.param_weight.dtype,
     )
 
 
@@ -757,7 +765,12 @@ def build_modelopt_export_plan(
             local_mapping = local_expert_mappings.get(task.global_param_name)
             if local_mapping is not None:
                 mapping = local_mapping
-        export_tasks.append(replace(task, mapping=mapping, export_hook=None))
+        # Keep source-checkpoint hooks for key/padding fixes, but opt out of their
+        # requantization: ModelOpt packs the logical weight after HF conversion.
+        weight_dtype = task.weight_dtype
+        if weight_dtype is None and source is not None:
+            weight_dtype = source.weight_dtype
+        export_tasks.append(replace(task, mapping=mapping, export_hook=None, weight_dtype=weight_dtype))
 
     quantized_params = frozenset(name for name, source in source_specs.items() if source.state is not None)
     return ModelOptExportPlan(export_tasks, quantization_config, quantized_params)

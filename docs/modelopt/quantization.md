@@ -184,8 +184,10 @@ and EP collection. Unsupported custom grouped mappings fail explicitly.
 
 Quantized adapter-wrapped weights are not supported. Fold adapters into the base weights before ModelOpt calibration
 or QAT. Quantized dimension-permuting mappings are also rejected by the streaming API; unquantized mappings retain
-their ordinary conversion path. This API requires a ModelOpt release that provides the functional quantized-weight
-export interface.
+their ordinary conversion path. Custom QKV mappings that change row layout are rejected for quantized weights.
+Post-mapping key renames of quantized weights are not supported, including legacy DeepSeek-V4 indexer scorer names;
+excluded weights retain their normal renaming behavior. This API requires a ModelOpt release that provides the
+functional quantized-weight export interface.
 
 ### Supported Models For PTQ
 

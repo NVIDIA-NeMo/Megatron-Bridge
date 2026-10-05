@@ -832,7 +832,8 @@ def test_stream_weights_megatron_to_hf_custom_export_preserves_device_when_cpu_f
     assert weights == [("hf.weight", source)]
 
 
-def test_stream_weights_megatron_to_hf_with_megatron_names_reports_source_param(monkeypatch):
+@pytest.mark.parametrize("grouped", [False, True])
+def test_stream_weights_megatron_to_hf_with_megatron_names_reports_source_param(monkeypatch, grouped):
     bridge = DummyBridge()
     source = torch.ones(2, 2)
 
@@ -857,8 +858,11 @@ def test_stream_weights_megatron_to_hf_with_megatron_names_reports_source_param(
     )
 
     def stream(**kwargs):
-        return list(
-            bridge.stream_weights_megatron_to_hf(
+        stream_method = (
+            bridge._stream_weight_groups_megatron_to_hf if grouped else bridge.stream_weights_megatron_to_hf
+        )
+        result = list(
+            stream_method(
                 [Mock()],
                 SimpleNamespace(),
                 cpu=False,
@@ -868,6 +872,10 @@ def test_stream_weights_megatron_to_hf_with_megatron_names_reports_source_param(
                 **kwargs,
             )
         )
+        if grouped:
+            assert len(result) == 1
+            return list(result[0])
+        return result
 
     # Default output stays a two-field tuple so ``for name, weight in ...`` keeps working.
     (plain,) = stream()
@@ -884,7 +892,8 @@ def test_stream_weights_megatron_to_hf_with_megatron_names_reports_source_param(
     assert sourced.megatron_param_name == "decoder.layers.0.mlp.linear_fc1.weight"
 
 
-def test_stream_weights_megatron_to_hf_with_megatron_names_lists_every_grouped_source(monkeypatch):
+@pytest.mark.parametrize("grouped", [False, True])
+def test_stream_weights_megatron_to_hf_with_megatron_names_lists_every_grouped_source(monkeypatch, grouped):
     """A packed grouped-expert tensor names all contributing per-expert params, not the last one."""
     bridge = DummyBridge()
 
@@ -918,8 +927,11 @@ def test_stream_weights_megatron_to_hf_with_megatron_names_lists_every_grouped_s
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch, num_moe_experts=3)
 
     def stream(**kwargs):
-        return list(
-            bridge.stream_weights_megatron_to_hf(
+        stream_method = (
+            bridge._stream_weight_groups_megatron_to_hf if grouped else bridge.stream_weights_megatron_to_hf
+        )
+        result = list(
+            stream_method(
                 [Mock()],
                 SimpleNamespace(),
                 cpu=True,
@@ -929,6 +941,11 @@ def test_stream_weights_megatron_to_hf_with_megatron_names_lists_every_grouped_s
                 **kwargs,
             )
         )
+        if grouped:
+            assert len(result) == 3 and result[:2] == [(), ()]
+            assert len(result[2]) == 2
+            return list(result[2])
+        return result
 
     plain = stream()
     assert [type(weight) for weight in plain] == [HFWeightTuple, HFWeightTuple]
