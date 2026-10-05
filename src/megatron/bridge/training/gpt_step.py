@@ -544,11 +544,13 @@ def _forward_step_common(
             cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
             cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
             cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
+    # Read seq_length from the run config: builder-path models expose only a nested
+    # TransformerConfig (no seq_length), and dense tokens here are already CP-sliced.
     accumulate_flops_metadata(
         state,
         flops_tokens,
         vp_stage=vp_stage,
-        config_seq_len=getattr(config, "seq_length", None),
+        config_seq_len=getattr(state.cfg.model, "seq_length", None),
         context_parallel_size=pg_collection.cp.size(),
         cu_seqlens=cu_seqlens,
         cu_seqlens_argmin=cu_seqlens_argmin,

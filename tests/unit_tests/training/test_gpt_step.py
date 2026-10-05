@@ -95,6 +95,7 @@ def _make_cfg(
     mtp_num_layers=0,
     dataset_kwargs=None,
     position_embedding_type=None,
+    seq_length=None,
 ):
     cfg = type("Cfg", (), {})()
     cfg.dataset = type(
@@ -116,6 +117,7 @@ def _make_cfg(
             "virtual_pipeline_model_parallel_size": virtual_pipeline_model_parallel_size,
             "mtp_num_layers": mtp_num_layers,
             "position_embedding_type": position_embedding_type,
+            "seq_length": seq_length,
         },
     )()
     return cfg
@@ -807,6 +809,44 @@ class TestGetBatch:
         assert model.forward_kwargs["input_ids"] is forward_tokens
         assert model.forward_kwargs["packed_seq_params"] is packed_params
         packed_params_mock.assert_called_once_with(metadata)
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_forward_common_counts_dense_flops_from_run_config_seq_length(self, monkeypatch, cp_size):
+        """Dense CP-sliced batches use the run config seq_length, not the built model's config.
+
+        Builder-path models expose a nested TransformerConfig without ``seq_length``,
+        so reading it from ``get_model_config(model)`` silently fell back to the
+        CP-local token count and under-reported FLOPS by ~cp_size.
+        """
+        seq_length = 32
+        tokens = torch.arange(seq_length // cp_size).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.ones_like(tokens, dtype=torch.float32)
+        model = _RecordingModel(vp_stage=None)
+        state = Mock()
+        state.cfg = _make_cfg(seq_length=seq_length)
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        state._flops_seqlen_sum = 0
+        state._flops_seqlen_sq_sum = 0
+        state._flops_requires_global_reduce = False
+        transformer_config = type(
+            "TransformerConfig",
+            (),
+            {"is_hybrid_model": False, "mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False},
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: transformer_config)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
+        )
+        get_batch_mock = Mock(return_value=(tokens, labels, loss_mask, None, tokens.clone(), None))
+
+        _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
+
+        assert state._flops_seqlen_sum == seq_length
+        assert state._flops_seqlen_sq_sum == seq_length**2
+        assert state._flops_requires_global_reduce is False
 
     def test_forward_common_passes_unmasked_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
         """Packed batches without physical gaps do not need the router graph guard."""
