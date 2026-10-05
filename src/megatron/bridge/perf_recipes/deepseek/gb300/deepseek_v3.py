@@ -158,6 +158,12 @@ def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+
+    cfg.comm_overlap.overlap_p2p_comm = False
+    cfg.model.overlap_p2p_comm = False
+    cfg.comm_overlap.batch_p2p_comm = False
+    cfg.model.overlap_p2p_comm_warmup_flush = False
+
     return cfg
 
 
@@ -189,6 +195,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "TORCH_SHOW_CPP_STACKTRACES": 1,
+        "CUDA_LOG_FILE": "stderr",
     }
     return cfg
 
