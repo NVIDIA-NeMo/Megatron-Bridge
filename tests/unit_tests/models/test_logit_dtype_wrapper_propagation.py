@@ -188,6 +188,8 @@ def test_nemotron_omni_wrapper_forwards_logit_dtype() -> None:
 
 
 class LegacyLLaVAModel:
+    """Exercise the unsupported interface still present in pinned MCore dev."""
+
     def __init__(self, **kwargs: object) -> None:
         raise AssertionError("Unsupported constructor must be rejected before invocation")
 

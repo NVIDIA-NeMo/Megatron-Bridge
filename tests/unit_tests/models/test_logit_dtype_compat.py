@@ -71,6 +71,7 @@ def test_requested_dtype_fails_clearly_for_old_constructor() -> None:
 
 
 def test_llava_rejection_does_not_claim_base_pr_is_sufficient() -> None:
+    # The pinned MCore dev LLaVA constructor still lacks logit_dtype.
     class LegacyLLaVAModel:
         def __init__(self) -> None:
             pass
@@ -80,10 +81,16 @@ def test_llava_rejection_does_not_claim_base_pr_is_sufficient() -> None:
 
 
 @pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_llava_constructor_supports_requested_dtype(dtype: torch.dtype) -> None:
+def test_llava_constructor_dtype_compatibility(dtype: torch.dtype) -> None:
     from megatron.core.models.multimodal.llava_model import LLaVAModel
 
-    assert logit_dtype_kwarg(LLaVAModel, dtype) == {"logit_dtype": dtype}
+    # Main gained this API in Megatron-LM #7799; the pinned dev version lacks it.
+    assert logit_dtype_kwarg(LLaVAModel, None) == {}
+    if "logit_dtype" in inspect.signature(LLaVAModel).parameters:
+        assert logit_dtype_kwarg(LLaVAModel, dtype) == {"logit_dtype": dtype}
+    else:
+        with pytest.raises(RuntimeError, match="LLaVAModel does not support logit_dtype"):
+            logit_dtype_kwarg(LLaVAModel, dtype)
 
 
 def test_unsupported_dtype_is_rejected() -> None:
