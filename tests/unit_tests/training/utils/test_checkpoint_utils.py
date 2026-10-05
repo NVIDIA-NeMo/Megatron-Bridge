@@ -31,7 +31,6 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     is_hf_checkpoint_dir,
     read_train_state,
 )
-from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 @dataclass

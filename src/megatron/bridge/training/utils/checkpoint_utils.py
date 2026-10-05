@@ -22,8 +22,8 @@ from typing import Any, Optional
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.training.utils.checkpoint_utils import (
-    apply_run_config_backward_compat,
     CONFIG_FILE,
+    apply_run_config_backward_compat,
     read_run_config,
 )
 
