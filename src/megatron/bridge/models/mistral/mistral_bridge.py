@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
-
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import MistralForCausalLM
@@ -25,7 +23,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
+from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
@@ -47,18 +45,23 @@ class MistralBridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
         hf_config = hf_pretrained.config
 
-        if getattr(hf_config, "rope_scaling", None) is not None and hf_config.rope_scaling.get("rope_type") == "yarn":
-            # Apply Mistral customize rope scaling
-            cls = partial(MistralModelProvider, scale_factor=rope_scaling_factor_from_hf(hf_config, default=8.0))
-        else:
-            cls = MistralModelProvider
+        rope_kwargs = {}
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if rope_scaling and (rope_scaling.get("type") or rope_scaling.get("rope_type")) == "yarn":
+            rope_kwargs["position_embedding_type"] = "yarn"
+            for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
+                value = rope_scaling.get(hf_key)
+                if value is not None:
+                    rope_kwargs[megatron_key] = value
+            if "truncate" in rope_scaling:
+                rope_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
 
         window_size, cp_comm_type = (None, None)
         if getattr(hf_config, "sliding_window", None) is not None:
             window_size = [hf_config.sliding_window - 1, 0]
             cp_comm_type = "a2a"
 
-        provider = cls(
+        provider = MistralModelProvider(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
             ffn_hidden_size=hf_config.intermediate_size,
@@ -78,6 +81,7 @@ class MistralBridge(MegatronModelBridge):
             params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
             vocab_size=hf_config.vocab_size,
             kv_channels=getattr(hf_config, "head_dim", None),
+            **rope_kwargs,
         )
 
         return provider
