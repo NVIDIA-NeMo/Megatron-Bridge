@@ -4628,6 +4628,40 @@ class TestFSDPDTensorFunctionality:
                 release=False,
             )
 
+    @pytest.mark.parametrize("strict", [False, True])
+    @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
+    def test_load_fsdp_dtensor_passes_metadata_to_preprocess(self, strict):
+        """Both strict and partial loaders select Mamba layout from disk metadata."""
+        from megatron.bridge.training import checkpointing
+
+        metadata = {"model.fused": None}
+        reader = Mock()
+        reader.read_metadata.return_value.state_dict_metadata = metadata
+        wrapped, cfg = Mock(), Mock()
+        model_state, optimizer_state = {"fused": torch.ones(4)}, {"state": {}}
+        raw = {"model": model_state, "optimizer": optimizer_state, "_model": [wrapped]}
+        with (
+            patch.object(checkpointing, "_get_filesystem_reader", return_value=reader),
+            patch.object(
+                checkpointing, "preprocess_fsdp_dtensor_state_dict", side_effect=lambda c, s, m, **kw: s
+            ) as preprocess,
+            patch.object(checkpointing, "print_diff_in_state_dicts"),
+            patch.object(checkpointing, "validate_fsdp_dtensor_model_load"),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.checkpoint.load_state_dict"),
+        ):
+            result, _, _, _ = checkpointing.load_fsdp_dtensor_checkpoint(
+                "/test/checkpoint",
+                CheckpointConfig(strict_fsdp_dtensor_load=strict),
+                rank0=False,
+                sharded_state_dict=raw,
+                iteration=1,
+                cfg=cfg,
+            )
+        preprocess.assert_called_once_with(cfg, raw, wrapped, checkpoint_metadata=metadata)
+        reader.read_metadata.assert_called_once()
+        assert result["model"]["fused"] is model_state["fused"]
+
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_generate_state_dict_fsdp_dtensor_no_preprocessing(self):
         """Test generate_state_dict does NOT apply FSDP DTensor preprocessing."""
@@ -4687,6 +4721,7 @@ class TestFSDPDTensorFunctionality:
                     "megatron.bridge.training.checkpointing.preprocess_state_dict_for_uneven_dtensor"
                 ) as mock_uneven,
                 patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
+                patch("megatron.bridge.training.checkpointing.handle_mamba_in_state_dict", None),
                 patch("megatron.bridge.training.checkpointing.handle_mla_down_proj_in_state_dict", None),
                 patch("megatron.bridge.training.checkpointing.handle_mtp_in_state_dict", None),
             ):
@@ -4697,6 +4732,34 @@ class TestFSDPDTensorFunctionality:
                 mock_fp8.assert_called_once()
                 mock_uneven.assert_called_once()
                 assert "model" in result
+
+    @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
+    @pytest.mark.parametrize("metadata", [None, {"model.fused": None}])
+    def test_mamba_preprocess_preserves_model_and_optimizer_results(self, metadata):
+        """Shared save/load preprocessing must pass both states through the MCore handler."""
+        from megatron.bridge.training import checkpointing
+
+        model, optimizer = {"fused": torch.ones(4)}, {"state": {"fused": {}}}
+        split_model, split_optimizer = {"component": torch.ones(2)}, {"state": {"component": {}}}
+        config = SimpleNamespace(gated_linear_unit=False, num_moe_experts=None)
+        with (
+            patch("megatron.core.utils.get_model_config", return_value=config),
+            patch.object(checkpointing, "handle_fp8_extra_state_case"),
+            patch.object(checkpointing, "preprocess_state_dict_for_uneven_dtensor"),
+            patch.object(checkpointing, "handle_gdn_in_state_dict", None),
+            patch.object(checkpointing, "handle_mla_down_proj_in_state_dict", None),
+            patch.object(checkpointing, "handle_mtp_in_state_dict", None),
+            patch.object(
+                checkpointing, "handle_mamba_in_state_dict", return_value=(split_model, split_optimizer)
+            ) as handler,
+        ):
+            wrapped = Mock()
+            result = checkpointing.preprocess_fsdp_dtensor_state_dict(
+                Mock(), {"model": model, "optimizer": optimizer}, wrapped, checkpoint_metadata=metadata
+            )
+        handler.assert_called_once_with(wrapped, model, optimizer, checkpoint_metadata=metadata)
+        assert result["model"] is split_model
+        assert result["optimizer"] is split_optimizer
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_save_fsdp_dtensor_checkpoint_preprocesses_and_saves(self, tmp_path):

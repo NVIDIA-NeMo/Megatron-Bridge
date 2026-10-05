@@ -134,6 +134,11 @@ try:
 except ImportError:
     handle_gdn_in_state_dict = None
 
+try:
+    from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_mamba_in_state_dict
+except ImportError:
+    handle_mamba_in_state_dict = None
+
 # Available from megatron-core with fused-MLA / MTP fsdp_dtensor support; None on older cores,
 # where the corresponding preprocessing and validation steps are skipped.
 try:
@@ -2220,13 +2225,16 @@ def generate_state_dict(
     return state_dict
 
 
-def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], model: MegatronModule) -> dict[str, Any]:
+def preprocess_fsdp_dtensor_state_dict(
+    cfg, raw_state_dict: dict[str, Any], model: MegatronModule, *, checkpoint_metadata: dict | None = None
+) -> dict[str, Any]:
     """Preprocess FSDP DTensor state dict before saving.
 
     Handles:
     - FP8 extra state
     - SWiGLU weight splitting
     - GDN (Gated DeltaNet) fused projection splitting (in_proj / conv1d)
+    - Mamba fused projection and convolution splitting, including Adam states
     - Fused MLA q/kv down-projection splitting (mla_down_proj_fusion)
     - MTP inner-layer renaming (mtp_model_layer -> transformer_layer)
     - Expert parameter reindexing for Expert Parallel
@@ -2236,6 +2244,7 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
         cfg: Configuration object
         raw_state_dict: The state dict to preprocess
         model: The model instance
+        checkpoint_metadata: DCP metadata on load, used to retain legacy fused Mamba keys.
 
     Returns:
         Preprocessed state dict ready for FSDP DTensor checkpoint save
@@ -2267,6 +2276,13 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     # or when the model contains no GDN layers.
     if handle_gdn_in_state_dict is not None:
         apply(handle_gdn_in_state_dict)
+
+    if handle_mamba_in_state_dict is not None:
+        apply(
+            lambda model, msd, osd: handle_mamba_in_state_dict(
+                model, msd, osd, checkpoint_metadata=checkpoint_metadata
+            )
+        )
 
     # Split a fused MLA q/kv down-projection (mla_down_proj_fusion) back into the unfused
     # layout used on disk, and un-fold the layernorm it absorbed, so fused and unfused
@@ -4033,7 +4049,6 @@ def load_fsdp_dtensor_checkpoint(
     # This applies the same transformations (expert parameter reindexing, SWiGLU, FP8)
     # that were applied during save, ensuring keys match
     model = state_dict.pop("_model")
-    state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
     checkpoint_name = (
         checkpoint_path_override
@@ -4042,11 +4057,12 @@ def load_fsdp_dtensor_checkpoint(
     )
 
     fs_storage_reader = _get_filesystem_reader(checkpoint_name)
+    state_dict_metadata = fs_storage_reader.read_metadata().state_dict_metadata
+    state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0], checkpoint_metadata=state_dict_metadata)
 
     # Configure partial loading based on strict_fsdp_dtensor_load setting
     allow_partial_load = not getattr(ckpt_cfg, "strict_fsdp_dtensor_load", False)
     if allow_partial_load:
-        state_dict_metadata = fs_storage_reader.read_metadata().state_dict_metadata
         rank = torch.distributed.get_rank()
         import time as _time
 
