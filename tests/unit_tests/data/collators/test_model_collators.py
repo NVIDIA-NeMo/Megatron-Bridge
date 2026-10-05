@@ -1781,9 +1781,9 @@ class _Gemma4MmTokenTypeProcessor(_Ministral3InstructionProcessor):
         if isinstance(result, dict):
             batch_size = len(conversations)
             result["input_ids"] = result["input_ids"].expand(batch_size, -1).clone()
-            result["mm_token_type_ids"] = torch.tensor([[0, 1, 1, 0, 0]], dtype=torch.long).expand(
-                batch_size, -1
-            ).clone()
+            result["mm_token_type_ids"] = (
+                torch.tensor([[0, 1, 1, 0, 0]], dtype=torch.long).expand(batch_size, -1).clone()
+            )
         return result
 
 
