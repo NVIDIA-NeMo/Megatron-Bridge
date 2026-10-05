@@ -18,6 +18,9 @@ from enum import Enum
 from types import SimpleNamespace
 
 import pytest
+from megatron.core.models.common.language_module.language_module import LanguageModule
+from megatron.core.transformer import utils as transformer_utils
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
@@ -336,3 +339,20 @@ def test_disabled_vision_recompute_allows_graphs_with_full_decoder_recompute():
     assert config.recompute_granularity is None
     assert config.recompute_modules == []
     assert config.cuda_graph_impl == "local_transformer_engine"
+
+
+@pytest.mark.parametrize("backend", [AttnBackend.flash, AttnBackend.fused, AttnBackend.auto])
+def test_vision_attention_backend_matches_language_selector(backend, monkeypatch):
+    """Both towers must agree with MCore's process-wide attention restrictions."""
+    for name in ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN"):
+        monkeypatch.setenv(name, "1")
+        monkeypatch.delenv(name)
+    language = get_vision_model_config(_hf_config(), _megatron_base())
+    language.attention_backend = backend
+    vision = get_vision_model_config(_hf_config(), _megatron_base(attention_backend=backend))
+    for config in (language, vision):
+        if hasattr(transformer_utils, "set_attention_backend"):
+            transformer_utils.set_attention_backend(config)
+        else:
+            LanguageModule._set_attention_backend(SimpleNamespace(config=config))
+    assert vision.attention_backend is backend

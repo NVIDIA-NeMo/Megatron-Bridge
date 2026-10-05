@@ -121,6 +121,9 @@ def get_vision_model_config(hf_config, megatron_config=None):
     )
 
     # apply text model config to vision model config
+    # Transformer Engine backend selection is shared by both towers in the process.
+    if getattr(megatron_config, "attention_backend", None) is not None:
+        config.attention_backend = megatron_config.attention_backend
     _apply_vision_recompute_config(config, megatron_config)
     config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size
     config.enable_cuda_graph = megatron_config.enable_cuda_graph

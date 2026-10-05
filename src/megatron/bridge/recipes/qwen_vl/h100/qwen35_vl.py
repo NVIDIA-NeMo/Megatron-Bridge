@@ -57,13 +57,14 @@ def _enable_gdn_conv_fusion(model) -> None:
         model.gdn_pre_gated_delta_rule_fusion = True
 
 
-def _qwen35_vl_provider(hf_path: str):
+def _qwen35_vl_provider(hf_path: str, *, hf_revision: str | None = None):
     """Build the Qwen3.5/Qwen3.6-VL Megatron provider.
 
     Construction only -- shared so the AutoBridge boilerplate is written once.
     Performance defaults are applied by the recipes, not here.
     """
-    return AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    kwargs = {} if hf_revision is None else {"revision": hf_revision}
+    return AutoBridge.from_hf_pretrained(hf_path, **kwargs).to_megatron_provider(load_weights=False)
 
 
 def _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config(cfg: ConfigContainer) -> None:
@@ -976,7 +977,9 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-def _qwen35_vl_35b_a3b_sft_base_config() -> ConfigContainer:
+def _qwen35_vl_35b_a3b_sft_base_config(
+    *, hf_path: str = "Qwen/Qwen3.5-35B-A3B", hf_revision: str | None = None
+) -> ConfigContainer:
     """Build the convergence-preserving SFT base for Qwen3.5/Qwen3.6-VL 35B-A3B.
 
     Default configuration: 16 GPUs
@@ -988,8 +991,7 @@ def _qwen35_vl_35b_a3b_sft_base_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model config
-    hf_path = "Qwen/Qwen3.5-35B-A3B"
-    cfg.model = _qwen35_vl_provider(hf_path)
+    cfg.model = _qwen35_vl_provider(hf_path, hf_revision=hf_revision)
     _enable_gdn_conv_fusion(cfg.model)
     cfg.model.seq_length = 4096
 
@@ -1072,6 +1074,8 @@ def _qwen35_vl_35b_a3b_sft_base_config() -> ConfigContainer:
     # Dataset config
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    if hf_revision is not None:
+        cfg.dataset.hf_processor_kwargs = {"revision": hf_revision}
     cfg.dataset.enable_in_batch_packing = False
     cfg.dataset.defer_in_batch_packing_to_step = True
 
