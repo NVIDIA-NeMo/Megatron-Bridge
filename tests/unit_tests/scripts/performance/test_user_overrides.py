@@ -17,13 +17,16 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 from argument_parser import parse_cli_args
-from utils.overrides import set_user_overrides
+from utils.overrides import apply_one_gpu_per_rank_device_mapping, set_user_overrides
+from utils.utils import apply_argparse_overrides, finalize_config_overrides
 
 from megatron.bridge.recipes.gpt.h100.vanilla_gpt import vanilla_gpt_pretrain_1gpu_h100_bf16_config
 
@@ -56,3 +59,47 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
 
     assert updated.model.seq_length == 128
     assert updated.dataset.seq_length == 128
+
+
+@pytest.mark.parametrize(
+    ("backend", "visible", "expected"),
+    [
+        ("ncclep", "2", True),  # bootstrap.py narrowed the process to one GPU
+        ("ncclep", "0,1,2,3", False),  # NCCL EP but the launcher exposed the whole node
+        ("hybridep", "2", False),  # one visible GPU on another backend: plain local-rank mapping
+    ],
+)
+def test_one_gpu_per_rank_device_mapping_follows_backend_and_environment(monkeypatch, backend, visible, expected):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible)
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.model.moe_flex_dispatcher_backend = backend
+    assert recipe.dist.external_gpu_device_mapping is False
+
+    updated = apply_one_gpu_per_rank_device_mapping(recipe)
+
+    assert updated.dist.external_gpu_device_mapping is expected
+
+
+def _nccl_ub_recipe():
+    # Model a recipe that enables NCCL UB with Megatron FSDP, as the GB300 Llama 3 70B recipe does.
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    recipe.ddp.use_megatron_fsdp = True
+    recipe.ddp.nccl_ub = True
+    recipe.ddp.fsdp_manual_registration = True
+    return recipe
+
+
+@pytest.mark.parametrize(("flag", "expected"), [(("--nccl_ub", "false"), False), ((), True)])
+def test_nccl_ub_flag_in_flat_runner(tmp_path, flag, expected):
+    updated = set_user_overrides(_nccl_ub_recipe(), _parse_args(tmp_path, *flag))
+
+    assert updated.ddp.nccl_ub is expected
+    assert updated.ddp.fsdp_manual_registration is expected
+
+
+@pytest.mark.parametrize(("flag", "expected"), [(("--nccl_ub", "false"), False), ((), True)])
+def test_nccl_ub_flag_in_recipe_runner(tmp_path, flag, expected):
+    updated = finalize_config_overrides(apply_argparse_overrides(_nccl_ub_recipe(), _parse_args(tmp_path, *flag)))
+
+    assert updated.ddp.nccl_ub is expected
+    assert updated.ddp.fsdp_manual_registration is expected

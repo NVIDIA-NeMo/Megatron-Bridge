@@ -42,6 +42,25 @@ config = ConfigContainer(
 When resuming adapter training, keep `checkpoint.pretrained_checkpoint` pointed at the same base model and set `checkpoint.load` to the PEFT adapter checkpoint directory.
 ```
 
+### MoE router state and checkpoint compatibility
+
+When expert-bias routing is enabled, gradient finalization updates the router's
+`expert_bias` buffer even when the router weights are frozen. PEFT checkpoints
+therefore retain these buffers alongside adapter parameters. Adapter reload and
+merge into a full model preserve this state.
+
+Older adapter checkpoints may omit these buffers. The adapter inference/merge
+loader rejects such checkpoints for a bias-enabled model, including when its
+`strict=False` option is used: that option does not permit missing distributed
+checkpoint tensors. The separate training-resume loader follows
+`checkpoint.dist_ckpt_strictness`; a permissive policy may retain the base-model
+bias, which is not exact recovery of the trained router state. Missing trained
+biases cannot be reconstructed from adapter weights alone.
+
+Standalone Hugging Face adapter export does not serialize router-bias buffers.
+For models whose biases changed during PEFT, merge the native adapter checkpoint
+into the base model and export the resulting full Hugging Face model instead.
+
 ## Supported PEFT Methods
 
 ### [LoRA: Low-Rank Adaptation of Large Language Models](https://arxiv.org/abs/2106.09685)
@@ -101,7 +120,7 @@ lora_config = LoRA(
 
 #### MoE Expert Adapter Modes
 
-`LoRA` and `CanonicalLoRA` expose two MoE-specific controls for grouped expert
+`LoRA` and `CanonicalLoRA` expose MoE-specific controls for grouped expert
 MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
 `linear_fc1_gate`:
 
@@ -109,6 +128,7 @@ MLP layers such as `linear_fc1`, `linear_fc2`, `linear_fc1_up`, and
 |-----------|------|---------|-------------|
 | `share_expert_adapters` | `bool` | `True` | Preserve the original behavior and share one adapter across all local experts on each EP rank |
 | `normalize_moe_lora` | `bool` | `False` | Use `dim // moe_router_topk` for expert layers only so MoE adapter capacity stays comparable to a dense model |
+| `experts_shared_outer_loras` | `bool` | `False` | `LoRA` only. Shared-outer layout for grouped experts: the gate/up LoRA-A and the down LoRA-B are shared across experts while the other factor stays per expert (SGLang's `experts_shared_outer_loras` serving contract) |
 
 - `share_expert_adapters=True` keeps the original shared-adapter behavior for grouped expert linears.
 - `share_expert_adapters=False` opts into per-local-expert adapters.
@@ -126,6 +146,38 @@ lora_config = LoRA(
     share_expert_adapters=False,
 )
 ```
+
+##### Expert-parallel synchronization of shared adapters
+
+Adapter weights that serve every expert (the default shared adapter, and the shared
+factor of each `experts_shared_outer_loras=True` adapter) are replicated across
+expert-parallel ranks, but Megatron-Core's expert DDP only reduces gradients over
+expert-data-parallel replicas. Megatron Bridge therefore sums those gradients across
+the expert-parallel group once per step, coalesced into a single collective right
+after the data-parallel gradient sync, the same point where Megatron-Core sums
+sequence-parallel layernorm gradients across tensor parallelism. The training loop
+installs this automatically for PEFT runs through `finalize_model_grads_with_expert_adapter_sync`
+(`megatron.bridge.peft.utils`), and it stays correct with
+`gradient_accumulation_fusion` enabled because it reads the fused `main_grad` buffers.
+
+External training loops that call Megatron-Core's `finalize_model_grads` themselves
+must install the Bridge wrapper (or call `allreduce_expert_parallel_replicated_grads`
+right after their own finalize step):
+
+```python
+from functools import partial
+
+from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
+
+model_config.finalize_model_grads_func = partial(
+    finalize_model_grads_with_expert_adapter_sync, pg_collection=pg_collection
+)
+```
+
+A per-layer fallback hook keeps eagerly computed weight gradients in sync until the
+finalize path takes over (Bridge's setup removes the hooks before the first step; otherwise
+the wrapper's first call does). The fallback cannot cover fused weight-gradient accumulation
+and logs a warning in that case.
 
 #### LoRA+
 
@@ -369,7 +421,7 @@ The PEFT framework introduces a modular design for integrating adapters into lar
 1. **Base PEFT Class**: All PEFT methods inherit from the abstract {py:class}`bridge.peft.base.PEFT` base class, which defines the core interface for module transformation.
 2. **Module Transformation**: PEFT traverses the model structure to identify and transform target modules individually.
 3. **Adapter Integration**: Adapters are injected into selected modules using a pre-wrap hook during model initialization.
-4. **Checkpoint Integration**: Only adapter parameters are saved and loaded during checkpointing; base model weights remain frozen and unchanged.
+4. **Checkpoint Integration**: Adapter parameters and updated MoE router expert-bias buffers are saved and loaded during checkpointing; base model weights remain frozen.
 
 ### PEFT Workflow in Training
 
@@ -377,8 +429,8 @@ The training workflow for PEFT follows a structured sequence that ensures effici
 1. **Model Loading**: The base model is initialized from a specified pretrained checkpoint.
 2. **PEFT Application**: Adapter transformations are applied after Megatron Core model initialization, but before distributed wrapping.
 3. **Parameter Freezing**: Base model parameters are frozen to reduce training complexity; only adapter parameters are updated.
-4. **Adapter Weight Loading**: When resuming training, adapter weights are restored from the checkpoint.
-5. **Checkpoint Saving**: Only adapter states are saved, resulting in significantly smaller checkpoint files.
+4. **Adapter Weight Loading**: When resuming training, adapter weights and saved router expert-bias buffers are restored from the checkpoint.
+5. **Checkpoint Saving**: Adapter states and router expert-bias buffers are saved, resulting in significantly smaller checkpoint files than full-model checkpoints.
 
 ### Key Benefits
 

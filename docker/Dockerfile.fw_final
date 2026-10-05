@@ -61,9 +61,15 @@ RUN    pushd /opt/Export-Deploy && \
 COPY --chmod=644 docker/common/fw_pyproject.toml /opt/NeMo-FW/pyproject.toml
 COPY --chmod=644 docker/common/_version.py docker/common/print_sha.sh /opt/NeMo-FW/
 COPY --chmod=644 docker/common/stubs/ /opt/NeMo-FW/stubs/
+COPY docker/common/preserve_base_runtime.py /opt/preserve_base_runtime.py
 RUN \
     cd /opt/NeMo-FW && \
-    uv sync --no-cache-dir --all-groups --inexact && \
+    BASE_RUNTIME_UV_ARGS="" && \
+    if [ "${MBRIDGE_PRESERVE_BASE_RUNTIME:-False}" = "True" ]; then \
+        BASE_RUNTIME_UV_ARGS="--no-install-package nvidia-cudnn-frontend --no-install-package transformer-engine --no-install-package transformer-engine-torch"; \
+    fi && \
+    uv sync --no-cache-dir --all-groups --inexact ${BASE_RUNTIME_UV_ARGS} && \
+    python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json && \
     uv pip list && \
     chmod +x print_sha.sh && \
     ./print_sha.sh
@@ -93,7 +99,7 @@ RUN pip install "fastapi==0.139.1" \
     "jupyterlab>=4.5.10" \
     "jupyter-server>=2.20.0" \
     "mistune>=3.3.0" \
-    "GitPython>=3.1.55" && \
+    "GitPython>=3.1.62,<4" && \
     # Address CVE from transitive dependency
     pip uninstall -y opencv-python-headless nvidia-dali-cuda130
 
@@ -101,10 +107,10 @@ RUN pip install "fastapi==0.139.1" \
 # The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
 RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
 
-# Patch wandb-core with fixed gRPC-Go and Go standard-library versions.
+# Rebuild wandb-core with fixed versions compatible with wandb 0.29.0.
 ARG TARGETARCH
-RUN GRPC_VERSION=1.83.0 && \
-    GO_VERSION=1.26.5 && \
+RUN GRPC_VERSION=1.83.2 && \
+    GO_VERSION=1.27.0 && \
     WANDB_VERSION=$(python3 -c "import wandb; print(wandb.__version__)") && \
     WANDB_CORE_BIN=/opt/venv/lib/python3.12/site-packages/wandb/bin/wandb-core && \
     curl -fsSL "https://dl.google.com/go/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /tmp -xz && \
@@ -148,6 +154,8 @@ RUN GO_GIT_VERSION=5.19.2 && \
 ##############################################################################
 
 WORKDIR /workspace
+
+RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
 
 ARG NVIDIA_BUILD_ID
 ENV NVIDIA_BUILD_ID=${NVIDIA_BUILD_ID:-<unknown>}

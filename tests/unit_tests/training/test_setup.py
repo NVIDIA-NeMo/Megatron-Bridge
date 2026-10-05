@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import torch
+from megatron.core.distributed import finalize_model_grads
 
 import megatron.bridge.training.setup as training_setup
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
@@ -28,8 +29,10 @@ from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.peft.utils import finalize_model_grads_with_expert_adapter_sync
 from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.checkpointing import load_checkpoint
+from megatron.bridge.training.config import DistributedInitConfig
 from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,
@@ -562,6 +565,40 @@ class TestBuildDistributedModel:
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
 
+    @pytest.mark.parametrize("use_provider", [True, False])
+    def test_mtp_freeze_hook_registered_once_before_build(self, use_provider):
+        from megatron.bridge.training.setup import _freeze_base_model_for_mtp
+
+        cfg, model_cfg = self._make_cfg_with_model_config()
+        if use_provider:
+            model_cfg = GPTModelProvider(num_layers=1, hidden_size=16, num_attention_heads=1, vocab_size=64)
+            cfg.model = model_cfg
+        model_cfg.freeze_base_model_for_mtp = True
+        model_cfg.mtp_num_layers = 1
+        user_hook = Mock(side_effect=lambda model: model)
+        if use_provider:
+            model_cfg.register_pre_wrap_hook(user_hook)
+        else:
+            model_cfg.pre_wrap_hooks.append(user_hook)
+
+        def build(**kwargs):
+            hooks = model_cfg._pre_wrap_hooks if use_provider else model_cfg.pre_wrap_hooks
+            assert hooks.count(_freeze_base_model_for_mtp) == 1
+            assert user_hook in hooks
+            return []
+
+        with patch("megatron.bridge.training.setup.classify_gtp_remat_chains"):
+            if use_provider:
+                with patch.object(model_cfg, "provide_distributed_model", side_effect=build):
+                    for _ in range(2):
+                        _build_distributed_model(cfg, pg_collection=MagicMock())
+            else:
+                builder = Mock()
+                builder.build_distributed_models.side_effect = build
+                with patch.object(type(model_cfg), "get_builder_cls", return_value=Mock(return_value=builder)):
+                    for _ in range(2):
+                        _build_distributed_model(cfg, pg_collection=MagicMock())
+
     def test_finalizes_heterogeneous_provider_before_entering_distributed_model_build(self):
         """Finalize deferred heterogeneous fields before entering provider model construction."""
         block = {
@@ -586,7 +623,7 @@ class TestBuildDistributedModel:
             model=provider,
             ddp=MagicMock(),
             optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
-            dist=SimpleNamespace(use_megatron_fsdp=False, use_torch_fsdp2=False),
+            dist=DistributedInitConfig(use_megatron_fsdp=False, use_torch_fsdp2=False),
             rng=SimpleNamespace(data_parallel_random_init=False),
         )
 
@@ -626,3 +663,29 @@ def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
         _update_model_config_funcs([rebuilt_model], transformer_config, ddp_config, optimizer=None)
 
     assert transformer_config.no_sync_func.__self__ is rebuilt_model
+
+
+def test_update_model_config_funcs_installs_expert_adapter_grad_sync_for_peft_only():
+    """Only PEFT runs get the finalize wrapper; the fallback hooks are removed at setup."""
+    model_config = _make_gpt_model_config()
+    transformer_config = model_config.transformer
+    ddp_config = SimpleNamespace(overlap_grad_reduce=False, overlap_param_gather=False, align_param_gather=False)
+    optimizer = Mock()
+
+    plain_model = torch.nn.Linear(2, 2)
+    _update_model_config_funcs([plain_model], transformer_config, ddp_config, optimizer=optimizer, pg_collection="pgs")
+    assert transformer_config.finalize_model_grads_func.func is finalize_model_grads
+    assert transformer_config.finalize_model_grads_func.keywords == {"pg_collection": "pgs"}
+
+    peft_model = torch.nn.Linear(2, 2)
+    peft_model.weight.expert_parallel_replicated = True
+    hook_handle = Mock()
+    peft_model.weight._expert_parallel_grad_hook = hook_handle
+    _update_model_config_funcs(
+        [peft_model], transformer_config, ddp_config, optimizer=optimizer, pg_collection="pgs", peft_enabled=True
+    )
+    assert transformer_config.finalize_model_grads_func.func is finalize_model_grads_with_expert_adapter_sync
+    assert transformer_config.finalize_model_grads_func.keywords == {"pg_collection": "pgs"}
+    assert transformer_config.grad_scale_func is optimizer.scale_loss
+    hook_handle.remove.assert_called_once()
+    assert not hasattr(peft_model.weight, "_expert_parallel_grad_hook")
