@@ -49,6 +49,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.pipeline_model_parallel_layout is None
+    assert "|" not in cfg.model.hybrid_layer_pattern
+    assert len(cfg.model.hybrid_layer_pattern) == 86
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 1
 
@@ -80,7 +82,7 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
 
     assert cfg.model.csa_compress_rotary_base == 40_000
     assert cfg.model.rotary_scaling_factor == 4
-    assert cfg.model.apply_dsa_kernel_fusion is True
+    assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.dsa_indexer_loss_coeff == 0.01
     assert cfg.model.dsa_indexer_use_sparse_loss is True
     assert cfg.model.cross_entropy_fusion_impl == "native"

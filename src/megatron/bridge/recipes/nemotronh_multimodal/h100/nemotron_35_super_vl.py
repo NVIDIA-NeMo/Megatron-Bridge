@@ -19,11 +19,11 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _sft_common_vlm
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
-    _make_nemotron_omni_energon_dataset,
-)
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     _apply_nemotron_3_super_64gpu_h100_training_stack,
+)
+from megatron.bridge.recipes.nemotronh_multimodal.h100.nemotron_omni import (
+    _make_nemotron_omni_energon_dataset,
 )
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS

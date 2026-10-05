@@ -58,7 +58,24 @@ def test_formal_review_rubric_is_inert_and_uses_formal_submission():
     assert "Never approve an incomplete" in rubric
 
 
-def test_automatic_review_is_retained_separately():
-    workflow = yaml.safe_load((ROOT / ".github/workflows/claude-review.yml").read_text())
-    assert set(workflow["jobs"]) == {"auto-review", "redirect-to-review"}
-    assert "github.event_name == 'workflow_run'" in workflow["jobs"]["auto-review"]["if"]
+def test_automatic_review_is_replaced_with_least_privilege_guidance():
+    source = (ROOT / ".github/workflows/claude-review.yml").read_text()
+    workflow = yaml.safe_load(source)
+    assert set(workflow["jobs"]) == {"review-hint", "redirect-to-review"}
+    assert workflow["permissions"] == {}
+    job = workflow["jobs"]["review-hint"]
+    assert "github.event_name == 'workflow_run'" in job["if"]
+    assert "github.event.workflow_run.event == 'push'" in job["if"]
+    assert "github.event.workflow_run.actor.login == 'copy-pr-bot[bot]'" in job["if"]
+    assert job["permissions"] == {"pull-requests": "write"}
+    assert job["concurrency"]["cancel-in-progress"] is False
+    assert "github.event.workflow_run.head_branch" in job["concurrency"]["group"]
+    assert len(job["steps"]) == 1
+    step = job["steps"][0]
+    assert step["uses"].startswith("actions/github-script@")
+    for text in ("/review", "model=claude", "model=codex", "mode=light|strict", "/review help"):
+        assert text in step["with"]["script"]
+    assert "${{" not in step["with"]["script"]
+    assert "secrets." not in source
+    assert "actions/checkout@" not in source
+    assert "anthropics/claude-code-action@" not in source

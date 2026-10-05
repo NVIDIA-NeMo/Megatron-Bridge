@@ -23,6 +23,8 @@ from megatron.energon.epathlib import EPath
 from megatron.energon.flavors.webdataset.default_generic_webdataset import DefaultGenericWebdatasetFactory
 from megatron.energon.typed_converter import JsonParser
 
+from megatron.bridge.training.gtp import _get_dataloader_process_group
+
 
 logger = logging.getLogger(__name__)
 
@@ -254,16 +256,11 @@ class EnergonMultiModalDataModule:
         self.kwargs = kwargs
 
     def _build_worker_config(self, num_workers: int, split: str = "train") -> WorkerConfig:
-        """Build a WorkerConfig using pg_collection, falling back to default_worker_config.
+        """Build workers for distinct microbatches across data and GTP ranks.
 
-        NOTE: We intentionally use the pure DP rank (pg_collection.dp)
-        rather than the combined DP-CP rank. With Megatron's rank ordering
-        (default "tp-cp-ep-dp-pp"), all CP ranks within the same DP replica
-        already share the same pure DP rank. This ensures that CP ranks
-        processing different sequence portions of the same batch receive
-        identical data from the dataloader.
-        Using dp_cp would be INCORRECT here — it would assign each CP rank
-        a unique rank, causing them to read different data shards.
+        Context-parallel peers consume the same sample before splitting its
+        sequence, so the worker group excludes CP. GTP peers consume different
+        microbatches and must have distinct worker ranks, including on resume.
         """
         if self.pg_collection is None or self.pg_collection.dp is None:
             logger.info(
@@ -272,9 +269,9 @@ class EnergonMultiModalDataModule:
             )
             return WorkerConfig.default_worker_config(num_workers)
 
-        rank = self.pg_collection.dp.rank()
-        world_size = self.pg_collection.dp.size()
-        data_parallel_group = self.pg_collection.dp
+        data_parallel_group = _get_dataloader_process_group(self.pg_collection)
+        rank = data_parallel_group.rank()
+        world_size = data_parallel_group.size()
         cp_rank = self.pg_collection.cp.rank() if self.pg_collection.cp is not None else 0
         cp_size = self.pg_collection.cp.size() if self.pg_collection.cp is not None else 1
 
