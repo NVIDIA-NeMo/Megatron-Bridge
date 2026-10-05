@@ -585,7 +585,7 @@ items:
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.log_device_memory_used=true
         logger.tensorboard_dir=null
-        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
+        logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed/ConfigContainer.yaml
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]

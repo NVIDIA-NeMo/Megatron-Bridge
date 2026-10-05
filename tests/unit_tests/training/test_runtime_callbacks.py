@@ -73,6 +73,8 @@ def _run_setup(
             align_grad_reduce=True,
             disable_jit_fuser=False,
             enable_megatron_core_experimental=False,
+            gtp_remat_reduce_scatter_with_fp32_accumulation=False,
+            gtp_remat_nccl_ub=False,
             use_decentralized_pg=False,
             use_gloo_process_groups=False,
             use_megatron_fsdp=False,

@@ -23,6 +23,7 @@ from megatron.core.transformer import MLATransformerConfig, TransformerConfig
 from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 
 from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.training.gtp import _get_checkpoint_weight_topology
 from megatron.bridge.training.mlm_compat.activations import squared_relu
 
 
@@ -69,18 +70,30 @@ def _transformer_config_from_args(
     args: argparse.Namespace, config_class: type[TransformerConfig] = TransformerConfig
 ) -> TransformerConfig:
     """Build a variant of TransformerConfig based on contents of the MLM argparse args object."""
-    if args.multi_latent_attention:
+    multi_latent_attention = getattr(args, "multi_latent_attention", False)
+    if multi_latent_attention:
         config_class = MLATransformerConfig
 
-    if args.heterogeneous_layers_config_path is not None:
-        assert not args.multi_latent_attention, "Multi latent attention with heterogeneous layers is not supported."
+    heterogeneous_layers_config_path = getattr(args, "heterogeneous_layers_config_path", None)
+    if heterogeneous_layers_config_path is not None:
+        assert not multi_latent_attention, "Multi latent attention with heterogeneous layers is not supported."
         config_class = HeterogeneousTransformerConfig
 
     # Translate args to core transformer configuration
     kw_args = {}
+    init_fields = {f.name for f in dataclasses.fields(config_class) if f.init}
     for f in dataclasses.fields(config_class):
-        if hasattr(args, f.name):
+        if f.init and hasattr(args, f.name):
             kw_args[f.name] = getattr(args, f.name)
+    # Some Bridge config variants expose the runtime GTP sizes as init=False.
+    # Preserve legacy MLM values through the public constructor shard counts.
+    tp, gtp, etp, egtp = _get_checkpoint_weight_topology(args)
+    for name, parallel_size, remat_size in (
+        ("tensor_parallel_num_weight_shards", tp, gtp),
+        ("expert_tensor_parallel_num_weight_shards", etp, egtp),
+    ):
+        if name in init_fields and kw_args.get(name) is None and remat_size > 1:
+            kw_args[name] = parallel_size * remat_size
     kw_args["persist_layer_norm"] = not args.no_persist_layer_norm
     kw_args["layernorm_zero_centered_gamma"] = getattr(
         args, "layernorm_zero_centered_gamma", getattr(args, "apply_layernorm_1p", False)
@@ -90,10 +103,13 @@ def _transformer_config_from_args(
     kw_args["pipeline_dtype"] = args.params_dtype
     kw_args["batch_p2p_comm"] = not args.overlap_p2p_comm
     kw_args["num_moe_experts"] = args.num_experts
-    kw_args["rotary_interleaved"] = args.rotary_interleaved
-    kw_args["num_layers_in_first_pipeline_stage"] = args.decoder_first_pipeline_num_layers
-    kw_args["num_layers_in_last_pipeline_stage"] = args.decoder_last_pipeline_num_layers
-    kw_args["fp8_param"] = args.fp8_param_gather
+    if hasattr(args, "decoder_first_pipeline_num_layers"):
+        kw_args["num_layers_in_first_pipeline_stage"] = args.decoder_first_pipeline_num_layers
+    if hasattr(args, "decoder_last_pipeline_num_layers"):
+        kw_args["num_layers_in_last_pipeline_stage"] = args.decoder_last_pipeline_num_layers
+    if hasattr(args, "fp8_param_gather"):
+        kw_args["fp8_param"] = args.fp8_param_gather
+
     if args.swiglu:
         kw_args["activation_func"] = F.silu
         kw_args["gated_linear_unit"] = True
@@ -109,12 +125,10 @@ def _transformer_config_from_args(
         kw_args["num_query_groups"] = args.num_query_groups
     else:
         kw_args["num_query_groups"] = None
-    kw_args["config_logger_dir"] = args.config_logger_dir
 
-    if len(args.cp_comm_type) == 1:
-        kw_args["cp_comm_type"] = args.cp_comm_type[0]
-    if args.is_hybrid_model:
-        kw_args["is_hybrid_model"] = args.is_hybrid_model
+    cp_comm_type = getattr(args, "cp_comm_type", ["p2p"])
+    if len(cp_comm_type) == 1:
+        kw_args["cp_comm_type"] = cp_comm_type[0]
 
     # handle quantization config
     # NOTE: Kitchen arguments are only added to the namespace when

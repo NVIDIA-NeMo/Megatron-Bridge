@@ -31,6 +31,7 @@ from typing import (
     Generic,
     Iterable,
     List,
+    Literal,
     Mapping,
     NamedTuple,
     Optional,
@@ -58,6 +59,13 @@ from megatron.bridge.models.conversion.fp8_export import (
     FP8ExportLayout,
     detect_fp8_export_layout,
     get_fp8_export_tensors,
+)
+from megatron.bridge.models.conversion.gtp import (
+    _gather_gtp_weight,
+    _get_mapping_shape,
+    _gtp_weight_load_context,
+    _is_gtp_param,
+    _slice_gtp_weight,
 )
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
@@ -1227,13 +1235,19 @@ class MegatronModelBridge(
     @staticmethod
     def _is_vocab_export_task(task: WeightConversionTask[Any]) -> bool:
         """Return whether a conversion task emits an HF token embedding or language-model head."""
-        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight")
+        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight", "output_layer.bias")
         global_param_name = task.global_param_name.removesuffix("_scale_inv")
         if not global_param_name.endswith(vocab_param_suffixes):
             return False
 
         hf_param = getattr(task.mapping, "hf_param", None)
-        vocab_hf_param_suffixes = ("embed_tokens.weight", "word_embeddings.weight", "lm_head.weight", "head.weight")
+        vocab_hf_param_suffixes = (
+            "embed_tokens.weight",
+            "word_embeddings.weight",
+            "lm_head.weight",
+            "head.weight",
+            "predictions.bias",
+        )
         return isinstance(hf_param, str) and hf_param.endswith(vocab_hf_param_suffixes)
 
     def _truncate_vocab_padding(
@@ -1523,7 +1537,8 @@ class MegatronModelBridge(
                     continue
 
                 # Check shape compatibility before copying
-                if converted_weights.shape != task.param_weight.shape:
+                expected_shape = _get_mapping_shape(task.param_weight)
+                if converted_weights.shape != expected_shape:
                     # Check whitelist
                     is_whitelisted = False
                     if allowed_mismatched_params:
@@ -1542,11 +1557,12 @@ class MegatronModelBridge(
 
                     raise ValueError(
                         f"Shape mismatch for megatron param {task.mapping.megatron_param}:\n"
-                        f"  Expected shape: {task.param_weight.shape}\n"
+                        f"  Expected shape: {expected_shape}\n"
                         f"  Got shape: {converted_weights.shape}\n"
                         f"  Bridge type: {type(task.mapping).__name__}\n"
                         f"  HF mapping: {task.mapping.hf_param}"
                     )
+                converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
                 if capture_unquantized_state_dict:
                     vp_stage = task.vp_stage if task.vp_stage is not None else 0
                     chunk_key = f"model{vp_stage}"
@@ -1556,7 +1572,7 @@ class MegatronModelBridge(
                 # Float8BlockwiseQTensor) that is a leaf with requires_grad=True.
                 # In-place updates under grad mode will raise:
                 # "a leaf Variable that requires grad is being used in an in-place operation."
-                with torch.no_grad():
+                with torch.no_grad(), _gtp_weight_load_context(task.param_weight, task.megatron_module):
                     task.param_weight.copy_(converted_weights)
         self.finalize_hf_import(megatron_model)
         if use_megatron_fsdp:
@@ -1675,6 +1691,7 @@ class MegatronModelBridge(
             hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
             if converted_weights is not None:
+                converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
@@ -1794,7 +1811,7 @@ class MegatronModelBridge(
 
                 megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
             else:
-                megatron_weights = task.param_weight
+                megatron_weights = _gather_gtp_weight(task.param_weight)
             megatron_module = task.megatron_module
             if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
                 megatron_weights = None
@@ -2180,10 +2197,13 @@ class MegatronModelBridge(
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         mappings_by_global_name = self._validate_conversion_mappings(
@@ -2336,7 +2356,7 @@ class MegatronModelBridge(
         Returns:
             Dictionary mapping global parameter names to FP8 export layouts.
         """
-        local_fp8_layouts: Dict[str, FP8ExportLayout] = {}
+        local_fp8_layouts: Dict[str, FP8ExportLayout | Literal[-1]] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
 
         for vp_stage, model in enumerate(megatron_model):
@@ -2359,10 +2379,12 @@ class MegatronModelBridge(
                     fp8_scale_inv_attr=fp8_scale_inv_attr,
                 )
                 if layout is not None:
-                    local_fp8_layouts[global_name] = layout
+                    # Reject on every PP rank before creating raw storage views,
+                    # which do not retain the parameter's GTP sharding metadata.
+                    local_fp8_layouts[global_name] = -1 if _is_gtp_param(local_weights) else layout
 
         # Gather across PP ranks to ensure consistent insertion decisions
-        fp8_layouts_list: list[Dict[str, FP8ExportLayout]] = [None] * get_pg_size(pp_group)
+        fp8_layouts_list: list[Dict[str, FP8ExportLayout | Literal[-1]] | None] = [None] * get_pg_size(pp_group)
         torch.distributed.all_gather_object(fp8_layouts_list, local_fp8_layouts, group=pp_group)
         global_fp8_layouts: Dict[str, FP8ExportLayout] = {}
         for layouts in fp8_layouts_list:
@@ -2370,6 +2392,11 @@ class MegatronModelBridge(
                 continue
             # Validate only after every PP rank has completed the collective.
             for global_name, layout in layouts.items():
+                if layout == -1:
+                    raise ValueError(
+                        f"{global_name}: raw FP8 export does not support GTP sharding; "
+                        "use gathered dequantized export or gathered quantized export instead"
+                    )
                 try:
                     layout.validate()
                 except ValueError as error:
@@ -2404,10 +2431,13 @@ class MegatronModelBridge(
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         mappings_by_global_name = self._validate_conversion_mappings(
