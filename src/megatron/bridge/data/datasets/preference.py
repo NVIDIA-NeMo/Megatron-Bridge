@@ -40,6 +40,7 @@ class ScoringFingerprint:
     tokenizer: str
     max_seq_length: int
     prompt_key: str | None
+    tools_key: str | None
     tensor_model_parallel_size: int
     sequence_parallel: bool
 
@@ -183,7 +184,7 @@ def preference_collate_fn(
 ) -> dict[str, Any]:
     """Collate pair records into an interleaved row batch (chosen@even, rejected@odd)."""
     input_ids: list[Sequence[int]] = []
-    context_lens: list[int] = []
+    loss_masks: list[Sequence[bool]] = []
     pair_ids: list[int] = []
     loss_multipliers: list[float] = []
     ref_sums: list[float] = []
@@ -192,8 +193,8 @@ def preference_collate_fn(
     for record in batch:
         input_ids.append(record["chosen_input_ids"])
         input_ids.append(record["rejected_input_ids"])
-        context_lens.append(int(record["chosen_context_len"]))
-        context_lens.append(int(record["rejected_context_len"]))
+        loss_masks.append(record["chosen_loss_mask"])
+        loss_masks.append(record["rejected_loss_mask"])
         pair_ids.extend([int(record["pair_id"])] * 2)
         loss_multipliers.extend([float(record.get("loss_multiplier", 1.0))] * 2)
         if require_ref_logprobs:
@@ -202,12 +203,11 @@ def preference_collate_fn(
             ref_counts.append(int(record["ref_chosen_num_tokens"]))
             ref_counts.append(int(record["ref_rejected_num_tokens"]))
 
-    for ids, ctx_len, pair_id in zip(input_ids, context_lens, pair_ids):
-        if not 1 <= ctx_len < len(ids):
+    for ids, mask, pair_id in zip(input_ids, loss_masks, pair_ids):
+        if len(mask) != len(ids) or not any(mask[1:]):
             raise ValueError(
-                f"Pair {pair_id}: context_len={ctx_len} must leave at least one completion "
-                f"token in a sequence of length {len(ids)}. The prep script should have "
-                "dropped this pair."
+                f"Pair {pair_id}: loss_mask ({len(mask)} entries) must align with input_ids ({len(ids)} tokens) "
+                "and score at least one token after the first. The prep script should have dropped this pair."
             )
 
     num_rows = len(input_ids)
@@ -215,20 +215,20 @@ def preference_collate_fn(
     seq_lens = torch.tensor([len(ids) - 1 for ids in input_ids], dtype=torch.long)
     max_length = _ceil_to_multiple(int(seq_lens.max()), pad_seq_length_to_mult)
 
-    # One padded id tensor; tokens and labels are its two shifted views.
+    # One padded id tensor; tokens and labels are its two shifted views, and the mask shifts with the labels.
     full = torch.full((num_rows, max_length + 1), pad_token_id, dtype=torch.long)
-    for i, ids in enumerate(input_ids):
+    scored = torch.zeros((num_rows, max_length + 1), dtype=torch.bool)
+    for i, (ids, mask) in enumerate(zip(input_ids, loss_masks)):
         full[i, : len(ids)] = torch.as_tensor(ids, dtype=torch.long)
+        scored[i, : len(ids)] = torch.as_tensor(mask, dtype=torch.bool)
 
     positions = torch.arange(max_length, dtype=torch.long)
     valid = positions < seq_lens.unsqueeze(1)
-    # Label position j predicts original token j+1, so completion labels start at ctx_len - 1.
-    completion_start = (torch.tensor(context_lens, dtype=torch.long) - 1).unsqueeze(1)
 
     collated: dict[str, Any] = {
         "tokens": full[:, :-1].masked_fill(~valid, pad_token_id),
         "labels": full[:, 1:],
-        "loss_mask": (valid & (positions >= completion_start)).long(),
+        "loss_mask": scored[:, 1:].long(),
         "position_ids": positions.unsqueeze(0).expand(num_rows, -1).contiguous(),
         "attention_mask": None,
         "pair_id": torch.tensor(pair_ids, dtype=torch.long),

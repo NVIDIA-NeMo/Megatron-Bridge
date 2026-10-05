@@ -37,9 +37,9 @@ def make_records(num_pairs: int) -> list[dict]:
         {
             "pair_id": p,
             "chosen_input_ids": [1000 + p] * (2 + p % 3) + [2000 + p] * (1 + p % 4),
-            "chosen_context_len": 2 + p % 3,
+            "chosen_loss_mask": [False] * (2 + p % 3) + [True] * (1 + p % 4),
             "rejected_input_ids": [3000 + p] * (2 + (p + 1) % 3) + [4000 + p] * (2 + (p + 2) % 3),
-            "rejected_context_len": 2 + (p + 1) % 3,
+            "rejected_loss_mask": [False] * (2 + (p + 1) % 3) + [True] * (2 + (p + 2) % 3),
             "ref_chosen_logprob_sum": p + 0.25,
             "ref_chosen_num_tokens": 1 + p % 4,
             "ref_rejected_logprob_sum": p + 0.75,
@@ -83,9 +83,9 @@ def test_collate_shift_mask_and_padding():
     record = {
         "pair_id": 7,
         "chosen_input_ids": [11, 12, 13, 21, 22],  # ctx=[11,12,13], completion=[21,22]
-        "chosen_context_len": 3,
+        "chosen_loss_mask": [False, False, False, True, True],
         "rejected_input_ids": [11, 12, 13, 31],  # ctx same, completion=[31]
-        "rejected_context_len": 3,
+        "rejected_loss_mask": [False, False, False, True],
         "ref_chosen_logprob_sum": -1.0,
         "ref_chosen_num_tokens": 2,
         "ref_rejected_logprob_sum": -2.0,
@@ -96,7 +96,7 @@ def test_collate_shift_mask_and_padding():
     assert out["tokens"].shape == (2, 8)  # max real length 4, ceiled to 8
     assert out["tokens"][0].tolist() == [11, 12, 13, 21, 0, 0, 0, 0]
     assert out["labels"][0].tolist() == [12, 13, 21, 22, 0, 0, 0, 0]
-    # completion labels start at ctx_len-1=2: labels [21, 22] are trained on.
+    # The mask shifts with the labels: labels [21, 22] are trained on.
     assert out["loss_mask"][0].tolist() == [0, 0, 1, 1, 0, 0, 0, 0]
     assert out["tokens"][1].tolist() == [11, 12, 13, 0, 0, 0, 0, 0]
     assert out["labels"][1].tolist() == [12, 13, 31, 0, 0, 0, 0, 0]

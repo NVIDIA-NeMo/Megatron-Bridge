@@ -13,9 +13,9 @@ def make_pair_record(pair_id: int, ctx_len: int, chosen_comp: int, rejected_comp
     return {
         "pair_id": pair_id,
         "chosen_input_ids": list(range(10, 10 + ctx_len + chosen_comp)),
-        "chosen_context_len": ctx_len,
+        "chosen_loss_mask": [False] * ctx_len + [True] * chosen_comp,
         "rejected_input_ids": list(range(50, 50 + ctx_len + rejected_comp)),
-        "rejected_context_len": ctx_len,
+        "rejected_loss_mask": [False] * ctx_len + [True] * rejected_comp,
         "ref_chosen_logprob_sum": -1.0,
         "ref_chosen_num_tokens": chosen_comp,
         "ref_rejected_logprob_sum": -2.0,

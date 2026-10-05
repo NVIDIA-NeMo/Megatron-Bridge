@@ -88,6 +88,8 @@ class DPODatasetConfig(DataloaderConfig):
     chosen_key: str = "chosen"
     rejected_key: str = "rejected"
     prompt_key: str | None = None
+    tools_key: str | None = None
+    """Field holding the row's tool schemas (list or JSON string), rendered into the prompt by the chat template."""
     index_mapping_dir: str | None = None
     num_pairs: int = 0
     dataloader_type: Literal["batch"] | None = "batch"
@@ -210,6 +212,7 @@ def build_preference_split(
         chosen_key=config.chosen_key,
         rejected_key=config.rejected_key,
         prompt_key=config.prompt_key,
+        tools_key=config.tools_key,
         ref_logprobs=ref_logprobs,
     )
 

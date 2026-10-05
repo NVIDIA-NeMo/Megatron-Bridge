@@ -135,6 +135,7 @@ def _warn_on_expert_layout_mismatch(config: ConfigContainer, artifact_dir: str, 
 def expected_scoring_metadata(
     config: ConfigContainer, split: Literal["train", "validation"] = "train"
 ) -> ScoringFingerprint:
+    """The scoring fingerprint this run's config implies for ``split``, compared against the artifact's."""
     field = "validation_source" if split == "validation" else "source"
     source = config.dataset.resolve_source(getattr(config.dataset, field), field=field)
     dataset_key, source_split = config.dataset.source_identity(source)
@@ -144,6 +145,7 @@ def expected_scoring_metadata(
         tokenizer=config.dataset.tokenizer_name,
         max_seq_length=config.dataset.seq_length,
         prompt_key=config.dataset.prompt_key,
+        tools_key=config.dataset.tools_key,
         tensor_model_parallel_size=config.model.tensor_model_parallel_size,
         sequence_parallel=bool(config.model.sequence_parallel),
     )

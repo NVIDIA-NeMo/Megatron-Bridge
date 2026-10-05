@@ -102,6 +102,11 @@ def parse_args() -> argparse.Namespace:
         help="Field holding the shared prompt when chosen/rejected hold only the completion turns; "
         "must match training",
     )
+    parser.add_argument(
+        "--tools-key",
+        default=None,
+        help="Field holding the row's tool schemas, rendered into the prompt by the chat template; must match training",
+    )
     parser.add_argument("--model", required=True, help="Reference model (HF path/id the policy initializes from)")
     parser.add_argument("--tokenizer", default=None, help="Defaults to --model; must match training")
     parser.add_argument("--output", required=True, help="msc:// URL or local directory for the artifact")
@@ -191,6 +196,7 @@ class ReferenceLogprobScorer:
             chosen_key=args.chosen_key,
             rejected_key=args.rejected_key,
             prompt_key=args.prompt_key,
+            tools_key=args.tools_key,
             pad_seq_length_to_mult=args.tp if args.sequence_parallel else 1,
         )
 
@@ -356,6 +362,7 @@ class ReferenceLogprobScorer:
             tokenizer=self.tokenizer_name,
             max_seq_length=self.args.max_seq_length,
             prompt_key=self.args.prompt_key,
+            tools_key=self.args.tools_key,
             tensor_model_parallel_size=self.args.tp,
             sequence_parallel=bool(self.args.sequence_parallel),
         )

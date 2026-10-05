@@ -19,6 +19,7 @@ SCORED_FINGERPRINT = ScoringFingerprint(
     tokenizer="org/some-model",
     max_seq_length=64,
     prompt_key=None,
+    tools_key=None,
     tensor_model_parallel_size=1,
     sequence_parallel=False,
 )

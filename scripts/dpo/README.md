@@ -30,6 +30,17 @@ Use the same `--prompt-key` when scoring and `dataset.prompt_key` when
 training. The value is recorded in the artifact and the trainer refuses to start
 on a mismatch. Other fields in the row are ignored.
 
+When the two sides share everything but the final assistant turn, only that
+turn is scored. Full agentic trajectories may also split earlier, at any
+assistant turn: every assistant turn is then scored, tool calls included, and
+the shared ones cancel in the margin. A pair whose sides first differ at a
+non-assistant turn (user or tool) is a `context_mismatch`. Tool turns are never
+scored, `tool_calls` may be a JSON string, and a final turn that is only a tool
+call (empty `content`) counts as a response. If the rows carry the tool schemas
+the trajectories were generated with, name that field with `--tools-key` /
+`dataset.tools_key` so the chat template renders them into the prompt; it is
+checked at startup like `--prompt-key`.
+
 Pairs that can't be used (`context_mismatch`, `no_assistant_completion`,
 `empty_completion`, `over_length`) are not dropped, because the sampler needs a
 fixed dataset length. They become stubs with zero loss. The scorer warns once
@@ -125,7 +136,7 @@ The margins only mean something if both runs saw the same tokens.
 | Dataset source and split | metadata check at startup |
 | Tokenizer | metadata check at startup |
 | Sequence length (`dataset.seq_length`, stored as `max_seq_length`) | metadata check at startup |
-| Row layout (`dataset.prompt_key` / `--prompt-key`) | metadata check at startup |
+| Row layout (`dataset.prompt_key`, `dataset.tools_key` / `--prompt-key`, `--tools-key`) | metadata check at startup |
 | TP and sequence parallelism | metadata check at startup (PP and DP may differ) |
 | `num_pairs`, same rows in the same order | artifact must cover `pair_id 0..N-1` exactly |
 | Reference model is `pretrained_checkpoint` | not checked, shows up as step-0 loss far from ln 2 |

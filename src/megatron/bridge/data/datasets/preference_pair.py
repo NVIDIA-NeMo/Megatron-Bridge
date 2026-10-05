@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 from collections.abc import Mapping, Sequence
 from functools import partial
@@ -46,6 +47,7 @@ class PreferencePairDataset(Dataset):
         chosen_key: str = "chosen",
         rejected_key: str = "rejected",
         prompt_key: str | None = None,
+        tools_key: str | None = None,
         ref_logprobs: Mapping[int, Mapping[str, Any]] | None = None,
     ) -> None:
         if len(source) == 0:
@@ -56,6 +58,7 @@ class PreferencePairDataset(Dataset):
         self.chosen_key = chosen_key
         self.rejected_key = rejected_key
         self.prompt_key = prompt_key
+        self.tools_key = tools_key
         self.ref_logprobs = ref_logprobs
         self.require_ref_logprobs = ref_logprobs is not None
 
@@ -77,13 +80,14 @@ class PreferencePairDataset(Dataset):
     def _stub_record(self, idx: int, reason: str) -> dict[str, Any]:
         logger.warning("Pair %d unusable (%s); emitting a zero-loss stub.", idx, reason)
         stub_ids = [self.pad_token_id, self.pad_token_id]
+        stub_mask = [False, True]
 
         return {
             "pair_id": idx,
             "chosen_input_ids": stub_ids,
-            "chosen_context_len": 1,
+            "chosen_loss_mask": stub_mask,
             "rejected_input_ids": stub_ids,
-            "rejected_context_len": 1,
+            "rejected_loss_mask": stub_mask,
             "loss_multiplier": 0.0,
         }
 
@@ -95,17 +99,22 @@ class PreferencePairDataset(Dataset):
         if isinstance(pair, str):
             record = self._stub_record(idx, pair)
         else:
-            side_c = tokenize_conversation(self.tokenizer, pair[0], self.max_seq_length)
-            side_r = tokenize_conversation(self.tokenizer, pair[1], self.max_seq_length)
+            tools = row[self.tools_key] if self.tools_key else None
+            if isinstance(tools, str):
+                tools = json.loads(tools)
+            # Pairs that split before the final turn score every assistant turn; the shared ones cancel in the margin.
+            diverged = pair[0][:-1] != pair[1][:-1]
+            side_c = tokenize_conversation(self.tokenizer, pair[0], self.max_seq_length, tools, diverged)
+            side_r = tokenize_conversation(self.tokenizer, pair[1], self.max_seq_length, tools, diverged)
             if isinstance(side_c, str) or isinstance(side_r, str):
                 record = self._stub_record(idx, side_c if isinstance(side_c, str) else side_r)
             else:
                 record = {
                     "pair_id": idx,
                     "chosen_input_ids": side_c[0],
-                    "chosen_context_len": side_c[1],
+                    "chosen_loss_mask": side_c[1],
                     "rejected_input_ids": side_r[0],
-                    "rejected_context_len": side_r[1],
+                    "rejected_loss_mask": side_r[1],
                     "loss_multiplier": 1.0,
                 }
         if self.ref_logprobs is not None:

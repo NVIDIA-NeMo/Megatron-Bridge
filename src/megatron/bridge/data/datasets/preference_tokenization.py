@@ -12,45 +12,77 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Mapping
+import json
+from typing import Any, Mapping, Sequence
 
 from megatron.bridge.data.conversation_processing import tokenize_chat_example
 
 
-def tokenize_conversation(tokenizer, messages: list[dict], max_seq_length: int) -> tuple[list[int], int] | str:
-    """Tokenize one conversation into ``(input_ids, context_len)``, or return a drop reason."""
+def tokenize_conversation(
+    tokenizer,
+    messages: list[dict],
+    max_seq_length: int,
+    tools: Sequence[Mapping[str, Any]] | None = None,
+    all_assistant_turns: bool = False,
+) -> tuple[list[int], list[bool]] | str:
+    """Tokenize one conversation into ``(input_ids, loss_mask)``, or return a drop reason.
+
+    Scores the final assistant turn (header included) and the appended EOS; ``all_assistant_turns``
+    also scores every earlier assistant turn. ``tools`` are rendered into the prompt, never scored.
+    """
     if len(messages) < 2 or messages[-1].get("role") != "assistant":
         return "no_assistant_completion"
-    if not str(messages[-1].get("content") or "").strip():
+    if not (str(messages[-1].get("content") or "").strip() or messages[-1].get("tool_calls")):
         return "empty_completion"
 
     tokenized = tokenize_chat_example(
         messages,
         tokenizer,
-        loss_mode="full",
+        tool_schemas=tools,
+        loss_mode="assistant" if all_assistant_turns else "full",
         return_final_assistant_start=True,
         final_assistant_span="turn",
     )
     input_ids = tokenized.input_ids.tolist()
     context_len = tokenized.final_assistant_start
-
-    eos_token_id = tokenizer.eos_token_id
-    if eos_token_id is not None and input_ids and input_ids[-1] != eos_token_id:
-        input_ids.append(eos_token_id)
-
     if context_len is None or not 1 <= context_len < len(input_ids):
         return "empty_completion"
+    loss_mask = [position >= context_len for position in range(len(input_ids))]
+    if all_assistant_turns:
+        loss_mask = [a or b for a, b in zip(loss_mask, tokenized.assistant_mask.tolist())]
+
+    eos_token_id = tokenizer.eos_token_id
+    if eos_token_id is not None and input_ids[-1] != eos_token_id:
+        input_ids.append(eos_token_id)
+        loss_mask.append(True)
 
     if len(input_ids) > max_seq_length:
         return "over_length"
 
-    return input_ids, context_len
+    return input_ids, loss_mask
 
 
-def _as_messages(value: str | list[dict], role: str) -> list[dict]:
+def _as_messages(value: str | Sequence[Mapping[str, Any]], role: str) -> list[dict]:
     if isinstance(value, str):
         return [{"role": role, "content": value}]
-    return list(value)
+    return [_decode_tool_calls(message) for message in value]
+
+
+def _decode_tool_calls(message: Mapping[str, Any]) -> dict[str, Any]:
+    """HF ``datasets`` stores ``tool_calls`` as a JSON string when message schemas differ; the template needs the list."""
+    message = dict(message)
+    if isinstance(message.get("tool_calls"), str):
+        message["tool_calls"] = json.loads(message["tool_calls"])
+    if message.get("tool_calls"):
+        message["tool_calls"] = [_decode_arguments(call) for call in message["tool_calls"]]
+    return message
+
+
+def _decode_arguments(call: Mapping[str, Any]) -> dict[str, Any]:
+    function = call.get("function")
+    if not isinstance(function, Mapping) or not isinstance(function.get("arguments"), str):
+        return dict(call)
+    return {**call, "function": {**function, "arguments": json.loads(function["arguments"])}}
 
 
 def build_pair_conversations(
@@ -60,7 +92,10 @@ def build_pair_conversations(
     rejected_key: str = "rejected",
     prompt_key: str | None = None,
 ) -> tuple[list[dict], list[dict]] | str:
-    """Build the chosen/rejected conversations for one row, or return a drop reason."""
+    """Build the chosen/rejected conversations for one row, or return a drop reason.
+
+    Full trajectories (no ``prompt_key``) must first differ at an assistant turn; the rest is shared context.
+    """
     chosen = _as_messages(row[chosen_key], "assistant")
     rejected = _as_messages(row[rejected_key], "assistant")
 
@@ -68,7 +103,8 @@ def build_pair_conversations(
         prompt = _as_messages(row[prompt_key], "user")
         return prompt + chosen, prompt + rejected
 
-    if chosen[:-1] != rejected[:-1]:
+    split = next((i for i, (c, r) in enumerate(zip(chosen, rejected)) if c != r), None)
+    if split is None or chosen[split].get("role") != "assistant" or rejected[split].get("role") != "assistant":
         return "context_mismatch"
 
     return chosen, rejected
