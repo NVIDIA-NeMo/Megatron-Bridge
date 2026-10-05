@@ -17,11 +17,12 @@ import posixpath
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.training.utils.checkpoint_utils import (
+    apply_run_config_backward_compat,
     CONFIG_FILE,
     read_run_config,
 )
