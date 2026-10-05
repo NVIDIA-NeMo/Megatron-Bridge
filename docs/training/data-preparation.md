@@ -8,10 +8,12 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 |----------|--------|-------------|--------------------|
 | LLM pretraining | Recommended | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` |
 | Text SFT or PEFT, processed at runtime | Recommended | Hosted Hugging Face rows or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face text-only](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-text-only/README.md) through `DirectHFSFTDatasetConfig` + builder |
-| Text SFT or PEFT, prepared data | Planned; not available yet | Pretokenized `.bin`/`.idx` | Future Issue #4664 prepared-SFT builder |
-| Text SFT or PEFT, transitional prepared data | Supported until `.bin`/`.idx` replacement | Local/materialized JSONL and optional packed Parquet | `GPTSFTDatasetConfig` |
+| Text SFT or PEFT, reusable prepared data | Recommended for offline packing or finite epochs | Local/materialized JSONL and packed Parquet | `GPTSFTDatasetConfig` + `GPTSFTDatasetBuilder` |
 | Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Hugging Face multimodal](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) through `DirectHFSFTDatasetConfig` + builder |
 | Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
+
+Megatron binary `.bin`/`.idx` is the prepared-data format for LLM pretraining.
+Offline-packed text SFT and PEFT use Parquet artifacts.
 
 All canonical dataset configs expose `seq_length` in Python and through CLI overrides. During finalization,
 `GPTDatasetConfig` copies that value to Megatron Core's internal `sequence_length` field.

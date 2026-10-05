@@ -1,14 +1,15 @@
 # Text-only SFT Dataset Tutorial
 
-Choose this transitional path when you have local text JSONL, or when you want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT. It also supports offline packed-Parquet processing and finite `num_epochs` training. The planned prepared `.bin`/`.idx` SFT workflow tracked by Issue #4664 will replace packed Parquet as the recommended scalable prepared-data path. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct SFT.
+Choose this path when you have local text JSONL, want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT, or want to train from reusable offline-packed Parquet. It also supports weighted blends of independently packed Parquet sources and finite `num_epochs` training. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct SFT.
 
 You configure the data with `GPTSFTDatasetConfig`; the training framework uses `GPTSFTDatasetBuilder` to bind the tokenizer, materialize sources when needed, prepare offline packing, and construct `GPTSFTDataset` splits.
 
-Choose exactly one source:
+Choose one input setup:
 
 - `dataset_root` for local `training.jsonl`, optional `validation.jsonl`, and optional `test.jsonl` files.
 - `per_split_data_source_manifest_path` for one or more local JSONL files per split, with optional MLM-style blend ratios.
 - `hf_dataset` for a declarative Hugging Face source plus an optional registered schema adapter.
+- `packed_train_data_blend` inside `offline_packing_specs` for a weighted blend of pre-packed Parquet training sources. A standalone blend must set `do_validation=False` and `do_test=False`; pair it with `dataset_root` or `hf_dataset` when that source should provide validation or test data.
 
 ## Prepare local JSONL
 
@@ -206,7 +207,7 @@ For the complete constraints and runtime behavior, see [Packed Sequences](../../
 
 | Area | Knobs | Purpose |
 | --- | --- | --- |
-| Source | `dataset_root`, `per_split_data_source_manifest_path`, `hf_dataset` | Exactly one local-root, local-blend, or Hugging Face source |
+| Source | `dataset_root`, `per_split_data_source_manifest_path`, `hf_dataset`, `packed_train_data_blend` | One local-root, local JSONL blend, or Hugging Face raw source; or pre-packed Parquet training sources |
 | Core | `seq_length`, `seed`, `memmap_workers`, `max_train_samples` | Shape, reproducibility, indexing, and train cap |
 | Splits | `do_validation`, `do_test` | Build optional split files |
 | Preprocessing | `ChatSFTPreprocessingConfig`, `PromptCompletionSFTPreprocessingConfig` | Chat rendering and assistant loss, or raw paired-text formatting and completion/full loss |
@@ -215,14 +216,15 @@ For the complete constraints and runtime behavior, see [Packed Sequences](../../
 | Loader | `dataloader_type`, `num_workers`, `data_sharding`, `pin_memory`, `drop_last`, `persistent_workers` | DataLoader behavior |
 | HF source | `path_or_dataset`, `split`, `subset`, `load_kwargs`, optional registered `schema_adapter` and `adapter_kwargs` | Dataset loading and row normalization |
 | HF materialization | `hf_validation_dataset`, `hf_test_dataset`, `hf_output_root`, `hf_validation_proportion`, `hf_rewrite` | Split overrides, cache location, and rematerialization |
-| Packing spec | `packed_sequence_size`, `tokenizer_model_name`, `num_tokenizer_workers`, packed paths, metadata path, `pad_cu_seqlens`, `pad_seq_to_mult` | Packed artifact layout and alignment |
+| Packing spec | `packed_sequence_size`, `tokenizer_model_name`, `num_tokenizer_workers`, `packed_train_data_path`, `packed_train_data_blend`, metadata path, `pad_cu_seqlens`, `pad_seq_to_mult` | Packed artifact layout, weighted training sources, and alignment |
 
 Do not repeat config-owned `seed`, `memmap_workers`, `max_num_samples`, or preprocessing fields inside `dataset_kwargs`. Source, adapter, and dataset mappings accept declarative values only; runtime tokenizers and callables belong to the builder.
 
 ## Troubleshooting
 
-- “Exactly one text-only SFT source” means multiple source modes, or none, were set.
-- A per-split blend must contain `train` plus every split enabled by `do_validation` and `do_test`.
+- “Exactly one text-only SFT source” means multiple raw source modes were set.
+- “A text-only SFT source must be set” means no raw or packed training source was configured. A standalone packed blend must disable validation and test.
+- A per-split JSONL blend must contain `train` plus every split enabled by `do_validation` and `do_test`; it cannot be combined with `packed_train_data_blend`.
 - A missing split file is expected when its `do_*` flag is false; otherwise verify the exact filenames above.
 - Chat-template errors usually mean `ChatSFTPreprocessingConfig` was selected but the tokenizer lacks a template.
 - Prompt-completion preprocessing never calls `apply_chat_template` and deliberately rejects structured multi-turn rows.
