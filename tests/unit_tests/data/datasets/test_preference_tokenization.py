@@ -4,7 +4,7 @@ import pytest
 
 from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.datasets.preference_tokenization import tokenize_conversation
-from tests.unit_tests.data.preference_fakes import ChatMLTokenizer
+from tests.unit_tests.data.preference_fakes import ChatMLTokenizer, ImEndEOSTokenizer
 
 
 def conversation(prompt, completion):
@@ -16,16 +16,20 @@ def scored_text(input_ids, loss_mask):
 
 
 def test_a_shared_history_scores_only_the_final_assistant_turn():
-    """Everything before the final assistant turn is context; that turn (header included) plus EOS is scored."""
+    """Everything before the final assistant turn is context; that turn (header included) through its EOS is
+    scored. A template whose turn terminator is the EOS (``<|im_end|>`` on Nemotron 3 / Qwen2.5-Instruct) ends
+    the completion there, with no second EOS; otherwise one is appended."""
     messages = [{"role": "system", "content": "be terse"}, *conversation("q1", "a1"), *conversation("q2", "a2")]
-    tokenizer = ChatMLTokenizer()
 
-    input_ids, loss_mask = tokenize_conversation(tokenizer, messages, max_seq_length=10_000)
+    for tokenizer in (ChatMLTokenizer(), ImEndEOSTokenizer()):
+        eos = chr(tokenizer.eos_token_id)
+        input_ids, loss_mask = tokenize_conversation(tokenizer, messages, max_seq_length=10_000)
 
-    context_len = loss_mask.index(True)
-    assert loss_mask == [False] * context_len + [True] * (len(input_ids) - context_len)
-    assert input_ids[:context_len] == tokenizer.apply_chat_template(messages[:-1])
-    assert scored_text(input_ids, loss_mask) == "<|im_start|>assistant\na2<|im_end|>\n" + chr(tokenizer.eos_token_id)
+        context_len = loss_mask.index(True)
+        assert loss_mask == [False] * context_len + [True] * (len(input_ids) - context_len)
+        assert input_ids[:context_len] == tokenizer.apply_chat_template(messages[:-1])
+        turn_end = eos if isinstance(tokenizer, ImEndEOSTokenizer) else "<|im_end|>\n" + eos
+        assert scored_text(input_ids, loss_mask) == "<|im_start|>assistant\na2" + turn_end, type(tokenizer).__name__
 
 
 def test_a_trajectory_may_end_on_a_tool_call():

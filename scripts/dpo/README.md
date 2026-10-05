@@ -41,6 +41,11 @@ the trajectories were generated with, name that field with `--tools-key` /
 `dataset.tools_key` so the chat template renders them into the prompt; it is
 checked at startup like `--prompt-key`.
 
+When the template already ends a turn with the EOS (ChatML `<|im_end|>`), the
+completion ends there: the trailing newline is not scored and no second EOS is
+appended. Artifacts scored before this rule carry no `tokenization_version` and
+are rejected; re-score them.
+
 Pairs that can't be used (`context_mismatch`, `no_assistant_completion`,
 `empty_completion`, `over_length`) are not dropped, because the sampler needs a
 fixed dataset length. They become stubs with zero loss. The scorer warns once
@@ -137,6 +142,7 @@ The margins only mean something if both runs saw the same tokens.
 | Tokenizer | metadata check at startup |
 | Sequence length (`dataset.seq_length`, stored as `max_seq_length`) | metadata check at startup |
 | Row layout (`dataset.prompt_key`, `dataset.tools_key` / `--prompt-key`, `--tools-key`) | metadata check at startup |
+| Tokenization rules (`tokenization_version`, set by the code) | metadata check at startup |
 | TP and sequence parallelism | metadata check at startup (PP and DP may differ) |
 | `num_pairs`, same rows in the same order | artifact must cover `pair_id 0..N-1` exactly |
 | Reference model is `pretrained_checkpoint` | not checked, shows up as step-0 loss far from ln 2 |

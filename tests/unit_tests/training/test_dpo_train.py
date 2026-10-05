@@ -73,6 +73,10 @@ def make_config(tmp_path) -> SimpleNamespace:
         (lambda c, _: setattr(c.validation, "eval_iters", 2), "validation split"),
         # The artifact was scored with other inputs than this run tokenizes with.
         (lambda c, tmp: write_artifact_metadata(tmp / "train_ref", max_seq_length=4096), "max_seq_length"),
+        (
+            lambda c, tmp: write_artifact_metadata(tmp / "train_ref", tokenization_version=None),
+            "tokenization_version",
+        ),
     ],
     ids=[
         "valid",
@@ -83,6 +87,7 @@ def make_config(tmp_path) -> SimpleNamespace:
         "odd_mbs",
         "no_val_split",
         "fingerprint",
+        "old_artifact",
     ],
 )
 def test_run_config_validation_names_the_offending_knob(tmp_path, mutate, match):

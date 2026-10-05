@@ -29,6 +29,9 @@ from megatron.bridge.data.samplers import build_pretraining_data_loader
 SCORING_METADATA_FILENAME = "scoring_metadata.json"
 
 REF_LOGPROBS_FILENAME = "ref_logprobs.jsonl"
+# 2: a completion whose template already renders the EOS (ChatML <|im_end|>) ends there, version 1 (unrecorded)
+# appended a second EOS after the template's trailing newline and scored both.
+PAIR_TOKENIZATION_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,8 @@ class ScoringFingerprint:
     tools_key: str | None
     tensor_model_parallel_size: int
     sequence_parallel: bool
+    tokenization_version: int = PAIR_TOKENIZATION_VERSION
+    """Bumped whenever the pair token streams change for the same inputs, so older artifacts fail the check."""
 
 
 def _open_path(path: str, mode: str):

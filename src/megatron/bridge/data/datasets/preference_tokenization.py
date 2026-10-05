@@ -27,7 +27,7 @@ def tokenize_conversation(
 ) -> tuple[list[int], list[bool]] | str:
     """Tokenize one conversation into ``(input_ids, loss_mask)``, or return a drop reason.
 
-    Scores the final assistant turn (header included) and the appended EOS; ``all_assistant_turns``
+    Scores the final assistant turn (header included) through its EOS; ``all_assistant_turns``
     also scores every earlier assistant turn. ``tools`` are rendered into the prompt, never scored.
     """
     if len(messages) < 2 or messages[-1].get("role") != "assistant":
@@ -52,14 +52,30 @@ def tokenize_conversation(
         loss_mask = [a or b for a, b in zip(loss_mask, tokenized.assistant_mask.tolist())]
 
     eos_token_id = tokenizer.eos_token_id
-    if eos_token_id is not None and input_ids[-1] != eos_token_id:
-        input_ids.append(eos_token_id)
-        loss_mask.append(True)
+    if eos_token_id is not None:
+        eos_end = _rendered_eos_end(tokenizer, input_ids, context_len, eos_token_id)
+        if eos_end is not None:
+            # Templates whose turn terminator is the EOS (ChatML <|im_end|>) already rendered it; drop the
+            # trailing newline after it instead of appending a second EOS that generation never produces.
+            input_ids, loss_mask = input_ids[:eos_end], loss_mask[:eos_end]
+        else:
+            input_ids.append(eos_token_id)
+            loss_mask.append(True)
 
     if len(input_ids) > max_seq_length:
         return "over_length"
 
     return input_ids, loss_mask
+
+
+def _rendered_eos_end(tokenizer, input_ids: list[int], context_len: int, eos_token_id: int) -> int | None:
+    """End (exclusive) of a final-turn EOS followed by nothing but whitespace, or None if there is none."""
+    for position in range(len(input_ids) - 1, context_len - 1, -1):
+        if input_ids[position] == eos_token_id:
+            return position + 1
+        if tokenizer.decode(input_ids[position:]).strip():
+            return None
+    return None
 
 
 def _as_messages(value: str | Sequence[Mapping[str, Any]], role: str) -> list[dict]:
