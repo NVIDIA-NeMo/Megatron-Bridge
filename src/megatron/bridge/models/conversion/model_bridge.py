@@ -46,7 +46,7 @@ from megatron.core import parallel_state
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import get_pg_size
+from megatron.core.utils import get_attr_wrapped_model, get_pg_size
 from megatron.training.models.base import ModelConfig
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from torch.distributed._tensor import DTensor
@@ -1551,7 +1551,9 @@ class MegatronModelBridge(
         self.finalize_hf_import(megatron_model)
         if use_megatron_fsdp:
             for m in original_megatron_model:
-                m.module.install_optimized_model_weights()
+                # Checkpoint loading may already have unwrapped the FSDP adapter.
+                # Find the FSDP owner instead of assuming a fixed wrapper depth.
+                get_attr_wrapped_model(m, "install_optimized_model_weights")()
             return original_megatron_model
         if capture_unquantized_state_dict:
             # Keep Megatron's single-chunk convention: "model" instead of "model0".

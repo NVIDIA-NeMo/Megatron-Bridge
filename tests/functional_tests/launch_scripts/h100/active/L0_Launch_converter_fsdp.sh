@@ -23,3 +23,7 @@ uv run coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}"
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/converter/test_hf_fsdp_conversion.py
 coverage combine -q
+
+uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \
+  -m pytest -v -s -x --tb=short \
+  tests/functional_tests/test_groups/converter/test_fsdp_bf16_import.py

@@ -29,6 +29,7 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
+    get_attr_wrapped_model,
     get_batch_on_this_cp_rank,
     get_model_config,
     get_pg_rank,
@@ -184,7 +185,9 @@ def _prepare_packed_padding_mask(
     # A pre-process GPT stage scatters this mask alongside its embeddings. HybridModel
     # scatters only its embeddings in the pinned MCore, while later PP stages already
     # receive SP-local activations, so both paths need the matching local mask here.
-    needs_sp_scatter = not unwrap_model(model).pre_process or getattr(config, "is_hybrid_model", False)
+    # MCore's unwrap_model can stop at an inner FSDP wrapper; pre_process
+    # belongs to the underlying model, not that wrapper.
+    needs_sp_scatter = not get_attr_wrapped_model(model, "pre_process") or getattr(config, "is_hybrid_model", False)
     if getattr(config, "sequence_parallel", False) and needs_sp_scatter:
         padding_mask = (
             tensor_parallel.scatter_to_sequence_parallel_region(

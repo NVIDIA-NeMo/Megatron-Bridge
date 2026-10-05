@@ -1065,6 +1065,35 @@ class TestGetBatch:
 
         _validate_packed_moe_cuda_graph(config)
 
+    @pytest.mark.parametrize("wrapper_depth", [0, 1, 3])
+    @pytest.mark.parametrize(
+        "pre_process,is_hybrid,scatter", [(True, False, False), (False, False, True), (True, True, True)]
+    )
+    def test_packed_padding_mask_resolves_wrapped_stage(
+        self, monkeypatch, wrapper_depth, pre_process, is_hybrid, scatter
+    ):
+        """FSDP wrapper depth must not change the stage's SP mask policy."""
+        model = _RecordingModel(pre_process=pre_process)
+        for _ in range(wrapper_depth):
+            wrapper = torch.nn.Module()
+            wrapper.module = model
+            model = wrapper
+        config = type("Config", (), {"is_hybrid_model": is_hybrid, "sequence_parallel": True})()
+        pg_collection = _MockPGCollection(tp_size=2)
+        padding_mask = torch.tensor([[False, False, True, True]])
+        scatter_mock = Mock(side_effect=lambda tensor, group: tensor[:2])
+        monkeypatch.setattr("megatron.core.tensor_parallel.scatter_to_sequence_parallel_region", scatter_mock)
+
+        result = _prepare_packed_padding_mask(padding_mask, config=config, model=model, pg_collection=pg_collection)
+
+        if scatter:
+            torch.testing.assert_close(result, padding_mask[:, :2])
+            scatter_mock.assert_called_once()
+            assert scatter_mock.call_args.kwargs["group"] is pg_collection.tp
+        else:
+            assert result is padding_mask
+            scatter_mock.assert_not_called()
+
     def test_hybrid_preprocess_stage_scatters_packed_padding_mask_for_sp(self, monkeypatch):
         """Hybrid embeddings scatter activations but need Bridge to scatter the router mask."""
         model = _RecordingModel(pre_process=True)

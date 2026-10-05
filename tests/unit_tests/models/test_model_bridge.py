@@ -398,6 +398,34 @@ def test_finalize_hf_import_allows_mcore_without_cache_refresh(monkeypatch):
     broadcast.assert_called_once_with(model)
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("adapter_wrapped", [False, True])
+def test_fsdp_import_installs_weights_on_owner(monkeypatch, adapter_wrapped):
+    """Both direct AutoBridge and checkpoint-unwrapped inputs retain the FSDP owner."""
+    bridge = DummyBridge()
+    events = []
+    bf16_model = torch.nn.Module()
+    fsdp = torch.nn.Module()
+    fsdp.module = bf16_model
+    fsdp.ddp_config = SimpleNamespace(use_megatron_fsdp=True)
+    fsdp.install_optimized_model_weights = lambda: events.append("install")
+    root = fsdp
+    if adapter_wrapped:
+        root = torch.nn.Module()
+        root.module = fsdp
+        root.ddp_config = fsdp.ddp_config
+    models = [root]
+    monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _: [bf16_model])
+    monkeypatch.setattr(bridge, "build_conversion_tasks", lambda *_: [])
+    monkeypatch.setattr(bridge, "finalize_hf_import", lambda _: events.append("finalize"))
+    hf = SimpleNamespace(state={}, model_name_or_path="test")
+
+    result = bridge.load_weights_hf_to_megatron(hf, models)
+
+    assert result is models
+    assert events == ["finalize", "install"]
+
+
 def test_modelopt_plan_keeps_tasks_after_a_sparse_slot(monkeypatch):
     """A hole in the task list must not truncate the plan.
 
