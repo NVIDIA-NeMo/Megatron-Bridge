@@ -23,6 +23,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.training.utils.checkpoint_utils import (
     CONFIG_FILE,
+    _sanitize_run_config_object,
     apply_run_config_backward_compat,
     read_run_config,
 )
