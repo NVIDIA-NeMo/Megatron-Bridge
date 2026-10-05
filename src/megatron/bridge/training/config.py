@@ -153,6 +153,12 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     with external process managers that handle GPU visibility.
     """
 
+    gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
+    """Accumulate GTP remat reduce-scatter results locally in FP32."""
+
+    gtp_remat_nccl_ub: bool = False
+    """Register the dense GTP remat group with an NCCL symmetric-memory user buffer."""
+
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
@@ -1418,6 +1424,16 @@ class ConfigContainer(Container):
                 )
             if self.ddp.average_in_collective:
                 raise ValueError("GTP requires ddp.average_in_collective=False.")
+            if (
+                self.checkpoint.dist_ckpt_optim_fully_reshardable
+                and self.checkpoint.distrib_optim_fully_reshardable_mem_efficient
+            ):
+                raise ValueError(
+                    "GTP does not support memory-efficient fully reshardable optimizer checkpoints: "
+                    "the GTP optimizer process groups do not provide the required Gloo group. "
+                    "Set checkpoint.distrib_optim_fully_reshardable_mem_efficient=False or "
+                    "checkpoint.dist_ckpt_optim_fully_reshardable=False."
+                )
             if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
                 if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
                     raise ValueError(

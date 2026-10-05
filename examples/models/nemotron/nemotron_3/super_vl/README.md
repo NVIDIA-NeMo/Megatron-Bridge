@@ -13,12 +13,24 @@ For language-only conversion and reuse of the existing Nemotron 3 Super
 recipes, see [the text-only bridge guide](text-only.md).
 
 The functional recipes are defined under
-[`src/megatron/bridge/recipes/nemotron_omni/`](../../../../../src/megatron/bridge/recipes/nemotron_omni/):
+[`src/megatron/bridge/recipes/nemotronh_multimodal/`](../../../../../src/megatron/bridge/recipes/nemotronh_multimodal/):
 
 - `nemotron_35_super_vl_pretrain_config`
 - `nemotron_35_super_vl_sft_config`
 - `nemotron_35_super_vl_peft_config`
 - `nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config`
+
+The `nemotronh_multimodal` package contains both Nemotron Omni and Super-VL
+recipes. For example:
+
+```python
+from megatron.bridge.recipes.nemotronh_multimodal import nemotron_35_super_vl_sft_config
+```
+
+Existing imports through `megatron.bridge.recipes.nemotron_omni` remain
+compatible aliases. CLI recipe names are unchanged. The shared model and
+preprocessing implementation still lives under `models.nemotron_omni`; using
+it for Super VL does not add an audio encoder.
 
 ## Fine-Tuning Freeze Controls
 

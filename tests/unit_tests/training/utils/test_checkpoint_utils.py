@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict
 from unittest.mock import patch
 
@@ -31,6 +31,15 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     is_hf_checkpoint_dir,
     read_train_state,
 )
+from megatron.bridge.utils.instantiate_utils import InstantiationException
+
+
+@dataclass
+class LegacyConfig:
+    """Test config with a field removed by backward compatibility sanitization."""
+
+    active: int = 1
+    removed: str = field(default="", init=False)
 
 
 @dataclass

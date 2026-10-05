@@ -28,6 +28,11 @@ from megatron.training.utils.checkpoint_utils import (
 
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
+from megatron.bridge.utils.instantiate_utils import (
+    _DISALLOWED_CANONICAL_TARGETS,
+    InstantiationException,
+    _reject_unsafe_target_name,
+)
 
 
 __all__ = [
@@ -403,6 +408,31 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
         return None
 
     return str(hf_model_id)
+
+
+def _validate_run_config_targets(value: Any, path: str = "") -> None:
+    """Reject known unsafe checkpoint targets before compatibility code imports them."""
+    if isinstance(value, dict):
+        target = value.get("_target_")
+        if isinstance(target, str):
+            full_key = f"{path}._target_" if path else "_target_"
+            _reject_unsafe_target_name(target=target, full_key=path)
+            if target in _DISALLOWED_CANONICAL_TARGETS:
+                raise InstantiationException(f"Instantiation of '{target}' is not allowed.\nfull_key: {full_key}")
+        for key, child in value.items():
+            if key != "_target_":
+                child_path = f"{path}.{key}" if path else str(key)
+                _validate_run_config_targets(child, child_path)
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _validate_run_config_targets(child, f"{path}[{index}]")
+
+
+def _prepare_run_config(config_dict: Any) -> dict[str, Any]:
+    """Sanitize and validate a parsed run config before target resolution."""
+    config_dict = _sanitize_run_config_object(config_dict)
+    _validate_run_config_targets(config_dict)
+    return apply_run_config_backward_compat(config_dict)
 
 
 @lru_cache()
