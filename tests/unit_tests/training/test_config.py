@@ -5309,13 +5309,6 @@ class TestGlobalBatchPackingValidation:
     """Global-batch online packing joins the packing taxonomy in ConfigContainer.validate."""
 
     @staticmethod
-    def _gpt_varlen_dataset(sequence_length: int) -> GPTDatasetConfig:
-        dataset_cfg = create_test_gpt_dataset_config(sequence_length)
-        dataset_cfg.enable_global_batch_packing = True
-        dataset_cfg.dataloader_type = "single"
-        return dataset_cfg
-
-    @staticmethod
     def _gpt_sft_unpacked_dataset(sequence_length: int) -> GPTSFTDatasetConfig:
         return GPTSFTDatasetConfig(
             seq_length=sequence_length,
@@ -5331,27 +5324,7 @@ class TestGlobalBatchPackingValidation:
 
         monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", lambda *a, **k: None)
 
-    def test_dataset_switch_selects_static_scheduler_and_records_layout(self):
-        model_cfg = create_test_gpt_config(
-            context_parallel_size=2, calculate_per_token_loss=True, max_seqlen_per_dp_cp_rank=256
-        )
-        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
-        dataset_cfg = self._gpt_varlen_dataset(512)
-        container, og_ws, cfg_mod = create_test_config_container(
-            world_size_override=8, model_config=model_cfg, train_config=train_cfg, dataset_config_override=dataset_cfg
-        )
-        container.ddp.average_in_collective = False
-        try:
-            container.validate()
-        finally:
-            restore_get_world_size_safe(og_ws, cfg_mod)
-
-        assert container.model.sequence_packing_scheduler == "dp_balanced"
-        assert dataset_cfg.data_parallel_size == 4 and dataset_cfg.context_parallel_size == 2
-        assert dataset_cfg.sequence_parallel_size == 0
-        assert getattr(container.model, "_enable_in_batch_packing", False) is True  # variable_seq_lengths path
-
-    def test_gpt_sft_dataset_gets_the_static_cp_padding_multiple(self):
+    def test_dataset_switch_selects_static_scheduler_and_padding_multiple(self):
         model_cfg = create_test_gpt_config(
             context_parallel_size=2, calculate_per_token_loss=True, max_seqlen_per_dp_cp_rank=256
         )
@@ -5369,6 +5342,7 @@ class TestGlobalBatchPackingValidation:
         assert container.model.sequence_packing_scheduler == "dp_balanced"
         # Same derivation as the other packing modes: 2 * cp for CP THD slicing.
         assert dataset_cfg.global_batch_packing_pad_to_multiple_of == 4
+        assert getattr(container.model, "_enable_in_batch_packing", False) is True  # variable_seq_lengths path
 
     @pytest.mark.skipif(
         not hasattr(GPTModelProvider, "dynamic_context_parallel"),
@@ -5386,7 +5360,7 @@ class TestGlobalBatchPackingValidation:
             world_size_override=8,
             model_config=model_cfg,
             train_config=train_cfg,
-            dataset_config_override=self._gpt_varlen_dataset(512),
+            dataset_config_override=self._gpt_sft_unpacked_dataset(512),
         )
         container.ddp.average_in_collective = False
         try:
@@ -5405,7 +5379,7 @@ class TestGlobalBatchPackingValidation:
             dataset_config_override=create_test_gpt_dataset_config(512),
         )
         try:
-            with pytest.raises(ValueError, match="enable_global_batch_packing"):
+            with pytest.raises(ValueError, match="enable_global_batch_packing=True on a GPTSFTDatasetConfig"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -5439,7 +5413,7 @@ class TestGlobalBatchPackingValidation:
             world_size_override=8,
             model_config=model_cfg,
             train_config=train_cfg,
-            dataset_config_override=self._gpt_varlen_dataset(512),
+            dataset_config_override=self._gpt_sft_unpacked_dataset(512),
         )
         container.ddp.average_in_collective = False
         try:

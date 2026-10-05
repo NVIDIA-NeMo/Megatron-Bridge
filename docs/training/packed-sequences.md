@@ -24,7 +24,7 @@ enablement through context parallelism:
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
 | Runtime in-batch packing | GPT-SFT JSONL, Direct Hugging Face, and supported VLM finetuning | `enable_in_batch_packing=True` |
 | Energon online packing | Qwen-VL data using the model-owned Energon collator | `packing_buffer_size=<candidate samples per worker>` |
-| Global-batch online packing | Variable-length SFT or pretraining, packed every step across data-parallel ranks | `enable_global_batch_packing=True` |
+| Global-batch online packing | Variable-length SFT, packed every step across data-parallel ranks | `enable_global_batch_packing=True` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
 These are related but they are not the same knob. The four packing paths
@@ -243,22 +243,19 @@ losses are averaged over the microbatches that actually ran. The code lives in
 
 ### Datasets That Yield Unpacked Samples
 
-The scheduler consumes **unpacked** per-sample dictionaries delivered through an
-identity collate, one sample per `micro_batch_size = 1` microbatch. Each sample
-carries `tokens`, `labels`, and `position_ids` as `int64 [L]`, `loss_mask` as
-`float32 [L]`, and `original_seq_len` and `padded_seq_len` as `int32 [1]`. Every
-`padded_seq_len` is a multiple of the context-parallel alignment, which is
-`2 x context_parallel_size`, times the tensor-parallel size under sequence
-parallelism. Dataset configs declare the capability through
-`yields_unpacked_samples`, and two of them implement it:
+The scheduler consumes **unpacked** per-sample dictionaries, one sample per
+`micro_batch_size = 1` microbatch, delivered as a list rather than stacked into a
+batch. Each sample carries `tokens`, `labels`, and `position_ids` as
+`int64 [L]`, `loss_mask` as `float32 [L]`, and `original_seq_len` and
+`padded_seq_len` as `int32 [1]`. Every `padded_seq_len` is a multiple of the
+context-parallel alignment, which is `2 x context_parallel_size`, times the
+tensor-parallel size under sequence parallelism.
 
-- `GPTSFTDatasetConfig(enable_global_batch_packing=True)` serves real SFT data. Its
-  per-sample collate shifts labels, builds the loss mask, and pads each sequence
-  to the alignment multiple. Use a `single` or `cyclic` dataloader.
-- `GPTDatasetConfig` and `MockGPTDatasetConfig` with `enable_global_batch_packing=True`
-  build Megatron's `VarlenDataset` from JSONL, Parquet, or Hugging Face sources
-  given as `blend`, or `MockVarlenDataset`, whose length distribution comes from
-  `varlen_mock_dataset_config_json`. Both emit exactly this schema.
+Global-batch packing is available for SFT through
+`GPTSFTDatasetConfig(enable_global_batch_packing=True)`. Its per-sample collate
+shifts labels, builds the loss mask, and pads each sequence to the alignment
+multiple. Use a `single` or `cyclic` dataloader. Dataset configs declare the
+capability through `yields_unpacked_samples`, which validation checks.
 
 ### Configuration
 

@@ -25,17 +25,10 @@ from megatron.bridge.data.datasets.gpt_sft import GPTSFTDataset
 from megatron.bridge.data.packing.global_batch import (
     REQUIRED_SAMPLE_KEYS,
     build_unpacked_sequence_sample,
-    identity_collate,
 )
 
 
 pytestmark = pytest.mark.unit
-
-
-def test_identity_collate_keeps_samples_separate():
-    samples = [{"tokens": torch.zeros(3)}, {"tokens": torch.zeros(5)}]
-    collated = identity_collate(samples)
-    assert collated == samples and collated is not samples
 
 
 def test_build_unpacked_sequence_sample_pads_to_multiple_and_masks_padding():

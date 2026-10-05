@@ -245,12 +245,6 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     ``finalize()``, which speeds up dataloader initialization by skipping
     per-dataset index file reads."""
 
-    enable_global_batch_packing: bool = False
-    """Yield unpacked variable-length samples (Megatron ``VarlenDataset`` / ``MockVarlenDataset``)
-    for Megatron-Core's online sequence-packing scheduler, which packs the global batch per step.
-    ``blend`` paths are JSONL/Parquet/HF sources for ``VarlenDataset``;
-    ``varlen_mock_dataset_config_json`` shapes the mock length distribution."""
-
     def __init__(
         self,
         seq_length: int | None = None,
@@ -272,8 +266,6 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         self.skip_getting_attention_mask_from_dataset = skip_getting_attention_mask_from_dataset
         self.data_path = data_path
         self.per_dataset_sequences_path = per_dataset_sequences_path
-        # Bridge-only fields: not part of MCore's GPTDatasetConfig constructor.
-        self.enable_global_batch_packing = bool(kwargs.pop("enable_global_batch_packing", False))
 
         if seq_length is not None:
             kwargs["sequence_length"] = seq_length
@@ -291,11 +283,6 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         The original post_init logic is deferred until finalize() is called.
         """
         pass
-
-    @property
-    def yields_unpacked_samples(self) -> bool:
-        """Whether the built datasets yield the per-sample dicts global-batch packing consumes."""
-        return self.enable_global_batch_packing
 
     def to_cfg_dict(self) -> dict[str, Any]:
         """Serialize the Bridge-facing fields without MCore's internal sequence-length copy."""
@@ -1274,9 +1261,9 @@ class ConfigContainer(Container):
         if not getattr(self.dataset, "yields_unpacked_samples", False):
             raise ValueError(
                 f"{feature} needs a dataset that yields unpacked per-sample dicts "
-                "(tokens/labels/loss_mask/position_ids/original_seq_len/padded_seq_len with an identity "
-                "collate): GPTSFTDatasetConfig or GPTDatasetConfig with enable_global_batch_packing=True, or a "
-                "DatasetProvider whose yields_unpacked_samples is True."
+                "(tokens/labels/loss_mask/position_ids/original_seq_len/padded_seq_len, one sequence per "
+                "sample): GPTSFTDatasetConfig with enable_global_batch_packing=True, or a DatasetProvider whose "
+                "yields_unpacked_samples is True."
             )
         if getattr(model, "dynamic_context_parallel", False):
             raise ValueError(
@@ -1327,13 +1314,6 @@ class ConfigContainer(Container):
         """Push the CP alignment multiple to the dataset that yields unpacked samples."""
         if hasattr(self.dataset, "global_batch_packing_pad_to_multiple_of"):
             self.dataset.global_batch_packing_pad_to_multiple_of = collate_padding_multiple
-        if isinstance(self.dataset, GPTDatasetConfig):
-            # Megatron's VarlenDataset / MockVarlenDataset derive the same multiple from the
-            # parallel layout recorded on the dataset config (SFTDataset._calculate_padding_divisor).
-            self.dataset.data_parallel_size = self.get_data_parallel_size(get_world_size_safe())
-            self.dataset.context_parallel_size = getattr(self.model, "context_parallel_size", 1)
-            has_sp = getattr(self.model, "sequence_parallel", False)
-            self.dataset.sequence_parallel_size = getattr(self.model, "tensor_model_parallel_size", 1) if has_sp else 0
         dataset_seq_length = getattr(self.dataset, "seq_length", None)
         if dataset_seq_length is not None and dataset_seq_length % collate_padding_multiple:
             raise ValueError(
@@ -1415,8 +1395,7 @@ class ConfigContainer(Container):
         if not enable_global_batch_packing and getattr(self.model, "sequence_packing_scheduler", None) is not None:
             raise ValueError(
                 "model.sequence_packing_scheduler is driven by the dataset: set "
-                "dataset.enable_global_batch_packing=True on a dataset that yields unpacked samples "
-                "(GPTSFTDatasetConfig or GPTDatasetConfig)."
+                "dataset.enable_global_batch_packing=True on a GPTSFTDatasetConfig."
             )
         if enable_offline_packing and offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Two-GPU end-to-end runs of global-batch online packing on the pinned Megatron-Core."""
+"""Two-GPU end-to-end runs of global-batch online packing (GPT-SFT) on the pinned Megatron-Core."""
 
 import gc
 import json
@@ -81,60 +81,7 @@ class TestGlobalBatchPacking:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("context_parallel_size", [1, 2], ids=["dp2", "cp2"])
-    def test_pretrain_packs_mock_varlen_samples(self, tmp_path, context_parallel_size):
-        pytest.importorskip("transformer_engine_torch")
-        initialize_distributed()
-        if torch.distributed.get_world_size() < 2:
-            pytest.skip("requires 2 GPUs")
-
-        shared_dir = broadcast_path(tmp_path)
-        checkpoint_dir = os.path.join(shared_dir, "checkpoints")
-        tensorboard_dir = os.path.join(shared_dir, "tensorboard")
-        if torch.distributed.get_rank() == 0:
-            os.makedirs(checkpoint_dir, exist_ok=True)
-            os.makedirs(tensorboard_dir, exist_ok=True)
-        torch.distributed.barrier()
-
-        cfg = qwen3_600m_pretrain_1gpu_h100_bf16_config()
-        _make_model_small(cfg.model)
-        _configure_global_batch_packing(cfg, context_parallel_size=context_parallel_size)
-        cfg.dataset.seq_length = SEQ_LENGTH
-        _set_existing_attr(cfg.dataset, "enable_global_batch_packing", True)
-        _set_existing_attr(cfg.dataset, "dataloader_type", "single")
-        _set_existing_attr(
-            cfg.dataset,
-            "varlen_mock_dataset_config_json",
-            json.dumps(
-                {
-                    "mode": "distribution",
-                    "type": "lognormal",
-                    "min_seq_len": 16,
-                    "max_seq_len": SEQ_LENGTH,
-                    "mean_seq_len": 128,
-                    "lognormal_sigma": 1.0,
-                }
-            ),
-        )
-        cfg.train.train_iters = 3
-        cfg.logger.tensorboard_dir = tensorboard_dir
-        cfg.checkpoint.save = checkpoint_dir
-        cfg.checkpoint.save_interval = cfg.train.train_iters
-        cfg.checkpoint.load = None
-
-        try:
-            pretrain(cfg, forward_step)
-            assert cfg.model.sequence_packing_scheduler == "dp_balanced"
-            verify_checkpoint_files(
-                checkpoint_dir,
-                cfg.train.train_iters,
-                ckpt_format=cfg.checkpoint.ckpt_format,
-                storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
-            )
-        finally:
-            clear_directories(shared_dir)
-
-    @pytest.mark.run_only_on("GPU")
-    def test_finetune_packs_gpt_sft_rows_with_context_parallelism(self, tmp_path):
+    def test_finetune_packs_gpt_sft_rows(self, tmp_path, context_parallel_size):
         pytest.importorskip("transformer_engine_torch")
         initialize_distributed()
         if torch.distributed.get_world_size() < 2:
@@ -162,7 +109,7 @@ class TestGlobalBatchPacking:
         _make_model_small(pretrain_cfg.model)
         pretrain_cfg.model.tensor_model_parallel_size = 1
         pretrain_cfg.model.pipeline_model_parallel_size = 1
-        pretrain_cfg.model.context_parallel_size = 2
+        pretrain_cfg.model.context_parallel_size = context_parallel_size
         pretrain_cfg.dataset.seq_length = SEQ_LENGTH
         pretrain_cfg.train.train_iters = 1
         pretrain_cfg.train.global_batch_size = 2
@@ -178,7 +125,7 @@ class TestGlobalBatchPacking:
 
         cfg = qwen3_600m_sft_1gpu_h100_bf16_config()
         _make_model_small(cfg.model)
-        _configure_global_batch_packing(cfg, context_parallel_size=2)
+        _configure_global_batch_packing(cfg, context_parallel_size=context_parallel_size)
         cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
         cfg.tokenizer.tokenizer_model = "gpt2"
         cfg.ddp.grad_reduce_in_fp32 = False
@@ -208,9 +155,11 @@ class TestGlobalBatchPacking:
             torch.distributed.barrier()
 
             finetune(cfg, forward_step)
-            # Validation derived the scheduler and the 2 * cp alignment for the unpacked rows.
+            # Validation derived the scheduler and the CP alignment (2 * cp, or 1 without CP).
             assert cfg.model.sequence_packing_scheduler == "dp_balanced"
-            assert cfg.dataset.global_batch_packing_pad_to_multiple_of == 4
+            assert cfg.dataset.global_batch_packing_pad_to_multiple_of == (
+                2 * context_parallel_size if context_parallel_size > 1 else 1
+            )
             verify_checkpoint_files(
                 sft_checkpoint_dir,
                 cfg.train.train_iters,

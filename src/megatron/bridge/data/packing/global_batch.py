@@ -21,15 +21,15 @@ after a data-parallel all-gather of sample lengths, so the candidate pool is the
 whole global batch across DP x CP ranks.
 
 The scheduler consumes *unpacked* per-sample dicts, one sequence per sample,
-delivered through an identity collate. This module holds that sample contract
-and the helpers datasets use to produce it.
+delivered as a list rather than stacked into a batch. GPT-SFT datasets produce
+them when ``enable_global_batch_packing`` is set; this module holds that sample
+contract and the helper that builds one sample.
 """
 
 from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any
 
 import torch
 
@@ -48,16 +48,6 @@ REQUIRED_SAMPLE_KEYS: tuple[str, ...] = (
 ``float32 [L]``, and the two lengths are ``int32 [1]`` tensors (``L`` is the
 padded length).
 """
-
-
-def identity_collate(samples: list[Any]) -> list[Any]:
-    """Return the samples as a list instead of stacking them.
-
-    The scheduler pulls ``micro_batch_size`` samples per ``next()`` and packs
-    them itself; the default collate would stack the variable-length tensors
-    and destroy the per-sample lengths it needs.
-    """
-    return list(samples)
 
 
 def build_unpacked_sequence_sample(
