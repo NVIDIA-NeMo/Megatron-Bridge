@@ -46,6 +46,7 @@ class ScoringFingerprint:
     tools_key: str | None
     tensor_model_parallel_size: int
     sequence_parallel: bool
+    chat_template_kwargs: dict[str, Any] | None = None
     tokenization_version: int = PAIR_TOKENIZATION_VERSION
     """Bumped whenever the pair token streams change for the same inputs, so older artifacts fail the check."""
 

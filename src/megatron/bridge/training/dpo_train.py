@@ -148,4 +148,7 @@ def expected_scoring_metadata(
         tools_key=config.dataset.tools_key,
         tensor_model_parallel_size=config.model.tensor_model_parallel_size,
         sequence_parallel=bool(config.model.sequence_parallel),
+        chat_template_kwargs=dict(config.dataset.chat_template_kwargs)
+        if config.dataset.chat_template_kwargs
+        else None,
     )

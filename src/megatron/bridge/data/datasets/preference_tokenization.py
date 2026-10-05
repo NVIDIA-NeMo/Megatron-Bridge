@@ -24,19 +24,23 @@ def tokenize_conversation(
     max_seq_length: int,
     tools: Sequence[Mapping[str, Any]] | None = None,
     all_assistant_turns: bool = False,
+    chat_template_kwargs: Mapping[str, Any] | None = None,
 ) -> tuple[list[int], list[bool]] | str:
     """Tokenize one conversation into ``(input_ids, loss_mask)``, or return a drop reason.
 
     Scores the final assistant turn (header included) through its EOS; ``all_assistant_turns``
     also scores every earlier assistant turn. ``tools`` are rendered into the prompt, never scored.
+    ``chat_template_kwargs`` reach the template (e.g. ``truncate_history_thinking=False`` keeps the
+    reasoning of assistant turns before the last user turn, which Nemotron 3 / Qwen3 drop by default).
     """
     if len(messages) < 2 or messages[-1].get("role") != "assistant":
         return "no_assistant_completion"
     if not (str(messages[-1].get("content") or "").strip() or messages[-1].get("tool_calls")):
         return "empty_completion"
 
+    example = {"messages": messages, "chat_template_kwargs": dict(chat_template_kwargs or {})}
     tokenized = tokenize_chat_example(
-        messages,
+        example,
         tokenizer,
         tool_schemas=tools,
         loss_mode="assistant" if all_assistant_turns else "full",

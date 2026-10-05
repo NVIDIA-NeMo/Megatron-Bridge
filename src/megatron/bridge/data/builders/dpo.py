@@ -90,6 +90,9 @@ class DPODatasetConfig(DataloaderConfig):
     prompt_key: str | None = None
     tools_key: str | None = None
     """Field holding the row's tool schemas (list or JSON string), rendered into the prompt by the chat template."""
+    chat_template_kwargs: dict[str, Any] | None = None
+    """Extra chat-template kwargs for every row, e.g. ``{"truncate_history_thinking": false}`` so multi-turn
+    trajectories keep the reasoning of turns before the last user message (Nemotron 3 / Qwen3 strip it)."""
     index_mapping_dir: str | None = None
     num_pairs: int = 0
     dataloader_type: Literal["batch"] | None = "batch"
@@ -213,6 +216,7 @@ def build_preference_split(
         rejected_key=config.rejected_key,
         prompt_key=config.prompt_key,
         tools_key=config.tools_key,
+        chat_template_kwargs=config.chat_template_kwargs,
         ref_logprobs=ref_logprobs,
     )
 

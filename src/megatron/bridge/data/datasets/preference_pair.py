@@ -48,6 +48,7 @@ class PreferencePairDataset(Dataset):
         rejected_key: str = "rejected",
         prompt_key: str | None = None,
         tools_key: str | None = None,
+        chat_template_kwargs: Mapping[str, Any] | None = None,
         ref_logprobs: Mapping[int, Mapping[str, Any]] | None = None,
     ) -> None:
         if len(source) == 0:
@@ -59,6 +60,7 @@ class PreferencePairDataset(Dataset):
         self.rejected_key = rejected_key
         self.prompt_key = prompt_key
         self.tools_key = tools_key
+        self.chat_template_kwargs = dict(chat_template_kwargs or {})
         self.ref_logprobs = ref_logprobs
         self.require_ref_logprobs = ref_logprobs is not None
 
@@ -102,10 +104,14 @@ class PreferencePairDataset(Dataset):
             tools = row[self.tools_key] if self.tools_key else None
             if isinstance(tools, str):
                 tools = json.loads(tools)
-            # Pairs that split before the final turn score every assistant turn; the shared ones cancel in the margin.
+            # Pairs that split before the final turn score every assistant turn, the shared ones cancel in the margin.
             diverged = pair[0][:-1] != pair[1][:-1]
-            side_c = tokenize_conversation(self.tokenizer, pair[0], self.max_seq_length, tools, diverged)
-            side_r = tokenize_conversation(self.tokenizer, pair[1], self.max_seq_length, tools, diverged)
+            side_c, side_r = (
+                tokenize_conversation(
+                    self.tokenizer, side, self.max_seq_length, tools, diverged, self.chat_template_kwargs
+                )
+                for side in pair
+            )
             if isinstance(side_c, str) or isinstance(side_r, str):
                 record = self._stub_record(idx, side_c if isinstance(side_c, str) else side_r)
             else:

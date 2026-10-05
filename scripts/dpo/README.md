@@ -41,10 +41,16 @@ the trajectories were generated with, name that field with `--tools-key` /
 `dataset.tools_key` so the chat template renders them into the prompt; it is
 checked at startup like `--prompt-key`.
 
-When the template already ends a turn with the EOS (ChatML `<|im_end|>`), the
-completion ends there: the trailing newline is not scored and no second EOS is
-appended. Artifacts scored before this rule carry no `tokenization_version` and
-are rejected; re-score them.
+Thinking templates (Nemotron 3, Qwen3) drop the reasoning of assistant turns
+that come before the last user turn. A pair that splits at such a turn would
+then be trained on that turn without the reasoning it was generated after.
+Pass `--chat-template-kwargs '{"truncate_history_thinking": false}'` when
+scoring and `dataset.chat_template_kwargs` when training to keep it; like the
+keys above, the value is recorded and checked. When the template already ends
+a turn with the EOS (ChatML `<|im_end|>`), the completion ends there: the
+trailing newline is not scored and no second EOS is appended. Artifacts scored
+before this rule carry no `tokenization_version` and are rejected; re-score
+them.
 
 Pairs that can't be used (`context_mismatch`, `no_assistant_completion`,
 `empty_completion`, `over_length`) are not dropped, because the sampler needs a
@@ -142,6 +148,7 @@ The margins only mean something if both runs saw the same tokens.
 | Tokenizer | metadata check at startup |
 | Sequence length (`dataset.seq_length`, stored as `max_seq_length`) | metadata check at startup |
 | Row layout (`dataset.prompt_key`, `dataset.tools_key` / `--prompt-key`, `--tools-key`) | metadata check at startup |
+| Chat-template kwargs (`dataset.chat_template_kwargs` / `--chat-template-kwargs`) | metadata check at startup |
 | Tokenization rules (`tokenization_version`, set by the code) | metadata check at startup |
 | TP and sequence parallelism | metadata check at startup (PP and DP may differ) |
 | `num_pairs`, same rows in the same order | artifact must cover `pair_id 0..N-1` exactly |

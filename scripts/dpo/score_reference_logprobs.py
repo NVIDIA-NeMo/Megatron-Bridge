@@ -34,6 +34,7 @@ With tensor and data parallelism (launch ``--tp`` x DP processes; rank 0 gathers
 """
 
 import argparse
+import json
 import os
 from dataclasses import asdict
 
@@ -106,6 +107,12 @@ def parse_args() -> argparse.Namespace:
         "--tools-key",
         default=None,
         help="Field holding the row's tool schemas, rendered into the prompt by the chat template; must match training",
+    )
+    parser.add_argument(
+        "--chat-template-kwargs",
+        type=json.loads,
+        default=None,
+        help="JSON object of extra chat-template kwargs, e.g. '{\"truncate_history_thinking\": false}'; must match training",
     )
     parser.add_argument("--model", required=True, help="Reference model (HF path/id the policy initializes from)")
     parser.add_argument("--tokenizer", default=None, help="Defaults to --model; must match training")
@@ -197,6 +204,7 @@ class ReferenceLogprobScorer:
             rejected_key=args.rejected_key,
             prompt_key=args.prompt_key,
             tools_key=args.tools_key,
+            chat_template_kwargs=args.chat_template_kwargs,
             pad_seq_length_to_mult=args.tp if args.sequence_parallel else 1,
         )
 
@@ -365,6 +373,7 @@ class ReferenceLogprobScorer:
             tools_key=self.args.tools_key,
             tensor_model_parallel_size=self.args.tp,
             sequence_parallel=bool(self.args.sequence_parallel),
+            chat_template_kwargs=self.args.chat_template_kwargs or None,
         )
         write_scoring_metadata(
             {
