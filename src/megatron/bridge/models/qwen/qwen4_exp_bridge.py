@@ -389,6 +389,7 @@ class Qwen4ExpBridge(MegatronModelBridge):
         mappings = [AutoMapping(megatron_param=m, hf_param=h) for m, h in simple.items()]
         AutoMapping.register_module_type("SharedExpertMLP", "column")
         AutoMapping.register_module_type("GatedDeltaNet", "column")
+        AutoMapping.register_module_type("Qwen4ExpGatedDeltaNet", "column")
 
         mappings.extend(
             [

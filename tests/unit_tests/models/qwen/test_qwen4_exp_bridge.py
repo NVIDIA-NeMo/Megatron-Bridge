@@ -21,8 +21,10 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpGatedDeltaNet
 from megatron.bridge.models.qwen.qwen4_exp_bridge import (
     PLENGramEmbeddingMapping,
     Qwen4ExpBridge,
@@ -181,6 +183,27 @@ class TestQwen4ExpProvider:
 
 
 class TestQwen4ExpMappings:
+    @pytest.mark.unit
+    @pytest.mark.parametrize("parameter", ["A_log", "dt_bias"])
+    def test_local_gdn_parallelism_detection(
+        self, mock_pretrained: Mock, monkeypatch: pytest.MonkeyPatch, parameter: str
+    ) -> None:
+        # AutoMapping dispatches on the concrete class name, rather than its bases.
+        registry_types = {
+            kind: names - {"Qwen4ExpGatedDeltaNet"} for kind, names in AutoMapping._MODULE_TYPE_REGISTRY.items()
+        }
+        monkeypatch.setattr(AutoMapping, "_MODULE_TYPE_REGISTRY", registry_types)
+        bridge = Qwen4ExpBridge()
+        bridge.hf_pretrained = mock_pretrained
+        registry = bridge.mapping_registry()
+        mapping = registry.megatron_to_hf_lookup(f"decoder.layers.0.self_attention.{parameter}")
+        assert isinstance(mapping, AutoMapping)
+
+        # Exercise the actual module type without allocating a model or initializing CUDA.
+        module = Qwen4ExpGatedDeltaNet.__new__(Qwen4ExpGatedDeltaNet)
+        torch.nn.Module.__init__(module)
+        assert mapping._detect_parallelism_type(module) == "column"
+
     def test_mapping_registry_covers_all_components(self, mock_pretrained, vl_config):
         bridge = Qwen4ExpBridge()
         bridge.hf_pretrained = mock_pretrained
