@@ -320,6 +320,7 @@ class PerLayerEmbedding(MegatronModule):
                     setattr(param, "sequence_parallel", True)
 
         self.tp_group = pg_collection.tp
+        self.cp_group = pg_collection.cp
         self._ngram_ids: Optional[Tensor] = None
         self._position_in_segment: Optional[Tensor] = None
         self._position_in_sequence: Optional[Tensor] = None
