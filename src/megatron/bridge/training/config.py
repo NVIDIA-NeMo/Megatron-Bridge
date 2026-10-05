@@ -2173,8 +2173,9 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
 
     This function ensures that distributed optimizer settings are consistent across
-    DDP and optimizer configurations. If either setting is enabled, both will be
-    enabled to maintain consistency.
+    DDP and optimizer configurations. Layer-wise optimizers require DDP's
+    distributed buffers while retaining their own optimizer implementation.
+    Otherwise, if either setting is enabled, both will be enabled.
 
     Args:
         config: The configuration container to validate and potentially modify.
@@ -2182,7 +2183,13 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     ddp_setting = config.ddp.use_distributed_optimizer
     optimizer_setting = config.optimizer.use_distributed_optimizer
 
-    if ddp_setting or optimizer_setting:
+    uses_layer_wise_optimizer = (
+        config.optimizer.use_layer_wise_distributed_optimizer or config.optimizer.optimizer.startswith("dist_")
+    )
+    if uses_layer_wise_optimizer:
+        config.ddp.use_distributed_optimizer = True
+        config.optimizer.use_distributed_optimizer = False
+    elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "

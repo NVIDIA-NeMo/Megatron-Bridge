@@ -258,7 +258,7 @@ def train(
     # Megatron FSDP and FSDP2 does not have this hook
     should_toggle_forward_pre_hook = should_disable_forward_pre_hook(
         config.ddp.use_megatron_fsdp,
-        config.optimizer.use_distributed_optimizer,
+        config.ddp.use_distributed_optimizer,
         config.ddp.overlap_param_gather,
     )
     # Also, check weight hash across DP replicas to be very pedantic.
@@ -1348,7 +1348,7 @@ def save_checkpoint_and_time(
 
     should_force_param_sync = should_disable_forward_pre_hook(
         state.cfg.ddp.use_megatron_fsdp,
-        state.cfg.optimizer.use_distributed_optimizer,
+        state.cfg.ddp.use_distributed_optimizer,
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:
