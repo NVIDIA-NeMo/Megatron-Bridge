@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 """CPU controls for full-sequence Nemotron-H expert-choice replay."""
 
 from types import SimpleNamespace

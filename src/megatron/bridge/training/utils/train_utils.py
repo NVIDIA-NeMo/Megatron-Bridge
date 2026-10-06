@@ -615,6 +615,24 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _step_num_microbatches(global_state: GlobalState) -> int:
+    """Return the microbatches this step ran: the packing scheduler's count, else the configured one."""
+    return getattr(global_state, "global_batch_packing_num_microbatches", None) or get_num_microbatches()
+
+
+def _mtp_loss_scale(global_state: GlobalState) -> float:
+    """Return the factor that turns the MTP loss tracker into a per-step loss for logging.
+
+    Megatron-Core releases that track MTP loss per token (with ``calculate_per_token_loss``)
+    already reduce raw loss sums and token counts into a per-token mean; earlier releases, and
+    microbatch-normalized training, accumulate one normalized loss per microbatch, which is
+    averaged over the microbatches this step ran. Megatron-LM's training loop applies the same rule.
+    """
+    if MTPLossLoggingHelper.tracker.get("calculate_per_token_loss", False):
+        return 1.0
+    return 1 / _step_num_microbatches(global_state)
+
+
 def _track_moe_metrics_supports_num_moe_layers() -> bool:
     """Return whether the active MCore accepts explicit MoE layer counts."""
     return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
@@ -1038,7 +1056,7 @@ def training_log(
 
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
     if num_moe_experts is not None:
-        moe_loss_scale = 1 / get_num_microbatches()
+        moe_loss_scale = 1 / _step_num_microbatches(global_state)
         track_names = []
 
         moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
@@ -1072,7 +1090,7 @@ def training_log(
             track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
         track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
-        mtp_loss_scale = 1 / get_num_microbatches()
+        mtp_loss_scale = _mtp_loss_scale(global_state)
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
