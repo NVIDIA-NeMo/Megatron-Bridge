@@ -2291,8 +2291,6 @@ class MegatronModelBridge(
 
                 local_name = self._unwrap_name(local_name)
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
-                if self._should_skip_mtp_duplicate_embedding_export(global_name, model):
-                    continue
                 # if name removed due to some reason, continue. e.g. embeddings_are_tied
                 if global_name not in global_names_index_dict:
                     print_rank_0(f"WARNING: {global_name} not in global_names_index_dict")
