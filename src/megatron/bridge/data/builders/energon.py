@@ -17,12 +17,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from transformers import AutoProcessor, AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+
+
+if TYPE_CHECKING:
+    from megatron.energon import CachePool
 
 
 def _validate_hf_path(path: str, *, field_name: str) -> None:
@@ -222,6 +227,9 @@ class EnergonDatasetConfig(DataloaderConfig):
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
+    cache_dir: str | None = None
+    cache_num_workers: int = 8
+    max_cache_size_gbytes: float = 1024
 
     def validate(self) -> None:
         """Validate declarative fields before training derives dataset settings."""
@@ -259,6 +267,13 @@ class EnergonDatasetConfig(DataloaderConfig):
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
         if self.do_test:
             raise ValueError("EnergonDatasetConfig does not support a distinct test split.")
+        if self.cache_dir is not None:
+            if not isinstance(self.cache_dir, str) or not self.cache_dir.strip():
+                raise ValueError("cache_dir must be a non-empty string when set.")
+            if self.cache_num_workers <= 0:
+                raise ValueError("cache_num_workers must be greater than 0.")
+            if self.max_cache_size_gbytes <= 0:
+                raise ValueError("max_cache_size_gbytes must be greater than 0.")
         if not isinstance(self.task_encoder, EnergonTaskEncoderConfig):
             raise TypeError("task_encoder must be a supported declarative Energon task-encoder config.")
         if self.packing_buffer_size is not None and not self.task_encoder.supports_native_packing:
@@ -266,6 +281,7 @@ class EnergonDatasetConfig(DataloaderConfig):
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         reserved_dataset_kwargs = {
             "batch_size",
+            "cache_pool",
             "max_samples_per_sequence",
             "packing_buffer_size",
             "shuffle_buffer_size",
@@ -396,6 +412,18 @@ class EnergonDatasetBuilder:
         config.validate()
         self.config = config
 
+    def _build_cache_pool(self) -> CachePool:
+        """Build the cache pool for the savable loaders."""
+        from megatron.energon import FileStoreCachePool, NoCachePool
+
+        if self.config.cache_dir is None:
+            return NoCachePool()
+        return FileStoreCachePool(
+            parent_cache_dir=Path(self.config.cache_dir),
+            num_workers=self.config.cache_num_workers,
+            max_cache_size_gbytes=self.config.max_cache_size_gbytes,
+        )
+
     def build(self, context: DatasetBuildContext) -> tuple[Any | None, Any | None, None]:
         """Build requested Energon train and validation iterators."""
         from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
@@ -418,6 +446,7 @@ class EnergonDatasetBuilder:
             max_samples_per_sequence=self.config.max_samples_per_sequence,
             packing_buffer_size=self.config.packing_buffer_size,
             pg_collection=context.pg_collection,
+            cache_pool=self._build_cache_pool(),
             **self.config.dataset_kwargs,
         )
         train = datamodule.train_dataloader() if build_train else None
