@@ -1,5 +1,8 @@
 # Training entry points
 
+For the optional all-Lustre direct-Enroot backend, see the
+[shared container backend guide](../common/README.md). Pyxis remains the default.
+
 Megatron Bridge training provides a small public Slurm launcher:
 
 ```bash
@@ -11,6 +14,12 @@ setup layer only owns resources, the container, explicitly forwarded environment
 Recipe selection, dataset construction, and ConfigContainer overrides are resolved inside the training environment.
 Without an active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than
 resolving the full GPU training dependency set on the login node.
+
+Submission returns immediately unless `--wait` is supplied. Waiting checks
+Slurm status every 60 seconds; `--poll-interval SECONDS` can increase that
+interval (minimum 60). Logs remain in the NeMo Run experiment directory, with
+no separate scheduler-querying log tailer or queue-start-time watcher. A
+monitoring error or interruption does not cancel the submitted job.
 
 `launch_with_nemo_run.py` and `launch_with_sbatch.sh` remain available for their existing specialized workflows; `train.sh` is the compact recipe-oriented path.
 
@@ -58,6 +67,8 @@ the Slurm partition must provide the requested hardware:
 
 `benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
 compatibility paths retain their legacy names.
+
+> **DeepSeek V4:** The 26.08 DeepSeek V4 benchmark recipes require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
 
 ```bash
 ./scripts/training/train.sh \

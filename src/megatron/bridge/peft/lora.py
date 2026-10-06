@@ -251,6 +251,7 @@ class LoRA(PEFT, ModuleMatcher):
                     sequence_parallel_input_regather=self.sequence_parallel_input_regather,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                    replicate_adapter=attrs.replicate_adapter,
                 )
             adapter = adapter_cls(attrs.in_features, attrs.out_features, dim, **adapter_kwargs)
             if isinstance(module, TopKRouter):

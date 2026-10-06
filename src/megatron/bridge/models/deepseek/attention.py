@@ -15,6 +15,7 @@
 """MLA attention spec helpers for the DeepSeek family."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 from typing import Optional
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -55,6 +56,15 @@ class MLASelfAttentionWithoutQueryNorm(MLASelfAttention):
         exists to do, so the rejection would fire on a configuration this class already
         knows how to satisfy.
         """
+        if not hasattr(self.config, "attention_latent_norm_epsilon"):
+            # Older MCore pins use ``layernorm_epsilon`` directly. A shallow
+            # namespace keeps this resolver side-effect free while exposing the
+            # compatibility attribute expected by the newer resolver.
+            self.config = SimpleNamespace(
+                **vars(self.config),
+                attention_latent_norm_epsilon=getattr(self.config, "layernorm_epsilon", 1e-5),
+            )
+
         if self.config.q_lora_rank is not None:
             return super()._resolve_qk_norm_config(submodules)
 

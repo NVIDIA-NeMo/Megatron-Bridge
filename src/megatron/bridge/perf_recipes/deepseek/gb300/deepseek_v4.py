@@ -15,6 +15,9 @@
 
 import torch
 
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
 from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config,
@@ -29,6 +32,10 @@ from megatron.bridge.training.config import ConfigContainer
 def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× GB300, MXFP8."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config()
+
+    cfg.model.expert_model_parallel_size = 32
+    cfg.train.micro_batch_size = 2
+
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -36,7 +43,7 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
@@ -51,7 +58,11 @@ def deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, dev Megatron-Core required."""
+    """DeepSeek V4 Pro pretrain: 256× GB300, MXFP8, native HybridModel layout.
+
+    Requires mHC PP/VPP and CUDA graphs with recompute and activation offload;
+    the main-branch MCore pin does not yet support this combination.
+    """
     cfg = deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config()
 
     cfg.model.tensor_model_parallel_size = 1
@@ -67,7 +78,8 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
-    cfg.model.pipeline_model_parallel_layout = "Et*4|(tttt|)*14tmL"
+    # Preserve the measured logical-block split, reserving room for MTP/loss.
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model, logical_layers_per_stage=[4] * 15 + [1])
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["mla_up_proj", "mhc"]
 
@@ -88,7 +100,7 @@ def deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
 
     cfg.model.moe_router_force_load_balancing = True
-    cfg.model.apply_dsa_kernel_fusion = True
+    cfg.model.dsa_kernel_backend = "cudnn"
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"

@@ -22,6 +22,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    ConcatenatedQKVMapping,
     DirectMapping,
     FusedExpertMapping,
     FusedGatedExpertMapping,
@@ -29,6 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     KVMapping,
     QKVMapping,
     ReplicatedMapping,
+    RMSNorm2ZeroCenteredRMSNormMapping,
     RowParallelMapping,
     merge_kv_biases,
     merge_kv_weights,
@@ -97,6 +99,99 @@ def transformer_config():
         use_cpu_initialization=True,
         num_query_groups=2,
     )
+
+
+def test_local_hf_param_specs_cover_gated_and_expert_views():
+    logical = torch.arange(32).reshape(8, 4)
+    gated = GatedMLPMapping(
+        "decoder.mlp.linear_fc1.weight",
+        gate="model.mlp.gate_proj.weight",
+        up="model.mlp.up_proj.weight",
+    )
+    gated_specs = gated.local_hf_param_specs()
+
+    assert [spec.name for spec in gated_specs] == [
+        "model.mlp.gate_proj.weight",
+        "model.mlp.up_proj.weight",
+    ]
+    assert gated_specs[0].selected_shape(logical.shape) == torch.Size((4, 4))
+    assert torch.equal(gated_specs[0].select(logical), logical[:4])
+    assert torch.equal(gated_specs[1].select(logical), logical[4:])
+
+    down = FusedExpertMapping(
+        "decoder.mlp.experts.linear_fc2.weight3",
+        "model.mlp.experts.down_proj",
+    )
+    assert [spec.name for spec in down.local_hf_param_specs()] == ["model.mlp.experts.3.down_proj.weight"]
+
+    gate_up = FusedGatedExpertMapping(
+        "decoder.mlp.experts.linear_fc1.weight3",
+        "model.mlp.experts.gate_up_proj",
+    )
+    assert [spec.name for spec in gate_up.local_hf_param_specs()] == [
+        "model.mlp.experts.3.gate_proj.weight",
+        "model.mlp.experts.3.up_proj.weight",
+    ]
+
+
+def test_local_hf_param_specs_reject_grouped_or_transformed_views():
+    """Mappings that need export transforms must use the normal Bridge path."""
+
+    class GroupedAutoMapping(AutoMapping):
+        is_grouped_export = True
+
+    class GroupedGatedMLPMapping(GatedMLPMapping):
+        is_grouped_export = True
+
+    class TransposedAutoMapping(AutoMapping):
+        transpose_on_export = True
+
+    assert not GroupedAutoMapping(
+        "decoder.mlp.experts.weight0",
+        "model.mlp.experts.down_proj",
+    ).local_hf_param_specs()
+    assert not GroupedGatedMLPMapping(
+        "decoder.mlp.experts.linear_fc1.weight0",
+        gate="model.mlp.experts.gate_proj",
+        up="model.mlp.experts.up_proj",
+    ).local_hf_param_specs()
+    assert not AutoMapping(
+        "decoder.proj.weight",
+        "model.proj.weight",
+        permute_dims=(1, 0),
+    ).local_hf_param_specs()
+    assert not TransposedAutoMapping(
+        "decoder.proj.weight",
+        "model.proj.weight",
+    ).local_hf_param_specs()
+    assert not ConcatenatedQKVMapping(
+        "decoder.self_attention.linear_qkv.weight",
+        "model.self_attn.qkv_proj.weight",
+    ).local_hf_param_specs()
+    assert not RMSNorm2ZeroCenteredRMSNormMapping(
+        "decoder.input_layernorm.weight",
+        "model.input_layernorm.weight",
+    ).local_hf_param_specs()
+    assert not FusedExpertMapping(
+        "decoder.mlp.experts.linear_fc2.weight3",
+        "model.mlp.experts.down_proj",
+        transpose_on_export=True,
+    ).local_hf_param_specs()
+    assert not FusedExpertMapping(
+        "decoder.mlp.experts.linear_fc2.weight3",
+        "model.mlp.experts.down_proj",
+        permute_dims=(1, 0),
+    ).local_hf_param_specs()
+    assert not FusedGatedExpertMapping(
+        "decoder.mlp.experts.linear_fc1.weight3",
+        "model.mlp.experts.gate_up_proj",
+        transpose_on_export=True,
+    ).local_hf_param_specs()
+    assert not FusedGatedExpertMapping(
+        "decoder.mlp.experts.linear_fc1.weight3",
+        "model.mlp.experts.gate_up_proj",
+        permute_dims=(1, 0),
+    ).local_hf_param_specs()
 
 
 class MockModule(torch.nn.Module):
@@ -423,6 +518,19 @@ class TestQKVMapping:
             mock_hf_to_megatron.assert_called_once()
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
+
+    def test_megatron_to_hf_scale_uses_explicit_mxfp8_row_block_size(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
+        megatron_module = MockModule(transformer_config, weight_shape=(64, 32))
+        packed_scale = torch.arange(64, dtype=torch.uint8).reshape(64, 1)
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"qkv.weight": packed_scale}):
+            result = mapping.megatron_to_hf_scale(packed_scale, megatron_module, row_block_size=1)
+
+        torch.testing.assert_close(result["q.weight"], torch.cat((packed_scale[:16], packed_scale[32:48])))
+        torch.testing.assert_close(result["k.weight"], torch.cat((packed_scale[16:24], packed_scale[48:56])))
+        torch.testing.assert_close(result["v.weight"], torch.cat((packed_scale[24:32], packed_scale[56:64])))
 
 
 class TestKVMapping:

@@ -15,6 +15,7 @@
 """Unit tests for the DeepSeek MLA attention spec helpers."""
 
 import inspect
+from dataclasses import dataclass
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -44,16 +45,25 @@ def _mla_submodules():
     return spec.submodules.self_attention.submodules
 
 
+@dataclass
+class _LegacyMLAConfig:
+    q_lora_rank: int | None
+    qk_layernorm: bool = True
+    qk_l2_norm: bool = False
+    multi_latent_attention: bool = True
+    experimental_attention_variant: str | None = None
+    normalization: str = "RMSNorm"
+    transformer_impl: str = "transformer_engine"
+    layernorm_epsilon: float = 1e-5
+
+
 def _config(q_lora_rank):
-    return SimpleNamespace(
-        q_lora_rank=q_lora_rank,
-        qk_layernorm=True,
-        qk_l2_norm=False,
-        multi_latent_attention=True,
-        experimental_attention_variant=None,
-        normalization="RMSNorm",
-        transformer_impl="transformer_engine",
-    )
+    return _LegacyMLAConfig(q_lora_rank=q_lora_rank)
+
+
+def _module_name(module_or_spec):
+    """Return the implementation name for class- and ModuleSpec-valued resolver results."""
+    return getattr(module_or_spec, "module", module_or_spec).__name__
 
 
 def _resolve(q_lora_rank):
@@ -70,25 +80,25 @@ class TestMLASelfAttentionWithoutQueryNorm:
     def test_no_query_lora_drops_the_fused_query_norm(self):
         """With q_lora_rank=None, HF has no query norm, so linear_q_proj must stay unfused."""
         resolved = _resolve(q_lora_rank=None)
-        assert "LayerNorm" not in resolved["linear_q_proj"].__name__
+        assert "LayerNorm" not in _module_name(resolved["linear_q_proj"])
 
     def test_no_query_lora_keeps_the_kv_norm(self):
         """kv_a_layernorm exists in every DeepSeek checkpoint and must still be built."""
         resolved = _resolve(q_lora_rank=None)
-        assert "LayerNorm" in resolved["linear_kv_up_proj"].__name__
+        assert "LayerNorm" in _module_name(resolved["linear_kv_up_proj"])
 
     def test_query_lora_is_untouched(self):
         """With a query LoRA the norm belongs on linear_q_up_proj and maps to q_a_layernorm."""
         resolved = _resolve(q_lora_rank=1536)
-        assert "LayerNorm" in resolved["linear_q_up_proj"].__name__
-        assert "LayerNorm" in resolved["linear_kv_up_proj"].__name__
+        assert "LayerNorm" in _module_name(resolved["linear_q_up_proj"])
+        assert "LayerNorm" in _module_name(resolved["linear_kv_up_proj"])
 
     @pytest.mark.parametrize("q_lora_rank", [None, 1536])
     def test_standalone_norms_stay_disabled(self, q_lora_rank):
         """Norms stay fused into the projections; no standalone q/kv norm modules appear."""
         resolved = _resolve(q_lora_rank)
-        assert resolved["q_layernorm"].__name__ == "IdentityOp"
-        assert resolved["kv_layernorm"].__name__ == "IdentityOp"
+        assert _module_name(resolved["q_layernorm"]) == "IdentityOp"
+        assert _module_name(resolved["kv_layernorm"]) == "IdentityOp"
 
 
 class TestDeepSeekBridgesUseTheSpecHelper:

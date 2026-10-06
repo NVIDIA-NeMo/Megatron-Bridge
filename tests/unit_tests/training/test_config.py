@@ -15,7 +15,8 @@
 import json
 import os
 import warnings
-from dataclasses import fields
+from dataclasses import dataclass, fields
+from types import SimpleNamespace
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
 
@@ -36,7 +37,11 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.transformer_config import HeterogeneousTransformerConfig, TransformerConfig
+from megatron.bridge.models.transformer_config import (
+    _HYBRIDEP_PADDING_FIELDS,
+    HeterogeneousTransformerConfig,
+    TransformerConfig,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -677,6 +682,71 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "use_gloo_process_groups, expect_assertion_error",
+        [(False, True), (True, False)],
+    )
+    def test_memory_efficient_fully_reshardable_checkpoint_requires_gloo(
+        self, monkeypatch, use_gloo_process_groups, expect_assertion_error
+    ):
+        """Require Gloo only when memory-efficient fully reshardable checkpoints are enabled."""
+        gpt_model_cfg = create_test_gpt_config()
+        dist_cfg = create_test_distributed_init_config(use_gloo_process_groups=use_gloo_process_groups)
+        opt_cfg = create_test_optimizer_config(use_distributed_optimizer=True)
+        chkpt_cfg = create_test_checkpoint_config(
+            dist_ckpt_optim_fully_reshardable=True,
+            distrib_optim_fully_reshardable_mem_efficient=True,
+        )
+        ddp_cfg = create_test_ddp_config(use_distributed_optimizer=True)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            dist_config=dist_cfg,
+            optimizer_config=opt_cfg,
+            checkpoint_config=chkpt_cfg,
+            ddp_config=ddp_cfg,
+        )
+        try:
+            if expect_assertion_error:
+                with pytest.raises(AssertionError, match="requires dist.use_gloo_process_groups=True"):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("expert_gtp", [False, True])
+    @pytest.mark.parametrize("fully_reshardable,memory_efficient", [(True, True), (True, False), (False, True)])
+    def test_gtp_rejects_memory_efficient_fully_reshardable_optimizer_checkpoint(
+        self, expert_gtp, fully_reshardable, memory_efficient
+    ):
+        model = create_test_gpt_config(
+            tensor_parallel_num_weight_shards=1 if expert_gtp else 2,
+            expert_tensor_parallel_size=1,
+            expert_tensor_parallel_num_weight_shards=2 if expert_gtp else 1,
+            num_moe_experts=4 if expert_gtp else None,
+        )
+        container, original_world_size, config_module = create_test_config_container(
+            world_size_override=2,
+            model_config=model,
+            dist_config=create_test_distributed_init_config(use_gloo_process_groups=True),
+            optimizer_config=create_test_optimizer_config(use_distributed_optimizer=True),
+            ddp_config=create_test_ddp_config(use_distributed_optimizer=True),
+            checkpoint_config=create_test_checkpoint_config(
+                dist_ckpt_optim_fully_reshardable=fully_reshardable,
+                distrib_optim_fully_reshardable_mem_efficient=memory_efficient,
+            ),
+        )
+        try:
+            if fully_reshardable and memory_efficient:
+                with pytest.raises(ValueError, match="GTP does not support memory-efficient fully reshardable"):
+                    container.validate()
+            else:
+                container.validate()
+        finally:
+            restore_get_world_size_safe(original_world_size, config_module)
+
     def test_scheduler_lr_decay_iters_default(self, monkeypatch):
         """Test `lr_decay_iters` defaults to `train_iters` and `lr_decay_steps` calculation."""
         gpt_model_cfg = create_test_gpt_config()
@@ -992,6 +1062,97 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize("packing_mode", ["offline", "in_batch"])
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_thd_recipe_enables_hybridep_padding(self, _mock_device, packing_mode):
+        """Recipe-owned THD packing enables safe HybridEP uneven-input padding."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+        )
+        padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if hasattr(gpt_model_cfg, field))
+
+        if packing_mode == "offline":
+            train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+            dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+            dataset_cfg.enable_offline_packing = True
+            dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        else:
+            train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=32)
+            dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+            dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("configured_padding", [False, True])
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_bshd_recipe_preserves_hybridep_padding_setting(self, _mock_device, configured_padding):
+        """An unpacked BSHD recipe does not gain automatic padding or lose an explicit setting."""
+        padding_field = next(
+            field for field in _HYBRIDEP_PADDING_FIELDS if field in GPTModelProvider.__dataclass_fields__
+        )
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            **{padding_field: configured_padding},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is configured_padding
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @patch("torch.cuda.get_device_properties", return_value=SimpleNamespace(major=9, name="NVIDIA H100"))
+    def test_thd_recipe_ignores_stale_cuda_graph_scope_when_impl_none(self, _mock_device):
+        """A deprecated scope that validation clears must not suppress eager THD safety."""
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config(
+            num_moe_experts=8,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            cuda_graph_impl="none",
+            use_te_rng_tracker=True,
+        )
+        padding_field = next(field for field in _HYBRIDEP_PADDING_FIELDS if hasattr(gpt_model_cfg, field))
+        gpt_model_cfg.cuda_graph_scope = ["full_iteration"]
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=create_test_training_config(micro_batch_size=1, global_batch_size=32),
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert getattr(gpt_model_cfg, padding_field) is True
+            assert cuda_graph_module_names(gpt_model_cfg) == []
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_packed_sequence_micro_batch_size_validation_error_for_dataset_provider(self, monkeypatch):
         """Test packed sequence validation for DatasetProvider configs."""
         from dataclasses import dataclass
@@ -1186,15 +1347,22 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_native_energon_packing_marks_builder_transformer_config(self, monkeypatch):
-        """Test native Energon packing marks the nested builder transformer config."""
+        """Native Energon THD packing marks the nested transformer and enables HybridEP padding."""
+        padding_field = next(
+            field for field in _HYBRIDEP_PADDING_FIELDS if field in TransformerConfig.__dataclass_fields__
+        )
         model_cfg = BridgeGPTModelConfig(
             transformer=TransformerConfig(
                 num_layers=2,
                 hidden_size=128,
                 num_attention_heads=4,
                 ffn_hidden_size=256,
+                num_moe_experts=8,
+                moe_token_dispatcher_type="flex",
+                moe_flex_dispatcher_backend="hybridep",
                 calculate_per_token_loss=True,
                 use_cpu_initialization=True,
+                **{padding_field: False},
             ),
             vocab_size=256,
             seq_length=512,
@@ -1209,10 +1377,16 @@ class TestConfigContainerValidation:
             dataset_config_override=dataset_cfg,
         )
         container.ddp.average_in_collective = False
+        monkeypatch.setattr(
+            torch.cuda,
+            "get_device_properties",
+            lambda _device: SimpleNamespace(major=9, name="NVIDIA H100"),
+        )
 
         try:
             container.validate()
             assert model_cfg.transformer._enable_in_batch_packing is True
+            assert getattr(model_cfg.transformer, padding_field) is True
             assert "_enable_in_batch_packing" not in model_cfg.__dict__
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1411,7 +1585,6 @@ class TestConfigContainerValidation:
     @pytest.mark.parametrize(
         ("field_name", "value", "world_size", "message"),
         [
-            ("mtp_num_layers", 1, 1, "does not support MTP"),
             ("cuda_graph_impl", "local", 1, "does not support CUDA graphs"),
             ("vision_cuda_graph_impl", "transformer_engine", 1, "does not support CUDA graphs"),
             ("pipeline_model_parallel_size", 2, 2, "does not yet support pipeline parallelism"),
@@ -1438,6 +1611,107 @@ class TestConfigContainerValidation:
         try:
             with pytest.raises(ValueError, match=message):
                 container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_native_energon_packing_allows_mtp(self, monkeypatch):
+        """Native Energon packing is orthogonal to MTP packed-sequence rolling.
+
+        MTP with packed sequences is handled downstream: ``vlm_step`` forwards
+        the packed THD metadata, the Qwen3-VL text model routes physical
+        boundaries to MCore's ``process_mtp_loss``, and MCore rolls
+        labels/loss_mask within packed boundaries. Configuration must not
+        reject the combination (regression for issue #5954).
+        """
+        model_cfg = create_test_qwen3_vl_config(calculate_per_token_loss=True)
+        model_cfg.mtp_num_layers = 1
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=4)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert model_cfg.mtp_num_layers == 1
+            assert dataset_cfg.packing_buffer_size is not None
+            assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 1
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("ep_size", "cp_size", "tp_size", "initial_padding", "expected_error"),
+        [
+            (2, 1, 1, 1, None),
+            (2, 2, 2, 1, None),
+            (2, 2, 2, 0, "in_batch_packing_pad_to_multiple_of must be greater than 0"),
+            (1, 1, 1, 1, "Custom encoder requires fixed-width padding"),
+        ],
+    )
+    def test_custom_energon_validation_uses_training_derived_padding(
+        self, monkeypatch, ep_size, cp_size, tp_size, initial_padding, expected_error
+    ):
+        @dataclass(kw_only=True)
+        class FixedWidthEncoderConfig(QwenVLEnergonTaskEncoderConfig):
+            required_padding_multiple: int
+            resolved_padding_multiple: int | None = None
+
+            def validate_dataset(self, dataset_config: EnergonDatasetConfig) -> None:
+                if not dataset_config.pad_to_max_length:
+                    raise ValueError("Custom encoder requires fixed-width padding.")
+                if dataset_config.in_batch_packing_pad_to_multiple_of != self.required_padding_multiple:
+                    raise ValueError("Custom encoder requires resolved CP/SP alignment.")
+                self.resolved_padding_multiple = dataset_config.in_batch_packing_pad_to_multiple_of
+
+        expected_padding = cp_size * tp_size if cp_size > 1 else 1
+        encoder_config = FixedWidthEncoderConfig(
+            hf_processor_path="Qwen/model", required_padding_multiple=expected_padding
+        )
+        validate_encoder = MagicMock(wraps=encoder_config.validate_dataset)
+        build_encoder = MagicMock(side_effect=AssertionError("Validation must not construct runtime encoders."))
+        monkeypatch.setattr(encoder_config, "validate_dataset", validate_encoder)
+        monkeypatch.setattr(encoder_config, "build_task_encoder", build_encoder)
+        model_cfg = create_test_qwen3_vl_config(
+            calculate_per_token_loss=True,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            expert_model_parallel_size=ep_size,
+            context_parallel_size=cp_size,
+            tensor_model_parallel_size=tp_size,
+            sequence_parallel=tp_size > 1,
+            moe_token_dispatcher_type="alltoall",
+        )
+        world_size = ep_size * cp_size * tp_size
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=world_size)
+        dataset_cfg = create_test_qwen_native_energon_dataset_config(sequence_length=512)
+        dataset_cfg.task_encoder = encoder_config
+        dataset_cfg.in_batch_packing_pad_to_multiple_of = initial_padding
+        assert dataset_cfg.pad_to_max_length is False
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=world_size,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            if expected_error is not None:
+                with pytest.raises(ValueError, match=expected_error):
+                    container.validate()
+                if initial_padding == 0:
+                    validate_encoder.assert_not_called()
+            else:
+                container.validate()
+                assert dataset_cfg.pad_to_max_length is True
+                assert encoder_config.resolved_padding_multiple == expected_padding
+                validate_encoder.assert_called_once_with(dataset_cfg)
+            build_encoder.assert_not_called()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -2169,6 +2443,47 @@ class TestConfigContainerValidation:
                 fp8_param_gather=True, fp8_recipe="delayed", reuse_grad_buf_for_mxfp8_param_ag=False
             )
             container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize(
+        ("fp8", "fp8_param_gather", "reuse_grad_buffer", "use_megatron_fsdp", "error_match"),
+        [
+            (None, False, False, False, None),
+            ("e4m3", False, False, False, "fp8_param_gather=True"),
+            ("e4m3", True, False, False, "reuse_grad_buf_for_mxfp8_param_ag=True"),
+            ("e4m3", True, True, False, None),
+            ("e4m3", True, True, True, "not supported with Megatron FSDP"),
+        ],
+    )
+    def test_gtp_mxfp8_requires_param_gather_and_grad_buffer_reuse(
+        self,
+        fp8,
+        fp8_param_gather,
+        reuse_grad_buffer,
+        use_megatron_fsdp,
+        error_match,
+    ):
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_parallel_num_weight_shards=2,
+            fp8=fp8,
+            fp8_recipe="mxfp8",
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=create_test_training_config(train_iters=500, global_batch_size=16),
+            scheduler_config=create_test_scheduler_config(),
+            dist_config=create_test_distributed_init_config(use_megatron_fsdp=use_megatron_fsdp),
+        )
+        try:
+            container.ddp.fp8_param_gather = fp8_param_gather
+            container.ddp.reuse_grad_buf_for_mxfp8_param_ag = reuse_grad_buffer
+            if error_match is None:
+                container.validate()
+            else:
+                with pytest.raises(ValueError, match=error_match):
+                    container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -4902,7 +5217,7 @@ class TestTokenizerConfig:
             tokenizer_type=tokenizer_type,
             metadata_path=metadata_path,
             hf_tokenizer_kwargs={"use_fast": use_fast},
-            sp_tokenizer_kwargs={"legacy": legacy},
+            tokenizer_sentencepiece_legacy=legacy,
         )
 
         assert config.tokenizer_model == tokenizer_model
@@ -4922,3 +5237,100 @@ class TestTokenizerConfig:
                 metadata_path=metadata_path,
                 random_arg=True,
             )
+
+
+@pytest.mark.parametrize("backend", ["torch", "megatron_dist", "megatron_ddp"])
+def test_shortcut_moe_rejects_fsdp(backend):
+    cfg, original, module = create_test_config_container(
+        1, create_test_gpt_config(moe_shortcut_connection=True, num_moe_experts=4)
+    )
+    try:
+        cfg.dist.use_torch_fsdp2 = backend == "torch"
+        cfg.dist.use_megatron_fsdp = backend == "megatron_dist"
+        cfg.ddp.use_megatron_fsdp = backend == "megatron_ddp"
+        with pytest.raises(ValueError, match="moe_shortcut_connection"):
+            cfg.validate()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize("use_recipe", [False, True])
+def test_layerwise_optimizer_rejects_single_grouped_weight(use_recipe):
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config(moe_single_grouped_weight=True))
+    try:
+        if use_recipe:
+            from megatron.bridge.recipes.utils.optimizer_utils import distributed_muon_with_cosine_annealing
+
+            cfg.optimizer, cfg.scheduler = distributed_muon_with_cosine_annealing()
+            assert not cfg.optimizer.use_layer_wise_distributed_optimizer
+        else:
+            cfg.optimizer.use_layer_wise_distributed_optimizer = True
+        with pytest.raises(ValueError, match="moe_single_grouped_weight"):
+            cfg.validate()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+def test_mtp_freeze_requires_mtp_layers():
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config(freeze_base_model_for_mtp=True))
+    try:
+        with pytest.raises(ValueError, match="requires mtp_num_layers"):
+            cfg.validate()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize(
+    "dense,expert",
+    [
+        ("no_shard", "optim_grads"),
+        ("optim", "optim_grads_params"),
+        ("optim_grads", "no_shard"),
+        ("optim_grads_params", None),
+        ("optim", "no_shard"),
+        ("no_shard", None),
+    ],
+)
+@pytest.mark.parametrize("fusion", [False, True])
+def test_fsdp_v1_considers_both_sharding_strategies(dense, expert, fusion, monkeypatch):
+    monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config())
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.data_parallel_sharding_strategy = dense
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        cfg.model.gradient_accumulation_fusion = fusion
+        with patch("megatron.bridge.training.config.warn_rank_0") as warn:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        assert cfg.model.gradient_accumulation_fusion is fusion
+        if fusion and {dense, expert} & {"optim_grads", "optim_grads_params"}:
+            warn.assert_called_once_with(
+                "Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP."
+            )
+        else:
+            warn.assert_not_called()
+        cfg.train.check_weight_hash_across_dp_replicas_interval = 10
+        if "optim_grads_params" in {dense, expert}:
+            with pytest.raises(AssertionError, match="check_weight_hash"):
+                cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        else:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)
+
+
+@pytest.mark.parametrize("expert", [None, "no_shard", "optim"])
+def test_fsdp_v1_meta_initialization_checks_all_strategies(expert, monkeypatch):
+    monkeypatch.delenv("CUDA_DEVICE_MAX_CONNECTIONS", raising=False)
+    cfg, original, module = create_test_config_container(1, create_test_gpt_config(init_model_with_meta_device=True))
+    try:
+        cfg.checkpoint.save = cfg.checkpoint.load = None
+        cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+        cfg.ddp.expert_data_parallel_sharding_strategy = expert
+        if expert in (None, "no_shard"):
+            with pytest.raises(ValueError, match="Meta device"):
+                cfg._validate_and_apply_megatron_fsdp_v1_configs()
+        else:
+            cfg._validate_and_apply_megatron_fsdp_v1_configs()
+    finally:
+        restore_get_world_size_safe(original, module)

@@ -13,11 +13,14 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Mapping
 from typing import Any
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import GlmMoeDsaForCausalLM
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -32,6 +35,43 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 logger = logging.getLogger(__name__)
 
 
+def _partition_layer_groups(group_sizes: list[int], num_stages: int) -> list[int]:
+    """Split ordered layer groups into contiguous stages that minimize the largest stage.
+
+    Args:
+        group_sizes: Number of layers in each group, in layer order.
+        num_stages: Number of stages; must not exceed the number of groups.
+
+    Returns:
+        Number of layers in each stage. Every stage receives at least one whole group.
+    """
+
+    def stages_needed(capacity: int) -> int:
+        count, load = 1, 0
+        for size in group_sizes:
+            if load + size > capacity:
+                count, load = count + 1, 0
+            load += size
+        return count
+
+    capacity = max(group_sizes)
+    while stages_needed(capacity) > num_stages:
+        capacity += 1
+
+    stage_sizes: list[int] = []
+    start = 0
+    for stage_index in range(num_stages):
+        # Fill each stage up to the minimal capacity while leaving one group for every later stage.
+        last_start = len(group_sizes) - (num_stages - stage_index - 1)
+        end, load = start + 1, group_sizes[start]
+        while end < last_start and load + group_sizes[end] <= capacity:
+            load += group_sizes[end]
+            end += 1
+        stage_sizes.append(load)
+        start = end
+    return stage_sizes
+
+
 @MegatronModelBridge.register_bridge(
     source=GlmMoeDsaForCausalLM, target=GPTModel, provider=MLAModelProvider, model_type="glm_moe_dsa"
 )
@@ -41,12 +81,15 @@ class GLM5Bridge(MegatronModelBridge):
 
     This bridge handles conversion between HuggingFace GlmMoeDsaForCausalLM
     and Megatron-Core GPTModel formats. ``zai-org/GLM-5``,
-    ``zai-org/GLM-5.1``, and ``zai-org/GLM-5.2`` are auto-detected through
+    ``zai-org/GLM-5.1``, ``zai-org/GLM-5.2``, and ``zai-org/GLM-5.3`` are auto-detected through
     this bridge, with version-specific DSA settings read from the HF config.
 
     The architecture uses Multi-Latent Attention (MLA), Dynamic Sparse Attention
     (DSA) indexer layers, and Mixture-of-Experts (MoE).
-    Requires transformers>=5.2.0.
+    GLM-5.2/5.3 share the same architecture; GLM-5.3's block-scaled FP8
+    checkpoint weights are dequantized to BF16 on import. This does not cover
+    GLM-5.3-Flash, which uses a different architecture. See the model guides
+    for checkpoint-specific verification and export requirements.
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -101,6 +144,7 @@ class GLM5Bridge(MegatronModelBridge):
         provider.moe_shared_expert_overlap = True
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
+        provider.moe_router_bias_update_rate = 0
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
 
@@ -141,6 +185,57 @@ class GLM5Bridge(MegatronModelBridge):
         provider.dsa_indexer_use_sparse_loss = True
 
         return provider
+
+    def generate_pipeline_layout(self, num_layers: int, pp: int, mtp_layers: int = 0) -> list[list[str]] | None:
+        """Generate a conversion pipeline layout that keeps DSA top-k sharing groups on one stage.
+
+        GLM-5.2 decoder layers reuse the DSA top-k indices computed by an earlier
+        layer (``index_topk_freq`` and ``index_skip_topk_offset`` in the HF config).
+        Megatron-Core rejects a pipeline split that separates a reusing layer from
+        its source, and no uniform split of GLM-5.2's 78 decoder layers satisfies
+        that constraint for PP > 1. The conversion launcher calls this hook so every
+        stage starts on a layer that computes its own top-k indices. Sharing groups
+        are assigned to contiguous stages to minimize the largest stage, with
+        embeddings on the first stage and MTP plus loss on the last stage.
+
+        Args:
+            num_layers: Number of decoder layers.
+            pp: Pipeline parallel size.
+            mtp_layers: Number of MTP layers in the converted model.
+
+        Returns:
+            A flexible pipeline layout with exactly ``pp`` stages, or ``None`` when
+            the checkpoint does not share DSA top-k indices across layers and the
+            default pipeline split applies.
+
+        Raises:
+            ValueError: If ``pp`` exceeds the number of DSA top-k sharing groups.
+        """
+        topk_freq = getattr(self.hf_config, "index_topk_freq", 1)
+        if topk_freq <= 1:
+            return None
+
+        from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
+
+        skip_topk_offset = getattr(self.hf_config, "index_skip_topk_offset", 0)
+        # Each group starts on a layer that computes top-k indices and includes the layers that reuse them.
+        group_sizes: list[int] = []
+        for layer_number in range(1, num_layers + 1):
+            if is_dsa_skip_topk_layer(layer_number, skip_topk_offset, topk_freq):
+                group_sizes[-1] += 1
+            else:
+                group_sizes.append(1)
+        if pp > len(group_sizes):
+            raise ValueError(
+                f"PP={pp} exceeds the {len(group_sizes)} DSA top-k sharing groups in {num_layers} decoder layers; "
+                "each pipeline stage must start on a layer that computes its own top-k indices."
+            )
+
+        layout = [["decoder"] * stage_size for stage_size in _partition_layer_groups(group_sizes, pp)]
+        layout[0].insert(0, "embedding")
+        layout[-1].extend(["mtp"] * mtp_layers)
+        layout[-1].append("loss")
+        return layout
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
@@ -309,3 +404,27 @@ class GLM5Bridge(MegatronModelBridge):
                 )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: str | dict[str, str],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor | dict[str, torch.Tensor]:
+        """Dequantize block-scaled FP8 checkpoint weights during import."""
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        scale_key = param_name + "_scale_inv"
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))

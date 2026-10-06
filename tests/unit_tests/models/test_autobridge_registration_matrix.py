@@ -54,11 +54,15 @@ EXPECTED_REGISTRATIONS = {
     "KimiK25ForConditionalGeneration": "megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge.KimiK25VLBridge",
     "KimiK2ForCausalLM": "megatron.bridge.models.kimi.kimi_bridge.KimiK2Bridge",
     "LlamaForCausalLM": "megatron.bridge.models.llama.llama_bridge.LlamaBridge",
+    "MegatronBertForMaskedLM": "megatron.bridge.models.bert.bert_bridge.BertBridge",
     "MiMoForCausalLM": "megatron.bridge.models.mimo.mimo_bridge.MimoBridge",
     "MiMoV2FlashForCausalLM": ("megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge.MiMoV2FlashBridge"),
     "MiniMaxM2ForCausalLM": "megatron.bridge.models.minimax_m2.minimax_m2_bridge.MiniMaxM2Bridge",
     "MiniMaxM3SparseForConditionalGeneration": ("megatron.bridge.models.minimax_m3.minimax_m3_bridge.MiniMaxM3Bridge"),
     "Mistral3ForConditionalGeneration": ("megatron.bridge.models.ministral3.ministral3_bridge.Ministral3Bridge"),
+    "MuseGlimmerForConditionalGeneration": (
+        "megatron.bridge.models.muse_glimmer.muse_glimmer_bridge.MuseGlimmerBridge"
+    ),
     "NemotronHForCausalLM": "megatron.bridge.models.nemotronh.nemotron_h_bridge.NemotronHBridge",
     "NemotronH_Nano_Omni_Reasoning_V3": (
         "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
@@ -114,6 +118,7 @@ STRING_REGISTRATIONS = {
     "MiMoV2FlashForCausalLM",
     "MiniMaxM2ForCausalLM",
     "MiniMaxM3SparseForConditionalGeneration",
+    "MuseGlimmerForConditionalGeneration",
     "NemotronHForCausalLM",
     "NemotronH_Nano_Omni_Reasoning_V3",
     "NemotronH_Super_Omni_Reasoning_V3",

@@ -51,6 +51,7 @@ from megatron.bridge.inference.text_generation import (
     load_bridge_model,
     load_prompts,
     resolve_hf_model_path,
+    validate_sequence_length,
 )
 from megatron.bridge.utils.activation_map import str_to_dtype
 from megatron.bridge.utils.common_utils import maybe_initialize_distributed, print_rank_0
@@ -91,11 +92,14 @@ async def _generate(
     sampling_params: SamplingParams,
 ) -> None:
     longest_prompt = max(len(tokenizer.tokenize(prompt)) for prompt in prompts)
-    # Async path grows the configured window to fit the longest request rather than raising.
-    max_sequence_length = max(args.max_seq_length, longest_prompt + args.max_new_tokens)
+    validate_sequence_length(
+        longest_prompt_tokens=longest_prompt,
+        num_new_tokens=args.max_new_tokens,
+        max_seq_length=args.max_seq_length,
+    )
     inference_config = build_inference_config(
         model=model,
-        max_sequence_length=max_sequence_length,
+        max_sequence_length=args.max_seq_length,
         max_batch_size=args.max_batch_size,
         num_prompts=len(prompts),
         tp=args.tp,

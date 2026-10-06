@@ -19,16 +19,22 @@ own it: GPU conversion topologies must decompose over the published world size,
 and an inference command must not carry a flag that belongs to the conversion
 launcher's namespace.
 
-Deliberately stdlib-only apart from PyYAML (no torch / megatron import) so it
+Uses only pytest, PyYAML and the standard library (no torch / megatron import) so it
 scans source files directly and runs anywhere, including without the GPU stack.
 """
 
 import ast
 import shlex
+import sys
+from collections.abc import Iterator
 from pathlib import Path
+from typing import overload
 
+import pytest
 import yaml
 
+
+pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CARDS_DIR = REPO_ROOT / "examples" / "model_verification_cards"
@@ -37,10 +43,28 @@ SETUP_CONVERSION = REPO_ROOT / "scripts" / "conversion" / "setup_conversion.py"
 SETUP_INFERENCE = REPO_ROOT / "scripts" / "inference" / "setup_inference.py"
 
 
-def _declared_options(source_path: Path, *, append_only: bool = False) -> set[str]:
-    """Return option strings an argparse parser in the module declares."""
+def _declared_options(source_path: Path, *, append_only: bool = False, function: str | None = None) -> set[str]:
+    """Read parser options, including called argument helpers in Bridge source."""
     options: set[str] = set()
-    for node in ast.walk(ast.parse(source_path.read_text(encoding="utf-8"))):
+    tree = ast.parse(source_path.read_text(encoding="utf-8"))
+    scope: ast.AST = tree
+    if function is not None:
+        scope = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function)
+    called = {
+        node.func.id for node in ast.walk(scope) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    for statement in tree.body:
+        if (
+            not isinstance(statement, ast.ImportFrom)
+            or not statement.module
+            or not statement.module.startswith("megatron.bridge.")
+        ):
+            continue
+        helper = REPO_ROOT / "src" / (statement.module.replace(".", "/") + ".py")
+        for alias in statement.names:
+            if alias.name.startswith("add_") and (alias.asname or alias.name) in called:
+                options |= _declared_options(helper, append_only=append_only, function=alias.name)
+    for node in ast.walk(scope):
         if not isinstance(node, ast.Call):
             continue
         if not isinstance(node.func, ast.Attribute) or node.func.attr != "add_argument":
@@ -64,11 +88,19 @@ def _inference_tasks() -> dict[str, Path]:
             continue
         if not any(isinstance(t, ast.Name) and t.id == "INFERENCE_TASKS" for t in node.targets):
             continue
-        return {key.value: REPO_ROOT / value.args[0].value for key, value in zip(node.value.keys, node.value.values)}
+        assert isinstance(node.value, ast.Dict)
+        tasks = {}
+        for key, value in zip(node.value.keys, node.value.values):
+            assert isinstance(key, ast.Constant) and isinstance(key.value, str)
+            assert isinstance(value, ast.Call) and value.args
+            argument = value.args[0]
+            assert isinstance(argument, ast.Constant) and isinstance(argument.value, str)
+            tasks[key.value] = REPO_ROOT / argument.value
+        return tasks
     raise AssertionError(f"INFERENCE_TASKS is no longer a module-level mapping in {SETUP_INFERENCE}")
 
 
-def _walk_commands(node, path: str = ""):
+def _walk_commands(node: object, path: str = "") -> Iterator[tuple[str, str]]:
     """Yield (card-relative location, command) for every published command."""
     if isinstance(node, dict):
         for key, value in node.items():
@@ -86,7 +118,7 @@ def _walk_commands(node, path: str = ""):
             yield from _walk_commands(entry, f"{path}[{index}]")
 
 
-def _published_commands():
+def _published_commands() -> Iterator[tuple[str, list[str]]]:
     """Yield (leaf identifier, argv tokens) for every command in every card."""
     for card in sorted(CARDS_DIR.glob("*/card.yaml")):
         document = yaml.safe_load(card.read_text(encoding="utf-8"))
@@ -94,6 +126,14 @@ def _published_commands():
             tokens = shlex.split(command)
             if tokens:
                 yield f"{card.parent.name}{location}", tokens
+
+
+@overload
+def _flag_value(tokens: list[str], flag: str, default: int) -> int: ...
+
+
+@overload
+def _flag_value(tokens: list[str], flag: str, default: None) -> int | None: ...
 
 
 def _flag_value(tokens: list[str], flag: str, default: int | None) -> int | None:
@@ -113,7 +153,7 @@ def _selected_task(tokens: list[str]) -> str:
     return task
 
 
-def test_published_gpu_conversion_commands_decompose_over_the_published_world_size():
+def test_published_gpu_conversion_commands_decompose_over_the_published_world_size() -> None:
     offenders = []
     for leaf, tokens in _published_commands():
         if "convert.sh" not in tokens[0]:
@@ -138,7 +178,7 @@ def test_published_gpu_conversion_commands_decompose_over_the_published_world_si
     assert not offenders, "setup_conversion.py refuses these published commands: " + "; ".join(offenders)
 
 
-def test_published_inference_commands_carry_no_conversion_launcher_flag():
+def test_published_inference_commands_carry_no_conversion_launcher_flag() -> None:
     launcher_options = _declared_options(SETUP_INFERENCE)
     conversion_options = _declared_options(CONVERSION_ARGUMENTS) | _declared_options(SETUP_CONVERSION)
     tasks = _inference_tasks()
@@ -149,14 +189,14 @@ def test_published_inference_commands_carry_no_conversion_launcher_flag():
         accepted = launcher_options | _declared_options(tasks[_selected_task(tokens)])
         for token in tokens[1:]:
             name = token.split("=", 1)[0]
-            # Restricted to the conversion namespace because task scripts may
-            # declare options through helpers this static scan does not follow.
+            # Restrict this check to conversion options; it is not a complete
+            # validator for every task's dynamic argument declarations.
             if name.startswith("--") and name not in accepted and name in conversion_options:
                 offenders.append(f"{leaf}: {name} belongs to setup_conversion.py, not to infer.sh")
     assert not offenders, "these published inference commands die in the container: " + "; ".join(offenders)
 
 
-def test_published_card_commands_do_not_repeat_a_flag():
+def test_published_card_commands_do_not_repeat_a_flag() -> None:
     repeatable = _declared_options(CONVERSION_ARGUMENTS, append_only=True) | _declared_options(
         SETUP_INFERENCE, append_only=True
     )
@@ -169,19 +209,53 @@ def test_published_card_commands_do_not_repeat_a_flag():
     assert not offenders, "published commands repeat a flag: " + "; ".join(offenders)
 
 
-if __name__ == "__main__":
-    # Allow standalone RED-GREEN without pytest/torch:  python3 test_verification_card_published_commands.py
-    import traceback
+def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys.modules[__name__], "REPO_ROOT", tmp_path)
+    helper = tmp_path / "src/megatron/bridge/arguments.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text(
+        "def add_parallelism(parser):\n"
+        "    parser.add_argument('--tp', type=int)\n"
+        "    parser.add_argument('--mount', action='append')\n"
+        "def add_unused(parser):\n"
+        "    parser.add_argument('--executor')\n",
+        encoding="utf-8",
+    )
+    script = tmp_path / "inference.py"
+    script.write_text(
+        "from megatron.bridge.arguments import add_parallelism as add_args, add_unused\n"
+        "def build_parser(parser):\n"
+        "    add_args(parser)\n",
+        encoding="utf-8",
+    )
+    assert _declared_options(script) == {"--tp", "--mount"}
+    assert _declared_options(script, append_only=True) == {"--mount"}
 
-    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
-    failed = 0
-    for t in tests:
-        try:
-            t()
-            print(f"PASS  {t.__name__}")
-        except Exception as e:  # noqa: BLE001
-            failed += 1
-            print(f"FAIL  {t.__name__}: {e}")
-            traceback.print_exc()
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
-    raise SystemExit(1 if failed else 0)
+
+@pytest.mark.parametrize(
+    ("command", "check_name", "message"),
+    [
+        (
+            "./scripts/conversion/convert.sh export --device gpu --nodes 2 --gpus-per-node 4 --ep 8 --pp 4",
+            "test_published_gpu_conversion_commands_decompose_over_the_published_world_size",
+            "ETP\\*EP\\*PP=32",
+        ),
+        (
+            "./scripts/inference/infer.sh --task model-comparison --executor slurm",
+            "test_published_inference_commands_carry_no_conversion_launcher_flag",
+            "--executor belongs to setup_conversion.py",
+        ),
+        (
+            "./scripts/inference/infer.sh --task model-comparison --ep 4 --ep 4",
+            "test_published_card_commands_do_not_repeat_a_flag",
+            "repeat a flag",
+        ),
+    ],
+)
+def test_published_command_checks_reject_original_errors(
+    command: str, check_name: str, message: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = sys.modules[__name__]
+    monkeypatch.setattr(module, "_published_commands", lambda: iter([("regression", shlex.split(command))]))
+    with pytest.raises(AssertionError, match=message):
+        getattr(module, check_name)()

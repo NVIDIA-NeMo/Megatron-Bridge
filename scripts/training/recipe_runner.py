@@ -63,6 +63,7 @@ STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "nemotron_omni_step": ("megatron.bridge.training.nemotron_omni_step", "forward_step"),
     "flux_step": ("megatron.bridge.diffusion.models.flux.flux_step", "FluxForwardStep"),
     "wan_step": ("megatron.bridge.diffusion.models.wan.wan_step", "WanForwardStep"),
+    "bagel_step": ("megatron.bridge.models.bagel.bagel_step", "BagelForwardStep"),
 }
 
 STEP_MODALITIES = {
@@ -78,6 +79,7 @@ STEP_MODALITIES = {
     "nemotron_omni_step": "vlm",
     "flux_step": "diffusion",
     "wan_step": "diffusion",
+    "bagel_step": "omni",
 }
 
 TRAIN_FUNCTIONS: dict[str, TrainFunctionEntry] = {

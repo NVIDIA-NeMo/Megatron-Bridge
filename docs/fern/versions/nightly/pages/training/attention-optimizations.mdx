@@ -125,4 +125,4 @@ model_config = GPTModelProvider(
 
 - [Megatron Core Attention Implementation](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/attention.py)
 - [Flash Attention Paper](https://arxiv.org/abs/2205.14135)
-- [Transformer Engine Attention Mechanisms](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/attention/attention.html)
+- [Transformer Engine Attention Mechanisms](https://docs.nvidia.com/deeplearning/transformer-engine/examples/attention/attention.html)

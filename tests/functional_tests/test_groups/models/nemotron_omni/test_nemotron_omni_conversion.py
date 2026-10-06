@@ -40,6 +40,10 @@ _DEFAULT_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 # 52-layer pattern, which keeps a representative mamba (M), MoE-MLP (E) and
 # attention (*) layer mix.
 _LLM_LAYER_TYPES = ["mamba", "moe", "mamba", "moe", "mamba", "attention"]
+_LLM_LAYER_TYPE_ALIASES = {
+    "linear_attention": "mamba",
+    "full_attention": "attention",
+}
 _LLM_OVERRIDES = {
     "hybrid_override_pattern": "MEMEM*",
     "layer_types": _LLM_LAYER_TYPES,
@@ -61,6 +65,11 @@ def _apply_overrides(sub_config, overrides: dict) -> None:
             sub_config[key] = value
         else:
             setattr(sub_config, key, value)
+
+
+def _normalize_llm_layer_types(layer_types: list[str]) -> list[str]:
+    """Normalize equivalent remote-config names to the toy model's layer vocabulary."""
+    return [_LLM_LAYER_TYPE_ALIASES.get(layer_type, layer_type) for layer_type in layer_types]
 
 
 def _fix_tied_weights_keys(model: nn.Module) -> None:
@@ -214,11 +223,23 @@ class TestNemotronOmniConversion:
         with open(config_file) as f:
             saved_config = json.load(f)
 
+        source_config_file = Path(hf_model_id) / "config.json"
+        if source_config_file.exists():
+            with open(source_config_file) as f:
+                source_config = json.load(f)
+        else:
+            source_config = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=True).to_dict()
+        source_llm_config = source_config["llm_config"]
+
         assert saved_config["architectures"][0] == "NemotronH_Nano_Omni_Reasoning_V3"
         assert saved_config["model_type"] == "NemotronH_Nano_Omni_Reasoning_V3"
         assert "llm_config" in saved_config
         assert "vision_config" in saved_config
         assert "sound_config" in saved_config
         assert saved_config["llm_config"]["num_hidden_layers"] == 6
-        assert saved_config["llm_config"]["layer_types"] == _LLM_LAYER_TYPES
-        assert saved_config["llm_config"]["layers_block_type"] == _LLM_LAYER_TYPES
+        expected_layer_types = _normalize_llm_layer_types(source_llm_config["layer_types"])
+        expected_block_types = _normalize_llm_layer_types(source_llm_config["layers_block_type"])
+        assert expected_layer_types == _LLM_LAYER_TYPES
+        assert expected_block_types == _LLM_LAYER_TYPES
+        assert _normalize_llm_layer_types(saved_config["llm_config"]["layer_types"]) == expected_layer_types
+        assert _normalize_llm_layer_types(saved_config["llm_config"]["layers_block_type"]) == expected_block_types
