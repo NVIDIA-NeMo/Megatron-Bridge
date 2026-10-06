@@ -203,6 +203,30 @@ intermediate pipeline stages, with one full-length sequence per microbatch.
 It reproduces the fixed pack shape used in the logs, rather than their random
 token stream or the general variable-length `dp_balanced` data scheduler.
 
+### Rubin Pro debugging proxy
+
+`deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config` exposes the same
+16-block + MTP proxy for 64 Rubin GPUs. It preserves the GB300 proxy's model,
+batch sizes, precision, Muon optimizer, mHC recompute, and attention CUDA graphs.
+The Rubin reference allocates 40 communication SMs to each MoK forward and
+backward operation, versus 28 on GB300; this is the only recipe override.
+The Pro proxy retains its SwiGLU clamp and MoK path rather than using the
+separate Flash recipe's grouped-GLU overrides.
+
+Use the development MCore revision above with the Rubin fix from
+[Megatron-LM PR #7779](https://github.com/NVIDIA/Megatron-LM/pull/7779), and a
+Rubin-compatible container providing the matching MoK and attention kernels.
+The recipe name uses `vr200`, while node count and GPU placement come from the
+cluster launcher. The allocation must total 64 GPUs.
+
+This recipe retains the bounded 50-step benchmark schedule. The supplied
+Rubin log requested 10,000 steps and disabled evaluation, but stopped at step
+71 due to its Slurm time limit. For the bounded reproduction, disable
+evaluation in the launcher. The reference used a 4,752 MHz memory clock;
+clock policy belongs to the cluster launch configuration. Matching the recipe
+does not establish Rubin runtime correctness or performance parity; validate
+completed finite optimizer steps and trace evidence in the chosen container.
+
 ## Supervised Fine-Tuning
 
 DeepSeek-V4-Flash provides BF16 Adam full-parameter SFT recipes. Packed THD

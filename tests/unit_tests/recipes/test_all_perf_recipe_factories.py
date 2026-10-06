@@ -71,6 +71,7 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
     if recipe_factory.__name__ in {
         "deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config",
         "deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config",
+        "deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config",
     }:
         from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
         from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import _MCORE_CAPABILITIES

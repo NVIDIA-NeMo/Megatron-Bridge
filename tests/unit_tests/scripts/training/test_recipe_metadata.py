@@ -99,19 +99,20 @@ def test_metadata_does_not_impose_a_hardware_node_shape():
 
 
 @pytest.mark.parametrize(
-    ("recipe_name", "num_gpus"),
+    ("recipe_name", "num_gpus", "hardware"),
     [
-        ("deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config", 256),
-        ("deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config", 64),
+        ("deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config", 256, "gb300"),
+        ("deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config", 64, "gb300"),
+        ("deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config", 64, "vr200"),
     ],
 )
-def test_pro_log_recipes_select_packed_deepseek_forward_step(recipe_name: str, num_gpus: int) -> None:
+def test_pro_log_recipes_select_packed_deepseek_forward_step(recipe_name: str, num_gpus: int, hardware: str) -> None:
     module = _load_module()
     metadata = module.selected_benchmark_recipe(["--recipe", recipe_name])
     assert metadata is not None
     assert metadata.num_gpus == num_gpus
     assert metadata.family == "deepseek"
-    assert metadata.hardware == "gb300"
+    assert metadata.hardware == hardware
     assert module.recipe_step(recipe_name) == "dsv4_step"
 
 

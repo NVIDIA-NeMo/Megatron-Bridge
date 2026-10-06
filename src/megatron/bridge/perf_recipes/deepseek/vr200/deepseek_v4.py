@@ -15,6 +15,7 @@
 
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
+    deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -49,5 +50,21 @@ def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # This benchmark-only recipe permits Scaled-SwiGLU dprob atomics in the fused path.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+    }
+    return cfg
+
+
+def deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V4 Pro proxy: 16 main blocks + MTP on 64 Rubin GPUs.
+
+    Requires development MCore with its Rubin device-capability fix and a
+    compatible MoK container. Retains the GB300 proxy's model and training
+    settings, using the communication SM allocation from the Rubin benchmark.
+    """
+    cfg = deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config()
+    cfg.model.moe_megakernel_backend_config = {
+        **cfg.model.moe_megakernel_backend_config,
+        "fwd_num_comm_sms": 40,
+        "bwd_num_comm_sms": 40,
     }
     return cfg

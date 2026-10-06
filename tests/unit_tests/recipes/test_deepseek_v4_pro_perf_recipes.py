@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guard the logged GB300 Pro topology and the reduced-depth debugging proxy."""
+"""Guard the logged Pro topology and the GB300/Rubin debugging proxies."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, fields, make_dataclass
@@ -25,6 +25,7 @@ from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.models.deepseek.deepseek_v4_hybrid_provider import DeepSeekV4HybridModelProvider
 from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
+    deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config,
     deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300._deepseek_v4_compat import (
@@ -53,8 +54,9 @@ def _build_recipe(recipe_factory: Callable[[], ConfigContainer]) -> ConfigContai
     [
         (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, 256, 61, 4, 4),
         (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, 64, 16, 1, None),
+        (deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config, 64, 16, 1, None),
     ],
-    ids=["full-pro", "proxy"],
+    ids=["full-pro", "gb300-proxy", "vr200-proxy"],
 )
 def test_pro_log_model_and_batch_contract(
     recipe_factory: Callable[[], ConfigContainer],
@@ -135,12 +137,34 @@ def test_proxy_preserves_parent_settings_outside_depth_and_pipeline() -> None:
     assert proxy.model.virtual_pipeline_model_parallel_size is None
 
 
+def test_rubin_proxy_preserves_gb300_contract_outside_mok_comm_sms() -> None:
+    gb300 = _build_recipe(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config)
+    rubin = _build_recipe(deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config)
+
+    assert {key: value for key, value in vars(rubin.model).items() if key != "moe_megakernel_backend_config"} == {
+        key: value for key, value in vars(gb300.model).items() if key != "moe_megakernel_backend_config"
+    }
+    for section in fields(gb300):
+        if section.name != "model":
+            assert getattr(rubin, section.name) == getattr(gb300, section.name), section.name
+
+    # The Flash Rubin recipe changes these for its grouped-GLU path; Pro uses MoK.
+    assert rubin.model.activation_func_clamp_value == 10.0
+    assert rubin.model.use_transformer_engine_op_fuser is False
+
+
 @pytest.mark.parametrize(
-    "recipe_factory",
-    [deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config],
-    ids=["full-pro", "proxy"],
+    ("recipe_factory", "comm_sms"),
+    [
+        (deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, 28),
+        (deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config, 28),
+        (deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config, 40),
+    ],
+    ids=["full-pro", "gb300-proxy", "vr200-proxy"],
 )
-def test_pro_log_optimizer_and_execution_contract(recipe_factory: Callable[[], ConfigContainer]) -> None:
+def test_pro_log_optimizer_and_execution_contract(
+    recipe_factory: Callable[[], ConfigContainer], comm_sms: int
+) -> None:
     cfg = _build_recipe(recipe_factory)
 
     assert set(_MCORE_CAPABILITIES) <= {field.name for field in fields(cfg.model)}
@@ -174,8 +198,8 @@ def test_pro_log_optimizer_and_execution_contract(recipe_factory: Callable[[], C
     assert cfg.model.moe_paged_stash is False
     assert cfg.model.moe_megakernel_backend == "mok"
     assert cfg.model.moe_megakernel_backend_config == {
-        "fwd_num_comm_sms": 28,
-        "bwd_num_comm_sms": 28,
+        "fwd_num_comm_sms": comm_sms,
+        "bwd_num_comm_sms": comm_sms,
         "minibatch_size": 4096,
         "macrobatch_size": 32768,
         "schedule_capacity_multiplier": 0.0625,
@@ -188,18 +212,19 @@ def test_pro_log_optimizer_and_execution_contract(recipe_factory: Callable[[], C
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
 
 
-def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("hardware", ["gb300", "vr200"])
+def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.MonkeyPatch, hardware: str) -> None:
     _build_recipe(deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts" / "performance"))
     from utils.utils import get_perf_recipe_by_name, list_available_config_variants
 
-    cfg = get_perf_recipe_by_name("deepseek_v4_pro", "pretrain", 64, "gb300", "fp8_mx", config_variant="proxy")
+    cfg = get_perf_recipe_by_name("deepseek_v4_pro", "pretrain", 64, hardware, "fp8_mx", config_variant="proxy")
     assert cfg.model.num_layers == 32
     assert cfg.model.pipeline_model_parallel_size == 1
     assert "proxy" in list_available_config_variants(
         model_family_name="deepseek",
         model_recipe_name="deepseek_v4_pro",
-        gpu="gb300",
+        gpu=hardware,
         compute_dtype="fp8_mx",
         task="pretrain",
     )
@@ -207,7 +232,11 @@ def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize(
     "recipe_factory",
-    [deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config, deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config],
+    [
+        deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config,
+        deepseek_v4_pro_pretrain_64gpu_gb300_fp8mx_proxy_config,
+        deepseek_v4_pro_pretrain_64gpu_vr200_fp8mx_proxy_config,
+    ],
 )
 def test_pro_recipes_reject_unsupported_mcore(recipe_factory: Callable[[], ConfigContainer]) -> None:
     available = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
