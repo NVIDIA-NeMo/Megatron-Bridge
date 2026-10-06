@@ -1863,11 +1863,7 @@ class MegatronModelBridge(
         _grouped_sources: Optional[Dict[str, List[str]]] = {} if with_megatron_names else None
 
         def _mapping_export_context():
-            return (
-                MegatronParamMapping.skip_pp_broadcast()
-                if current_pp_stage_only
-                else contextlib.nullcontext()
-            )
+            return MegatronParamMapping.skip_pp_broadcast() if current_pp_stage_only else contextlib.nullcontext()
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
@@ -1879,7 +1875,9 @@ class MegatronModelBridge(
             else:
                 megatron_weights = _gather_gtp_weight(task.param_weight)
             megatron_module = task.megatron_module
-            if task.vp_stage is not None and self._should_skip_mtp_duplicate_embedding_export(task.global_param_name, megatron_model[task.vp_stage]):
+            if task.vp_stage is not None and self._should_skip_mtp_duplicate_embedding_export(
+                task.global_param_name, megatron_model[task.vp_stage]
+            ):
                 megatron_weights = None
                 megatron_module = None
 
@@ -2198,7 +2196,6 @@ class MegatronModelBridge(
 
         inner_model = getattr(model_chunk, "language_model", model_chunk)
         return bool(getattr(inner_model, "mtp_process", False))
-
 
     def _get_tied_output_hf_name(
         self,

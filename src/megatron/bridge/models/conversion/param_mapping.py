@@ -57,9 +57,7 @@ logger = logging.getLogger(__name__)
 # mapping instance. Some mappings (notably AutoMapping) create their concrete
 # delegate lazily while ``megatron_to_hf`` is running, so an instance property
 # would not reliably reach the object that performs the PP broadcast.
-_SKIP_PP_BROADCAST: ContextVar[bool] = ContextVar(
-    "megatron_bridge_skip_pp_broadcast", default=False
-)
+_SKIP_PP_BROADCAST: ContextVar[bool] = ContextVar("megatron_bridge_skip_pp_broadcast", default=False)
 
 
 @dataclass(frozen=True)

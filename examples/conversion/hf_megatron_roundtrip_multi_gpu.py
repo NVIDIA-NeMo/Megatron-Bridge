@@ -85,7 +85,6 @@ IGNORE_PRECISION_PARAMS = [
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
 
-
 def _configure_slurm_distributed_environment() -> None:
     """Translate native Slurm task variables into PyTorch distributed variables."""
     if os.environ.get("WORLD_SIZE") is not None or os.environ.get("SLURM_NTASKS") is None:

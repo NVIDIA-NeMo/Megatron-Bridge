@@ -653,7 +653,6 @@ class TestQKVMapping:
         torch.testing.assert_close(result["v.weight"], torch.cat((packed_scale[24:32], packed_scale[56:64])))
 
 
-
 class TestKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
