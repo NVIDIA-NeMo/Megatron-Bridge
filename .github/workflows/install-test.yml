@@ -57,8 +57,9 @@ concurrency:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@037094bcc9138c72bc125418e6e3653f9e1c4160 # v1.11.0
     with:
+      workflow_ref: 037094bcc9138c72bc125418e6e3653f9e1c4160 # pragma: allowlist secret
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
@@ -127,7 +128,10 @@ jobs:
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-container
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
-      image: nvcr.io/nvidia/pytorch:25.05-py3
+      # Keep the basic install environment aligned with docker/Dockerfile.ci.
+      # TransformerEngine's current NCCL-EP build requires NCCL device headers
+      # that are not present in the legacy 25.05 image.
+      image: nvcr.io/nvidia/pytorch:26.06-py3
     strategy:
       fail-fast: false
       matrix:

@@ -4,6 +4,14 @@ Reference implementations:
 - **Megatron vision encoder:** Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
 - **HF vision encoder:** Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`)
 
+For new support, invoke HF vision/video and audio encoders directly. Use the
+HF-encoder pattern below and keep only modality integration and genuinely
+missing language computations in Bridge's `modeling_<model>/` directory.
+The native encoder example documents existing models; do not copy or port an
+encoder merely to follow that example. Select the language builder requested by
+the task (including HybridModel); the GPT provider snippets below illustrate
+older integration patterns and do not require GPTModel.
+
 ## Provider Pattern
 
 Subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of standard LLM fields.
@@ -117,6 +125,18 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 ```
 
 ## VLM Model Class Patterns
+
+### Normalization backend
+
+Thread the language model's `TransformerConfig` into custom Megatron vision modules so affine vision
+LayerNorm/RMSNorm instances use Transformer Engine and the same initialization device as the rest of
+the model. Assume TE is installed in production model code and instantiate `TENorm` or the TE module
+directly. Do not add model-local wrappers, `HAVE_TE` branches, copied norm kernels, or `torch.nn`
+fallbacks for ordinary affine normalization. When the HF architecture specifies a weightless norm,
+first verify whether the pinned TE API supports that exact parameter-free contract; a custom
+parameter-free path is an exception only when TE cannot express it. Prefer a framework-native
+parameter-free module or direct functional call over a wrapper or copied formula, and do not add
+checkpoint parameters to simulate it.
 
 ### Option A: Megatron Vision Encoder (Qwen3.5 pattern)
 

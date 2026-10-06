@@ -69,6 +69,7 @@ def _load_module():
         "energon",
         "squad",
         "tulu3",
+        "coderforge",
         "openmathinstruct2",
         "openmathinstruct2-thinking",
         "gsm8k",
@@ -475,7 +476,7 @@ def test_benchmark_finetuning_recipes_use_unified_runner(monkeypatch, mode, task
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
-def test_library_only_canonical_name_does_not_enable_benchmark_runtime():
+def test_library_only_canonical_name_applies_runtime_environment_without_restart():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
 
@@ -488,8 +489,38 @@ def test_library_only_canonical_name_does_not_enable_benchmark_runtime():
         ]
     )
 
+    handles.recipe_runner.apply_runtime_environment.assert_called_once_with(
+        handles.recipe_runner.load_recipe.return_value
+    )
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
+
+
+def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("NVTE_CPU_OFFLOAD_V1", raising=False)
+    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    bootstrap_call = handles.recipe_runner.bootstrap_recipe_environment.call_args
+    assert bootstrap_call.args == (config,)
+    assert bootstrap_call.kwargs["script_path"].endswith("scripts/training/run_recipe.py")
+    handles.recipe_runner.apply_runtime_environment.assert_not_called()
+
+
+def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("NVTE_CPU_OFFLOAD_V1", "0")
+    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
+
+    handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
 
 
 def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):
@@ -538,6 +569,63 @@ def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):
         dryrun_world_size=16,
         dump_environment=False,
     )
+
+
+def test_benchmark_ep_override_updates_hybridep_topology_environment(monkeypatch):
+    """The exact-recipe launcher must keep HybridEP environment aligned with EP."""
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "256")
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        },
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=32,
+            expert_tensor_parallel_size=1,
+            moe_flex_dispatcher_backend="hybridep",
+        ),
+        train=SimpleNamespace(global_batch_size=2048),
+        dataset=SimpleNamespace(),
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_overrides(recipe, overrides):
+        assert "model.expert_model_parallel_size=64" in overrides
+        recipe.model.expert_model_parallel_size = 64
+        return recipe
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
+    environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
+    environment_module.HYBRID_EP_ENV_NAMES = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    monkeypatch.setitem(sys.modules, "megatron", _package("megatron"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge", _package("megatron.bridge"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes", _package("megatron.bridge.perf_recipes"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes.environment", environment_module)
+
+    module.main(
+        [
+            "--recipe",
+            "qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config",
+            "--mode",
+            "pretrain",
+            "--dry-run",
+            "--expert_model_parallel_size",
+            "64",
+        ]
+    )
+
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
 
 
 def test_benchmark_recipe_weak_scales_noncanonical_world_size(monkeypatch):
@@ -895,12 +983,13 @@ def test_named_finetuning_dataset_maps_to_internal_config():
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, [])
 
 
-def test_tulu3_dataset_is_listed_in_launcher_help():
+@pytest.mark.parametrize("dataset_name", ["tulu3", "coderforge"])
+def test_named_dataset_is_listed_in_launcher_help(dataset_name):
     module, _ = _load_module()
 
     help_text = module._build_parser().format_help()
 
-    assert "tulu3" in help_text
+    assert dataset_name in help_text
 
 
 @pytest.mark.parametrize(
@@ -1445,3 +1534,4 @@ def test_config_container_overrides_are_forwarded_directly():
         ["train.train_iters=3", "train.global_batch_size=8", "train.micro_batch_size=1"],
     )
     handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()

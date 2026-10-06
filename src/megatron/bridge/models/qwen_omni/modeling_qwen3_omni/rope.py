@@ -17,11 +17,12 @@
 import torch
 
 
-def _get_feat_extract_output_lengths(input_lengths: torch.Tensor) -> torch.Tensor:
+def _get_feat_extract_output_lengths(input_lengths: torch.Tensor, n_window: int = 50) -> torch.Tensor:
     """Compute Qwen3-Omni thinker audio token lengths from feature lengths."""
-    input_lengths_leave = input_lengths % 100
+    chunk_len = n_window * 2
+    input_lengths_leave = input_lengths % chunk_len
     feat_lengths = (input_lengths_leave - 1) // 2 + 1
-    output_lengths = ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
+    output_lengths = ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // chunk_len) * 13
     return output_lengths
 
 

@@ -244,6 +244,18 @@ def _as_python_int(value: PackedMetadataValue, *, field_name: str) -> int | None
     return int(value)
 
 
+def _as_python_bool(value: PackedMetadataValue, *, field_name: str) -> bool | None:
+    """Normalize scalar packed-sequence metadata to MCore's boolean contract."""
+    value = _squeeze_metadata(value)
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.numel() != 1:
+            raise ValueError(f"{field_name} must contain exactly one value, got shape {tuple(value.shape)}")
+        return bool(value.item())
+    return bool(value)
+
+
 def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
 
@@ -277,6 +289,11 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen_kv if max_seqlen_kv is not None else max_seqlen_q,
             total_tokens=batch.get("total_tokens"),
             qkv_format="thd",
+            **(
+                {"pad_between_seqs": _as_python_bool(batch.get("pad_between_seqs"), field_name="pad_between_seqs")}
+                if hasattr(PackedSeqParams, "pad_between_seqs")
+                else {}
+            ),
             # cp_partition_mode available in dev MCore only.
             **(
                 {

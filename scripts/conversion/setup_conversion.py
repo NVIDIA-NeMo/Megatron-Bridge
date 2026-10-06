@@ -25,7 +25,9 @@ from pathlib import Path
 
 import nemo_run as run
 from arguments import build_parser, conversion_worker_args
+from container_runtime import apply_container_runtime, validate_container_runtime
 from nemo_run.config import get_nemorun_home
+from slurm_wait import wait_for_slurm_job
 from torchx.specs.api import AppState
 
 
@@ -67,8 +69,13 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
+    validate_container_runtime(args)
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
+    if args.cpu_processes_per_node < 1:
+        raise ValueError("--cpu-processes-per-node must be at least 1.")
+    if args.cpus_per_task is not None and args.cpus_per_task < 1:
+        raise ValueError("--cpus-per-task must be at least 1.")
     distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
     if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
@@ -87,6 +94,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("--exclusive is only supported by the Slurm executor.")
         if args.srun_args:
             raise ValueError("--srun-arg is only supported by the Slurm executor.")
+        if args.additional_slurm_params:
+            raise ValueError("--additional-slurm-params is only supported by the Slurm executor.")
         if args.mount:
             raise ValueError("--mount is only supported by the Slurm executor; mount paths before local execution.")
     elif not args.account or not args.partition:
@@ -99,16 +108,31 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.command == "import" and args.device == "cpu" and args.low_memory_save:
         raise ValueError("--low-memory-save is only supported by the GPU backend.")
 
+    distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
     if args.device == "cpu":
-        if args.nodes != 1:
-            raise ValueError("CPU conversion supports exactly one node and one process.")
+        if distributed_cpu and args.command != "export":
+            raise ValueError("Distributed CPU conversion currently supports export only.")
+        if not distributed_cpu and args.nodes != 1:
+            raise ValueError("Single-process CPU conversion supports exactly one node.")
         if args.gpus_per_node is not None and args.gpus_per_node < 0:
             raise ValueError("--gpus-per-node must not be negative.")
+        if distributed_cpu and args.gpus_per_node not in (None, 0):
+            raise ValueError("Distributed CPU export does not request GPU resources.")
         if args.gres:
             raise ValueError("CPU conversion does not accept --gres.")
-        if any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
+        if not distributed_cpu and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
             raise ValueError("CPU conversion requires TP=PP=EP=ETP=1.")
+        if distributed_cpu:
+            world_size = args.nodes * args.cpu_processes_per_node
+            model_parallel_size = args.tp * args.pp
+            if world_size % model_parallel_size != 0:
+                raise ValueError("nodes*cpu-processes-per-node must be divisible by TP*PP.")
+            expert_model_parallel_size = args.etp * args.ep * args.pp
+            if world_size % expert_model_parallel_size != 0:
+                raise ValueError("nodes*cpu-processes-per-node must be divisible by ETP*EP*PP.")
     else:
+        if args.cpu_processes_per_node != 1:
+            raise ValueError("--cpu-processes-per-node is only supported by the CPU backend.")
         if args.gpus_per_node is None or args.gpus_per_node < 1:
             raise ValueError("GPU conversion requires --gpus-per-node of at least 1.")
         if args.executor == "local":
@@ -133,13 +157,17 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.command == "export":
         if args.save_every_n_ranks < 1:
             raise ValueError("--save-every-n-ranks must be at least 1.")
-        distributed_save = args.distributed_save if args.distributed_save is not None else args.device == "gpu"
-        if args.device == "cpu" and distributed_save:
-            raise ValueError("--distributed-save is only supported by the GPU backend.")
+        distributed_save = (
+            args.distributed_save if args.distributed_save is not None else (args.device == "gpu" or distributed_cpu)
+        )
+        if args.device == "cpu" and distributed_save and not distributed_cpu:
+            raise ValueError("--distributed-save requires distributed CPU export or the GPU backend.")
+        if distributed_cpu and not distributed_save:
+            raise ValueError("Distributed CPU export requires --distributed-save.")
         if not distributed_save and args.save_every_n_ranks != 1:
             raise ValueError("--save-every-n-ranks requires --distributed-save.")
-        if args.device == "cpu" and args.export_weight_dtype is not None:
-            raise ValueError("--export-weight-dtype is only supported by the GPU backend.")
+        if args.device == "cpu" and not distributed_cpu and args.export_weight_dtype is not None:
+            raise ValueError("--export-weight-dtype requires distributed CPU export or the GPU backend.")
 
 
 def _build_executor(
@@ -148,8 +176,9 @@ def _build_executor(
     mounts: list[str],
 ) -> object:
     """Build a Local or Slurm NeMo Run executor."""
-    task_count = args.gpus_per_node if args.device == "gpu" else 1
-    launcher = run.Torchrun() if args.executor == "local" and args.device == "gpu" else None
+    distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
+    task_count = args.gpus_per_node if args.device == "gpu" else args.cpu_processes_per_node
+    launcher = run.Torchrun() if args.executor == "local" and (args.device == "gpu" or distributed_cpu) else None
     if args.executor == "local":
         executor = run.LocalExecutor(
             ntasks_per_node=task_count,
@@ -162,10 +191,14 @@ def _build_executor(
     gpu_kwargs = {}
     if args.gpus_per_node and not args.no_gpu_resource_request:
         gpu_kwargs["gpus_per_node"] = args.gpus_per_node
+    cpu_kwargs = {}
+    if args.cpus_per_task is not None:
+        cpu_kwargs["cpus_per_task"] = args.cpus_per_task
     container_env = [*env_names]
     if "PYTHONPATH" not in container_env:
         container_env.append("PYTHONPATH")
     executor = run.SlurmExecutor(
+        poll_estimated_start_time=False,
         account=args.account,
         partition=args.partition,
         job_name_prefix=args.experiment_name,
@@ -182,8 +215,9 @@ def _build_executor(
         container_image=args.container_image,
         container_mounts=mounts,
         container_env=container_env,
-        additional_parameters={"export": ",".join(container_env)},
+        additional_parameters={**args.additional_slurm_params, "export": ",".join(container_env)},
         srun_args=args.srun_args,
+        **cpu_kwargs,
         **gpu_kwargs,
     )
     # Values are inherited by Slurm and selected by name for the container;
@@ -206,7 +240,8 @@ def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
     else:
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM:$PYTHONPATH"
     task_env = {"PYTHONPATH": pythonpath}
-    if args.executor == "local" and args.device == "gpu":
+    distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
+    if args.executor == "local" and (args.device == "gpu" or distributed_cpu):
         # The torchrun console script can belong to a different Python than the
         # uv environment running this launcher. PyTorch honors PYTHON_EXEC for
         # workers, so keep conversion dependencies from this environment.
@@ -249,12 +284,19 @@ def main(argv: list[str] | None = None) -> None:
     if args.executor == "slurm":
         logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
-    with run.Experiment(experiment_name) as experiment:
+    experiment_options = {"skip_status_at_exit": True} if args.executor == "slurm" else {}
+    task = apply_container_runtime(args, executor=executor, task=task, mounts=mounts, env_names=env_names)
+    with run.Experiment(experiment_name, **experiment_options) as experiment:
         experiment.add(task, executor=executor, name=f"{args.command}-{args.device}")
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=args.detach, tail_logs=not args.detach)
+        if args.executor == "slurm":
+            experiment.run(detach=True, tail_logs=False)
+            if not args.detach:
+                wait_for_slurm_job(experiment, poll_interval=args.poll_interval)
+        else:
+            experiment.run(detach=False, tail_logs=True)
     if not args.detach:
         _raise_on_failed_tasks(experiment)
 

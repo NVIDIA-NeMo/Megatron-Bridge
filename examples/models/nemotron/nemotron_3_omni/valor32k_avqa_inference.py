@@ -39,16 +39,16 @@ import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from transformers import AutoTokenizer, ParakeetFeatureExtractor
+from transformers import AutoProcessor, AutoTokenizer, ParakeetFeatureExtractor
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     COMPACT_IMAGE_PLACEHOLDER,
-    inference_expanded_image_token_counts,
-    inference_num_image_tiles,
-    patchify_temporal_frame,
+    processor_patchify_temporal_frames,
     select_inference_next_token,
     temporal_model_frames,
+    temporal_tubelet_feature_counts,
+    temporal_video_frame_labels,
     valid_audio_feature_lengths,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
@@ -65,8 +65,6 @@ from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 # ---------------------------------------------------------------------------
 
 _VIDEO_TEMPORAL_PATCH_SIZE = 2
-_VIDEO_FRAME_H = 512
-_VIDEO_FRAME_W = 512
 _VISION_PATCH_DIM = 16
 
 
@@ -184,6 +182,7 @@ def process_sample(
     vid_map: dict,
     data_root: Path,
     tokenizer,
+    image_processor,
     feature_extractor,
     video_fps: float = 1.0,
     video_nframes: int = 8,
@@ -218,24 +217,21 @@ def process_sample(
         nframe_max=-1,
     )
     frames = [pil_image_from_base64(url) for url in image_urls]
-    fps = metadata.fps if metadata and metadata.fps else video_fps
-
     tps = temporal_patch_size
     if not frames:
         print_rank_0(f"[skip] {video_id}: no sampled frames")
         return None
     model_frames = temporal_model_frames(frames, tps)
 
-    # Group frames by temporal_patch_size for the prompt: one <image> per pair,
-    # with the training-time timestamp format.
-    video_prompt_lines = ["This is a video:"]
-    for i in range(0, len(frames), tps):
-        group = frames[i : i + tps]
-        ts_parts = [
-            f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps:.2f} seconds"
-            for j in range(len(group))
-        ]
-        video_prompt_lines.append(" and ".join(ts_parts) + f": {COMPACT_IMAGE_PLACEHOLDER}")
+    # Group frames by temporal_patch_size for the prompt: one compact wrapper
+    # per tubelet with the training-time source timestamp format.
+    frame_labels = temporal_video_frame_labels(
+        len(frames),
+        temporal_patch_size=tps,
+        source_fps=getattr(metadata, "fps", video_fps),
+        frame_indices=getattr(metadata, "frames_indices", None),
+    )
+    video_prompt_lines = [label + COMPACT_IMAGE_PLACEHOLDER for label in frame_labels]
 
     # Build question with MCQ options
     question = qa["question"]
@@ -255,40 +251,27 @@ def process_sample(
 
     input_ids = tokenizer([prompt], return_tensors="pt").input_ids
 
-    # Pre-patchify ALL frames into [1, total_patches, 3*P*P]: dynamic-resolution
-    # input that RADIO's _apply_temporal_grouping splits per-frame and fuses
-    # into tubelets via `video_embedder`.
-    all_patches = [
-        patchify_temporal_frame(
-            frame,
-            height=_VIDEO_FRAME_H,
-            width=_VIDEO_FRAME_W,
-            patch_dim=_VISION_PATCH_DIM,
-        )
-        for frame in model_frames
-    ]
-    images = torch.cat(all_patches, dim=0).unsqueeze(0).bfloat16()
-    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
-    num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
-    num_image_tiles = inference_num_image_tiles(
-        imgs_sizes,
+    # Use the processor-owned aspect-preserving video grid from SFT collation.
+    images, imgs_sizes = processor_patchify_temporal_frames(
+        model_frames,
+        image_processor=image_processor,
         patch_dim=_VISION_PATCH_DIM,
-        num_frames=num_frames,
+    )
+    images = images.bfloat16()
+    num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
+    expanded_counts = temporal_tubelet_feature_counts(
+        imgs_sizes,
+        num_frames,
         temporal_patch_size=temporal_patch_size,
+        patch_dim=_VISION_PATCH_DIM,
     )
     image_token_id = tokenizer.convert_tokens_to_ids("<image>")
     num_placeholders = int((input_ids == image_token_id).sum().item())
-    if num_image_tiles.numel() != num_placeholders:
+    if expanded_counts.numel() != num_placeholders:
         raise ValueError(
             "Vision metadata produced "
-            f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
+            f"{expanded_counts.numel()} replacement counts for {num_placeholders} image placeholders."
         )
-    image_seq_len = (_VIDEO_FRAME_H // _VISION_PATCH_DIM) * (_VIDEO_FRAME_W // _VISION_PATCH_DIM) // 4
-    expanded_counts = inference_expanded_image_token_counts(
-        num_image_tiles,
-        torch.ones_like(num_image_tiles),
-        feature_multiplier=image_seq_len,
-    )
     input_ids = adjust_image_tokens(
         input_ids,
         expanded_counts,
@@ -540,8 +523,9 @@ def main():
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
         model = [m.cuda().bfloat16().eval() for m in model]
 
-    # Load tokenizer
+    # Load tokenizer and processor
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
     feature_extractor = ParakeetFeatureExtractor(sampling_rate=16000, feature_size=128)
 
     if tokenizer.pad_token is None:
@@ -569,6 +553,7 @@ def main():
             vid_map,
             data_root,
             tokenizer,
+            processor.image_processor,
             feature_extractor,
         )
         if sample is None:

@@ -24,12 +24,13 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 import torch.nn as nn
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
-from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
+from megatron.core.utils import get_data_parallel_group_if_dtensor, get_pg_rank, to_local_if_dtensor
 
 from megatron.bridge.models.common.heads import (
     LinearForLastLayer as LinearForLastLayer,
@@ -113,7 +114,7 @@ def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
     """
     if profiling is None or not profiling.record_memory_history:
         return
-    if get_rank_safe() not in profiling.profile_ranks:
+    if profiling.profile_ranks and get_rank_safe() not in profiling.profile_ranks:
         return
 
     torch.cuda.memory._record_memory_history(
@@ -236,20 +237,31 @@ def calc_params_l2_norm(
     sharded_moe_params_data = []
     data_parallel_group = None
     pg_collection = get_pg_collection(model)
+    gtp_rank = get_pg_rank(pg_collection.gtp_remat)
+    expert_gtp_group = pg_collection.expt_gtp_remat
+    expert_gtp_rank = get_pg_rank(expert_gtp_group)
 
     for model_chunk in model:
         for param in model_chunk.parameters():
             data_parallel_group = get_data_parallel_group_if_dtensor(param, data_parallel_group)
+            is_gtp = getattr(param, "is_gtp_weight_remat", False)
             # MCore uses allreduce=False to mark parameters that use expert-parallel process groups.
             uses_expert_parallel_groups = not getattr(param, "allreduce", True)
-            is_not_tp_duplicate = param_is_not_tensor_parallel_duplicate(
+            # GTP parameters are unique across TP ranks. Other parameters still need TP filtering.
+            if not is_gtp and not param_is_not_tensor_parallel_duplicate(
                 param,
                 tp_group=pg_collection.tp,
                 expert_tp_group=pg_collection.expt_tp,
-            )
-            if not is_not_tp_duplicate:
+            ):
                 continue
-            assert is_not_tp_duplicate
+
+            # Parameters that are not GTP-sharded are replicated across the corresponding GTP axis.
+            if uses_expert_parallel_groups:
+                if not is_gtp and expert_gtp_rank != 0:
+                    continue
+            elif not is_gtp and gtp_rank != 0:
+                continue
+
             if uses_expert_parallel_groups:
                 assert param_is_not_shared(param)
                 param = to_local_if_dtensor(param)
@@ -358,6 +370,15 @@ def calc_params_l2_norm(
         group=pg_collection.expt_dp,
     )
     moe_norm_2 += sharded_moe_norm_2
+
+    # Expert model parallel excludes expert GTP. This reduction collects both unique GTP shards
+    # and ordinary expert parameters, which are counted only on expert GTP rank zero above.
+    if expert_gtp_group is not None:
+        torch.distributed.all_reduce(
+            moe_norm_2,
+            op=torch.distributed.ReduceOp.SUM,
+            group=expert_gtp_group,
+        )
 
     # Reduce norm across model parallel groups (dense and expert).
     # Dense params should sum across all model-parallel GPUs (tensor + pipeline).
@@ -594,6 +615,47 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _track_moe_metrics_supports_num_moe_layers() -> bool:
+    """Return whether the active MCore accepts explicit MoE layer counts."""
+    return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
+
+
+def _get_num_moe_layers(model_config: Any) -> int:
+    """Count MoE aux-loss contributors for MCore metric averaging."""
+    num_layers = model_config.num_layers
+    mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
+    repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
+
+    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
+        pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
+        main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
+        mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
+        mtp_depth = pattern.mtp_num_depths
+    else:
+        moe_layer_freq = getattr(model_config, "moe_layer_freq", None)
+        if moe_layer_freq is None:
+            main_moe_layers = num_layers
+            last_layer_is_moe = True
+        elif isinstance(moe_layer_freq, int):
+            main_moe_layers = sum(i % moe_layer_freq == 0 for i in range(num_layers))
+            last_layer_is_moe = (num_layers - 1) % moe_layer_freq == 0
+        elif isinstance(moe_layer_freq, list):
+            main_moe_layers = sum(moe_layer_freq)
+            last_layer_is_moe = bool(moe_layer_freq[-1])
+        else:
+            raise ValueError(f"Invalid moe_layer_freq: {moe_layer_freq}")
+
+        # Non-hybrid MTP copies the final main layer's dense/MoE layout.
+        mtp_moe_layers = int(last_layer_is_moe and mtp_num_layers > 0)
+        mtp_depth = mtp_num_layers
+
+    # A reused MTP block contributes once; distinct blocks contribute at each depth.
+    if not repeated_mtp:
+        mtp_moe_layers *= mtp_depth
+
+    return main_moe_layers + mtp_moe_layers
+
+
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
@@ -747,7 +809,7 @@ def training_log(
 
     if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
         rank = get_rank_safe()
-        if rank in config.profiling.profile_ranks:
+        if not config.profiling.profile_ranks or rank in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
@@ -764,7 +826,10 @@ def training_log(
     # emits the per-metric peak across the pipeline (issue #3167).
     memory_report: Optional[dict[str, Union[int, float]]] = None
     if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
-        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = report_memory(
+            memory_keys=logger_config.memory_keys,
+            log_device_memory_used=logger_config.log_device_memory_used,
+        )
         memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
         memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
 
@@ -986,28 +1051,26 @@ def training_log(
         if getattr(config.model, "moe_z_loss_coeff", None) is not None:
             track_names.append("z_loss")
 
-        if getattr(config.model, "is_hybrid_model", False):
-            layers = getattr(config.model, "hybrid_layer_pattern", "").count("E")
-        else:
-            layers = getattr(config.model, "num_layers", None)
-
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
         # No-op when neither logger is configured: the original writer is returned as-is.
         moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
-        track_moe_metrics(
-            loss_scale=moe_loss_scale,
-            iteration=iteration,
-            writer=moe_metric_writer,
-            wandb_writer=wandb_writer,
-            total_loss_dict=total_loss_dict,
-            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
-            force_initialize=True,
-            track_names=track_names,
-            num_layers=layers,
-            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
-            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
-            pg_collection=pg_collection,
-        )
+        track_moe_metrics_kwargs = {
+            "loss_scale": moe_loss_scale,
+            "iteration": iteration,
+            "writer": moe_metric_writer,
+            "wandb_writer": wandb_writer,
+            "total_loss_dict": total_loss_dict,
+            "per_layer_logging": getattr(config.model, "moe_per_layer_logging", False),
+            "force_initialize": True,
+            "track_names": track_names,
+            "num_layers": config.model.num_layers,
+            "moe_layer_freq": getattr(config.model, "moe_layer_freq", None),
+            "mtp_num_layers": getattr(config.model, "mtp_num_layers", None),
+            "pg_collection": pg_collection,
+        }
+        if _track_moe_metrics_supports_num_moe_layers():
+            track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
+        track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
@@ -1144,20 +1207,35 @@ def training_log(
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
             memory_string = f"(after {iteration} iterations) memory (GB)"
-            for metric, value in report_memory(logger_config.memory_keys).items():
+            for metric, value in report_memory(
+                logger_config.memory_keys, log_device_memory_used=logger_config.log_device_memory_used
+            ).items():
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            if iteration > (loaded_iteration + 1):
-                # Make sure the memory after the second iteration is reported
-                # to include optimizer state memory.
+            cuda_graphs_enabled = (
+                config.model.cuda_graph_impl != "none"
+                or config.optimizer.optimizer_cuda_graph
+                or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
+            )
+            memory_reporting_iterations = 2
+            if cuda_graphs_enabled:
+                # Capture runs at the zero-based warmup-step offset. training_log runs
+                # after that step, so warmup_steps + 1 is the post-capture iteration.
+                memory_reporting_iterations = max(
+                    memory_reporting_iterations,
+                    config.model.cuda_graph_warmup_steps + 1,
+                )
+            if iteration >= loaded_iteration + memory_reporting_iterations:
+                # Always include optimizer state memory and, when enabled, CUDA graph
+                # capture memory before disabling the one-shot report.
                 report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag
 
 
-def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
+def report_memory(memory_keys: Optional[dict[str, str]], *, log_device_memory_used: bool = False) -> dict:
     """
     Logs the memory usage of the model.
     This metric calls the torch memory stats API for CUDA and reports different memory statistics.
@@ -1188,9 +1266,22 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
             are the names of memory statistics to log from `torch.cuda.memory_stats()`, and values
             are the names they will be logged under. If not provided, the above statistics are
             logged. Defaults to None.
+        log_device_memory_used (bool): If True, also report ``mem-device-used-gigabytes``, the total
+            memory currently in use on the device as reported by NVML (``torch.cuda.device_memory_used``,
+            the same figure ``nvidia-smi`` shows). Unlike the allocator statistics above this covers
+            memory outside the caching allocator (CUDA context, NCCL / dispatcher buffers, other
+            processes). It is a point-in-time value, not a peak. Defaults to False.
     Returns:
         Memory metrics dictionary.
     """
+
+    def _to_gigabytes(num_bytes: int | float) -> float:
+        gigabytes = num_bytes / 1.0e9
+        # Round to preserve 5 significant digits
+        if gigabytes != 0:
+            order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
+            gigabytes = round(gigabytes, -order_of_magnitude + 4)
+        return gigabytes
 
     memory_stats = torch.cuda.memory_stats()
     memory_keys = memory_keys if memory_keys else MEMORY_KEYS
@@ -1201,14 +1292,18 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
         if torch_name in memory_stats:
             # Convert to gigabytes
             if "bytes" in torch_name:
-                gigabytes = memory_stats[torch_name] / 1.0e9
-                # Round to preserve 5 significant digits
-                if gigabytes != 0:
-                    order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
-                    gigabytes = round(gigabytes, -order_of_magnitude + 4)
-                memory_report[name.replace("bytes", "gigabytes")] = gigabytes
+                memory_report[name.replace("bytes", "gigabytes")] = _to_gigabytes(memory_stats[torch_name])
             else:
                 memory_report[name] = memory_stats[torch_name]
+
+    if log_device_memory_used:
+        device_memory_used = getattr(torch.cuda, "device_memory_used", None)
+        if device_memory_used is None:
+            raise RuntimeError(
+                "logger.log_device_memory_used requires torch.cuda.device_memory_used (PyTorch >= 2.7); "
+                "disable the option or upgrade PyTorch."
+            )
+        memory_report["mem-device-used-gigabytes"] = _to_gigabytes(device_memory_used())
 
     return memory_report
 

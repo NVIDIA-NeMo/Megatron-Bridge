@@ -1,5 +1,8 @@
 # Training entry points
 
+For the optional all-Lustre direct-Enroot backend, see the
+[shared container backend guide](../common/README.md). Pyxis remains the default.
+
 Megatron Bridge training provides a small public Slurm launcher:
 
 ```bash
@@ -11,6 +14,12 @@ setup layer only owns resources, the container, explicitly forwarded environment
 Recipe selection, dataset construction, and ConfigContainer overrides are resolved inside the training environment.
 Without an active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than
 resolving the full GPU training dependency set on the login node.
+
+Submission returns immediately unless `--wait` is supplied. Waiting checks
+Slurm status every 60 seconds; `--poll-interval SECONDS` can increase that
+interval (minimum 60). Logs remain in the NeMo Run experiment directory, with
+no separate scheduler-querying log tailer or queue-start-time watcher. A
+monitoring error or interruption does not cancel the submitted job.
 
 `launch_with_nemo_run.py` and `launch_with_sbatch.sh` remain available for their existing specialized workflows; `train.sh` is the compact recipe-oriented path.
 
@@ -58,6 +67,8 @@ the Slurm partition must provide the requested hardware:
 
 `benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
 compatibility paths retain their legacy names.
+
+> **DeepSeek V4:** The 26.08 DeepSeek V4 benchmark recipes require the Megatron-Core `dev` branch, and the default MCore submodule revision in `r0.6.0` is insufficient. Follow the [DeepSeek V4 setup instructions](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.6.0/examples/models/deepseek_v4).
 
 ```bash
 ./scripts/training/train.sh \
@@ -119,6 +130,7 @@ Benchmark recipes retain their recipe-owned dataset and reject `--dataset`.
 | `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
 | `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
 | `tulu3` | Named preset | sft/lora/dora | Ai2 Tulu 3 SFT mixture (`allenai/tulu-3-sft-mixture`) |
+| `coderforge` | Named preset | sft/lora/dora | CoderForge Preview `SWE_Rebench` agent-trajectory split |
 | `openmathinstruct2` | Named preset | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
 | `openmathinstruct2-thinking` | Named preset | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
 | `gsm8k` | Named preset | sft/lora/dora | GSM8K preset |
@@ -187,14 +199,23 @@ format: chain-of-thought goes to the analysis channel and the answer goes to the
 under ODC-BY-1.0, but individual subsets can carry additional terms, including non-commercial restrictions. Review the
 Hugging Face dataset card and its linked subset licenses before use.
 
+### CoderForge Preview
+
+`coderforge` selects the `trajectories` configuration and `SWE_Rebench` split of
+`togethercomputer/CoderForge-Preview`. The preset decodes the dataset's JSON-string `messages` and `tools` fields and
+uses assistant-only chat loss. Its `image` field identifies the execution environment and is retained as metadata; it
+is not treated as visual input. Use a Hugging Face split slice such as
+`'dataset.hf_dataset.split="SWE_Rebench[:64]"'` for bounded smoke runs; Hydra requires the quoted value to preserve
+the brackets.
+
 ### Offline packing
 
 Offline packing is a text SFT option, not a dataset name. Set `dataset.enable_offline_packing=true` for `squad`, either
-OpenMathInstruct-2 format, `tulu3`, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
-sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder materializes packed
-data automatically, so a separate packing Slurm job is not required. The selected recipe/model must support packed THD
-sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on
-shared mounted storage.
+OpenMathInstruct-2 format, `tulu3`, `coderforge`, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the
+resolved CP/TP and sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder
+materializes packed data automatically, so a separate packing Slurm job is not required. The selected recipe/model must
+support packed THD sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the
+dataset cache on shared mounted storage.
 
 ### In-batch packing for GPT SFT JSONL
 

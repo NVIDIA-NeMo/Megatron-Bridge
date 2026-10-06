@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     CommOverlapConfig,
@@ -219,7 +220,7 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
 
 def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× GB200, FP8-MX."""
+    """GPT-OSS 120B pretrain: 64× GB200, FP8-MX, NCCL EP."""
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.moe_router_fusion = True
@@ -237,6 +238,8 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg)
+    _enable_ncclep(cfg)
+    cfg.model.moe_use_grouped_tensor = True
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -250,11 +253,8 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,

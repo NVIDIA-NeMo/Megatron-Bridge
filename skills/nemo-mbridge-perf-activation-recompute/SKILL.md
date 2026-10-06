@@ -14,8 +14,6 @@ license: Apache-2.0
 Stable docs: @docs/training/activation-recomputation.md
 Card: @skills/nemo-mbridge-perf-activation-recompute/card.yaml
 
-<!-- Guidance refreshed: 2026-08-12. -->
-
 Activation recompute (activation checkpointing) trades additional forward work during backward for lower retained-activation memory. The useful checkpoint boundary depends on the model architecture, attention backend, parallelism, and the tensor that actually drives the per-rank peak.
 
 ## Quick Decision Guide
@@ -83,6 +81,20 @@ Common performance configurations consequently fall into several patterns rather
 - higher-pressure MoE recipes sometimes use broader combinations such as `moe` plus `layernorm`.
 
 These are candidate patterns, not an ordering guarantee. Peak attribution and matched measurements decide the final list.
+
+### Qwen Family Boundary
+
+- Standard-attention Qwen2/Qwen3 models can usually start by testing
+  `core_attn`, subject to the fused/Flash Attention control above.
+- Qwen3.5 is a hybrid architecture with GDN layers. `core_attn` does not cover
+  the GDN normalization output; the current pinned Megatron Core provides
+  `gdn_norm_out`, and current Bridge recipes demonstrate it in a selective
+  list. Verify that label and the recipe's complete layer mix on the exact
+  revision rather than describing Qwen3.5 selective recompute as unsupported.
+- If the selected Qwen3.5 boundaries still OOM after optimizer initialization,
+  full-layer recompute is the valid capacity fallback. This is more likely at
+  lower EP because EP shards expert weights but not dense or activation state;
+  it is not proof that the selective boundary itself is broken.
 
 ## Measurement Contract
 
@@ -264,4 +276,4 @@ Limitations of this evidence:
 - `skills/nemo-mbridge-perf-memory-tuning/SKILL.md`
 - `skills/nemo-mbridge-perf-cuda-graphs/SKILL.md`
 - `skills/nemo-mbridge-perf-cpu-offloading/SKILL.md`
-- Megatron Core activation recomputation guide: <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html>
+- [Megatron Core activation recomputation guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html)

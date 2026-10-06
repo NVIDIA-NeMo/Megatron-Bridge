@@ -161,6 +161,10 @@ def _generate_with_dynamic_engine(
     ) as llm:
         if llm.is_primary_rank:
             outputs = llm.generate(prompts, sampling_params)
+            failed_outputs = [output for output in outputs if output.failed()]
+            if failed_outputs:
+                details = ", ".join(f"request {output.request_id}={output.status.name}" for output in failed_outputs)
+                raise RuntimeError(f"Inference failed: {details}")
             _print_results(prompts, outputs)
 
 

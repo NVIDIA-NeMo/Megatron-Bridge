@@ -46,6 +46,31 @@ class _ModeTrackingModel:
         self.training = True
 
 
+class _StrictTimer:
+    def __init__(self):
+        self.started = False
+
+    def start(self, barrier=False):
+        assert not self.started, "timer has already been started"
+        self.started = True
+
+    def stop(self):
+        assert self.started, "timer is not started"
+        self.started = False
+
+
+class _StrictTimers:
+    def __init__(self):
+        self.timer = _StrictTimer()
+
+    def __call__(self, name, log_level=None):
+        assert name == "evaluate"
+        return self.timer
+
+    def log(self, names):
+        assert names == ["evaluate"]
+
+
 def _make_evaluate_state(*, eval_iters, exit_duration_in_mins=None):
     timer = MagicMock()
     timers = MagicMock(return_value=timer)
@@ -224,6 +249,32 @@ def test_evaluate_timelimit_fires_start_but_not_end_callback():
     assert observed == [("on_eval_start", False)]
 
 
+def test_evaluate_timelimit_releases_lifecycle_state_before_next_evaluation():
+    state = _make_evaluate_state(eval_iters=1, exit_duration_in_mins=1)
+    state.timers = _StrictTimers()
+    model = _ModeTrackingModel()
+    callback_manager = CallbackManager()
+
+    validation_result = _run_evaluate(
+        state=state,
+        model=model,
+        callback_manager=callback_manager,
+        timelimit_hit=True,
+    )
+    test_result = _run_evaluate(
+        state=state,
+        model=model,
+        callback_manager=callback_manager,
+        is_test=True,
+        timelimit_hit=True,
+    )
+
+    assert validation_result == (None, None, True)
+    assert test_result == (None, None, True)
+    assert not state.timers.timer.started
+    assert model.training
+
+
 def test_evaluate_uses_injected_eval_data_parallel_size_for_microbatches():
     """An injected eval process-group layout owns eval global-batch semantics."""
     state = _make_evaluate_state(eval_iters=1)
@@ -306,3 +357,38 @@ def test_evaluate_preserves_multimodule_data_parallel_accounting():
         )
 
     assert forward_backward_func.call_args.kwargs["num_microbatches"] == 2
+
+
+def test_evaluate_runs_non_loss_collection_on_every_pipeline_rank():
+    state = _make_evaluate_state(eval_iters=0)
+    model = _ModeTrackingModel()
+    forward_backward_func = MagicMock(return_value=[])
+    rerun_state_machine = MagicMock()
+    pg_collection = SimpleNamespace(
+        pp=SimpleNamespace(size=lambda: 2),
+        dp=SimpleNamespace(size=lambda: 1),
+        dp_cp=object(),
+    )
+
+    with (
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=rerun_state_machine),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch("megatron.bridge.training.eval.get_forward_backward_func", return_value=forward_backward_func),
+        patch("megatron.bridge.training.eval.is_last_rank", return_value=False),
+    ):
+        result = evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=object(),
+            model=[model],
+            process_non_loss_data_func=MagicMock(),
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MagicMock(),
+            pg_collection=pg_collection,
+        )
+
+    assert result == ({}, [], False)
+    forward_backward_func.assert_called_once()
+    assert forward_backward_func.call_args.kwargs["collect_non_loss_data"] is True

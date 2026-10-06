@@ -80,12 +80,15 @@ class LoRALinear(AdapterWrapper):
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
         if not self._adapter_enabled:
             return linear_output if not self._base_returns_tuple else (linear_output, bias)
+        # Serialize full-width branch buffers to keep long-context peak at two outputs.
+        combined_output = linear_output.clone()
+        del linear_output
         adapter_output = self.adapter_forward(self.adapter, layernorm_output.contiguous(), *args, **kwargs)
-        adapter_output = adapter_output.reshape(linear_output.shape)
-        combined = linear_output + adapter_output
+        adapter_output = adapter_output.reshape(combined_output.shape)
+        combined_output.add_(adapter_output)
         if not self._base_returns_tuple:
-            return combined
-        return combined, bias
+            return combined_output
+        return combined_output, bias
 
 
 class LoRATopKRouter(AdapterWrapper):

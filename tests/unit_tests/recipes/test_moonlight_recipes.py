@@ -116,6 +116,7 @@ class _FakeMoonlightModelProvider:
         self.pipeline_model_parallel_layout = None
         self.moe_token_dispatcher_type = "alltoall"
         self.moe_enable_deepep = False
+        self.moe_hybridep_pad_uneven_dispatch_inputs = False
         self.moe_shared_expert_overlap = True
         self.overlap_moe_expert_parallel_comm = False
         self.delay_wgrad_compute = False
@@ -527,6 +528,7 @@ def test_moonlight_pipeline_layout_tracks_supported_runner_override(monkeypatch:
 
     assert cfg.data_parallel_size == 8
     assert cfg.model.pipeline_model_parallel_layout == _get_moonlight_pipeline_layout(2, 1)
+    assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
 
 
 def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):

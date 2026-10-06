@@ -14,7 +14,7 @@
 
 import pytest
 
-from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
+from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size, remove_non_pickleables
 
 
 @pytest.mark.parametrize(
@@ -33,3 +33,23 @@ def test_mcore_to_hf_window_size(window_size, expected):
 def test_mcore_to_hf_window_size_rejects_malformed_pair():
     with pytest.raises(ValueError, match="two-element MCore window"):
         mcore_to_hf_window_size([2047])
+
+
+def test_remove_non_pickleables_reads_raw_config_attributes():
+    class HeterogeneousConfig:
+        def __init__(self):
+            self.num_key_value_heads = 8
+            self.callback = lambda: None
+
+        def __getattribute__(self, name):
+            if name == "num_key_value_heads":
+                raise RuntimeError("attribute must be read from the per-layer config")
+            return super().__getattribute__(name)
+
+    original = HeterogeneousConfig()
+
+    cleaned = remove_non_pickleables(original)
+
+    assert vars(cleaned)["num_key_value_heads"] == 8
+    assert cleaned.callback is None
+    assert vars(original)["callback"] is not None

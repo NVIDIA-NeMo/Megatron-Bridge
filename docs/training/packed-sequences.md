@@ -49,6 +49,13 @@ row; it does not materialize an offline dataset or load the full source into
 RAM. Use a microbatch-yielding `single` or `cyclic` dataloader; GPT-SFT
 in-batch packing does not support the global-batch `batch` dataloader.
 
+Local GPT-SFT data can also use `per_split_data_source_manifest_path` with MLM-style
+alternating ratios and JSONL paths. Offline packing resolves the weighted raw
+row stream first and writes one packed Parquet cache for the blended split.
+The input JSONL files remain memory-mapped; blending does not concatenate them
+into another raw file or load them all into host memory. A one-path split keeps
+the established single-file behavior.
+
 ## When to Use It
 
 Packed sequences are a good fit when all of the following are true:
@@ -155,17 +162,21 @@ The durable constraints for packed sequences in Bridge are:
   worker; it is not a byte cache or a packed-sequence length
 - Energon native packing and collator-owned `enable_in_batch_packing=True` are
   mutually exclusive
-- Energon native packing does not currently support MTP, CUDA graphs, Qwen3-VL
-  DistTrain, or pipeline parallelism; requested MoE expert-parallel communication
-  overlap is disabled with a warning so training uses the non-overlapped path
+- Energon native packing does not currently support CUDA graphs, Qwen3-VL
+  DistTrain, or pipeline parallelism; MTP is supported via MCore's packed
+  sequence boundary-aware token rolling; requested MoE expert-parallel
+  communication overlap is disabled with a warning so training uses the
+  non-overlapped path
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
 - GPT-SFT and Direct-HF sequence length must also satisfy the LCM of the training and
   evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter
-- Megatron Bridge automatically enables safe uneven-input padding for eager
-  HybridEP configs; this pads only to the group-wide aligned maximum before
+- combined recipes using offline, in-batch, or Energon native packing
+  automatically enable safe uneven-input padding for eager HybridEP; unpacked
+  BSHD recipes preserve their configured setting
+- the THD safety path pads only to the group-wide aligned maximum before
   dispatch and trims the padding after combine
 - CUDA-graph-friendly packed metadata requires additional padding constraints
 
@@ -175,7 +186,9 @@ opt out of packed sequences or related packing modes.
 HybridEP CUDA-graph configs preserve their explicit uneven-input setting because
 the safety path performs a host scalar synchronization that is not capture-safe.
 They must provide equal per-rank dispatch shapes. Disable CUDA graphs when packed
-runtime token counts can differ so Bridge can enable safe padding.
+THD token counts can differ so the recipe can enable safe padding. Direct model-
+provider callers must explicitly enable the setting when they supply uneven THD
+inputs because no combined recipe is available to infer their layout.
 
 ## Relationship to Long-Sequence Training
 

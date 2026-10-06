@@ -23,11 +23,13 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
-from megatron.core.inference.sampling.torch_sampling import TorchSampling
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MODULE_PATH = _REPO_ROOT / "src" / "megatron" / "bridge" / "inference" / "text_generation.py"
+_TORCH_SAMPLING_PATH = (
+    _REPO_ROOT / "3rdparty" / "Megatron-LM" / "megatron" / "core" / "inference" / "sampling" / "torch_sampling.py"
+)
 
 
 class _AttnBackend(Enum):
@@ -41,7 +43,7 @@ class _AttnBackend(Enum):
 class _MambaInferenceStateConfig:
     @classmethod
     def from_model(cls, model):
-        return cls()
+        return getattr(model, "mamba_inference_state_config", None)
 
 
 class _DynamicInferenceContext:
@@ -64,6 +66,26 @@ def _module(name: str, **attrs: object) -> types.ModuleType:
     for attr_name, value in attrs.items():
         setattr(module, attr_name, value)
     return module
+
+
+def _load_torch_sampling() -> type:
+    base_module_name = "megatron.core.inference.sampling.base"
+    original_base_module = sys.modules.get(base_module_name)
+    sys.modules[base_module_name] = _module(base_module_name, Sampling=object)
+    try:
+        spec = importlib.util.spec_from_file_location("torch_sampling_under_test", _TORCH_SAMPLING_PATH)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.TorchSampling
+    finally:
+        if original_base_module is None:
+            sys.modules.pop(base_module_name, None)
+        else:
+            sys.modules[base_module_name] = original_base_module
+
+
+TorchSampling = _load_torch_sampling()
 
 
 def _install_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,6 +184,54 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["fp16"] is False
     assert overrides["cache_mla_latents"] is True
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
+    assert overrides["moe_expert_capacity_factor"] is None
+    assert overrides["moe_expert_rank_capacity_factor"] is None
+    assert overrides["moe_paged_stash"] is False
+    assert overrides["moe_ncclep_zero_copy"] is False
+    assert overrides["moe_pad_expert_input_to_capacity"] is False
+    assert overrides["moe_router_force_load_balancing"] is False
+    assert overrides["moe_router_force_biased"] is None
+    assert "moe_token_dispatcher_type" not in overrides
+    assert "moe_flex_dispatcher_backend" not in overrides
+
+
+@pytest.mark.parametrize("backend,zero_copy", [("hybridep", False), ("ncclep", True)])
+@pytest.mark.parametrize("forced_bias", [None, 0.0, 0.5, -0.5])
+def test_provider_inference_disables_dropping_without_changing_dispatcher(
+    text_generation, backend, zero_copy, forced_bias
+):
+    provider = types.SimpleNamespace(
+        moe_token_dispatcher_type="flex",
+        moe_flex_dispatcher_backend=backend,
+        moe_expert_capacity_factor=1.1 if backend == "hybridep" else None,
+        moe_expert_rank_capacity_factor=1.5,
+        moe_paged_stash=True,
+        moe_ncclep_zero_copy=zero_copy,
+        moe_pad_expert_input_to_capacity=backend == "hybridep",
+        moe_router_force_load_balancing=True,
+        moe_router_force_biased=forced_bias,
+    )
+    text_generation._apply_provider_parallelism(
+        provider,
+        tp=1,
+        pp=1,
+        ep=8,
+        etp=1,
+        sequence_parallel=False,
+        dtype=text_generation.torch.bfloat16,
+        attention_backend=None,
+        cache_mla_latents=None,
+        inference_moe_token_dispatcher_type=None,
+    )
+    assert provider.moe_expert_capacity_factor is None
+    assert provider.moe_expert_rank_capacity_factor is None
+    assert provider.moe_paged_stash is False
+    assert provider.moe_ncclep_zero_copy is False
+    assert provider.moe_pad_expert_input_to_capacity is False
+    assert provider.moe_router_force_load_balancing is False
+    assert provider.moe_router_force_biased is None
+    assert provider.moe_token_dispatcher_type == "flex"
+    assert provider.moe_flex_dispatcher_backend == backend
 
 
 def test_build_inference_config_rounds_max_requests_up_to_tp(text_generation):
@@ -207,7 +277,7 @@ def test_build_inference_config_caps_auto_sized_server_requests_at_token_budget(
     assert config.kwargs["max_requests"] % 2 == 0
 
 
-def test_build_inference_config_preserves_kv_auto_sizing_without_token_limit(text_generation):
+def test_build_inference_config_caps_auto_sized_server_requests_at_default_token_budget(text_generation):
     model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
 
     config = text_generation.build_inference_config(
@@ -223,7 +293,55 @@ def test_build_inference_config_preserves_kv_auto_sizing_without_token_limit(tex
         enable_chunked_prefill=False,
     )
 
+    assert config.kwargs["max_requests"] == text_generation.DynamicInferenceContext.DEFAULT_MAX_TOKENS
+
+
+def test_build_inference_config_preserves_recurrent_state_auto_sizing(text_generation):
+    mamba_inference_state_config = object()
+    model = types.SimpleNamespace(
+        position_embedding_type="rope",
+        max_sequence_length=8192,
+        mamba_inference_state_config=mamba_inference_state_config,
+    )
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=None,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
     assert config.kwargs["max_requests"] is None
+    assert config.kwargs["mamba_inference_state_config"] is mamba_inference_state_config
+
+
+def test_build_inference_config_caps_recurrent_requests_at_explicit_token_budget(text_generation):
+    model = types.SimpleNamespace(
+        position_embedding_type="rope",
+        max_sequence_length=8192,
+        mamba_inference_state_config=object(),
+    )
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=None,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=128,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    assert config.kwargs["max_requests"] == 128
 
 
 @pytest.mark.parametrize(
@@ -392,6 +510,23 @@ def test_top_p_sampling_is_compatible_with_default_cli_values(text_generation):
 
     assert params.kwargs["top_k"] == 0
     assert sampled.shape == (1,)
+
+
+def test_zero_temperature_top_p_sampling_is_greedy(text_generation):
+    params = _parse_sampling_params(text_generation, ["--temperature", "0", "--top_p", "0.9"])
+    logits = text_generation.torch.tensor([[1.0, 2.0, 3.0]])
+
+    sampled = TorchSampling.sample_from_logits(
+        logits,
+        params.kwargs["temperature"],
+        params.kwargs["top_k"],
+        params.kwargs["top_p"],
+        generator=text_generation.torch.Generator().manual_seed(0),
+    )
+
+    assert params.kwargs["top_k"] == 1
+    assert params.kwargs["top_p"] == 0.0
+    assert sampled.item() == 2
 
 
 def test_default_sampling_remains_greedy(text_generation):

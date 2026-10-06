@@ -33,7 +33,12 @@ from transformers import AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    disable_mtp_for_inference,
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+)
 
 
 class SingleBatchIterator:
@@ -173,6 +178,8 @@ def main(args) -> None:
               parallelism settings, and generation parameters
     """
     # pylint: disable=C0115,C0116
+    maybe_initialize_distributed()
+
     tp = args.tp
     pp = args.pp
     ep = args.ep
@@ -221,8 +228,8 @@ def main(args) -> None:
                         model_provider.pipeline_model_parallel_layout = saved_layout
                         break
 
-        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-        model_provider.finalize()
+        # Once all overrides are set, apply provider-specific derivations before post initialization.
+        model_provider.apply_overrides_and_finalize()
         model_provider.initialize_model_parallel(seed=0)
 
         # Load the Megatron model directly
@@ -233,8 +240,15 @@ def main(args) -> None:
             "expert_tensor_parallel_size": etp,
             "pipeline_dtype": torch.bfloat16,
         }
+        resolved_pipeline_layout = getattr(
+            model_provider.pipeline_model_parallel_layout,
+            "input_data",
+            model_provider.pipeline_model_parallel_layout,
+        )
         if args.pipeline_model_parallel_layout is not None:
             mp_overrides["pipeline_model_parallel_layout"] = args.pipeline_model_parallel_layout
+        elif isinstance(resolved_pipeline_layout, list):
+            mp_overrides["pipeline_model_parallel_layout"] = resolved_pipeline_layout
 
         model = bridge.load_megatron_model(
             args.megatron_model_path,
@@ -262,8 +276,8 @@ def main(args) -> None:
         if args.pipeline_model_parallel_layout is not None:
             model_provider.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
-        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-        model_provider.finalize()
+        # Once all overrides are set, apply provider-specific derivations before post initialization.
+        model_provider.apply_overrides_and_finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
@@ -310,12 +324,13 @@ def main(args) -> None:
                 input_ids,
                 legacy_full_prefix=args.legacy_full_prefix,
             )
-            iterator = SingleBatchIterator(input_ids, position_ids, inference_context)
+            iterators = [SingleBatchIterator(input_ids, position_ids, inference_context) for _ in model]
+            data_iterator = iterators if len(iterators) > 1 else iterators[0]
 
             output = _run_megatron_forward(
                 fwd_bwd_function,
                 forward_step_func=text_forward_step,
-                data_iterator=iterator,
+                data_iterator=data_iterator,
                 model=model,
                 num_microbatches=1,
                 forward_only=True,

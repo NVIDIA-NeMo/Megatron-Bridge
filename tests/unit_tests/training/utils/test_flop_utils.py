@@ -14,7 +14,10 @@
 
 """Unit tests for flop_utils module."""
 
-from dataclasses import dataclass, field
+import subprocess
+import sys
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +25,7 @@ import pytest
 import torch
 
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.flop_utils import (
     GlobalFlopsRuntimeStats,
     _lora_seq_stats_cache,
@@ -68,6 +72,8 @@ class MockModelConfig:
     hybrid_layer_pattern: str | None = None
     hybrid_attention_ratio: float = 0
     hybrid_mlp_ratio: float = 0
+    hybrid_stack_spec: object | None = None
+    gdp_num_householder: int = 1
     # Mamba settings
     mamba_state_dim: int = 128
     mamba_head_dim: int = 64
@@ -94,8 +100,8 @@ class MockModelConfig:
     qk_head_dim: int = 64
     qk_pos_emb_head_dim: int = 0
     v_head_dim: int = 64
-    o_lora_rank: int = 0
-    o_groups: int = 1
+    output_projection_lora_rank: int = 0
+    output_projection_groups: int = 1
     # Sliding window attention settings
     window_size: tuple | list | int | None = None
     window_attn_skip_freq: int | list | None = None
@@ -711,6 +717,39 @@ class TestGDNLayerFlops:
         defaults.update(overrides)
         return MockModelConfig(**defaults)
 
+    def test_flop_utils_imports_without_mcore_gdn_helper(self) -> None:
+        code = """
+import importlib
+import sys
+
+from megatron.core.models.gpt import experimental_attention_variant_module_specs
+from megatron.bridge.training import utils
+
+import megatron.bridge.training.utils.flop_utils
+
+experimental_attention_variant_module_specs.__dict__.pop("is_gated_delta_net_variant", None)
+del sys.modules["megatron.bridge.training.utils.flop_utils"]
+del utils.flop_utils
+flop_utils = importlib.import_module("megatron.bridge.training.utils.flop_utils")
+
+assert flop_utils._mcore_is_gated_delta_net_variant is None
+assert flop_utils._is_gated_delta_net_variant("gdn") is True
+"""
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+        assert result.returncode == 0, result.stderr
+
+    @pytest.mark.parametrize(
+        ("variant", "expected"),
+        [("gated_delta_net", True), ("gdn", True), ("gdn2", True), ("mamba", False), (None, False)],
+    )
+    def test_gdn_variant_fallback_supports_older_mcore_dev(
+        self, monkeypatch: pytest.MonkeyPatch, variant: str | None, expected: bool
+    ) -> None:
+        monkeypatch.setattr(flop_utils, "_mcore_is_gated_delta_net_variant", None)
+
+        assert flop_utils._is_gated_delta_net_variant(variant) is expected
+
     def test_gdn_flops_differ_from_pure_attention(self):
         """GDN-enabled config should produce different FLOPs than pure-attention baseline."""
         batch_size = 1
@@ -1003,9 +1042,10 @@ class TestGDNLayerFlops:
 
 
 class TestDeepSeekV4HybridFlops:
-    """Tests for DeepSeek-V4 hybrid attention FLOPs in the transformer path."""
+    """Tests for DeepSeek-V4 attention FLOPs in logical and physical layouts."""
 
-    def test_dsv4_hybrid_exact_flops(self):
+    @pytest.mark.parametrize("native_hybrid", [False, True])
+    def test_dsv4_hybrid_exact_flops(self, native_hybrid):
         """DSv4 hybrid FLOPs include sparse attention, compressor, and indexer terms."""
         batch_size = 1
         seq_len = 512
@@ -1038,8 +1078,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=qk_head_dim,
             qk_pos_emb_head_dim=qk_pos_emb_head_dim,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=[0, 4, 128],
             csa_window_size=window,
             dsa_indexer_n_heads=idx_n_heads,
@@ -1047,6 +1087,15 @@ class TestDeepSeekV4HybridFlops:
             dsa_indexer_topk=idx_topk,
             gated_linear_unit=False,
         )
+        if native_hybrid:
+            model_cfg = replace(
+                model_cfg,
+                num_layers=2 * num_layers,
+                hybrid_layer_pattern="W-C-H-",
+                # Ratios on native configs align with physical layers, including
+                # MLP slots. The W/C/H symbols determine the attention work.
+                csa_compress_ratios=[0, 0, 4, 0, 128, 0],
+            )
         cfg = MockConfigContainer(model=model_cfg)
 
         q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
@@ -1078,6 +1127,49 @@ class TestDeepSeekV4HybridFlops:
         actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
 
         assert actual_flops == expected_flops
+
+    @pytest.mark.parametrize("mtp_depth", [0, 1, 2])
+    @pytest.mark.parametrize("packed", [False, True])
+    def test_native_dsv4_moe_and_mtp_match_logical_layout(self, mtp_depth, packed):
+        """Physical W/C/H + E blocks count the same work as logical DSv4 blocks."""
+        logical = MockModelConfig(
+            num_layers=3,
+            hidden_size=128,
+            seq_length=512,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            vocab_size=1024,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=16,
+            qk_head_dim=24,
+            qk_pos_emb_head_dim=8,
+            v_head_dim=32,
+            output_projection_lora_rank=16,
+            output_projection_groups=2,
+            csa_compress_ratios=[0, 4, 128] + [4] * mtp_depth,
+            csa_window_size=64,
+            dsa_indexer_n_heads=2,
+            dsa_indexer_head_dim=8,
+            dsa_indexer_topk=32,
+            num_moe_experts=8,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=64,
+            moe_shared_expert_intermediate_size=128,
+            mtp_num_layers=mtp_depth,
+        )
+        physical = replace(
+            logical,
+            num_layers=6,
+            hybrid_layer_pattern="WE|CEHE" + "/CE" * mtp_depth,
+            csa_compress_ratios=[0, 0, 4, 0, 128, 0] + [4, 0] * mtp_depth,
+            # The unified pattern supplies MTP depth on native HybridModel.
+            mtp_num_layers=None,
+        )
+        runtime_stats = {"seqlen_sum": 768, "seqlen_squared_sum": 256**2 + 512**2} if packed else {}
+        expected = num_floating_point_operations(MockConfigContainer(model=logical), batch_size=2, **runtime_stats)
+        actual = num_floating_point_operations(MockConfigContainer(model=physical), batch_size=2, **runtime_stats)
+        assert actual == pytest.approx(expected)
 
     def test_dsv4_hybrid_packed_flops_match_mcore_split(self):
         """Packed DSv4 FLOPs split token-linear work from quadratic sparse work."""
@@ -1114,8 +1206,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=32,
             qk_pos_emb_head_dim=32,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=compress_ratios,
             csa_window_size=window,
             dsa_indexer_n_heads=idx_n_heads,
@@ -1178,7 +1270,7 @@ class TestDeepSeekV4HybridFlops:
             multi_latent_attention=True,
             experimental_attention_variant="dsv4_hybrid",
             q_lora_rank=16,
-            o_lora_rank=16,
+            output_projection_lora_rank=16,
             csa_compress_ratios=[0, 4],
             dsa_indexer_n_heads=2,
             dsa_indexer_head_dim=8,
@@ -1196,7 +1288,7 @@ class TestDeepSeekV4HybridFlops:
             multi_latent_attention=True,
             experimental_attention_variant="dsv4_hybrid",
             q_lora_rank=16,
-            o_lora_rank=16,
+            output_projection_lora_rank=16,
             csa_compress_ratios=[0, 8, 128],
             dsa_indexer_n_heads=2,
             dsa_indexer_head_dim=8,
@@ -1263,8 +1355,8 @@ class TestDeepSeekV4HybridFlops:
             qk_head_dim=qk_head_dim,
             qk_pos_emb_head_dim=qk_pos_emb_head_dim,
             v_head_dim=v_head_dim,
-            o_lora_rank=o_lora_rank,
-            o_groups=o_groups,
+            output_projection_lora_rank=o_lora_rank,
+            output_projection_groups=o_groups,
             csa_compress_ratios=[0, 128],
             csa_window_size=window,
             gated_linear_unit=False,
@@ -1305,7 +1397,7 @@ class TestDeepSeekV4HybridFlops:
             "multi_latent_attention": True,
             "experimental_attention_variant": "dsv4_hybrid",
             "q_lora_rank": 16,
-            "o_lora_rank": 16,
+            "output_projection_lora_rank": 16,
             "csa_compress_ratios": [0, 4, 128],
             "dsa_indexer_n_heads": 2,
             "dsa_indexer_head_dim": 8,
@@ -1465,7 +1557,7 @@ class TestHybridGDNFlops:
 
 @pytest.mark.unit
 class TestAttentionOutputGateFlops:
-    """Tests for attention_output_gate FLOPs in transformer_flops path."""
+    """Tests for attention_output_gate FLOPs in Transformer and Hybrid paths."""
 
     def test_gate_increases_flops(self):
         """attention_output_gate=True should add extra FLOPs for the gate projection."""
@@ -1522,6 +1614,47 @@ class TestAttentionOutputGateFlops:
         actual_delta = flops_gate - flops_no_gate
 
         assert actual_delta == expected_delta, f"Expected gate delta {expected_delta:.2e} but got {actual_delta:.2e}"
+
+    @pytest.mark.parametrize("pattern", ["**", "*-*E", "-E"])
+    @pytest.mark.parametrize("window_mode", ["full", "sliding", "mixed"])
+    @pytest.mark.parametrize("kv_channels", [16, 24])
+    def test_hybrid_gate_exact_delta(self, pattern, window_mode, kv_channels):
+        """Only attention layers pay for the full-width gate, independently of their window."""
+        batch_size = 2
+        model = MockModelConfig(
+            hybrid_layer_pattern=pattern,
+            num_layers=len(pattern),
+            hidden_size=64,
+            seq_length=128,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=kv_channels,
+            ffn_hidden_size=128,
+            num_moe_experts=4,
+            moe_ffn_hidden_size=64,
+            moe_router_topk=2,
+            vocab_size=256,
+            window_size=None if window_mode == "full" else (15, 0),
+            window_attn_skip_freq=[
+                int(symbol == "*" and (window_mode == "sliding" or index == 0)) for index, symbol in enumerate(pattern)
+            ],
+        )
+        without_gate = num_floating_point_operations(MockConfigContainer(model=model), batch_size=batch_size)
+        with_gate = num_floating_point_operations(
+            MockConfigContainer(model=replace(model, attention_output_gate=True)), batch_size=batch_size
+        )
+        # One H -> (heads * head_dim) GEMM per attention layer; training counts forward + backward.
+        expected_delta = (
+            3
+            * 2
+            * batch_size
+            * model.seq_length
+            * pattern.count("*")
+            * model.hidden_size
+            * model.num_attention_heads
+            * kv_channels
+        )
+        assert with_gate - without_gate == expected_delta
 
 
 @pytest.mark.unit
@@ -2767,13 +2900,14 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sq_sum == 2 * 512**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
 
-    def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self):
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self, cp_size):
         # Dense GPT batches are sliced along sequence dimension before the
         # forward step under context parallelism. FLOPS should still be based on
         # the full model sequence length, not the CP-local token length.
         state = _State()
-        tokens = torch.zeros(1, 2048)
-        accumulate_flops_metadata(state, tokens, config_seq_len=4096)
+        tokens = torch.zeros(1, 4096 // cp_size)
+        accumulate_flops_metadata(state, tokens, config_seq_len=4096, context_parallel_size=cp_size)
         assert state._flops_seqlen_sum == 4096
         assert state._flops_seqlen_sq_sum == 4096**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
@@ -2838,6 +2972,24 @@ class TestAccumulateFlopsMetadata:
         )
         assert state._flops_seqlen_sq_sum == 1000**2 + 2500**2 + 596**2
 
+    @pytest.mark.parametrize("cp_size", [1, 2, 4, 8])
+    @pytest.mark.parametrize("use_unpadded", [False, True])
+    def test_thd_cp_restores_physical_tokens_without_rescaling_attention(self, cp_size, use_unpadded):
+        state = _State()
+        tokens = torch.zeros(1, 32 // cp_size)
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            config_seq_len=128,
+            context_parallel_size=cp_size,
+            cu_seqlens=torch.tensor([0, 16, 32]),
+            cu_seqlens_unpadded=torch.tensor([0, 5, 16]) if use_unpadded else None,
+        )
+
+        assert state._flops_seqlen_sum == 32
+        assert state._flops_seqlen_sq_sum == (5**2 + 11**2 if use_unpadded else 2 * 16**2)
+        assert state._flops_requires_global_reduce
+
     def test_accumulates_additively_across_microbatches(self):
         # Each call adds to existing accumulators (microbatch loop semantics).
         state = _State()
@@ -2885,13 +3037,14 @@ class TestAccumulateFlopsMetadata:
             )
 
     @pytest.mark.parametrize("vp_size", [1, 2, 10])
-    def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size):
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size, cp_size):
         # MCore's interleaved schedule calls forward_step once for every
         # (logical microbatch, model chunk) pair. FLOPS metadata describes the
         # data, not a model chunk, so only VP stage 0 may contribute it.
         state = _State()
         num_microbatches = 4
-        tokens = torch.zeros(1, 128)
+        tokens = torch.zeros(1, 128 // cp_size)
         cu_seqlens = torch.tensor([0, 32, 128])
 
         for vp_stage in range(vp_size):
@@ -2900,6 +3053,7 @@ class TestAccumulateFlopsMetadata:
                     state,
                     tokens,
                     vp_stage=vp_stage,
+                    context_parallel_size=cp_size,
                     cu_seqlens=cu_seqlens,
                     num_vision_patches=8,
                 )
@@ -3152,6 +3306,37 @@ class TestResolveGlobalFlopsSeqlenStats:
         all_reduce.assert_called_once()
         assert all_reduce.call_args.args[0].numel() == 3
         assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
+
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    def test_cp_packed_stats_sum_unequal_dp_batches_without_cp_duplication(self, monkeypatch, cp_size):
+        state = _State()
+        accumulate_flops_metadata(
+            state,
+            torch.zeros(1, 32 // cp_size),
+            context_parallel_size=cp_size,
+            cu_seqlens=torch.tensor([0, 16, 32]),
+            cu_seqlens_unpadded=torch.tensor([0, 5, 16]),
+        )
+        dp_group = object()
+
+        def fake_all_reduce(stats, op=None, group=None):
+            assert group is dp_group
+            assert op == torch.distributed.ReduceOp.SUM
+            assert stats.tolist() == [32, 5**2 + 11**2, 0]
+            # The other DP replica has two different lengths in a 64-token pack.
+            stats.add_(torch.tensor([64, 17**2 + 23**2, 0], dtype=stats.dtype))
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        stats = resolve_global_flops_runtime_stats(state, data_parallel_size=2, dp_group=dp_group)
+
+        all_reduce.assert_called_once()
+        assert stats.seqlen_sum == 96
+        assert stats.seqlen_squared_sum == 5**2 + 11**2 + 17**2 + 23**2
 
     def test_exact_vision_stats_share_integer_all_reduce_across_dp(self, monkeypatch):
         state = _State()
@@ -3423,3 +3608,59 @@ class TestLoraSquadPackedFlopBranch:
 
         mock_calc.assert_called_once()
         assert first == second
+
+
+@pytest.mark.parametrize("householders, expected_layer", [(1, 784), (2, 1152), (3, 1520)])
+@pytest.mark.parametrize("spec_kind", ["module", "factory", "provider_factory", "lazy_module"])
+def test_hybrid_gdp_flops(householders, expected_layer, spec_kind):
+    from megatron.core.models.hybrid.hybrid_layer_specs import gated_delta_product_stack_spec
+
+    spec = gated_delta_product_stack_spec
+    if spec_kind == "factory":
+        spec = lambda: gated_delta_product_stack_spec
+    elif spec_kind == "provider_factory":
+        spec = lambda provider: gated_delta_product_stack_spec
+    elif spec_kind == "lazy_module":
+        spec = deepcopy(gated_delta_product_stack_spec)
+        spec.submodules.mamba_layer.submodules.mixer.module = (
+            "megatron.core.ssm.gated_delta_product",
+            "GatedDeltaProductMixer",
+        )
+    model = MockModelConfig(
+        hybrid_layer_pattern="M",
+        num_layers=1,
+        hidden_size=8,
+        seq_length=3,
+        mamba_state_dim=2,
+        mamba_head_dim=2,
+        mamba_num_groups=1,
+        mamba_num_heads=4,
+        vocab_size=16,
+        make_vocab_size_divisible_by=1,
+        hybrid_stack_spec=spec,
+        gdp_num_householder=householders,
+    )
+    # Per-token GDP projection, convolution, recurrent core, and output costs,
+    # plus the vocabulary projection; multiply by 6 tokens and fwd/bwd factor 3.
+    expected = (expected_layer + 2 * 8 * 16) * 6 * 3
+    assert num_floating_point_operations(MockConfigContainer(model), batch_size=2) == expected
+
+
+@pytest.mark.parametrize("pattern", ["GG", "G*", "**"])
+def test_hybrid_gdn2_projection_flops(pattern):
+    model = MockModelConfig(
+        hybrid_layer_pattern=pattern,
+        num_layers=2,
+        hidden_size=16,
+        seq_length=8,
+        linear_key_head_dim=2,
+        linear_value_head_dim=4,
+        linear_num_key_heads=2,
+        linear_num_value_heads=4,
+    )
+    cfg = MockConfigContainer(model)
+    gdn = num_floating_point_operations(cfg, batch_size=2)
+    model.experimental_attention_variant = "gdn2"
+    gdn2 = num_floating_point_operations(cfg, batch_size=2)
+    # GDN input width is 48, GDN2 input width is 64 for this configuration.
+    assert gdn2 - gdn == pattern.count("G") * 2 * 2 * 8 * 16 * (64 - 48) * 3

@@ -34,9 +34,10 @@ index details:
    recommendations, use `--dataset mock`. Do not pair the pretraining-only
    `mock` preset with an SFT or PEFT mode.
 5. After the recipe and dataset, give the required resizing rules: TP must
-   divide `num_key_value_heads`, keep TP within one node unless using
-   NVL72-class interconnect, enable SP when TP > 1, configure CP for long
-   context, DP is implicit, and reduce `micro_batch_size` first on OOM.
+   divide `num_key_value_heads`, use the lowest TP that still fits the dense
+   state, keep TP within one node unless using NVL72-class interconnect, enable
+   SP when TP > 1, configure CP for long context, and make both dense and
+   expert meshes divide the allocation.
 6. State whether each proposed override changes the convergence contract or
    only the execution/performance mapping. Do not trade convergence semantics
    for throughput without calling it a new experiment.
@@ -249,9 +250,40 @@ When the user's GPU count differs from the recipe default:
    `world_size / (PP × EP × ETP)`; both quotients must be integral, and the
    expert count must be divisible by EP.
 
+### Fit-First, Then Fill Tuning Loop
+
+For an MoE recipe on a fixed allocation, use this practical order:
+
+1. Start with the lowest legal TP that can hold the dense parameters,
+   optimizer state, and workspaces. Do not raise TP only to reduce activation
+   memory; TP communication is expensive, so try recompute first.
+2. Use the largest legal EP that matches the expert count and topology. EP=8
+   is a common first candidate on one 8-GPU node, and EP=32 is a common first
+   candidate on a 32-GPU allocation. These are starting points, not universal
+   defaults: EP shards expert weights only, not dense layers or activations.
+3. Prefer architecture-specific selective recompute. For Qwen3.5 GDN layers,
+   verify `gdn_norm_out` on the exact Megatron Core revision instead of
+   assuming `core_attn` covers the GDN peak. Use full-layer recompute only when
+   the targeted boundaries still do not make the complete step fit.
+4. After a stable baseline completes optimizer initialization and several
+   steady steps, inspect W&B memory and confirm every rank's peak allocated and
+   reserved memory in the runtime logs; rank 0 can miss the hot EP or PP rank.
+   If there is safe headroom, test one change at a time: lower TP by one legal
+   step or increase MBS while keeping GBS, data order, and optimizer boundaries
+   fixed.
+5. Keep the candidate only when it improves end-to-end tokens/s/GPU or step
+   time with healthy loss and no skipped/NaN iterations. Leave headroom for
+   checkpointing, evaluation, routing imbalance, and optional CUDA graphs.
+
+On EP=8, a large expert footprint can remain capacity-limited enough to need
+full recompute. EP=32 usually reduces expert-weight pressure substantially,
+making selective recompute a better candidate, but Qwen3.5 GDN coverage and
+the hot rank's measured peak still decide.
+
 ### Batch Size Tuning
 
-- Start with the recipe's `micro_batch_size`. If OOM, reduce to 1.
+- Start with the recipe's `micro_batch_size`. If OOM, reduce to 1; after the
+  run fits, use measured headroom to sweep MBS upward again.
 - `global_batch_size` determines learning dynamics. Scale with DP:
   `GBS = micro_batch_size × DP × gradient_accumulation_steps`.
 - For MoE, `micro_batch_size=1` is typical at scale.
