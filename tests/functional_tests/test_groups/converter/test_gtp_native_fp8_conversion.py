@@ -23,6 +23,7 @@ from megatron.core import parallel_state
 from megatron.core.config import set_experimental_flag
 from megatron.core.process_groups_config import ProcessGroupCollection
 
+
 try:
     from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
 except ImportError:

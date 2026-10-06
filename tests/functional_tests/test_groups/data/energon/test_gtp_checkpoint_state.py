@@ -26,6 +26,7 @@ from megatron.core.config import set_experimental_flag
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.energon import DefaultTaskEncoder, TextSample, stateless
 
+
 try:
     from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
 except ImportError:
