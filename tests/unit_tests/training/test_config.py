@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import ast
+import importlib.util
 import json
 import os
 import warnings
 from dataclasses import dataclass, fields
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
@@ -44,6 +47,8 @@ from megatron.bridge.models.transformer_config import (
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
+    _CUDNN_FRONTEND_GDN_NAN_FREE_VERSION,
+    _CUTLASS_DSL_GDN_MIN_VERSION,
     CheckpointConfig,
     ConfigContainer,
     DatasetProvider,
@@ -61,8 +66,15 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
     ValidationConfig,
+    _cudnn_gdn_stack_issues,
+    _have_te_gdn,
+    _installed_distribution_version,
+    _probe_cudnn_gdn_stack_issues,
+    _release_tuple,
     _validate_and_sync_distributed_optimizer_settings,
+    _validate_cudnn_gdn_stack,
     _validate_mixed_precision_consistency,
+    _version_str,
     apply_environment_variables,
     megatron_mimo_runtime_config_update,
 )
@@ -4491,6 +4503,201 @@ class TestDistributedOptimizerValidation:
 
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+
+@pytest.mark.unit
+class TestCudnnGdnStackValidation:
+    """Tests for _validate_cudnn_gdn_stack and _cudnn_gdn_stack_issues."""
+
+    _COMPLETE = {
+        "have_te_gdn": True,
+        "cudnn_frontend_version": "1.29.0",
+        "cutlass_importable": True,
+        "cutlass_dsl": ("nvidia-cutlass-dsl", "4.8.0"),
+    }
+    _DSL_FLOOR = _version_str(_CUTLASS_DSL_GDN_MIN_VERSION)
+
+    def test_complete_stack_reports_nothing(self):
+        assert _cudnn_gdn_stack_issues(**self._COMPLETE) == []
+
+    @pytest.mark.parametrize(
+        ("gap", "fragment"),
+        [
+            pytest.param({"have_te_gdn": False}, "no GatedDeltaNetAttention", id="te-missing"),
+            pytest.param({"cudnn_frontend_version": None}, "nvidia-cudnn-frontend is not installed", id="fe-missing"),
+            pytest.param({"cudnn_frontend_version": "1.26.0"}, "has no cudnn.linear_attention", id="fe-1.26"),
+            pytest.param({"cudnn_frontend_version": "1.28.0"}, "can return NaN", id="fe-1.28"),
+            pytest.param({"cutlass_importable": False}, "is not importable", id="cutlass-missing"),
+            pytest.param({"cutlass_dsl": ("nvidia-cutlass-dsl", "4.5.0")}, "nvidia-cutlass-dsl 4.5.0", id="dsl-4.5.0"),
+            pytest.param({"cutlass_dsl": ("nvidia-cutlass-dsl", "4.6")}, "nvidia-cutlass-dsl 4.6 ", id="dsl-4.6"),
+            pytest.param({"cutlass_dsl": ("nvidia-cutlass-dsl", "4.6.2rc1")}, "4.6.2rc1", id="dsl-4.6.2rc1"),
+        ],
+    )
+    def test_each_gap_is_reported(self, gap, fragment):
+        issues = _cudnn_gdn_stack_issues(**{**self._COMPLETE, **gap})
+        assert len(issues) == 1
+        assert fragment in issues[0]
+
+    @pytest.mark.parametrize("frontend", ["1.26.0", None, "1.28.0"])
+    @pytest.mark.parametrize(
+        "dsl_gap",
+        [
+            pytest.param({"cutlass_dsl": ("nvidia-cutlass-dsl", "4.5.0")}, id="dsl-4.5.0"),
+            pytest.param({"cutlass_importable": False}, id="dsl-missing"),
+        ],
+    )
+    def test_an_unusable_frontend_hides_the_cute_dsl_gate(self, frontend, dsl_gap):
+        """Below cuDNN frontend 1.29 only the frontend gap is reported.
+
+        Frontends 1.27 and 1.28 gate the CuTe DSL differently, and the install hint already names its floor.
+        """
+        issues = _cudnn_gdn_stack_issues(**{**self._COMPLETE, "cudnn_frontend_version": frontend, **dsl_gap})
+        assert len(issues) == 1
+        assert "cuTile" not in issues[0]
+
+    @pytest.mark.parametrize(
+        "cutlass_dsl",
+        [
+            ("nvidia-cutlass-dsl", "4.7.0"),
+            ("nvidia-cutlass-dsl", "4.7.0.dev0"),
+            ("nvidia-cutlass-dsl", "4.8.0a0+local"),
+            ("nvidia-cutlass-dsl", "dev"),
+            ("nvidia-cutlass-dsl-internal", "0.3.0+2026"),
+            None,
+        ],
+    )
+    def test_cutlass_dsl_versions_cudnn_frontend_accepts(self, cutlass_dsl):
+        """Mirror ``cudnn.frost.buffers.cutedsl_too_old`` (cuDNN frontend 1.29.0).
+
+        Internal builds, unparsable versions and missing metadata are never too old.
+        """
+        assert _cudnn_gdn_stack_issues(**{**self._COMPLETE, "cutlass_dsl": cutlass_dsl}) == []
+
+    def test_unparsable_frontend_version_is_not_flagged(self):
+        assert _cudnn_gdn_stack_issues(**{**self._COMPLETE, "cudnn_frontend_version": "unknown"}) == []
+
+    @pytest.mark.parametrize(
+        ("versions", "fragment"),
+        [
+            pytest.param({"nvidia-cutlass-dsl": "4.5.0"}, "nvidia-cutlass-dsl 4.5.0", id="public-4.5.0"),
+            pytest.param({"nvidia-cutlass-dsl-internal": "0.3.0+2026"}, None, id="internal-only"),
+            pytest.param({}, None, id="no-dsl-metadata"),
+        ],
+    )
+    def test_probe_reads_this_environment(self, monkeypatch, versions, fragment):
+        """The probe feeds installed distribution versions and the import checks into the stack check."""
+        versions = {"nvidia-cudnn-frontend": "1.29.0", **versions}
+        monkeypatch.setattr("megatron.bridge.training.config._have_te_gdn", lambda: True)
+        monkeypatch.setattr("megatron.bridge.training.config._cutlass_importable", lambda: True)
+        monkeypatch.setattr("megatron.bridge.training.config._installed_distribution_version", versions.get)
+
+        issues = _probe_cudnn_gdn_stack_issues()
+
+        if fragment is None:
+            assert issues == []
+        else:
+            assert len(issues) == 1
+            assert fragment in issues[0]
+
+    def test_probe_runs_unpatched(self):
+        """The real probe returns a list of messages, whatever this environment has installed."""
+        issues = _probe_cudnn_gdn_stack_issues()
+        assert isinstance(issues, list)
+        assert all(isinstance(issue, str) for issue in issues)
+
+    def test_have_te_gdn_matches_megatron_core(self):
+        """_have_te_gdn reads HAVE_TE_GDN from the Megatron-Core module that defines it.
+
+        Once Megatron-Core has ``TransformerConfig.gdn_kernel_backend``, a moved or renamed ``HAVE_TE_GDN`` would make
+        every Transformer Engine GDN run warn falsely, so it must be found where ``_have_te_gdn`` looks.
+        """
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        if "gdn_kernel_backend" not in {field.name for field in fields(TransformerConfig)}:
+            assert _have_te_gdn() is False
+            pytest.skip("Megatron-Core predates TransformerConfig.gdn_kernel_backend (NVIDIA/Megatron-LM#6645)")
+        from megatron.core.extensions import transformer_engine as mcore_te
+
+        assert hasattr(mcore_te, "HAVE_TE_GDN"), "Megatron-Core moved HAVE_TE_GDN; update _have_te_gdn"
+        assert _have_te_gdn() is bool(mcore_te.HAVE_TE_GDN)
+
+    @pytest.mark.parametrize(
+        "model",
+        [
+            pytest.param(SimpleNamespace(), id="no-field"),
+            pytest.param(SimpleNamespace(gdn_kernel_backend="fla"), id="fla"),
+            pytest.param(SimpleNamespace(gdn_kernel_backend="torch"), id="torch"),
+        ],
+    )
+    @patch("megatron.bridge.training.config._probe_cudnn_gdn_stack_issues")
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_inert_unless_the_cudnn_backend_is_selected(self, mock_warn, mock_probe, model):
+        _validate_cudnn_gdn_stack(SimpleNamespace(model=model))
+        mock_probe.assert_not_called()
+        mock_warn.assert_not_called()
+
+    @patch("megatron.bridge.training.config._probe_cudnn_gdn_stack_issues", return_value=["ISSUE-A", "ISSUE-B"])
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_warns_with_the_fix_and_the_fla_override(self, mock_warn, mock_probe):
+        config = SimpleNamespace(model=SimpleNamespace(gdn_kernel_backend="transformer_engine"))
+        _validate_cudnn_gdn_stack(config)
+        mock_warn.assert_called_once()
+        message = mock_warn.call_args[0][0]
+        assert "ISSUE-A; ISSUE-B" in message
+        assert f"nvidia-cudnn-frontend>={_version_str(_CUDNN_FRONTEND_GDN_NAN_FREE_VERSION)}" in message
+        assert f"nvidia-cutlass-dsl[cu13]>={self._DSL_FLOOR}" in message
+        assert "model.gdn_kernel_backend=fla" in message
+        assert config.model.gdn_kernel_backend == "transformer_engine"  # never switched
+
+    @patch("megatron.bridge.training.config._probe_cudnn_gdn_stack_issues", return_value=[])
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_complete_stack_is_silent(self, mock_warn, mock_probe):
+        _validate_cudnn_gdn_stack(SimpleNamespace(model=SimpleNamespace(gdn_kernel_backend="transformer_engine")))
+        mock_probe.assert_called_once()
+        mock_warn.assert_not_called()
+
+    @patch("megatron.bridge.training.config._validate_cudnn_gdn_stack")
+    def test_config_container_validate_runs_the_check(self, mock_check):
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=create_test_gpt_config()
+        )
+        try:
+            container.validate()
+            mock_check.assert_called_once_with(container)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @staticmethod
+    def _require_frost_frontend() -> None:
+        frontend = _installed_distribution_version("nvidia-cudnn-frontend")
+        if frontend is None or _release_tuple(frontend) < _CUDNN_FRONTEND_GDN_NAN_FREE_VERSION:
+            floor = _version_str(_CUDNN_FRONTEND_GDN_NAN_FREE_VERSION)
+            pytest.skip(f"needs nvidia-cudnn-frontend >= {floor} (installed: {frontend})")
+
+    def test_cutlass_dsl_floor_matches_the_installed_cudnn_frontend(self):
+        """_CUTLASS_DSL_GDN_MIN_VERSION copies CUTEDSL_MIN_VERSION; this fails when a frontend bump moves it."""
+        self._require_frost_frontend()
+        spec = importlib.util.find_spec("cudnn")  # top-level lookup; does not import cudnn
+        assert spec is not None and spec.submodule_search_locations, "nvidia-cudnn-frontend is installed but missing"
+        buffers = Path(list(spec.submodule_search_locations)[0], "frost", "buffers.py")
+        assert buffers.is_file(), f"{buffers} moved; re-check _cudnn_gdn_stack_issues against the new FROST gate"
+        floor = None
+        for node in ast.parse(buffers.read_text()).body:
+            targets = node.targets if isinstance(node, ast.Assign) else [getattr(node, "target", None)]
+            if any(isinstance(target, ast.Name) and target.id == "CUTEDSL_MIN_VERSION" for target in targets):
+                floor = ast.literal_eval(node.value)
+        assert floor is not None, f"{buffers} no longer defines CUTEDSL_MIN_VERSION"
+        assert tuple(floor) == _CUTLASS_DSL_GDN_MIN_VERSION
+
+    @pytest.mark.parametrize(
+        "version", ["4.5.0", "4.6", "4.6.2rc1", "4.6.post1", "4.7.0", "4.7.0.dev0", "4.8.0a0+local", "dev"]
+    )
+    def test_cutlass_dsl_rule_matches_the_installed_cudnn_frontend(self, version):
+        """Bridge flags exactly the public CuTe DSL versions that cuDNN frontend's own FROST gate rejects."""
+        self._require_frost_frontend()
+        buffers = pytest.importorskip("cudnn.frost.buffers")
+        flagged = bool(_cudnn_gdn_stack_issues(**{**self._COMPLETE, "cutlass_dsl": ("nvidia-cutlass-dsl", version)}))
+        assert flagged == buffers.cutedsl_too_old(("nvidia-cutlass-dsl", version))
 
 
 class TestSampleBasedTraining:
