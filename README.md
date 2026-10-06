@@ -229,6 +229,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 
 | Family | Supported variants |
 |----------------|--------------------|
+| [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
 | [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite (deprecated), DeepSeek V3, DeepSeek V4 / V4 Flash |
@@ -246,6 +247,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Mistral**](docs/models/mistral/index.md) | Mistral 7B / Small 3 24B (deprecated), Ministral 3 (3B/8B/14B) |
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
+| [**Muse Glimmer**](docs/models/muse_glimmer/muse-glimmer.md) | Muse Glimmer 30B |
 | [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H v1 (deprecated), Nemotron Nano v2 (deprecated), Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Llama Nemotron (deprecated), Nemotron Nano v2 VL (deprecated), Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
 | [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
