@@ -57,6 +57,7 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 
 
 pytestmark = pytest.mark.unit
@@ -106,6 +107,10 @@ _NCCLEP_RECIPES = (
 _GB_FSDP_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config,
     nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_fsdp_config,
+)
+_FULL_ITERATION_MXFP8_RECIPES = (
+    nemotron_3_5_lightning_pretrain_8gpu_gb300_fp8mx_config,
+    nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config,
 )
 _VR200_RECIPES = (
     nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config,
@@ -344,6 +349,12 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
 
     if recipe_factory in _B_MXFP8_RECIPES:
         assert cfg.env_vars == {**base_cfg.env_vars, "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1}
+    elif recipe_factory in _FULL_ITERATION_MXFP8_RECIPES:
+        assert cfg.env_vars == {
+            **base_cfg.env_vars,
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+            "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        }
     elif recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
         assert cfg.env_vars == base_cfg.env_vars
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
@@ -392,6 +403,41 @@ def test_gb_mxfp8_enables_cutedsl_fusion(recipe_factory: Callable[[], ConfigCont
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
+
+
+@pytest.mark.parametrize("recipe_factory", _FULL_ITERATION_MXFP8_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_mxfp8_full_iteration_graph_config(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """Lightning full-iteration recipes satisfy graph and static MoE buffer constraints."""
+    cfg = recipe_factory()
+
+    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.cuda_graph_scope is None
+    assert cfg.model.cuda_graph_modules == []
+    assert is_full_iteration_cuda_graph(cfg.model)
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is False
+    assert cfg.ddp.check_for_nan_in_grad is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.offload_modules == []
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.model.moe_paged_stash is False
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
+    assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size is None
+    assert cfg.model.high_priority_a2a_comm_stream is False
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
+    assert cfg.mixed_precision.fp8_dot_product_attention is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+
+    # Validate against MCore as well as checking the unfinalized recipe settings.
+    cfg.model.finalize()
+    assert is_full_iteration_cuda_graph(cfg.model)
 
 
 @pytest.mark.parametrize("recipe_factory", _GB_FSDP_RECIPES, ids=lambda recipe: recipe.__name__)
@@ -542,6 +588,14 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
 
+    if recipe_factory is nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config:
+        assert cfg.model.cuda_graph_impl == "transformer_engine"
+        assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
+        assert cfg.model.moe_expert_rank_capacity_factor is None
+        assert cfg.model.moe_paged_stash is False
+        assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+        assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
+
 
 @pytest.mark.parametrize("recipe_factory", _GB300_RECIPES, ids=lambda recipe: recipe.__name__)
 def test_gb300_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]) -> None:
@@ -619,6 +673,8 @@ def test_gb_fsdp_perf_recipe_defaults(recipe_factory: Callable[[], ConfigContain
     assert cfg.model.cuda_graph_impl == "none"
     assert cfg.model.cuda_graph_scope is None
     assert cfg.model.cuda_graph_modules == []
+    assert cfg.model.moe_expert_rank_capacity_factor is None
+    assert cfg.model.moe_paged_stash is False
     assert cfg.model.init_model_with_meta_device is True
 
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
