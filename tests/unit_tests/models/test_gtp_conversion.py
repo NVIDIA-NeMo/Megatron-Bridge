@@ -186,9 +186,7 @@ def test_native_fp8_hf_import_preserves_gtp_storage_context(monkeypatch, copy_er
             raise RuntimeError("TE copy failed")
         return original_copy(param, value)
 
-    monkeypatch.setattr(
-        "megatron.bridge.models.conversion.gtp.get_gtp_native_fp8_load_context", native_load_context
-    )
+    monkeypatch.setattr("megatron.bridge.models.conversion.gtp.get_gtp_native_fp8_load_context", native_load_context)
     monkeypatch.setattr(torch.nn.Parameter, "copy_", copy_with_te_check)
     mapping = Mock(hf_param="hf.weight", is_grouped_export=False)
     mapping.hf_to_megatron.return_value = source
