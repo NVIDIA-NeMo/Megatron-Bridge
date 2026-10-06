@@ -162,8 +162,6 @@ def test_hf_import_loads_local_gtp_shard(monkeypatch, streaming):
 @pytest.mark.parametrize("copy_error", [False, True])
 def test_native_fp8_hf_import_preserves_gtp_storage_context(monkeypatch, copy_error):
     """TE copy must run inside Core's temporary native-FP8 class restoration."""
-    import megatron.core.tensor_parallel.gtp_api as gtp_api
-
     bridge = _Bridge()
     module = torch.nn.Module()
     module.weight = _shard((3, 4), rank=1, padding=1)
@@ -188,7 +186,9 @@ def test_native_fp8_hf_import_preserves_gtp_storage_context(monkeypatch, copy_er
             raise RuntimeError("TE copy failed")
         return original_copy(param, value)
 
-    monkeypatch.setattr(gtp_api, "gtp_native_fp8_load_context", native_load_context, raising=False)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.gtp.get_gtp_native_fp8_load_context", native_load_context
+    )
     monkeypatch.setattr(torch.nn.Parameter, "copy_", copy_with_te_check)
     mapping = Mock(hf_param="hf.weight", is_grouped_export=False)
     mapping.hf_to_megatron.return_value = source

@@ -3396,7 +3396,9 @@ def _load_checkpoint_from_path(
             and cfg.ddp is not None
             and (cfg.ddp.fp8_param_gather or cfg.ddp.fp4_param_gather)
         ):
-            optimizer.quantize_and_sync_model_params_from_main_params()
+            quantize_and_sync = getattr(optimizer, "quantize_and_sync_model_params_from_main_params", None)
+            if quantize_and_sync is not None:
+                quantize_and_sync()
     else:
         if (
             not skip_load_to_model_and_opt

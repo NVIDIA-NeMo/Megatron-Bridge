@@ -20,6 +20,7 @@ from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 
+from megatron.bridge.models.common.base import serialize_model_config
 from megatron.bridge.models.hybrid.hybrid_builder import (
     HybridModelBuilder,
     HybridModelConfig,
@@ -49,7 +50,7 @@ class MambaModelConfig(HybridModelConfig):
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize without the deprecated ``mamba_stack_spec`` field."""
-        result = super().as_dict()
+        result = serialize_model_config(self)
         result.pop("mamba_stack_spec", None)
         return result
 

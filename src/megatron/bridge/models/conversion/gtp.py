@@ -19,6 +19,8 @@ from contextlib import contextmanager
 
 import torch
 
+from megatron.bridge.dev_compat import get_gtp_api, get_gtp_native_fp8_load_context
+
 
 def _is_gtp_param(param: torch.Tensor | None) -> bool:
     return getattr(param, "is_gtp_weight_remat", False) is True
@@ -37,9 +39,7 @@ def _get_mapping_shape(param: torch.Tensor) -> torch.Size:
 def _gtp_weight_load_context(param: torch.Tensor, module: torch.nn.Module) -> Iterator[None]:
     """Let TE update native FP8 storage while preserving the GTP parameter subclass."""
     if _is_gtp_param(param) and getattr(param, "_gtp_native_fp8", False):
-        from megatron.core.tensor_parallel.gtp_api import gtp_native_fp8_load_context
-
-        with gtp_native_fp8_load_context(module):
+        with get_gtp_native_fp8_load_context(module):
             yield
     else:
         yield
@@ -62,9 +62,10 @@ def _gather_gtp_weight(param: torch.Tensor | None) -> torch.Tensor | None:
     if not _is_gtp_param(param):
         return param
     if getattr(param, "_gtp_native_fp8", False):
-        from megatron.core.tensor_parallel.gtp_api import dequantize_gtp_native_fp8
-
-        local_weight = dequantize_gtp_native_fp8(param)
+        gtp_api = get_gtp_api()
+        if gtp_api is None:
+            raise RuntimeError("Cannot dequantize a native-FP8 GTP parameter because this MCore has no GTP API")
+        local_weight = gtp_api.dequantize_gtp_native_fp8(param)
     else:
         # GTP's detach preserves the subclass but drops its runtime attributes.
         # Collectives should operate on a plain tensor without triggering prefetch.

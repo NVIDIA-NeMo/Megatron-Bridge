@@ -2080,6 +2080,15 @@ class AutoBridge(Generic[MegatronModelT]):
             dist.init_process_group(backend=backend)
 
         if not parallel_state.is_initialized():
+            initialize_parameters = inspect.signature(parallel_state.initialize_model_parallel).parameters
+            optional_kwargs = {
+                parameter: getattr(transformer_config, attribute, 1)
+                for parameter, attribute in (
+                    ("gtp_remat_size", "gtp_weight_remat_size"),
+                    ("expert_gtp_remat_size", "expert_gtp_weight_remat_size"),
+                )
+                if parameter in initialize_parameters
+            }
             parallel_state.initialize_model_parallel(
                 tensor_model_parallel_size=transformer_config.tensor_model_parallel_size,
                 pipeline_model_parallel_size=transformer_config.pipeline_model_parallel_size,
@@ -2087,8 +2096,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 context_parallel_size=transformer_config.context_parallel_size or 1,
                 expert_model_parallel_size=transformer_config.expert_model_parallel_size or 1,
                 expert_tensor_parallel_size=transformer_config.expert_tensor_parallel_size,
-                gtp_remat_size=transformer_config.gtp_weight_remat_size,
-                expert_gtp_remat_size=transformer_config.expert_gtp_weight_remat_size,
+                **optional_kwargs,
             )
             if torch.cuda.is_available():
                 from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed

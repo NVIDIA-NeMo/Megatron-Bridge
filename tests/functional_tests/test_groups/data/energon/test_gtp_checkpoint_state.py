@@ -24,8 +24,12 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.config import set_experimental_flag
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
 from megatron.energon import DefaultTaskEncoder, TextSample, stateless
+
+try:
+    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+except ImportError:
+    HAVE_GTP = False
 
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
 from megatron.bridge.data.energon.prepare import prepare_webdataset
@@ -72,12 +76,14 @@ def test_energon_gtp_streams_and_checkpoint_resume(tmp_path, topology):
     if torch.distributed.get_world_size() != 2:
         pytest.skip("This test requires exactly two ranks")
     set_experimental_flag(True)
-    parallel_state.initialize_model_parallel(
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        context_parallel_size=2 if topology == "cp" else 1,
-        gtp_remat_size=2 if topology == "gtp" else 1,
-    )
+    model_parallel_kwargs = {
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "context_parallel_size": 2 if topology == "cp" else 1,
+    }
+    if HAVE_GTP:
+        model_parallel_kwargs["gtp_remat_size"] = 2 if topology == "gtp" else 1
+    parallel_state.initialize_model_parallel(**model_parallel_kwargs)
     try:
         pg = ProcessGroupCollection.use_mpu_process_groups()
         root = Path(broadcast_path(tmp_path))
