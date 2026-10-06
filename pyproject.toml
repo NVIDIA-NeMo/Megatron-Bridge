@@ -172,7 +172,7 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.20.0+131157b5"
+version = "2.20.2+6ea2a74a"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
