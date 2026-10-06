@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from unittest.mock import Mock, call, patch
 
 import pytest
 import torch
+from megatron.core import parallel_state
 from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
+
+
+_HAS_GTP_MODEL_PARALLEL = "gtp_remat_size" in inspect.signature(parallel_state.initialize_model_parallel).parameters
 
 
 class MockMegatronModule(MegatronModule):
@@ -98,12 +103,19 @@ def test_initialize_model_parallel_forwards_gtp_sizes(provider):
     with (
         patch("torch.distributed.is_initialized", return_value=True),
         patch("megatron.bridge.training.gtp.configure_gtp_remat") as configure,
-        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as initialize,
+        patch(
+            "megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel",
+            autospec=True,
+        ) as initialize,
     ):
         provider.initialize_model_parallel()
     configure.assert_called_once_with(provider)
-    assert initialize.call_args.kwargs["gtp_remat_size"] == 2
-    assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 4
+    if _HAS_GTP_MODEL_PARALLEL:
+        assert initialize.call_args.kwargs["gtp_remat_size"] == 2
+        assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 4
+    else:
+        assert "gtp_remat_size" not in initialize.call_args.kwargs
+        assert "expert_gtp_remat_size" not in initialize.call_args.kwargs
 
 
 def test_initialize_model_parallel_finalizes_public_gtp_shards():
@@ -118,14 +130,21 @@ def test_initialize_model_parallel_finalizes_public_gtp_shards():
     with (
         patch("torch.distributed.is_initialized", return_value=True),
         patch("megatron.bridge.training.gtp.configure_gtp_remat") as configure,
-        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as initialize,
+        patch(
+            "megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel",
+            autospec=True,
+        ) as initialize,
     ):
         provider.initialize_model_parallel()
     configure.assert_called_once_with(provider)
     assert provider.gtp_weight_remat_size == 2
     assert provider.expert_gtp_weight_remat_size == 2
-    assert initialize.call_args.kwargs["gtp_remat_size"] == 2
-    assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 2
+    if _HAS_GTP_MODEL_PARALLEL:
+        assert initialize.call_args.kwargs["gtp_remat_size"] == 2
+        assert initialize.call_args.kwargs["expert_gtp_remat_size"] == 2
+    else:
+        assert "gtp_remat_size" not in initialize.call_args.kwargs
+        assert "expert_gtp_remat_size" not in initialize.call_args.kwargs
 
 
 def test_initialize_model_parallel_preserves_explicit_gtp_overrides(provider):
@@ -133,10 +152,48 @@ def test_initialize_model_parallel_preserves_explicit_gtp_overrides(provider):
     with (
         patch("torch.distributed.is_initialized", return_value=True),
         patch("megatron.bridge.training.gtp.configure_gtp_remat"),
-        patch("megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel") as initialize,
+        patch(
+            "megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel",
+            autospec=True,
+        ) as initialize,
     ):
         provider.initialize_model_parallel(gtp_remat_size=4)
-    assert initialize.call_args.kwargs["gtp_remat_size"] == 4
+    if _HAS_GTP_MODEL_PARALLEL:
+        assert initialize.call_args.kwargs["gtp_remat_size"] == 4
+    else:
+        assert "gtp_remat_size" not in initialize.call_args.kwargs
+
+
+def test_initialize_model_parallel_omits_unsupported_gtp_sizes(provider):
+    def initialize_without_gtp(*, tensor_model_parallel_size: int, **kwargs) -> None:
+        pass
+
+    initialize_without_gtp.__signature__ = inspect.Signature(
+        [
+            inspect.Parameter(
+                "tensor_model_parallel_size",
+                inspect.Parameter.KEYWORD_ONLY,
+                annotation=int,
+            )
+        ]
+    )
+    with (
+        patch("torch.distributed.is_initialized", return_value=True),
+        patch("megatron.bridge.training.gtp.configure_gtp_remat"),
+        patch(
+            "megatron.bridge.models.model_provider.parallel_state.initialize_model_parallel",
+            wraps=initialize_without_gtp,
+        ) as initialize,
+    ):
+        provider.initialize_model_parallel()
+    assert initialize.call_args.kwargs == {
+        "tensor_model_parallel_size": 1,
+        "pipeline_model_parallel_size": 1,
+        "virtual_pipeline_model_parallel_size": None,
+        "context_parallel_size": 1,
+        "expert_model_parallel_size": 1,
+        "expert_tensor_parallel_size": 1,
+    }
 
 
 @patch("megatron.bridge.models.model_provider.ProcessGroupCollection.use_mpu_process_groups")

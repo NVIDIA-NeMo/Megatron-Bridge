@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import ClassVar
@@ -53,6 +54,7 @@ DummyModelConfig.builder = f"{DummyModelBuilder.__module__}.DummyModelBuilder"
 class DummySubConfig:
     x: int = 1
     y: str = "sub"
+    timers: Callable | None = None
 
 
 @dataclass
@@ -63,6 +65,11 @@ class DummyDerivedSubConfig:
 
 def dummy_callable() -> None:
     """Placeholder callable used as a field default in DummyNestedModelConfig."""
+
+
+class CallableRuntimeState:
+    def __call__(self) -> None:
+        """Model a runtime-owned callable object that must not be serialized."""
 
 
 @dataclass
@@ -110,7 +117,13 @@ def test_model_config_get_builder_cls_uses_validated_target() -> None:
 def test_model_config_from_dict_round_trips_nested_config(fn_field: Callable[..., object]) -> None:
     original = DummyNestedModelConfig(sub=DummySubConfig(x=7, y="nested"), fn_field=fn_field, extra=99)
 
-    cfg = ModelConfig.from_dict(original.as_dict())
+    serialized = original.as_dict()
+    assert serialized["fn_field"] == {
+        "_target_": f"{fn_field.__module__}.{fn_field.__qualname__}",
+        "_callable_": True,
+    }
+
+    cfg = ModelConfig.from_dict(serialized)
 
     assert isinstance(cfg, DummyNestedModelConfig)
     assert cfg.extra == 99
@@ -118,6 +131,39 @@ def test_model_config_from_dict_round_trips_nested_config(fn_field: Callable[...
     assert cfg.sub.x == 7
     assert cfg.sub.y == "nested"
     assert cfg.fn_field is fn_field
+
+
+def test_model_config_as_dict_omits_runtime_fields() -> None:
+    original = DummyNestedModelConfig(sub=DummySubConfig(x=7, timers=CallableRuntimeState()))
+
+    serialized = original.as_dict()
+
+    assert serialized["sub"] == {
+        "_target_": f"{DummySubConfig.__module__}.{DummySubConfig.__qualname__}",
+        "x": 7,
+        "y": "sub",
+    }
+
+
+def test_model_config_from_dict_round_trips_partial_callable() -> None:
+    fn_field = functools.partial(torch.nn.init.normal_, mean=0.0, std=0.02)
+    original = DummyNestedModelConfig(fn_field=fn_field)
+
+    serialized = original.as_dict()
+    assert serialized["fn_field"] == {
+        "_target_": "torch.nn.init.normal_",
+        "_partial_": True,
+        "mean": 0.0,
+        "std": 0.02,
+    }
+
+    cfg = ModelConfig.from_dict(serialized)
+
+    assert isinstance(cfg, DummyNestedModelConfig)
+    assert isinstance(cfg.fn_field, functools.partial)
+    assert cfg.fn_field.func is torch.nn.init.normal_
+    assert cfg.fn_field.args == ()
+    assert cfg.fn_field.keywords == {"mean": 0.0, "std": 0.02}
 
 
 def test_model_config_from_dict_ignores_non_init_derived_fields() -> None:

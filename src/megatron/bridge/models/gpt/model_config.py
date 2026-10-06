@@ -49,11 +49,6 @@ class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the config with a symbolic activation function."""
-        data = super().as_dict()
-        transformer_data = data.get("transformer")
-        if not isinstance(transformer_data, dict):
-            raise TypeError("Serialized GPT model config must contain a transformer mapping.")
-
         activation_func = self.transformer.activation_func
         if isinstance(activation_func, str):
             str_to_callable(activation_func)
@@ -62,6 +57,11 @@ class BridgeGPTModelConfig(ModelConfigOverrideMixin, GPTModelConfig, ModelConfig
             activation_name = callable_to_str(activation_func)
         if activation_name is None:
             raise ValueError(f"Cannot serialize unregistered activation callable: {activation_func!r}.")
+
+        data = super().as_dict()
+        transformer_data = data.get("transformer")
+        if not isinstance(transformer_data, dict):
+            raise TypeError("Serialized GPT model config must contain a transformer mapping.")
 
         transformer_data["activation_func"] = activation_name
         return data

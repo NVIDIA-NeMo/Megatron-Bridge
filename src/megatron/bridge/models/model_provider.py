@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import abc
+import inspect
 import os
 import warnings
 from pathlib import Path
@@ -335,8 +336,15 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         from megatron.bridge.training.gtp import configure_gtp_remat
 
         configure_gtp_remat(self)
-        model_parallel_kwargs.setdefault("gtp_remat_size", getattr(self, "gtp_weight_remat_size", 1))
-        model_parallel_kwargs.setdefault("expert_gtp_remat_size", getattr(self, "expert_gtp_weight_remat_size", 1))
+        initialize_parameters = inspect.signature(parallel_state.initialize_model_parallel).parameters
+        for parameter_name, provider_name in (
+            ("gtp_remat_size", "gtp_weight_remat_size"),
+            ("expert_gtp_remat_size", "expert_gtp_weight_remat_size"),
+        ):
+            if parameter_name in initialize_parameters:
+                model_parallel_kwargs.setdefault(parameter_name, getattr(self, provider_name, 1))
+            else:
+                model_parallel_kwargs.pop(parameter_name, None)
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=getattr(self, "tensor_model_parallel_size", 1),
             pipeline_model_parallel_size=getattr(self, "pipeline_model_parallel_size", 1),
