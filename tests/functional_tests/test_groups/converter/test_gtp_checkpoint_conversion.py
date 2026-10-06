@@ -23,6 +23,7 @@ from megatron.core.num_microbatches_calculator import init_num_microbatches_calc
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
 
+
 try:
     from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
     from megatron.core.tensor_parallel.random import get_gtp_remat_rng_tracker_name
