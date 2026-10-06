@@ -46,14 +46,6 @@ identifier and the exact Bridge commit used for verification. Put them in
 the container, record the mounted checkout commit. Never substitute a private
 image path for the public base container identifier.
 
-When no item is verified, either environment field may be null if its exact
-public provenance is unavailable. Keep historical observations in the relevant
-unverified item's `expected_result`, with the actual source/runtime limitations
-stated explicitly and its structured metrics and date null. Do not substitute
-a later clean commit or invent a public image for a release-candidate run.
-This applies to draft and historical cards for any model. As soon as any item
-is verified, both environment fields must satisfy the existing requirements.
-
 The top-level Bridge commit is the default for every item leaf. If one verified
 item was run from a different clean checkout, put that exact 40-hex commit in
 the leaf's optional `bridge_commit` field. Omit the field when it would repeat

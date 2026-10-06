@@ -115,7 +115,6 @@ MODEL_PAGE_PATHS = {
     "qwen3-235b-a22b": "models/qwen/qwen3-235b-a22b.md",
     "qwen3-30b-a3b": "models/qwen/qwen3-30b-a3b.md",
     "qwen3-8b": "models/qwen/qwen3-8b.md",
-    "qwen3.5-35b-a3b-text": "models/qwen/qwen3.5-35b-a3b-text.md",
     "qwen3.6-35b-a3b": "models/qwen/qwen3.6-35b-a3b.md",
     "qwen3.8-27b": "models/qwen/qwen3.8-27b.md",
     "step35-flash": "models/stepfun/step35.md",
@@ -131,7 +130,6 @@ MODEL_PAGE_TITLES = {
     "qwen3-235b-a22b": "Qwen3-235B-A22B",
     "qwen3-30b-a3b": "Qwen3-30B-A3B",
     "qwen3-8b": "Qwen3-8B",
-    "qwen3.5-35b-a3b-text": "Qwen3.5-35B-A3B Text",
     "qwen3.6-35b-a3b": "Qwen3.6-35B-A3B",
     "qwen3.8-27b": "Qwen3.8-27B",
 }
