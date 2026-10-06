@@ -15,7 +15,7 @@
 """Training recipe for the public DiffusionGemma 26B-A4B checkpoint."""
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.diffusion_gemma.data import DiffusionGemmaDatasetConfig
+from megatron.bridge.models.diffusion_gemma.data import DiffusionGemmaDatasetConfig, MockDiffusionGemmaDatasetConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -33,14 +33,22 @@ _HF_PATH = "google/diffusiongemma-26B-A4B-it"
 
 def diffusion_gemma_26b_sft_config(
     *,
-    train_path: str,
+    train_path: str | None = None,
     validation_path: str | None = None,
     test_path: str | None = None,
     hf_model_path: str = _HF_PATH,
 ) -> ConfigContainer:
-    """Return the 8-GPU EP=8 block-diffusion SFT configuration."""
+    """Return the 8-GPU EP=8 block-diffusion SFT configuration.
+
+    Pass ``train_path`` to train on JSONL split files. Without it, the recipe uses
+    synthetic data so it can be constructed for smoke tests and recipe discovery.
+    """
+    if train_path is None and (validation_path is not None or test_path is not None):
+        raise ValueError("validation_path and test_path require train_path")
     bridge = AutoBridge.from_hf_pretrained(hf_model_path)
     provider = bridge.to_megatron_provider(load_weights=True)
+    text_config = getattr(provider, "text_config", None)
+    vocab_size = getattr(text_config, "vocab_size", getattr(provider, "vocab_size", 262144))
     cfg = ConfigContainer(
         model=provider,
         train=TrainingConfig(train_iters=1000, global_batch_size=8, micro_batch_size=1),
@@ -52,14 +60,18 @@ def diffusion_gemma_26b_sft_config(
             start_weight_decay=0.0,
             end_weight_decay=0.0,
         ),
-        dataset=DiffusionGemmaDatasetConfig(
-            train_path=train_path,
-            validation_path=validation_path,
-            test_path=test_path,
-            hf_processor_path=hf_model_path,
+        dataset=(
+            DiffusionGemmaDatasetConfig(
+                train_path=train_path,
+                validation_path=validation_path,
+                test_path=test_path,
+                hf_processor_path=hf_model_path,
+            )
+            if train_path is not None
+            else MockDiffusionGemmaDatasetConfig()
         ),
         logger=LoggerConfig(log_interval=1),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=provider.text_config.vocab_size),
+        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=vocab_size),
         checkpoint=CheckpointConfig(
             save="diffusiongemma-checkpoints",
             load="diffusiongemma-checkpoints",
@@ -96,7 +108,7 @@ def diffusion_gemma_26b_sft_config(
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
     cfg.model.recompute_num_layers = 1
-    cfg.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=cfg.model.text_config.vocab_size)
+    cfg.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=vocab_size)
     cfg.train.train_iters = 1000
     cfg.train.global_batch_size = 8
     cfg.train.micro_batch_size = 1

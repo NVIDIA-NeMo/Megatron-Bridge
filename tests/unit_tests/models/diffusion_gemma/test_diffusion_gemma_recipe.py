@@ -18,14 +18,14 @@ import pytest
 from transformers.models.diffusion_gemma import DiffusionGemmaConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.diffusion_gemma.data import DiffusionGemmaDatasetConfig
+from megatron.bridge.models.diffusion_gemma.data import DiffusionGemmaDatasetConfig, MockDiffusionGemmaDatasetConfig
 from megatron.bridge.recipes.diffusion_gemma import diffusion_gemma_26b_sft_config
 
 
 pytestmark = pytest.mark.unit
 
 
-def test_recipe_has_trainable_ep8_distributed_optimizer_and_explicit_splits(monkeypatch):
+def _patch_provider(monkeypatch):
     provider = AutoBridge.from_hf_config(
         DiffusionGemmaConfig(
             architectures=["DiffusionGemmaForBlockDiffusion"],
@@ -45,6 +45,11 @@ def test_recipe_has_trainable_ep8_distributed_optimizer_and_explicit_splits(monk
             return provider
 
     monkeypatch.setattr(AutoBridge, "from_hf_pretrained", lambda path: _Bridge())
+    return calls
+
+
+def test_recipe_has_trainable_ep8_distributed_optimizer_and_explicit_splits(monkeypatch):
+    calls = _patch_provider(monkeypatch)
     cfg = diffusion_gemma_26b_sft_config(
         train_path="train.jsonl", validation_path="validation.jsonl", test_path="test.jsonl"
     )
@@ -68,3 +73,16 @@ def test_recipe_has_trainable_ep8_distributed_optimizer_and_explicit_splits(monk
     assert cfg.checkpoint.pretrained_checkpoint is None  # HF hook, not an invalid HF path masquerading as MCore
     assert cfg.checkpoint.ckpt_format == "torch_dist"
     assert cfg.mixed_precision == "bf16_mixed"
+
+
+def test_recipe_defaults_to_synthetic_data(monkeypatch):
+    calls = _patch_provider(monkeypatch)
+    cfg = diffusion_gemma_26b_sft_config()
+    assert calls == [True]
+    assert isinstance(cfg.dataset, MockDiffusionGemmaDatasetConfig)
+
+
+@pytest.mark.parametrize("split", ["validation_path", "test_path"])
+def test_recipe_rejects_eval_split_without_train_split(split):
+    with pytest.raises(ValueError, match="require train_path"):
+        diffusion_gemma_26b_sft_config(**{split: f"{split}.jsonl"})

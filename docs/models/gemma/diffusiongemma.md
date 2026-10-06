@@ -26,8 +26,10 @@ EP=8, one pipeline stage, BF16 mixed precision, a distributed optimizer, and
 full uniform activation recomputation. The recomputation setting keeps
 large-image prompts with long text and prior-target context within H200
 memory; callers can override it for shorter inputs.
-The required `train_path` and optional `validation_path`/`test_path` are existing
-JSONL split files; the adapter never creates a new split. Each row has the form:
+Pass `train_path` and optional `validation_path`/`test_path` to train on
+existing JSONL split files; the adapter never creates a new split. Without
+`train_path`, the recipe uses synthetic smoke-test data. Each JSONL row has the
+form:
 
 ```json
 {"messages":[{"role":"user","content":[{"type":"image","image":"images/example.png"},{"type":"text","text":"Describe the image."}]}],"completion":"A blue square above a red circle."}
@@ -95,7 +97,7 @@ gradient norms, and consumed-sample positions exactly.
   diffusion training step.
 - Context lengths beyond the validated sliding-window boundary still need
   production-shaped memory and quality evaluation.
-- `MockDiffusionGemmaDatasetConfig` is for smoke tests only. The real recipe
-  uses `DiffusionGemmaDatasetConfig` and requires curated JSONL input files.
+- `MockDiffusionGemmaDatasetConfig` is for smoke tests only. Pass
+  `train_path` to use `DiffusionGemmaDatasetConfig` with curated JSONL input files.
 - A successful optimizer smoke test does not demonstrate task quality or
   generalization. Those require held-out task evaluation on a saved split.
