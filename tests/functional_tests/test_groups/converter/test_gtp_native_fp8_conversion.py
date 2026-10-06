@@ -22,7 +22,11 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.config import set_experimental_flag
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+
+try:
+    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+except ImportError:
+    HAVE_GTP = False
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge

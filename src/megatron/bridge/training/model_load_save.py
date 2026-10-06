@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import inspect
 import logging
 from contextlib import contextmanager
 from pathlib import Path
@@ -166,6 +167,18 @@ def _get_or_initialize_pg_collection(
 
     configure_gtp_remat(model_cfg)
     if not parallel_state.is_initialized():
+        initialize_parameters = inspect.signature(parallel_state.initialize_model_parallel).parameters
+        accepts_var_kwargs = any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in initialize_parameters.values()
+        )
+        optional_kwargs = {
+            parameter: getattr(model_cfg, attribute, 1)
+            for parameter, attribute in (
+                ("gtp_remat_size", "gtp_weight_remat_size"),
+                ("expert_gtp_remat_size", "expert_gtp_weight_remat_size"),
+            )
+            if parameter in initialize_parameters or accepts_var_kwargs
+        }
         parallel_state.initialize_model_parallel(
             tensor_model_parallel_size=model_cfg.tensor_model_parallel_size,
             pipeline_model_parallel_size=model_cfg.pipeline_model_parallel_size,
@@ -173,8 +186,7 @@ def _get_or_initialize_pg_collection(
             context_parallel_size=model_cfg.context_parallel_size or 1,
             expert_model_parallel_size=model_cfg.expert_model_parallel_size or 1,
             expert_tensor_parallel_size=model_cfg.expert_tensor_parallel_size,
-            gtp_remat_size=getattr(model_cfg, "gtp_weight_remat_size", 1),
-            expert_gtp_remat_size=getattr(model_cfg, "expert_gtp_weight_remat_size", 1),
+            **optional_kwargs,
         )
         if torch.cuda.is_available() and torch.cuda.device_count() > 0:
             from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed

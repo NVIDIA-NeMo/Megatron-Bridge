@@ -21,8 +21,14 @@ import pytest
 import torch
 from megatron.core.num_microbatches_calculator import init_num_microbatches_calculator
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
-from megatron.core.tensor_parallel.random import get_cuda_rng_tracker, get_gtp_remat_rng_tracker_name
+from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
+
+try:
+    from megatron.core.tensor_parallel.gtp_api import HAVE_GTP
+    from megatron.core.tensor_parallel.random import get_gtp_remat_rng_tracker_name
+except ImportError:
+    HAVE_GTP = False
+    get_gtp_remat_rng_tracker_name = None
 from transformers import (
     LlamaConfig,
     LlamaForCausalLM,
@@ -146,7 +152,7 @@ def test_gtp_hf_roundtrip_and_checkpoint(tmp_path, topology, fully_parallel, mod
             rank=torch.distributed.get_rank(),
             global_batch_size=cfg.train.global_batch_size,
             micro_batch_size=cfg.train.micro_batch_size,
-            data_parallel_size=pg.dp_cp_gtp_remat.size(),
+            data_parallel_size=(getattr(pg, "dp_cp_gtp_remat", None) or pg.dp_cp).size(),
         )
         init_rerun_state(cfg.rerun_state_machine)
         state = GlobalState()

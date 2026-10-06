@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 from typing import Any, ClassVar
@@ -29,6 +30,63 @@ from megatron.training.models.base import (
 
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
+
+
+_RUNTIME_CONFIG_FIELDS = frozenset(
+    {
+        "pre_wrap_hooks",
+        "post_wrap_hooks",
+        "timers",
+        "finalize_model_grads_func",
+        "grad_scale_func",
+        "moe_grad_scale_func",
+        "mtp_grad_scale_func",
+        "no_sync_func",
+        "grad_sync_func",
+        "param_sync_func",
+    }
+)
+
+
+def serialize_model_config(config: _MegatronModelConfig) -> dict[str, Any]:
+    """Serialize model configs while preserving importable callable fields."""
+
+    def _serialize_value(value: Any) -> Any:
+        if is_dataclass(value) and not isinstance(value, type):
+            result = {"_target_": f"{value.__class__.__module__}.{value.__class__.__qualname__}"}
+            for config_field in dataclass_fields(value):
+                if config_field.name.startswith("_") or config_field.name in _RUNTIME_CONFIG_FIELDS:
+                    continue
+                result[config_field.name] = _serialize_value(getattr(value, config_field.name))
+            return result
+        if isinstance(value, (list, tuple)):
+            return [_serialize_value(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _serialize_value(item) for key, item in value.items()}
+        if isinstance(value, functools.partial):
+            module = getattr(value.func, "__module__", None)
+            qualname = getattr(value.func, "__qualname__", None)
+            if not module or not qualname or "<locals>" in qualname:
+                raise TypeError(f"Cannot serialize partial with non-importable callable {value.func!r}")
+            result = {"_target_": f"{module}.{qualname}", "_partial_": True}
+            if value.args:
+                result["_args_"] = [_serialize_value(item) for item in value.args]
+            for key, item in (value.keywords or {}).items():
+                if key in {"_target_", "_partial_", "_args_"}:
+                    raise TypeError(f"Cannot serialize partial with reserved keyword {key!r}")
+                result[key] = _serialize_value(item)
+            return result
+        if callable(value):
+            module = getattr(value, "__module__", None)
+            qualname = getattr(value, "__qualname__", None)
+            if not module or not qualname or "<locals>" in qualname:
+                raise TypeError(f"Cannot serialize non-importable callable {value!r}")
+            return {"_target_": f"{module}.{qualname}", "_callable_": True}
+        return value
+
+    result = _serialize_value(config)
+    result["_builder_"] = config.builder
+    return result
 
 
 def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
@@ -51,6 +109,10 @@ def deserialize_model_config(data: dict[str, Any]) -> _MegatronModelConfig:
             raise ValueError(f"Cannot deserialize: '_target_' must be a string, got {type(target).__name__}")
 
         config_cls = _resolve_target(target, full_key=full_key, check_callable=False)
+        if subdata.get("_callable_") is True:
+            if set(subdata) != {"_target_", "_callable_"}:
+                raise ValueError(f"Cannot deserialize callable target with extra fields: {sorted(subdata)}")
+            return config_cls
         if not isinstance(config_cls, type) or not is_dataclass(config_cls):
             return instantiate(subdata)
 
@@ -119,6 +181,10 @@ class ModelConfig(_MegatronModelConfig):
         if not isinstance(builder_cls, type):
             raise TypeError(f"Builder target '{self.builder}' did not resolve to a class.")
         return builder_cls
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize this config without dropping importable callable fields."""
+        return serialize_model_config(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> _MegatronModelConfig:
