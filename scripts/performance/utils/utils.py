@@ -364,8 +364,9 @@ def apply_argparse_overrides(config: Any, args: Any) -> Any:
     The bootstrap and training entrypoints call this helper before Hydra
     overrides so parallelism and environment-relevant settings match.
     """
-    if getattr(args, "nccl_ub", False):
-        config.ddp.nccl_ub = True
+    nccl_ub = getattr(args, "nccl_ub", None)
+    if nccl_ub is not None:
+        config.ddp.nccl_ub = nccl_ub
 
     # Keep all parallelism overrides together so bootstrap topology and the
     # final training config resolve the same user input.
