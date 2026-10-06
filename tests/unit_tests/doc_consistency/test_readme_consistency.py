@@ -61,6 +61,7 @@ DATA_PREPARATION_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
 )
 QWEN3_VL_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+MEGATRON_BERT_README = REPO_ROOT / "examples" / "models" / "bert" / "megatron-bert" / "README.md"
 QWEN25_VL_DOCS = (
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
@@ -688,6 +689,17 @@ def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
     for path in SPHINX_TUTORIAL_LINK_DOCS:
         relative_tutorial_links = re.findall(r"\]\((?:\.\./)+tutorials/[^)]+\)", _read(path))
         assert not relative_tutorial_links, f"{path} has out-of-tree Sphinx links: {relative_tutorial_links}"
+
+
+def test_megatron_bert_readme_saves_a_bert_tokenizer():
+    """The Megatron BERT README must load the Hub tokenizer through a BERT tokenizer class."""
+    loaders = re.findall(
+        r"(\w+)\.from_pretrained\(\s*[\"']nvidia/megatron-bert-uncased-345m[\"']", _read(MEGATRON_BERT_README)
+    )
+    assert loaders, f"{MEGATRON_BERT_README} no longer loads the nvidia/megatron-bert-uncased-345m tokenizer"
+    assert all(re.fullmatch(r"BertTokenizer(Fast)?", name) for name in loaders), (
+        f"non-BERT tokenizer loaders: {loaders}"
+    )
 
 
 if __name__ == "__main__":
