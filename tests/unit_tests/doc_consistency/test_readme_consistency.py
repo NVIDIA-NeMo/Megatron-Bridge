@@ -203,6 +203,17 @@ def test_shell_conversion_launcher_is_not_run_through_python():
     assert not offenders, f"convert.sh is invoked through Python or torchrun: {offenders}"
 
 
+def test_model_example_scripts_reference_existing_conversion_scripts():
+    """Every examples/conversion/*.py path in a model example shell script exists in the repo."""
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "examples" / "models").rglob("*.sh")):
+        for ref in sorted(set(re.findall(r"examples/conversion/[\w./-]+\.py", _read(path)))):
+            if not (REPO_ROOT / ref).is_file():
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {ref}")
+
+    assert not offenders, f"model example scripts reference missing conversion scripts: {offenders}"
+
+
 def test_llama_readme_gptdataset_field_name():
     """The GPTDatasetConfig YAML block uses the canonical field name (bug 4)."""
     # Bridge exposes seq_length and copies it to MCore's internal sequence_length during finalization.
