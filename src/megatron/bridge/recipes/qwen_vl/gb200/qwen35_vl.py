@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
@@ -224,8 +225,6 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).to_megatron_provider(
         load_weights=False
     )
-    cfg.dataset.hf_processor_path = hf_path
-    cfg.dataset.hf_processor_kwargs = {"revision": _QWEN35_35B_A3B_REVISION}
     cfg.model.calculate_per_token_loss = True
     cfg.ddp.average_in_collective = False
 
@@ -253,10 +252,23 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model.vision_recompute_num_layers = 1
 
     cfg.train.micro_batch_size = 1
-    cfg.dataset.seq_length = 131072
-    cfg.dataset.enable_in_batch_packing = False
-    cfg.dataset.pad_to_max_length = True  # HybridEP requires a fixed token width.
-    cfg.dataset.in_batch_packing_pad_to_multiple_of = 16
+    # Nemotron Image Training v3, clevr_2 subset, prepared as Energon shards.
+    # Native packing combines samples into one physical 128K microbatch.
+    cfg.dataset = EnergonDatasetConfig(
+        seq_length=cfg.model.seq_length,
+        micro_batch_size=cfg.train.micro_batch_size,
+        num_workers=1,
+        shuffle_buffer_size=2,
+        packing_buffer_size=8,
+        dataset_kwargs={"image_decode_spec": "pilrgb"},
+        task_encoder=QwenVLEnergonTaskEncoderConfig(
+            hf_processor_path=hf_path,
+            hf_processor_revision=_QWEN35_35B_A3B_REVISION,
+            max_pixels=401408,
+            max_num_images=4,
+            max_visual_tokens=2048,
+        ),
+    )
 
     cfg.optimizer.lr = 2e-5
     cfg.optimizer.min_lr = 2e-6
@@ -294,8 +306,12 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContainer:
     """Return 128K BF16 Qwen3.5-VL SFT with TP2/CP8/EP16 on 32 GB200 GPUs.
 
-    Supply a pretrained checkpoint and multimodal data. The default dataset
-    uses unpacked examples with a one-sample microbatch.
+    Set ``dataset.path`` to the prepared Nemotron Image Training v3 ``clevr_2``
+    Energon shards and supply a pretrained checkpoint. After verifying the
+    source revision, use ``tutorials/data/energon/prepare_nemotron_image_v3.py``
+    with ``--subsets clevr_2 --skip-source-integrity-check``; its built-in
+    integrity manifest covers only ``turing``. Native Energon packing uses
+    one physical microbatch per 128K pack.
     """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_mixed()
@@ -303,7 +319,11 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
 
 
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Return 128K MXFP8 Qwen3.5-VL SFT with BF16 parameter communication."""
+    """Return packed CLEVR2 128K MXFP8 SFT with BF16 parameter communication.
+
+    Set ``dataset.path`` to prepared CLEVR2 Energon shards and supply a
+    pretrained checkpoint, as for the BF16 variant.
+    """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_with_mxfp8_mixed()
     cfg.mixed_precision.fp8_param_gather = False

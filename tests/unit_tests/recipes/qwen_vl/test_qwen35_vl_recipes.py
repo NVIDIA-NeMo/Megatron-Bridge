@@ -664,6 +664,7 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
 
 def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest.MonkeyPatch):
     """The GB200 BF16 and MXFP8 recipes should share one 128K execution topology."""
+    from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
     from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
 
     monkeypatch.setattr(
@@ -712,9 +713,21 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.dataset.seq_length == 131072
         assert cfg.dataset.enable_in_batch_packing is False
         assert cfg.dataset.defer_in_batch_packing_to_step is False
-        assert cfg.dataset.pad_to_max_length is True
-        assert cfg.dataset.hf_processor_kwargs == {"revision": _qwen35_vl_gb200_module._QWEN35_35B_A3B_REVISION}
-        assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 16
+        assert isinstance(cfg.dataset, EnergonDatasetConfig)
+        assert cfg.dataset.path is None  # Caller supplies prepared CLEVR2 shards.
+        assert cfg.dataset.micro_batch_size == 1
+        assert cfg.dataset.num_workers == 1
+        assert cfg.dataset.shuffle_buffer_size == 2
+        assert cfg.dataset.packing_buffer_size == 8
+        assert cfg.dataset.dataset_kwargs == {"image_decode_spec": "pilrgb"}
+        encoder = cfg.dataset.task_encoder
+        assert isinstance(encoder, QwenVLEnergonTaskEncoderConfig)
+        assert encoder.hf_processor_path == "Qwen/Qwen3.5-35B-A3B"
+        assert encoder.hf_processor_revision == _qwen35_vl_gb200_module._QWEN35_35B_A3B_REVISION
+        assert encoder.min_pixels == 200704
+        assert encoder.max_pixels == 401408
+        assert encoder.max_num_images == 4
+        assert encoder.max_visual_tokens == 2048
         assert cfg.mixed_precision.grad_reduce_in_fp32 is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
         assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
@@ -1491,12 +1504,15 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
     config = recipe_func()
 
+    config.dataset.path = "prepared-clevr2-energon"
+    config.dataset.validate()
     config.validate()
+    assert config.dataset.pad_to_max_length is True  # Derived for HybridEP.
 
     assert config.train.global_batch_size % (2 * config.train.micro_batch_size) == 0
     config.dataset.enable_in_batch_packing = True
-    with pytest.raises(ValueError, match="micro_batch_size should be greater than 1"):
-        config.validate()
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        config.dataset.validate()
 
 
 def test_gb200_long_context_pins_model_and_processor_together(monkeypatch):
@@ -1510,4 +1526,5 @@ def test_gb200_long_context_pins_model_and_processor_together(monkeypatch):
     patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
     recipe = _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config
     cfg = recipe()
-    assert calls == [(cfg.dataset.hf_processor_path, cfg.dataset.hf_processor_kwargs)]
+    encoder = cfg.dataset.task_encoder
+    assert calls == [(encoder.hf_processor_path, {"revision": encoder.hf_processor_revision})]
