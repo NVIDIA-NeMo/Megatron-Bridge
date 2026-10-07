@@ -54,6 +54,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.utils import unwrap_model
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
@@ -385,8 +386,75 @@ class Nemotron35SuperVLBridge(NemotronOmniBridge):
     """Bridge for Nemotron 3.5 Super VL using the shared Omni media stack."""
 
     _HF_SUMMARY_IDXS_BUFFER = "vision_model.summary_idxs"
+    _HF_VIDEO_EMBEDDER = "vision_model.radio_model.model.patch_generator.video_embedder.weight"
+    _HF_PASSTHROUGH_KEYS = (*NemotronOmniBridge._HF_PASSTHROUGH_KEYS, _HF_SUMMARY_IDXS_BUFFER)
     _HF_SHARED_MTP_BLOCKS = 1
     _MCORE_MTP_PREDICTION_DEPTHS = 2
+
+    @torch.no_grad()
+    def stream_weights_megatron_to_hf(
+        self,
+        megatron_model: NemotronOmniModel | list[NemotronOmniModel],
+        hf_pretrained: PreTrainedCausalLM,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: list[WeightConversionTask] | None = None,
+        merge_adapter_weights: bool = True,
+        weight_dtype: torch.dtype | None = None,
+        with_megatron_names: bool = False,
+    ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
+        """Preserve source aliases and the unused image-only video parameter.
+
+        Aliases must follow the newly converted (and possibly LoRA-merged)
+        tensor, never the original base weight. Only aliases actually present
+        in the source layout are emitted; there is no checkpoint-size assumption.
+        """
+        state = getattr(hf_pretrained, "state", None)
+        source = getattr(state, "source", None)
+        if source is None and (source_path := getattr(hf_pretrained, "name_or_path", None)):
+            source = SafeTensorsStateSource(source_path)
+            state = StateDict(source)
+        source_keys = set(source.get_all_keys()) if source is not None else set()
+        seen_video = False
+        for item in super().stream_weights_megatron_to_hf(
+            megatron_model,
+            hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
+            with_megatron_names=with_megatron_names,
+        ):
+            yield item
+            seen_video |= item.param_name == self._HF_VIDEO_EMBEDDER
+            name = item.param_name
+            if name in (
+                "language_model.backbone.embeddings.weight",
+                "language_model.lm_head.weight",
+            ) or name.startswith("language_model.mtp."):
+                alias = name.removeprefix("language_model.")
+                if alias in source_keys:
+                    sources = item.megatron_param_names if with_megatron_names else None
+                    yield from HFWeightTuple(alias, item.weight).iter_finalized(
+                        cpu=cpu, clone_identity_output=True, megatron_param_names=sources
+                    )
+
+        models = unwrap_model(megatron_model)
+        config = models[0].config if models else None
+        image_only = (
+            getattr(config, "separate_video_embedder", None) is False
+            and getattr(config, "temporal_patch_dim", None) == 1
+        )
+        # Only an explicitly disabled video branch may be restored from the
+        # source. Never mask a missing conversion for an active/trained branch.
+        if image_only and not seen_video and self._HF_VIDEO_EMBEDDER in source_keys:
+            tensor = state[self._HF_VIDEO_EMBEDDER]
+            if not cpu and tensor.device.type == "cpu" and torch.cuda.is_available():
+                tensor = tensor.to(device=torch.cuda.current_device())
+            yield from HFWeightTuple(self._HF_VIDEO_EMBEDDER, tensor).iter_finalized(
+                cpu=cpu, megatron_param_names=() if with_megatron_names else None
+            )
 
     def postprocess_hf_export_artifacts(self, path: Path) -> None:
         """Require the direct Transformers entrypoint used by Super VL exports."""

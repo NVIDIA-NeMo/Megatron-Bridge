@@ -745,3 +745,104 @@ def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
     )
 
     assert all(not param.requires_grad for param in model.language_model.parameters())
+
+
+@pytest.mark.parametrize("with_sources", [False, True])
+def test_super_vl_export_aliases_follow_converted_weights(with_sources):
+    bridge = Nemotron35SuperVLBridge()
+    # Include an expert outside the old helper's hard-coded first 16 experts.
+    names = ["backbone.embeddings.weight", "lm_head.weight", "mtp.layers.1.mixer.experts.31.up_proj.weight"]
+    source_tensors = {name: torch.zeros(2) for name in names}
+    source_tensors.update({"language_model." + name: torch.zeros(2) for name in names})
+    source_tensors[bridge._HF_SUMMARY_IDXS_BUFFER] = torch.tensor([0, 1])
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = list(source_tensors)
+    hf_pretrained.state.__getitem__ = Mock(side_effect=source_tensors.__getitem__)
+    converted = [
+        HFSourcedWeightTuple("language_model." + name, torch.ones(2), ("decoder.weight",))
+        if with_sources
+        else HFWeightTuple("language_model." + name, torch.ones(2))
+        for name in names
+    ]
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(converted)):
+        exported = list(bridge.stream_weights_megatron_to_hf([], hf_pretrained, with_megatron_names=with_sources))
+    weights = {item.param_name: item.weight for item in exported}
+    assert len(weights) == len(exported) == len(source_tensors)
+    for name in names:
+        assert torch.equal(weights[name], torch.ones(2))
+        assert torch.equal(weights[name], weights["language_model." + name])
+        assert weights[name].data_ptr() != weights["language_model." + name].data_ptr()
+    assert torch.equal(weights[bridge._HF_SUMMARY_IDXS_BUFFER], torch.tensor([0, 1]))
+    if with_sources:
+        for item in exported:
+            assert item.megatron_param_names == (
+                () if item.param_name == bridge._HF_SUMMARY_IDXS_BUFFER else ("decoder.weight",)
+            )
+
+
+@pytest.mark.parametrize("enabled,converted_video", [(False, False), (True, False), (True, True)])
+def test_super_vl_export_restores_only_explicitly_disabled_video_branch(enabled, converted_video):
+    bridge = Nemotron35SuperVLBridge()
+    name = bridge._HF_VIDEO_EMBEDDER
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = [name]
+    hf_pretrained.state.__getitem__ = Mock(return_value=torch.zeros(2))
+    model = nn.Module()
+    model.config = SimpleNamespace(separate_video_embedder=enabled, temporal_patch_dim=2 if enabled else 1)
+    converted = [HFWeightTuple(name, torch.ones(2))] if converted_video else []
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter(converted)):
+        exported = list(bridge.stream_weights_megatron_to_hf([model], hf_pretrained))
+    if enabled and not converted_video:
+        assert not exported  # Strict writer must still reject the missing trained weight.
+    else:
+        assert len(exported) == 1
+        assert torch.equal(exported[0].weight, torch.ones(2) if converted_video else torch.zeros(2))
+    if enabled:
+        hf_pretrained.state.__getitem__.assert_not_called()
+
+
+def test_super_vl_export_does_not_invent_source_aliases():
+    bridge = Nemotron35SuperVLBridge()
+    converted = HFWeightTuple("language_model.lm_head.weight", torch.ones(2))
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.state = MagicMock()
+    hf_pretrained.state.source.get_all_keys.return_value = [converted.param_name]
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        assert list(bridge.stream_weights_megatron_to_hf([], hf_pretrained)) == [converted]
+
+
+def test_super_vl_strict_export_accepts_completed_layout_and_rejects_missing_active_weight(tmp_path):
+    from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
+
+    bridge = Nemotron35SuperVLBridge()
+    canonical = "language_model.lm_head.weight"
+    alias = "lm_head.weight"
+    video = bridge._HF_VIDEO_EMBEDDER
+    summary = bridge._HF_SUMMARY_IDXS_BUFFER
+    source = tmp_path / "source"
+    source.mkdir()
+    tensors = {canonical: torch.zeros(2), alias: torch.zeros(2), video: torch.zeros(2), summary: torch.tensor([0])}
+    save_file(tensors, source / "model.safetensors")
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.state = StateDict(SafeTensorsStateSource(source))
+    model = nn.Module()
+    model.config = SimpleNamespace(separate_video_embedder=False, temporal_patch_dim=1)
+    converted = HFWeightTuple(canonical, torch.ones(2))
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        hf_pretrained.state.source.save_generator(
+            bridge.stream_weights_megatron_to_hf([model], hf_pretrained), tmp_path / "complete", strict=True
+        )
+    exported = load_file(tmp_path / "complete/model.safetensors")
+    assert exported.keys() == tensors.keys()
+    assert torch.equal(exported[alias], exported[canonical])
+    assert torch.equal(exported[canonical], torch.ones(2))
+    assert torch.equal(exported[video], tensors[video])
+    model.config.separate_video_embedder = True
+    model.config.temporal_patch_dim = 2
+    with patch.object(NemotronVLBridge, "stream_weights_megatron_to_hf", return_value=iter([converted])):
+        with pytest.raises(RuntimeError, match="not written"):
+            hf_pretrained.state.source.save_generator(
+                bridge.stream_weights_megatron_to_hf([model], hf_pretrained), tmp_path / "incomplete", strict=True
+            )
