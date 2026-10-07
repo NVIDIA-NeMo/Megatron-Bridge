@@ -22,7 +22,7 @@ ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
     UV_VERSION="0.7.2" \
     UV_HTTP_TIMEOUT=120
 
-# Remove the Nsight Systems EFA metrics plugin inherited from the base image.
+# Remove the Nsight Systems EFA metrics plugin to address CVE-2026-27143.
 RUN rm -rf /usr/local/cuda-*/NsightSystems-cli-*/target-linux-x64/plugins/efa_metrics/ && \
     curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     install -m 0755 /root/.local/bin/uv /usr/local/bin/uv && \
