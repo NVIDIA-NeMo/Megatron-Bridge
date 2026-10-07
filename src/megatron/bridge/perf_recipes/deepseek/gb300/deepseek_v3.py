@@ -325,25 +325,37 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.fp8_output_proj = True
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
 
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.gradient_accumulation_fusion = False
+
+
+    cfg.model.expert_model_parallel_size = 64
     cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
+    cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
+    cfg.ddp.megatron_fsdp_version = 2
+
+    cfg.optimizer.lr = 3e-7
+    cfg.optimizer.min_lr = 1e-7
 
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
+    cfg.model.average_in_collective = True
+    cfg.ddp.average_in_collective = True
 
     # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
     cfg.model.cuda_graph_impl = "full_iteration"
+    #cfg.model.cuda_graph_impl = "none"
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
     cfg.ddp.megatron_fsdp_cuda_graph_mode = True
     cfg.ddp.fsdp_all_gather_in_start_param_sync = False
@@ -356,6 +368,25 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
+    # Run the attention activations neither recomputed nor offloaded, to establish whether the
+    # model fits without either. recompute_granularity/recompute_modules are set explicitly
+    # rather than left out: deepseek/common.py sets "selective" recompute, so omitting these
+    # would silently re-enable it. offload_modules is cleared for the same reason.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = []
+    cfg.model.offload_modules = []
+    # cfg.model.fine_grained_activation_offloading = True
+    # cfg.model.cpu_offloading_num_layers = 95
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.fused_residual_rmsnorm = True
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    # These three are owned by comm_overlap, not model/ddp: _apply_cfgs() copies the
+    # comm_overlap values onto the model and DDP configs after the recipe runs, so setting
+    # them anywhere else is silently overwritten by the defaults at comm_overlap.py:438.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.align_param_gather = True
+
     # CuTeDSL fused grouped MLP (moe_a2a_overlap disabled).
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
@@ -363,10 +394,16 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # selective-recompute modules inherited from the FSDP base.
     cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
 
+    cfg.model.mla_down_proj_fusion = True
+
     cfg.mixed_precision.fp8_dot_product_attention = False
 
     cfg.model.moe_router_force_load_balancing = True
-    _enable_ncclep(cfg)
+    # Deliberately not calling _enable_ncclep(cfg) here. The other GB300 recipes default to NCCL EP,
+    # but this one is tuned around HybridEP: it sets moe_hybridep_num_sms_preprocessing and the
+    # HybridEP topology env vars below, and the measured baseline for this config was taken with
+    # the HybridEP dispatcher. _enable_ncclep runs after _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
+    # so calling it would silently override that helper's hybridep selection and strand both.
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
@@ -375,14 +412,18 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_CUDNN_MXFP8_NORM_OUTPUT_IN_INPUT_DTYPE": 0,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode and one GPU per rank.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_CPU_OFFLOAD_V1": 1,
@@ -466,7 +507,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_partial_cg_dev_config() -> ConfigCon
 
     cfg.rng.te_rng_tracker = True
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(tttt|)*14tmL")
-    _enable_deepseek_precision_aware_optimizer(cfg)
+    # _enable_deepseek_precision_aware_optimizer(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
