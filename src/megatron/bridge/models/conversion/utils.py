@@ -14,6 +14,7 @@
 
 import copy
 import functools
+import pickle
 import re
 import types
 from typing import Iterable, List, Optional, Tuple
@@ -226,8 +227,15 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
         The cleaned object with non-pickleables removed
     """
 
-    # Stop recursion if max depth reached
+    # A depth limit must not let a nested setup-hook closure escape into an
+    # object collective. Preserve safe metadata at the boundary, but discard
+    # subtrees that cannot be serialized. Work on copies throughout so live
+    # training hooks remain installed after export.
     if current_depth >= max_depth:
+        try:
+            pickle.dumps(obj)
+        except (pickle.PicklingError, TypeError, AttributeError, RecursionError):
+            return None
         return obj
 
     # Handle None
@@ -254,6 +262,15 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
         ):  # bound methods
             return None
 
+    # Check containers before objects: OrderedDict has a __dict__, but its
+    # hook values are mapping entries rather than object attributes.
+    if isinstance(obj, list):
+        return [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
+    if isinstance(obj, tuple):
+        return tuple(remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj)
+    if isinstance(obj, dict):
+        return {key: remove_non_pickleables(value, max_depth, current_depth + 1) for key, value in obj.items()}
+
     # Handle dataclass/object with attributes
     if hasattr(obj, "__dict__"):
         # Create a copy to avoid modifying the original
@@ -270,18 +287,6 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
             setattr(cleaned_obj, attr_name, cleaned_value)
 
         return cleaned_obj
-
-    # Handle lists
-    elif isinstance(obj, list):
-        return [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
-
-    # Handle tuples
-    elif isinstance(obj, tuple):
-        return tuple(remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj)
-
-    # Handle dictionaries
-    elif isinstance(obj, dict):
-        return {key: remove_non_pickleables(value, max_depth, current_depth + 1) for key, value in obj.items()}
 
     # For primitive types and other safe objects, return as-is
     return obj
