@@ -1079,18 +1079,20 @@ def test_super_vl_mimo_conversion_specs_and_routes(monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.parametrize("temporal_patch_dim", [1, 2])
-def test_mimo_radio_pixel_shuffle(monkeypatch, temporal_patch_dim):
+@pytest.mark.parametrize("class_tokens", [0, 1])
+def test_mimo_radio_pixel_shuffle(monkeypatch, temporal_patch_dim, class_tokens):
     encoder = NemotronOmniMimoRadioEncoder.__new__(NemotronOmniMimoRadioEncoder)
     torch.nn.Module.__init__(encoder)
     encoder.register_parameter("weight", torch.nn.Parameter(torch.ones(1)))
     encoder.patch_dim = 2
     encoder.temporal_patch_dim = temporal_patch_dim
-    encoder.class_token_len = 1
-    encoder.add_class_token = True
+    encoder.class_token_len = class_tokens
+    encoder.add_class_token = bool(class_tokens)
     sizes = torch.tensor([[4, 4], [4, 8]])
     pixels = torch.zeros(1, 12, 12)
     frames = torch.tensor([1, 1])
-    encoded = torch.arange(14 * 2, dtype=torch.float32).reshape(1, 14, 2)
+    token_count = 12 + 2 * class_tokens
+    encoded = torch.arange(token_count * 2, dtype=torch.float32).reshape(1, token_count, 2).requires_grad_()
 
     def radio_forward(self, x, *, imgs_sizes, packed_seq_params, num_frames):
         assert x is pixels
@@ -1101,4 +1103,36 @@ def test_mimo_radio_pixel_shuffle(monkeypatch, temporal_patch_dim):
     monkeypatch.setattr(RADIOViTModel, "forward", radio_forward)
     output = encoder(pixel_values=pixels, imgs_sizes=sizes, num_frames=frames)
     assert output.shape == (3, 8)
-    assert torch.equal(output[0], encoded[0, 1:5].reshape(-1))
+    patch_indices = (
+        torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [4 + class_tokens, 5 + class_tokens, 8 + class_tokens, 9 + class_tokens],
+                [6 + class_tokens, 7 + class_tokens, 10 + class_tokens, 11 + class_tokens],
+            ]
+        )
+        + class_tokens
+    )
+    expected = encoded[0, patch_indices].reshape(3, 8)
+    assert torch.equal(output, expected)
+
+    # The regular model shares the same rows before its separate projection.
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.vision_model = RADIOViTModel.__new__(RADIOViTModel)
+    nn.Module.__init__(model.vision_model)
+    model.vision_model.register_parameter("weight", nn.Parameter(torch.ones(1)))
+    model.vision_model.temporal_patch_dim = temporal_patch_dim
+    model.vision_model.class_token_len = class_tokens
+    model.vision_model.add_class_token = bool(class_tokens)
+    model.patch_dim = encoder.patch_dim
+    model.vision_dp_over_cp = False
+    model.vision_projection = nn.Identity()
+    regular_output = model._encode_images(pixels, sizes, None, frames)
+    assert torch.equal(regular_output, expected)
+    weights = torch.arange(output.numel(), dtype=output.dtype).reshape_as(output)
+    mimo_grad = torch.autograd.grad((output * weights).sum(), encoded)[0]
+    regular_grad = torch.autograd.grad((regular_output * weights).sum(), encoded)[0]
+    expected_grad = torch.autograd.grad((expected * weights).sum(), encoded)[0]
+    assert torch.equal(mimo_grad, expected_grad)
+    assert torch.equal(regular_grad, expected_grad)

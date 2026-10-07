@@ -135,6 +135,34 @@ def _pad_patch_grid_to_even(
     return grid.reshape(1, padded_height * padded_width, -1), padded_height, padded_width
 
 
+def _postprocess_radio_embeddings(
+    encoded: torch.Tensor,
+    imgs_sizes: torch.Tensor,
+    *,
+    patch_dim: int,
+    class_tokens: int,
+    pad_patch_grid: bool = False,
+) -> torch.Tensor:
+    """Remove per-image class tokens and pixel-shuffle dynamic RADIO patch grids.
+
+    Context-parallel shards may contain odd-sized placeholder grids, which
+    require padding before pixel shuffle. Unsharded inputs retain strict grid
+    validation.
+    """
+    sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
+    patch_counts = [(height // patch_dim) * (width // patch_dim) for height, width in sizes]
+    chunks = torch.split(encoded.squeeze(0), [count + class_tokens for count in patch_counts], dim=0)
+    shuffled = []
+    for chunk, (height, width) in zip(chunks, sizes):
+        features = chunk[class_tokens:].unsqueeze(0)
+        grid_height = height // patch_dim
+        grid_width = width // patch_dim
+        if pad_patch_grid:
+            features, grid_height, grid_width = _pad_patch_grid_to_even(features, height=grid_height, width=grid_width)
+        shuffled.append(_pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0))
+    return torch.cat(shuffled, dim=0)
+
+
 def _project_multimodal_embeddings(
     projection: torch.nn.Module,
     embeddings: torch.Tensor,
@@ -263,21 +291,12 @@ class NemotronOmniMimoRadioEncoder(RADIOViTModel):
         else:
             encoded = vision_output
 
-        sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
-        class_tokens = self.class_token_len if getattr(self, "add_class_token", False) else 0
-        patch_counts = [(height // self.patch_dim) * (width // self.patch_dim) for height, width in sizes]
-        chunks = torch.split(encoded.squeeze(0), [count + class_tokens for count in patch_counts], dim=0)
-        shuffled = []
-        for chunk, (height, width) in zip(chunks, sizes):
-            features = chunk[class_tokens:].unsqueeze(0)
-            shuffled.append(
-                _pixel_shuffle_dynamic_resolution(
-                    features,
-                    height=height // self.patch_dim,
-                    width=width // self.patch_dim,
-                ).squeeze(0)
-            )
-        return torch.cat(shuffled, dim=0).contiguous()
+        return _postprocess_radio_embeddings(
+            encoded,
+            imgs_sizes,
+            patch_dim=self.patch_dim,
+            class_tokens=self.class_token_len if getattr(self, "add_class_token", False) else 0,
+        ).contiguous()
 
 
 class NemotronOmniModel(MegatronModule):
@@ -627,30 +646,15 @@ class NemotronOmniModel(MegatronModule):
                 encoded, imgs_sizes, _ = vision_output
             else:
                 encoded = vision_output
-            sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
-            class_tokens = (
-                self.vision_model.class_token_len if getattr(self.vision_model, "add_class_token", False) else 0
+            encoded = _postprocess_radio_embeddings(
+                encoded,
+                imgs_sizes,
+                patch_dim=self.patch_dim,
+                class_tokens=self.vision_model.class_token_len
+                if getattr(self.vision_model, "add_class_token", False)
+                else 0,
+                pad_patch_grid=shard_vision,
             )
-            patch_counts = [(height // self.patch_dim) * (width // self.patch_dim) for height, width in sizes]
-            chunks = torch.split(
-                encoded.squeeze(0),
-                [patch_count + class_tokens for patch_count in patch_counts],
-                dim=0,
-            )
-            chunks = [chunk[class_tokens:] for chunk in chunks]
-            shuffled = []
-            for chunk, (height, width) in zip(chunks, sizes):
-                grid_height = height // self.patch_dim
-                grid_width = width // self.patch_dim
-                features = chunk.unsqueeze(0)
-                if shard_vision:
-                    features, grid_height, grid_width = _pad_patch_grid_to_even(
-                        features, height=grid_height, width=grid_width
-                    )
-                shuffled.append(
-                    _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
-                )
-            encoded = torch.cat(shuffled, dim=0)
 
             if shard_vision:
                 # Project before the gather so the projector stays sharded, then
