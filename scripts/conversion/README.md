@@ -56,9 +56,10 @@ conversion to finish.
   --hf-path /workspace/models/llama32-1b-hf
 ```
 
-CPU import and the default CPU export use one process on one node. Distributed
-CPU export is available through the Slurm workflow below for checkpoints that
-cannot be loaded on one host within the available memory or wall-time limit.
+The default CPU import and CPU export use one process on one node. Distributed
+CPU import and export are available through the Slurm workflow below for
+checkpoints that cannot be held on one host within the available memory or
+wall-time limit.
 
 ## Distributed GPU conversion on Slurm
 
@@ -202,8 +203,31 @@ enables distributed Hugging Face saving by default. It does not request GPUs:
 
 The topology must satisfy
 `nodes * cpu-processes-per-node % (TP * PP) == 0` and
-`nodes * cpu-processes-per-node % (ETP * EP * PP) == 0`. Distributed CPU
-conversion currently supports export only and requires distributed saving.
+`nodes * cpu-processes-per-node % (ETP * EP * PP) == 0`. Distributed CPU export
+requires distributed saving.
+
+Distributed CPU import uses the same launcher shape. Every process initializes
+its model shard in host memory, streams its share of the Hugging Face weights,
+and writes a regular `torch_dist` Megatron checkpoint. `--low-memory-save`
+remains GPU-only:
+
+```bash
+./scripts/conversion/convert.sh import \
+  --executor slurm \
+  --device cpu \
+  --nodes 4 \
+  --cpu-processes-per-node 8 \
+  --cpus-per-task 16 \
+  --mem 0 \
+  --exclusive \
+  --account ACCOUNT \
+  --partition CPU_PARTITION \
+  --container-image /path/to/megatron-bridge.sqsh \
+  --mount /workspace \
+  --hf-model MODEL \
+  --megatron-path /workspace/models/model \
+  --tp 1 --pp 4 --ep 8 --etp 1
+```
 
 `--env` accepts names only. Export values in the launcher environment so
 secrets are inherited by Slurm without being materialized in generated job

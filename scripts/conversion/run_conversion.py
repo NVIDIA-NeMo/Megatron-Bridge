@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Run CPU or distributed GPU checkpoint conversion inside the job environment."""
+"""Run single-process CPU, distributed CPU, or distributed GPU checkpoint conversion inside the job environment."""
 
 import argparse
 import logging
@@ -52,14 +52,12 @@ def _validate_args(args: argparse.Namespace) -> None:
         and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp"))
     ):
         raise ValueError("CPU conversion requires TP=PP=EP=ETP=1.")
-    if distributed_cpu and args.command != "export":
-        raise ValueError("Distributed CPU conversion currently supports export only.")
     if distributed_cpu:
         world_size = _distributed_world_size()
         if world_size % (args.tp * args.pp) != 0:
-            raise ValueError("WORLD_SIZE must be divisible by TP*PP for distributed CPU export.")
+            raise ValueError("WORLD_SIZE must be divisible by TP*PP for distributed CPU conversion.")
         if world_size % (args.etp * args.ep * args.pp) != 0:
-            raise ValueError("WORLD_SIZE must be divisible by ETP*EP*PP for distributed CPU export.")
+            raise ValueError("WORLD_SIZE must be divisible by ETP*EP*PP for distributed CPU conversion.")
     if args.command == "import" and args.device == "cpu" and args.low_memory_save:
         raise ValueError("--low-memory-save is only supported by the GPU backend.")
     if args.command == "export":
@@ -90,7 +88,8 @@ def _run_import(args: argparse.Namespace) -> None:
     }
     if args.text_only:
         common_args["text_only"] = True
-    if args.device == "cpu":
+    distributed_cpu = args.device == "cpu" and _distributed_world_size() > 1
+    if args.device == "cpu" and not distributed_cpu:
         cpu_backend.import_checkpoint(**common_args)
         return
     gpu_backend.import_checkpoint(
@@ -101,6 +100,7 @@ def _run_import(args: argparse.Namespace) -> None:
         etp=args.etp,
         low_memory_save=args.low_memory_save,
         distributed_timeout_minutes=args.distributed_timeout_minutes,
+        use_cpu=distributed_cpu,
     )
 
 

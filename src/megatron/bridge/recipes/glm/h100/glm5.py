@@ -99,9 +99,9 @@ def glm52_pretrain_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
@@ -182,9 +182,9 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
     cfg.checkpoint.save_rng = False
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
@@ -260,9 +260,9 @@ def glm52_sft_608gpu_h100_bf16_200k_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_iters = 20
     cfg.checkpoint.save = None
     cfg.checkpoint.load = None
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     block_counts = [6] + [4] * 18
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 
@@ -355,9 +355,9 @@ def glm52_peft_208gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Conf
     cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
-    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     block_counts = [6, 4] + [8] * 6 + [4] * 5
     cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
+    cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
 

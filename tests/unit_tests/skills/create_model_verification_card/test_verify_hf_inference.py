@@ -146,6 +146,7 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
         trust_remote_code=True,
         dtype="bfloat16",
         device_map="auto",
+        tp_plan=None,
         device="cuda",
         require_gpu_only=True,
     )
@@ -174,9 +175,125 @@ def test_model_input_device_prefers_input_embeddings():
     )
 
     assert module._model_input_device(model) == torch.device("cuda:1")
-
     model.get_input_embeddings = lambda: types.SimpleNamespace(weight=torch.empty(1))
     assert module._model_input_device(model) == torch.device("cpu")
+
+
+def test_tensor_parallel_load_preserves_strict_loading_and_local_shards(monkeypatch):
+    module = _load_module()
+    calls = []
+
+    class LoadedModel(_Model):
+        def to(self, device):
+            raise AssertionError("A tensor-parallel model must retain its distributed placement")
+
+    def load(name, **kwargs):
+        calls.append((name, kwargs))
+        return LoadedModel(), {key: [] for key in module._LOADING_ISSUE_KEYS}
+
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers",
+        SimpleNamespace(
+            AutoModelForCausalLM=SimpleNamespace(from_pretrained=load),
+            AutoTokenizer=SimpleNamespace(from_pretrained=lambda *args, **kwargs: _Tokenizer()),
+        ),
+    )
+    args = SimpleNamespace(
+        image=None,
+        hf_model="model",
+        trust_remote_code=False,
+        dtype="bfloat16",
+        device_map=None,
+        tp_plan="auto",
+        device="cuda",
+        require_gpu_only=False,
+    )
+
+    module._load_runtime(args)
+
+    assert calls == [
+        (
+            "model",
+            {
+                "dtype": torch.bfloat16,
+                "trust_remote_code": False,
+                "output_loading_info": True,
+                "tp_plan": "auto",
+            },
+        )
+    ]
+
+
+def test_tensor_parallel_and_device_map_are_mutually_exclusive(monkeypatch):
+    module = _load_module()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_hf_inference.py",
+            "--hf-model",
+            "model",
+            "--prompt",
+            "text",
+            "--max-new-tokens",
+            "2",
+            "--tp-plan",
+            "auto",
+            "--device-map",
+            "auto",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        module._parse_args()
+
+
+@pytest.mark.parametrize("already_initialized", [False, True])
+def test_tensor_parallel_context_cleans_up_only_owned_group(monkeypatch, already_initialized):
+    module = _load_module()
+    state = {"initialized": already_initialized, "destroyed": 0}
+
+    def initialize():
+        state["initialized"] = True
+
+    def destroy():
+        state["destroyed"] += 1
+        state["initialized"] = False
+
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.bridge.utils.common_utils",
+        SimpleNamespace(
+            get_world_size_safe=lambda: 4,
+            maybe_initialize_distributed=initialize,
+        ),
+    )
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: state["initialized"])
+    monkeypatch.setattr(torch.distributed, "destroy_process_group", destroy)
+    with pytest.raises(RuntimeError, match="load failed"):
+        with module._tensor_parallel_context(True):
+            assert state["initialized"]
+            raise RuntimeError("load failed")
+    assert state["destroyed"] == (0 if already_initialized else 1)
+
+
+def test_tensor_parallel_rejects_single_process_before_initialization(monkeypatch):
+    module = _load_module()
+
+    def unexpected_initialization():
+        raise AssertionError("Must validate the launcher before initializing")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.bridge.utils.common_utils",
+        SimpleNamespace(
+            get_world_size_safe=lambda: 1,
+            maybe_initialize_distributed=unexpected_initialization,
+        ),
+    )
+    with pytest.raises(ValueError, match="at least two processes"):
+        with module._tensor_parallel_context(True):
+            raise AssertionError("Invalid launch must not enter the context")
 
 
 def test_gpu_only_placement_rejects_cpu_or_disk_shards():
@@ -301,6 +418,7 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
     args = SimpleNamespace(
         device="cuda",
         device_map=device_map,
+        tp_plan=None,
         dtype="bfloat16",
         hf_model="exported-model",
         image="image.png",

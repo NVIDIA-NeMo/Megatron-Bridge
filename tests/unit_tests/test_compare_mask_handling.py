@@ -85,6 +85,7 @@ try:
         from compare import (  # noqa: E402
             SingleBatchIterator,
             _broadcast_hf_results,
+            _build_inference_context,
             _load_hf_reference_logits,
             _maybe_gather_tensor_parallel_logits,
             _run_hf_inference,
@@ -285,6 +286,22 @@ class TestCompareMaskHandling:
 
         assert mock_model.call_args.kwargs["inference_context"] is inference_context
         assert mock_model.call_args.kwargs["runtime_gather_output"] is True
+
+    def test_legacy_full_prefix_disables_inference_context(self):
+        """AbsorbedMLA-style attention rejects inference contexts, so the flag must yield None."""
+        input_ids = torch.tensor([[1, 2, 3]])
+
+        assert _build_inference_context(input_ids, legacy_full_prefix=True) is None
+
+        with patch.object(compare, "StaticInferenceContext") as mock_context:
+            _build_inference_context(input_ids, legacy_full_prefix=False)
+        mock_context.assert_called_once_with(max_batch_size=1, max_sequence_length=3)
+
+    def test_parser_accepts_legacy_full_prefix(self):
+        """The compare CLI exposes the same switch as the text-generation script."""
+        base = ["--hf_model_path", "org/model", "--prompt", "hi"]
+        assert compare.build_parser().parse_args([*base, "--legacy-full-prefix"]).legacy_full_prefix is True
+        assert compare.build_parser().parse_args(base).legacy_full_prefix is False
 
     def test_megatron_forward_activates_inference_mode(self):
         """Test that the scheduled forward runs inside MCore inference mode."""

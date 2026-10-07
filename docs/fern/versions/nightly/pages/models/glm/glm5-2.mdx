@@ -96,10 +96,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     </div>
   </div>
   <div class="verification-combination-list" hidden>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="glm5-2-hf-to-megatron-cpu" aria-controls="glm5-2-hf-to-megatron-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="glm5-2-hf-to-megatron-cpu" aria-controls="glm5-2-hf-to-megatron-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -124,31 +124,31 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-2-pretrain-gb200" aria-controls="glm5-2-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="glm5-2-pretrain-gb200" aria-controls="glm5-2-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-2-sft-gb200" aria-controls="glm5-2-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="glm5-2-sft-gb200" aria-controls="glm5-2-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-2-sft-long-context-gb200" aria-controls="glm5-2-sft-long-context-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="glm5-2-sft-long-context-gb200" aria-controls="glm5-2-sft-long-context-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="glm5-2-peft-gb200" aria-controls="glm5-2-peft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="glm5-2-peft-gb200" aria-controls="glm5-2-peft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -157,12 +157,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="glm5-2-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="glm5-2-hf-to-megatron-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-22</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -171,12 +171,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/cpu-megatron --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/hybrid/cpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU HF-to-Hybrid import must cover every enabled parameter and save a strictly reloadable checkpoint. Hybrid execution has not yet been verified.</p>
+        <p>Distributed CPU HF-to-Hybrid import with 32 Gloo processes on the host memory of 4 GB200 nodes maps all 5916 pinned source tensors through GLM5Bridge and saves a 1.4 TB torch_dist checkpoint (iter_0000000 with run_config.yaml) in about 14 minutes. The checkpoint is strictly reloadable, as exercised by a distributed CPU export of it whose 58794 tensors match the pinned source keys, shapes, dtypes and values exactly (the 791 tensors of the appended MTP layer, model.layers.78.*, are excluded because MTP is disabled by default). Weights stay on CPU, but Megatron-Core&#x27;s CUDA RNG tracker still requires a visible CUDA device on each node during model-parallel initialization, so the run cannot execute on GPU-less nodes. Attention, dense and shared-expert weights are replicated across the 16 expert ranks of each pipeline stage, so peak host memory reached about 930 GB of the 952 GB per node (up to 177 GB for a single process); a single-process CPU import would need more than 1.5 TB on one host.</p>
       </section>
     </article>
     <article id="glm5-2-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="glm5-2-hf-to-megatron-gpu" tabindex="-1">
@@ -257,35 +257,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="glm5-2-pretrain-gb200" class="verification-model-detail" data-entry-detail="glm5-2-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.039136</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.8746876</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>32,331.530 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>219.080 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>675.667 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -296,46 +296,46 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/rp2/head_01_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.pretrained_checkpoint=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --save_dir work/model-verification/glm5-2/hybrid/pretrain-rp2-gb200/checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron-mtp-20261007-135936/iter_0000000 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_glm52_text_document&quot;],null]&#x27; dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --save_dir work/model-verification/glm5-2/hybrid/pretrain-wikitext-gb200-20261007-135936/checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/hybrid/pretrain-wikitext-gb200-20261007-135936/resolved-config.yaml dist.distributed_timeout_minutes=60</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Complete 100 real-data Hybrid pretraining steps with finite losses and zero skipped or NaN iterations, preserving the existing convergence contract. Save a full step-50 checkpoint and the post-setup config. Hybrid execution has not yet been verified.</p>
+        <p>Completed 20 BF16 Hybrid warm-start steps on 192 GB200 GPUs with WikiText-103 raw train (29444 articles, 120372951 tokens), tokenized with the pinned GLM-5.2 tokenizer. Used 4K sequences, GBS/MBS 1024/1, MTP1, all-to-all expert dispatch and natural routing. LR warmed up to 3e-6 at step 10 and decayed to 3e-7 at step 20. Saved full step-10 and step-20 checkpoints with optimizer, scheduler and RNG state, plus the post-setup config. All losses and gradients were finite with zero skipped or NaN iterations; the step-10 checkpoint passed the separate resume comparison.</p>
       </section>
     </article>
     <article id="glm5-2-sft-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.913098</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.7940679</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>6,738.850 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>17.140 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>50.652 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -346,46 +346,46 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_gb200_sft_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hybrid/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 --max_steps 100 tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja --save_dir work/model-verification/glm5-2/hybrid/sft-gb200-cudnn/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm52_gb200_sft_config --mode sft --max_steps 100 --save_dir work/model-verification/glm5-2/hybrid/sft-causal-fixed-gb200-glm-remaining-20261007-175000/checkpoints --save_interval 100 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/hybrid/sft-causal-fixed-gb200-glm-remaining-20261007-175000/launch-config.yaml dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5-2/hybrid/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 dataset.hf_output_root=work/data/glm5-2/tulu3-sft-20261006-142455</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Complete 100 real-data Hybrid full-SFT steps with finite losses, unchanged data/masking/packing semantics, and a full reloadable checkpoint. Hybrid execution has not yet been verified.</p>
+        <p>Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS 8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training step. Metrics cover the original 100 steps only.</p>
       </section>
     </article>
     <article id="glm5-2-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="glm5-2-sft-long-context-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-08</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>3.501637</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>3.345199</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>115,202.340 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>110.510 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>331.845 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -396,46 +396,46 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_sft_192gpu_gb200_bf16_128k_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hybrid/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 --max_steps 20 tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja dataset.dataset_root=work/data/glm5-2/synthetic-long-sft-128k dataset.max_train_samples=1120 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm52_sft_192gpu_gb200_bf16_128k_config --mode sft --max_steps 20 --save_dir work/model-verification/glm5-2/hybrid/long-gb200-glm-remaining-20261007-175000/checkpoints --save_interval 20 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/hybrid/long-gb200-glm-remaining-20261007-175000/launch-config.yaml dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5-2/hybrid/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 dataset.dataset_root=work/data/glm5-2/long-glm-remaining-20261007-175000</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Complete the hardware recipe long-context Hybrid workload with packed CP, finite losses and zero skipped or NaN iterations. Verify causal positions and top-k sharing before scaling up. Hybrid execution has not yet been verified.</p>
+        <p>Completed 20 BF16 Hybrid full-SFT steps with 128K synthetic packed sequences, GBS/MBS 56/1 and CP32 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup configuration.</p>
       </section>
     </article>
     <article id="glm5-2-peft-gb200" class="verification-model-detail" data-entry-detail="glm5-2-peft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-07</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.903576</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.8791012</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>4,322.970 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>23.030 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>78.958 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -446,12 +446,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_peft_192gpu_gb200_bf16_config --mode lora --pretrained_checkpoint work/model-verification/glm5-2/hybrid/gpu-megatron/iter_0000000 --max_steps 100 tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja --save_dir work/model-verification/glm5-2/hybrid/peft-gb200-cudnn/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm52_peft_192gpu_gb200_bf16_config --mode lora --max_steps 100 --save_dir work/model-verification/glm5-2/hybrid/peft-gb200-glm-remaining-20261007-175000/checkpoints --save_interval 100 checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/hybrid/peft-gb200-glm-remaining-20261007-175000/launch-config.yaml dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5-2/hybrid/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 dataset.hf_output_root=work/data/glm5-2/peft-glm-remaining-20261007-175000</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Complete 100 Hybrid LoRA steps with the original targets and hyperparameters; reload the adapter checkpoint and verify the trainable parameter set. Hybrid execution has not yet been verified.</p>
+        <p>Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000], 2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover training steps 1-100 only.</p>
       </section>
     </article>
   </div>

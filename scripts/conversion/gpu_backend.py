@@ -329,6 +329,7 @@ def import_checkpoint(
     distributed_timeout_minutes: int | None,
     overwrite: bool,
     text_only: bool = False,
+    use_cpu: bool = False,
 ) -> None:
     """Import a Hugging Face model into a distributed Megatron checkpoint.
 
@@ -346,12 +347,17 @@ def import_checkpoint(
         distributed_timeout_minutes: Process-group timeout in minutes.
         overwrite: Delete a non-empty destination before conversion.
         text_only: Convert only the supported model's language component.
+        use_cpu: Use Gloo and CPU model initialization instead of NCCL/CUDA so the
+            model shards live in host memory across processes.
     """
-    _ensure_distributed_initialized(distributed_timeout_minutes)
+    if use_cpu and low_memory_save:
+        raise ValueError("--low-memory-save is only supported by the GPU backend.")
+    _ensure_distributed_initialized(distributed_timeout_minutes, use_cpu=use_cpu)
     _prepare_distributed_output(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     dtype = parse_dtype(torch_dtype)
 
-    print_rank_0(f"GPU import: {hf_model} -> {megatron_path}")
+    device_label = "CPU" if use_cpu else "GPU"
+    print_rank_0(f"Distributed {device_label} import: {hf_model} -> {megatron_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
     if text_only:
@@ -364,7 +370,7 @@ def import_checkpoint(
     )
     if _uses_model_builder(bridge):
         model_config = bridge.get_model_config()
-        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
         _maybe_generate_pipeline_layout(bridge, model_config, pp)
         megatron_model = bridge.get_model(
             model_config,
@@ -373,7 +379,7 @@ def import_checkpoint(
         )
     else:
         model_provider = bridge.to_megatron_provider(load_weights=True)
-        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
         _maybe_generate_pipeline_layout(bridge, model_provider, pp)
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
@@ -386,7 +392,7 @@ def import_checkpoint(
         hf_tokenizer_kwargs=_hf_tokenizer_kwargs(bridge, trust_remote_code=trust_remote_code),
         low_memory_save=low_memory_save,
     )
-    print_rank_0(f"GPU import complete: {megatron_path}")
+    print_rank_0(f"Distributed {device_label} import complete: {megatron_path}")
 
 
 @torchrun_main
