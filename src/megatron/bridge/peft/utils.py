@@ -2634,6 +2634,7 @@ class PackedPerExpertLinear(nn.Module):
         init_method: Optional[Callable] = None,
         dtype: Optional[torch.dtype] = None,
         device: Optional[torch.device] = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ):
         super().__init__()
         if not hasattr(torch, "_grouped_mm"):
@@ -2641,6 +2642,7 @@ class PackedPerExpertLinear(nn.Module):
         self.num_local_experts = num_local_experts
         self.in_features = in_features
         self.out_features = out_features
+        self.pg_collection = pg_collection
         weight = torch.empty(num_local_experts, out_features, in_features, dtype=dtype, device=device)
         if init_method is not None:
             for e in range(num_local_experts):
@@ -2670,7 +2672,11 @@ class PackedPerExpertLinear(nn.Module):
         key = f"{prefix}weight"
         return {
             key: _make_grouped_expert_sharded_tensor(
-                self.weight.data, key, tp_axis=None, sharded_offsets=sharded_offsets
+                self.weight.data,
+                key,
+                tp_axis=None,
+                sharded_offsets=sharded_offsets,
+                pg_collection=self.pg_collection,
             )
         }
 
@@ -2770,6 +2776,7 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
                 init_method=row_init,
                 device=params_device,
                 dtype=params_dtype,
+                pg_collection=self.pg_collection,
             )
         else:
             # Per-expert A (intermediate → rank); shared B (rank → hidden).
@@ -2780,6 +2787,7 @@ class SharedOuterGroupedExpertAdapter(nn.Module):
                 init_method=column_init,
                 device=params_device,
                 dtype=params_dtype,
+                pg_collection=self.pg_collection,
             )
             self.linear_out = RowParallelLinear(
                 dim,
