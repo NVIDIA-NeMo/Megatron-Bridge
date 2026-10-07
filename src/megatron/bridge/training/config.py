@@ -153,6 +153,12 @@ class DistributedInitConfig(MTrainDistributedInitConfig):
     with external process managers that handle GPU visibility.
     """
 
+    gtp_remat_reduce_scatter_with_fp32_accumulation: bool = False
+    """Accumulate GTP remat reduce-scatter results locally in FP32."""
+
+    gtp_remat_nccl_ub: bool = False
+    """Register the dense GTP remat group with an NCCL symmetric-memory user buffer."""
+
     enable_megatron_core_experimental: bool = False
     """Enable experimental features for Megatron Core."""
 
@@ -1132,7 +1138,14 @@ class ConfigContainer(Container):
         else:
             # Only compatible with NCCL UBR.
             assert not self.ddp.fsdp_manual_registration, "DDP.fsdp_manual_registration requires DDP.nccl_ub!"
-        if self.ddp.data_parallel_sharding_strategy == "optim_grads_params":
+        sharding_strategies = {self.ddp.data_parallel_sharding_strategy}
+        if self.ddp.expert_data_parallel_sharding_strategy is not None:
+            sharding_strategies.add(self.ddp.expert_data_parallel_sharding_strategy)
+        if sharding_strategies & {"optim_grads", "optim_grads_params"} and self.model.gradient_accumulation_fusion:
+            warn_rank_0("Verify that fused gradient accumulation is supported by TransformerEngine for Megatron-FSDP.")
+        if self.model.init_model_with_meta_device and sharding_strategies == {"no_shard"}:
+            raise ValueError("Meta device initialization is not supported with only no_shard strategies.")
+        if "optim_grads_params" in sharding_strategies:
             assert self.train.check_weight_hash_across_dp_replicas_interval is None, (
                 "TrainingConfig.check_weight_hash_across_dp_replicas_interval is not "
                 "supported with the Megatron-FSDP optim_grads_params sharding strategy"
@@ -1215,6 +1228,105 @@ class ConfigContainer(Container):
             "an HF model id."
         )
 
+    def _validate_thd_per_token_loss_mode(self, feature: str) -> None:
+        """Constraints shared by every runtime THD packing mode that normalizes loss per token.
+
+        Packed microbatches hold one bin, their token counts differ across ranks, and
+        their shapes change every step, hence: micro batch 1, per-token loss with a
+        non-averaging collective, no CUDA graphs, and no pipeline parallelism.
+        """
+        if self.train.micro_batch_size != 1:
+            raise ValueError(f"{feature} requires train.micro_batch_size=1.")
+        if not self.model.calculate_per_token_loss:
+            raise ValueError(f"{feature} requires model.calculate_per_token_loss=True.")
+        if self.ddp.average_in_collective:
+            raise ValueError(f"{feature} requires ddp.average_in_collective=False.")
+        if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
+            self.model, "vision_cuda_graph_impl", None
+        ) not in (None, "none"):
+            raise ValueError(f"{feature} does not support CUDA graphs.")
+        if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
+            raise ValueError(f"{feature} does not yet support pipeline parallelism.")
+
+    def _validate_global_batch_packing(self) -> None:
+        """Check and complete the configuration for global-batch online packing.
+
+        ``dataset.enable_global_batch_packing`` drives ``model.sequence_packing_scheduler``
+        (``dp_balanced`` unless set explicitly), the way in-batch packing drives
+        ``variable_seq_lengths``.
+        """
+        from megatron.bridge.training.global_batch_packing import probe_global_batch_packing_support
+
+        feature = "Global-batch packing"
+        model = self.model
+        if not hasattr(model, "sequence_packing_scheduler"):
+            raise ValueError(
+                f"{feature}: the pinned Megatron-Core does not expose online sequence packing "
+                "(no sequence_packing_scheduler field on the model config)."
+            )
+        if not getattr(self.dataset, "yields_unpacked_samples", False):
+            raise ValueError(
+                f"{feature} needs a dataset that yields unpacked per-sample dicts "
+                "(tokens/labels/loss_mask/position_ids/original_seq_len/padded_seq_len, one sequence per "
+                "sample): GPTSFTDatasetConfig with enable_global_batch_packing=True, or a DatasetProvider whose "
+                "yields_unpacked_samples is True."
+            )
+        if getattr(model, "dynamic_context_parallel", False):
+            raise ValueError(
+                f"{feature} does not support model.dynamic_context_parallel yet; unset it to pack with the "
+                "static context-parallel group."
+            )
+        scheduler = getattr(model, "sequence_packing_scheduler", None)
+        if scheduler is None:
+            scheduler = "dp_balanced"
+            model.sequence_packing_scheduler = scheduler
+        unsupported = probe_global_batch_packing_support(scheduler)
+        if unsupported is not None:
+            raise ValueError(f"{feature}: {unsupported}")
+
+        self._validate_thd_per_token_loss_mode(feature)
+        if self.dataset.dataloader_type not in ("single", "cyclic"):
+            raise ValueError(
+                f"{feature} consumes per-sample microbatches; set dataset.dataloader_type to 'single' or 'cyclic' "
+                f"(got {self.dataset.dataloader_type!r})."
+            )
+        if getattr(model, "virtual_pipeline_model_parallel_size", None) not in (None, 1):
+            raise ValueError(f"{feature} does not yet support virtual pipeline parallelism.")
+        if getattr(model, "is_hybrid_model", False):
+            raise ValueError(
+                f"{feature} does not yet support Mamba hybrid models (packed boundaries are not propagated to SSM layers)."
+            )
+        if getattr(self.ddp, "use_megatron_fsdp", False):
+            raise ValueError(f"{feature} is not supported with Megatron FSDP.")
+        if getattr(model, "max_seqlen_per_dp_cp_rank", None) is None:
+            raise ValueError(
+                "model.max_seqlen_per_dp_cp_rank must be set explicitly for global-batch packing: it is the token "
+                "capacity of one rank per microbatch, so a bin holds at most context_parallel_size times that."
+            )
+
+        cp_size = model.context_parallel_size
+        capacity = cp_size * model.max_seqlen_per_dp_cp_rank
+        seq_length = getattr(self.dataset, "seq_length", None) or model.seq_length
+        if capacity < seq_length:
+            raise ValueError(
+                f"Bin capacity too small: {cp_size} CP ranks x max_seqlen_per_dp_cp_rank "
+                f"{model.max_seqlen_per_dp_cp_rank} = {capacity} tokens < seq_length {seq_length}; the longest sample "
+                "could never be scheduled."
+            )
+        if seq_length > model.seq_length:
+            raise ValueError(f"dataset.seq_length={seq_length} exceeds model.seq_length={model.seq_length}.")
+
+    def _apply_global_batch_packing_padding(self, collate_padding_multiple: int) -> None:
+        """Push the CP alignment multiple to the dataset that yields unpacked samples."""
+        if hasattr(self.dataset, "global_batch_packing_pad_to_multiple_of"):
+            self.dataset.global_batch_packing_pad_to_multiple_of = collate_padding_multiple
+        dataset_seq_length = getattr(self.dataset, "seq_length", None)
+        if dataset_seq_length is not None and dataset_seq_length % collate_padding_multiple:
+            raise ValueError(
+                f"{type(self.dataset).__name__}.seq_length must be divisible by the CP/SP collate padding multiple "
+                f"({collate_padding_multiple}) for global-batch packing."
+            )
+
     def _disable_native_energon_packing_moe_overlap(self) -> None:
         """Disable EP overlap until packed VLM schedule plans preserve every model input."""
         enable_energon_packing = isinstance(self.dataset, EnergonDatasetConfig) and (
@@ -1272,10 +1384,25 @@ class ConfigContainer(Container):
         )
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
         offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
-        uses_thd = enable_offline_packing or enable_in_batch_packing or enable_energon_packing
+        enable_global_batch_packing = getattr(self.dataset, "enable_global_batch_packing", False)
+        uses_thd = (
+            enable_offline_packing or enable_in_batch_packing or enable_energon_packing or enable_global_batch_packing
+        )
 
         if enable_offline_packing and enable_in_batch_packing:
             raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
+        if enable_global_batch_packing and (
+            enable_offline_packing or enable_in_batch_packing or enable_energon_packing
+        ):
+            raise ValueError(
+                "enable_global_batch_packing is mutually exclusive with offline, in-batch, and Energon packing: "
+                "the scheduler packs unpacked samples itself."
+            )
+        if not enable_global_batch_packing and getattr(self.model, "sequence_packing_scheduler", None) is not None:
+            raise ValueError(
+                "model.sequence_packing_scheduler is driven by the dataset: set "
+                "dataset.enable_global_batch_packing=True on a GPTSFTDatasetConfig."
+            )
         if enable_offline_packing and offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if offline_packing_specs is not None and not enable_offline_packing:
@@ -1326,22 +1453,14 @@ class ConfigContainer(Container):
             )
 
         if enable_energon_packing:
-            if self.train.micro_batch_size != 1:
-                raise ValueError("Energon native sequence packing requires train.micro_batch_size=1.")
-            if not self.model.calculate_per_token_loss:
-                raise ValueError("Energon native sequence packing requires model.calculate_per_token_loss=True.")
-            if self.ddp.average_in_collective:
-                raise ValueError("Energon native sequence packing requires ddp.average_in_collective=False.")
-            if getattr(self.model, "cuda_graph_impl", None) not in (None, "none") or getattr(
-                self.model, "vision_cuda_graph_impl", None
-            ) not in (None, "none"):
-                raise ValueError("Energon native sequence packing does not support CUDA graphs.")
+            self._validate_thd_per_token_loss_mode("Energon native sequence packing")
             dist_train = getattr(self.model, "dist_train", None)
             if dist_train is not None and getattr(dist_train, "use_dist_train", False):
                 raise ValueError("Energon native sequence packing does not support Qwen3-VL DistTrain.")
-            if getattr(self.model, "pipeline_model_parallel_size", 1) > 1:
-                raise ValueError("Energon native sequence packing does not yet support pipeline parallelism.")
             self._disable_native_energon_packing_moe_overlap()
+
+        if enable_global_batch_packing:
+            self._validate_global_batch_packing()
 
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
@@ -1358,6 +1477,8 @@ class ConfigContainer(Container):
         cp_multiples = [2 * size if size > 1 else 1 for size in cp_sizes]
         sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
         collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
+        if enable_global_batch_packing:
+            self._apply_global_batch_packing_padding(collate_padding_multiple)
         if (
             isinstance(
                 self.dataset,
@@ -1373,7 +1494,9 @@ class ConfigContainer(Container):
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         transformer_config = getattr(self.model, "transformer", self.model)
-        if enable_in_batch_packing or enable_energon_packing:
+        if enable_in_batch_packing or enable_energon_packing or enable_global_batch_packing:
+            # Any runtime-packed THD mode yields microbatches of data-dependent length, so PP
+            # stages must exchange tensor shapes (variable_seq_lengths) instead of using static buffers.
             transformer_config._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
@@ -1411,6 +1534,16 @@ class ConfigContainer(Container):
                 )
             if self.ddp.average_in_collective:
                 raise ValueError("GTP requires ddp.average_in_collective=False.")
+            if (
+                self.checkpoint.dist_ckpt_optim_fully_reshardable
+                and self.checkpoint.distrib_optim_fully_reshardable_mem_efficient
+            ):
+                raise ValueError(
+                    "GTP does not support memory-efficient fully reshardable optimizer checkpoints: "
+                    "the GTP optimizer process groups do not provide the required Gloo group. "
+                    "Set checkpoint.distrib_optim_fully_reshardable_mem_efficient=False or "
+                    "checkpoint.dist_ckpt_optim_fully_reshardable=False."
+                )
             if transformer_config.fp8 and transformer_config.fp8_recipe == "mxfp8":
                 if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
                     raise ValueError(
@@ -1504,6 +1637,19 @@ class ConfigContainer(Container):
             f"eval_micro_batch_size * eval_data_parallel_size ({self.validation.eval_micro_batch_size} * "
             f"{eval_data_parallel_size} = {eval_dp_product})"
         )
+
+        if getattr(self.model, "freeze_base_model_for_mtp", False):
+            if not self.model.mtp_num_layers:
+                raise ValueError("freeze_base_model_for_mtp requires mtp_num_layers.")
+        if getattr(self.model, "moe_shortcut_connection", False) and (
+            self.dist.use_torch_fsdp2 or self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
+        ):
+            raise ValueError("moe_shortcut_connection is not supported with FSDP.")
+        # Core also enables LayerWise for legacy dist_* optimizer names.
+        if (
+            self.optimizer.use_layer_wise_distributed_optimizer or self.optimizer.optimizer.startswith("dist_")
+        ) and self.model.moe_single_grouped_weight:
+            raise ValueError("Layer-wise distributed optimizer does not support moe_single_grouped_weight.")
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:

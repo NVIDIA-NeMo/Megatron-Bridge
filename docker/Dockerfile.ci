@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION. All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,29 @@
 # limitations under the License.
 
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.08-py3
-FROM ${BASE_IMAGE} AS megatron_bridge
+FROM ${BASE_IMAGE} AS base
+
+ENV PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    VIRTUAL_ENV=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_VERSION="0.7.2" \
+    UV_HTTP_TIMEOUT=120
+
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
+    install -m 0755 /root/.local/bin/uv /usr/local/bin/uv && \
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages
+
+# Cache the native wheel independently of Bridge's other dependencies. Both CPU
+# platforms use the same base runtime as the final image and build both GPU targets.
+FROM base AS mok-wheel
+ARG MOK_COMMIT=a2ad2d0ce2366c1817d15498cdbaf8ead5966117
+ARG MOK_ARCH=ALL
+RUN --mount=type=bind,source=docker/common/install_mok.sh,target=/opt/install_mok.sh \
+    --mount=type=bind,source=docker/patches/mok.patch,target=/opt/mok.patch \
+    MOK_ARCH=${MOK_ARCH} bash /opt/install_mok.sh "${MOK_COMMIT}" /opt/mok.patch /opt/mok-wheels
+
+FROM base AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
 ARG APPLY_PYTORCH_LIBRARY_FINALIZER_PATCH=False
@@ -50,17 +72,35 @@ ARG REINSTALL_NVSHMEM=True
 ARG PRESERVE_BASE_RUNTIME=False
 
 ENV MBRIDGE_PRESERVE_BASE_RUNTIME=${PRESERVE_BASE_RUNTIME} \
-    PATH="/opt/venv/bin:/usr/local/bin:$PATH" \
-    UV_PROJECT_ENVIRONMENT=/opt/venv \
-    VIRTUAL_ENV=/opt/venv \
-    UV_LINK_MODE=copy \
-    UV_VERSION="0.7.2" \
-    UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
     NVTE_SKIP_SUBMODULE_CHECKS_DURING_BUILD=1 \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
+
+ARG TARGETARCH
+ARG CUBLAS_VERSION=13.8.1.7
+RUN bash -euxo pipefail <<"EOF"
+    if [ "$MBRIDGE_PRESERVE_BASE_RUNTIME" = "True" ]; then exit 0; fi
+    # Match the cuBLAS update in NVIDIA/Megatron-LM#7685.
+    case "${TARGETARCH}" in
+        amd64) CUBLAS_ARCH=x86_64 ;;
+        arm64) CUBLAS_ARCH=sbsa ;;
+        *) echo "Unsupported TARGETARCH for cuBLAS: ${TARGETARCH}" >&2; exit 1 ;;
+    esac
+    CUBLAS_ARCHIVE="libcublas-linux-${CUBLAS_ARCH}-${CUBLAS_VERSION}_cuda13-archive"
+    CUBLAS_TMP=$(mktemp -d)
+    trap 'rm -rf "${CUBLAS_TMP}"' EXIT
+    curl -fLSs --retry 3 -o "${CUBLAS_TMP}/cublas.tar.xz" \
+        "https://developer.download.nvidia.com/compute/cublas/redist/libcublas/linux-${CUBLAS_ARCH}/${CUBLAS_ARCHIVE}.tar.xz"
+    tar -xJf "${CUBLAS_TMP}/cublas.tar.xz" -C "${CUBLAS_TMP}"
+    # Replace the toolkit copies so existing linker paths use the updated libraries.
+    CUDA_ROOT="${CUDA_HOME:-/usr/local/cuda}"
+    cp -a "${CUBLAS_TMP}/${CUBLAS_ARCHIVE}/include/." "${CUDA_ROOT}/include/"
+    cp -a "${CUBLAS_TMP}/${CUBLAS_ARCHIVE}/lib/." "${CUDA_ROOT}/lib64/"
+    install -Dm644 "${CUBLAS_TMP}/${CUBLAS_ARCHIVE}/LICENSE" "${CUDA_ROOT}/doc/cublas/LICENSE"
+    ldconfig
+EOF
 
 ##############################################################################
 ##
@@ -73,9 +113,6 @@ ENV MBRIDGE_PRESERVE_BASE_RUNTIME=${PRESERVE_BASE_RUNTIME} \
 ARG DEEPEP_NVCC_THREADS
 
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
-    curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
-    install -m 0755 /root/.local/bin/uv /usr/local/bin/uv && \
-    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
     apt-get update && apt install -y --only-upgrade gnupg openssl libssl3t64 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
@@ -207,7 +244,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # its CUTLASS-backed kernels.
     if [ "$MBRIDGE_PRESERVE_BASE_RUNTIME" != "True" ]; then \
         pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
-        pip install nvidia-cutlass-dsl[cu13]==4.5.0; \
+        pip install nvidia-cutlass-dsl[cu13]==4.8.0; \
     fi && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
@@ -238,6 +275,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_DIFFUSION_DEPS" = "true" ]; then \
         bash scripts/install_diffusion_deps.sh; \
     fi && \
+    chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
+
+# Install after every uv sync so the Docker-only package is retained. Bind-mount
+# the wheel to avoid retaining a second archive in the final image.
+RUN --mount=type=bind,from=mok-wheel,source=/opt/mok-wheels,target=/opt/mok-wheels \
+    uv pip install --python "${UV_PROJECT_ENVIRONMENT}/bin/python" --no-deps --no-cache /opt/mok-wheels/*.whl && \
     chown -R 1000:1000 ${UV_PROJECT_ENVIRONMENT}
 
 COPY --chown=1000:1000 . /opt/Megatron-Bridge

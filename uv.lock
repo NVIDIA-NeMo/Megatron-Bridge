@@ -27,7 +27,7 @@ overrides = [
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.16.0" },
-    { name = "nvidia-cudnn-frontend", specifier = "==1.28.0" },
+    { name = "nvidia-cudnn-frontend", specifier = "==1.29.0" },
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
     { name = "nvidia-modelopt", specifier = "==0.46.0rc1", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
@@ -37,7 +37,7 @@ overrides = [
     { name = "torchvision", marker = "sys_platform == 'never'" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
-    { name = "wandb", specifier = "==0.27.2" },
+    { name = "wandb", specifier = ">=0.29.0" },
 ]
 
 [[manifest.dependency-metadata]]
@@ -55,8 +55,8 @@ version = "0.0.10b1"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
-version = "2.19.0+5e52befd"
-requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.28.0"]
+version = "2.20.2+6ea2a74a"
+requires-dist = ["pydantic<2.14", "importlib-metadata>=1.0", "packaging", "torch>=2.1", "einops", "onnxscript", "onnx", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.29.0"]
 
 [[package]]
 name = "absl-py"
@@ -2257,7 +2257,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "transformers", specifier = ">=5.15,<5.18" },
     { name = "typing-extensions" },
-    { name = "wandb", specifier = ">=0.25.0" },
+    { name = "wandb", specifier = ">=0.29.0" },
 ]
 provides-extras = ["bagel", "recipes", "parquet", "tensor-inspect", "te", "ssm", "audio"]
 
@@ -2266,7 +2266,7 @@ build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "ninja" },
     { name = "numpy" },
-    { name = "nvidia-cudnn-frontend", specifier = ">=1.28.0" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.29.0" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -2382,7 +2382,7 @@ requires-dist = [
     { name = "nemo-lens", marker = "extra == 'dev'", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d" },
     { name = "nemo-lens", extras = ["sdk"], marker = "extra == 'otel'", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d" },
     { name = "numpy" },
-    { name = "nvidia-cudnn-frontend", extras = ["cutedsl"], marker = "extra == 'dev'", specifier = "==1.28.0" },
+    { name = "nvidia-cudnn-frontend", extras = ["cutedsl"], marker = "extra == 'dev'", specifier = "==1.29.0" },
     { name = "nvidia-modelopt", extras = ["torch"], marker = "sys_platform != 'darwin' and extra == 'dev'", specifier = ">=0.44" },
     { name = "nvidia-resiliency-ext", marker = "extra == 'dev'", specifier = "==0.7.0" },
     { name = "omegaconf", marker = "extra == 'mlm'" },
@@ -2402,7 +2402,7 @@ requires-dist = [
     { name = "torch", specifier = ">=2.6.0" },
     { name = "torch-memory-saver", marker = "extra == 'inference'", git = "https://github.com/fzyzcjy/torch_memory_saver.git?rev=9bc9a442e6d108c7b7903def199896a005143aaf" },
     { name = "tqdm", marker = "extra == 'dev'" },
-    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5e52befd5262c06289106338c308079d6adb391f" },
+    { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=6ea2a74a9e98c99e6d7b164a33775cc457520027" },
     { name = "transformers", marker = "extra == 'mlm'" },
     { name = "transformers", marker = "extra == 'training'" },
     { name = "wandb", marker = "extra == 'mlm'" },
@@ -2417,7 +2417,7 @@ batch-invariant = [{ name = "deep-gemm", git = "https://github.com/deepseek-ai/D
 build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "hatchling" },
-    { name = "nvidia-cudnn-frontend", specifier = ">=1.28.0" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.29.0" },
     { name = "nvidia-mathdx" },
     { name = "packaging", specifier = ">=24.2" },
     { name = "pybind11" },
@@ -2918,12 +2918,16 @@ source = { registry = "https://pypi.nvidia.com/" }
 
 [[package]]
 name = "nvidia-cudnn-frontend"
-version = "1.28.0"
+version = "1.29.0"
 source = { registry = "https://pypi.nvidia.com/" }
+dependencies = [
+    { name = "apache-tvm-ffi" },
+    { name = "nvidia-cutlass-dsl", extra = ["cu13"], marker = "sys_platform == 'never'" },
+]
 wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.28.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:060b0c021f6841312ad26dd837a51b4941d4e0d2a547d87455bd974c173da075" },
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.28.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:335c916be758a8d5533104e04fc4a15f9c30a419b103ecd2b6fd0d23e1d532e4" },
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.28.0-cp312-cp312-win_amd64.whl", hash = "sha256:e1929bde04d0172828b65584317b5e2de3e60743768e5f634875f69eeab6b97e" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.29.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:a3fb92256890b3027e59bb25a468ad2b8a474d2910e394edcf0b1c1015463f78" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.29.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:596c9b7591457b4b49227fa2e22bd5960957a198e4336ce9ada8b5d2a1e4a5a1" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.29.0-cp312-cp312-win_amd64.whl", hash = "sha256:06e46b829c9f1c470e8aa78581a3af3a7041d869d7590a0e55aff6f2638be39e" },
 ]
 
 [[package]]
@@ -4832,8 +4836,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.19.0+5e52befd"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=5e52befd5262c06289106338c308079d6adb391f#5e52befd5262c06289106338c308079d6adb391f" }
+version = "2.20.2+6ea2a74a"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=6ea2a74a9e98c99e6d7b164a33775cc457520027#6ea2a74a9e98c99e6d7b164a33775cc457520027" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
@@ -5010,11 +5014,11 @@ wheels = [
 
 [[package]]
 name = "wandb"
-version = "0.27.2"
+version = "0.29.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
-    { name = "gitpython" },
+    { name = "opentelemetry-api" },
     { name = "packaging" },
     { name = "platformdirs" },
     { name = "protobuf" },
@@ -5023,18 +5027,18 @@ dependencies = [
     { name = "requests" },
     { name = "sentry-sdk" },
     { name = "typing-extensions" },
+    { name = "xxhash" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/14/a2/53ca062f430178e3af48ebc137396481d0ee885fb94a554c0df464cd8afa/wandb-0.27.2.tar.gz", hash = "sha256:c81ff93ab63f4dabc5a27b90ac3d12310fbfa6a14ca99201626921c99b2845be", size = 40300451, upload-time = "2026-06-06T01:47:02.74Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/f2/ae1d136972c93c20b87f0caa8cfcacf922d2c650272d0f5af412847955a9/wandb-0.29.0.tar.gz", hash = "sha256:44981b504427ba312e0823fa62c02ff96fb9740a83e4657e693e3e2097cde603", size = 41230058, upload-time = "2026-08-26T23:43:12.669Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/95/18d3625558667b459d91c19630f7cecfbc133f87f5b144a7fb755e473e8c/wandb-0.27.2-py3-none-macosx_12_0_arm64.whl", hash = "sha256:978400b3c4b7d97e927c32264453da5e4a0040a3468d5b77a00d9c480613f370", size = 23990048, upload-time = "2026-06-06T01:46:38.902Z" },
-    { url = "https://files.pythonhosted.org/packages/43/14/72c26f67b0b6cb307cbb76659465c6ab7d99ea27c268d1b4f5aa82c4d8e5/wandb-0.27.2-py3-none-macosx_12_0_x86_64.whl", hash = "sha256:de8099f02f540c743069617db7d034511a64c193748783aa6d2d98310918d170", size = 25165812, upload-time = "2026-06-06T01:46:42.068Z" },
-    { url = "https://files.pythonhosted.org/packages/b5/a3/f9fe31ca72b4f5854d1e488403d6310783127a6b7e267c28577e9bd51b43/wandb-0.27.2-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:e0779592410215a2762063c3585d3dcad73c7dca9cb6d63c4dcc1588267c1392", size = 24554366, upload-time = "2026-06-06T01:46:44.57Z" },
-    { url = "https://files.pythonhosted.org/packages/76/e2/7a5064aba235ddb855b8c2250e07e6187fcc8382332e237e545d4de094ee/wandb-0.27.2-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:55bfebf4d382116a8e9610848cadc0de50d406bacd3d0a390d12dabde196f009", size = 26380293, upload-time = "2026-06-06T01:46:47.487Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/4c/0c845edac5ff0fd0930e881bec2569f2e2af2a4fc873249855600546eee0/wandb-0.27.2-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:566aa2fcd67d2a23c08713da75e9daf82f30f7136af76763ef1d7db3d901d940", size = 24728823, upload-time = "2026-06-06T01:46:49.887Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/7a/a6f7a02a0e6bf73e163b61caca03aaba3452836a02dbe2b64f9e1a3c6afc/wandb-0.27.2-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:41158181fc5b691438b3d04fee0a8c061e3f1f407a3258096afbebfe1db24e72", size = 26691957, upload-time = "2026-06-06T01:46:52.384Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/9b/aa94eb8265b0c55dc6c3e435c11241b3f885c7a1720718046efd7cbd8361/wandb-0.27.2-py3-none-win32.whl", hash = "sha256:5c55fad8c7be9d345dcebdc9dc10f7d2ac5af5bede62acbcd79a412ccaf48c87", size = 24151396, upload-time = "2026-06-06T01:46:54.793Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/0b/9e442779f5f24baaca044daf7546a735f41a811886b84ae12740d51b7f9d/wandb-0.27.2-py3-none-win_amd64.whl", hash = "sha256:87204d4fe40fbd9a1fe89a05927ce4ddb8be34d8210045457819fb4a35e0bcea", size = 24151404, upload-time = "2026-06-06T01:46:56.994Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/3a/01ab3afc1f6f962df93db34be8183147c9821e4dce82dc03313fb8d08635/wandb-0.27.2-py3-none-win_arm64.whl", hash = "sha256:32ed7456f40443c971e95dd63704d840fce66c24f88049a9bda8a09dfe85effe", size = 22063373, upload-time = "2026-06-06T01:47:00.263Z" },
+    { url = "https://files.pythonhosted.org/packages/f0/ff/b1ca84260ff441652389188510b8ad8fab0e978b936aa8b7fb7557808d4a/wandb-0.29.0-py3-none-macosx_13_0_arm64.whl", hash = "sha256:c9efa966c3bf7b7a80bf461e4856546f0592cbb6a47e6f292db4d8e7270dab73", size = 26899829, upload-time = "2026-08-26T23:42:52.271Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/9c/fb0799f91830441e65616902c3c633f5f72166732e57c137dc6c2625179e/wandb-0.29.0-py3-none-macosx_13_0_x86_64.whl", hash = "sha256:2adae9c36a6d992c767c2248c175a1963db4771e650acdf3da471314c33d3d41", size = 28892707, upload-time = "2026-08-26T23:42:55.37Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/15/7270dd7ae17dd914f25794088b6d9583bc989626be472153770ca6272cf0/wandb-0.29.0-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:095b17df32ead3b459069b460665cea1d1781c63ad649be042894bc8e4c17b0b", size = 27547745, upload-time = "2026-08-26T23:42:57.795Z" },
+    { url = "https://files.pythonhosted.org/packages/32/fc/d9a9978acffb34ae2a2e5065f421a6e62f3ad6e27ad41229e86025b56fe3/wandb-0.29.0-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:fdfd8845539302d2e3a880bc3d2586c2fd2da9515939cbc69e173d88f9e8c024", size = 29847397, upload-time = "2026-08-26T23:43:00.218Z" },
+    { url = "https://files.pythonhosted.org/packages/dc/21/a4034ec06ed5a72cb85e3f1db013b1a8366b91ffd629bc807eb900527c73/wandb-0.29.0-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:217236c7347cd9c9c9e0332d5cf6d7342ca47d9d81faf2bcd1674d72988870c3", size = 27583732, upload-time = "2026-08-26T23:43:02.643Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/9a/6da88bb45ea28c83eeb889473f84d0d505ed5f15be40726f125621fa7467/wandb-0.29.0-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:2bdb72ba809192a1a170830bea1071804d762769448f3ceb822b41160b9f6098", size = 30074151, upload-time = "2026-08-26T23:43:05.026Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/f9/96746f484690cd23fbb84c6fd0364e8c462e804dede9efe50a98b4f27ddd/wandb-0.29.0-py3-none-win_amd64.whl", hash = "sha256:92dca672417404d2cb882fe34f38d602ddcb54ece38716f7c76630e06fc62360", size = 27040796, upload-time = "2026-08-26T23:43:07.444Z" },
+    { url = "https://files.pythonhosted.org/packages/94/74/e11e2ad886ac35bb5d568308f279357868de233e0dfaec11b9ddeed53164/wandb-0.29.0-py3-none-win_arm64.whl", hash = "sha256:ac523a1cd863f1a883852146f451ec9b950b0d2278d6e3bbedd099c713d14047", size = 24663195, upload-time = "2026-08-26T23:43:09.896Z" },
 ]
 
 [[package]]

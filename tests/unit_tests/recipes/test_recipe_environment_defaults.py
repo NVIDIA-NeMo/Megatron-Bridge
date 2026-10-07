@@ -198,7 +198,7 @@ def test_explicit_recipe_environment_invariants():
             },
         ),
         (
-            "nemotron_omni/h100/nemotron_35_super_vl.py",
+            "nemotronh_multimodal/h100/nemotron_35_super_vl.py",
             "nemotron_35_super_vl_pretrain_64gpu_h100_bf16_config",
             {
                 "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -211,7 +211,7 @@ def test_explicit_recipe_environment_invariants():
             },
         ),
         (
-            "nemotron_omni/h100/nemotron_35_super_vl.py",
+            "nemotronh_multimodal/h100/nemotron_35_super_vl.py",
             "nemotron_35_super_vl_sft_64gpu_h100_bf16_config",
             {
                 "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -233,7 +233,7 @@ def test_representative_recipe_environment_is_visible(relative_path, function_na
 
 def test_super_vl_alltoall_peft_omits_hybrid_ep_environment():
     environment = _explicit_environment(
-        _RECIPE_ROOT / "nemotron_omni/h100/nemotron_35_super_vl.py",
+        _RECIPE_ROOT / "nemotronh_multimodal/h100/nemotron_35_super_vl.py",
         "nemotron_35_super_vl_peft_16gpu_h100_bf16_config",
     )
 

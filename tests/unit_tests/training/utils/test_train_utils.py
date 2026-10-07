@@ -3668,7 +3668,7 @@ class TestCalcParamsL2Norm:
         expected_norm = 5.0  # sqrt(25 * 1.0^2)
         assert result == pytest.approx(expected_norm, rel=1e-3)
 
-    # ==================== MoE BF16 main_param tests ====================
+    # ==================== MoE BF16 main_param tests =============
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -4410,6 +4410,22 @@ def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
     assert shared_experts.gate_bias.requires_grad is False
 
 
+@pytest.mark.parametrize("repeated, expected", [(False, 4), (True, 3)])
+def test_hybrid_provider_moe_count_without_legacy_flag(repeated, expected):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    provider = HybridModelProvider(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=2,
+        hybrid_layer_pattern="MEME/*E/*E",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated,
+    )
+    assert not provider.is_hybrid_model
+    assert _get_num_moe_layers(provider) == expected
+
+
 @pytest.mark.parametrize("rank", [0, 7])
 def test_empty_profile_ranks_records_on_every_rank(rank):
     profiling = SimpleNamespace(record_memory_history=True, profile_ranks=[], memory_snapshot_path="snapshot.pkl")
@@ -4421,3 +4437,26 @@ def test_empty_profile_ranks_records_on_every_rank(rank):
         start_memory_history_recording(profiling)
     record.assert_called_once()
     attach.assert_called_once()
+
+
+class TestStepLossScales:
+    """MoE/MTP logging scales under the packing scheduler's per-step microbatch count."""
+
+    def test_step_num_microbatches_prefers_the_scheduled_count(self, monkeypatch):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=5)) == 5
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=None)) == 16
+        assert train_utils._step_num_microbatches(SimpleNamespace()) == 16
+
+    @pytest.mark.parametrize(("per_token_tracker", "expected"), [(True, 1.0), (False, 0.25)])
+    def test_mtp_loss_scale_follows_the_tracker_mode(self, monkeypatch, per_token_tracker, expected):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        tracker = {"calculate_per_token_loss": True} if per_token_tracker else {}
+        monkeypatch.setattr(train_utils.MTPLossLoggingHelper, "tracker", tracker)
+        state = SimpleNamespace(global_batch_packing_num_microbatches=4)
+        # A per-token tracker already holds sum(loss) / sum(tokens) for the step.
+        assert train_utils._mtp_loss_scale(state) == expected

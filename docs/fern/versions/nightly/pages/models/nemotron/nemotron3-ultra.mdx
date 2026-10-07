@@ -10,7 +10,7 @@ packed OpenMathInstruct-2 full SFT, and packed OpenMathInstruct-2 LoRA PEFT.
 Use the main example README for setup and scripts:
 [`examples/models/nemotron/nemotron_3/ultra/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3/ultra/README.md).
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -172,8 +172,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A machine with enough host memory must import the complete pinned BF16 checkpoint, persist iter_0000000, and reload it without missing, unexpected, shape-mismatched, dtype-mismatched, or value-mismatched tensors.
-</p>
+        <p>A machine with enough host memory must import the complete pinned BF16 checkpoint, persist iter_0000000, and reload it without missing, unexpected, shape-mismatched, dtype-mismatched, or value-mismatched tensors.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-hf-to-megatron-gpu" tabindex="-1">
@@ -198,8 +197,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command exited successfully and persisted a reloadable iter_0000000 at TP1/PP3/EP8/ETP1. Exact distributed export back to the immutable source revision accounted for all 51,023 Nemotron-H, LatentMoE, Mamba, attention, and MTP tensors and 560,524,603,904 parameters with matching names, shapes, dtypes, and values.
-</p>
+        <p>The command exited successfully and persisted a reloadable iter_0000000 at TP1/PP3/EP8/ETP1. Exact distributed export back to the immutable source revision accounted for all 51,023 Nemotron-H, LatentMoE, Mamba, attention, and MTP tensors and 560,524,603,904 parameters with matching names, shapes, dtypes, and values.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-megatron-to-hf-cpu" tabindex="-1">
@@ -224,8 +222,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The single-process CPU export exits successfully and writes all 51,023 tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned source with no dtype conversions, preserving its BF16 model weights and FP32 expert-score correction biases. Transformers strictly reloads the output natively as NemotronHForCausalLM with all 927 state tensors and no loading discrepancies.
-</p>
+        <p>The single-process CPU export exits successfully and writes all 51,023 tensors, 560,524,603,904 values, and 1,121,049,257,984 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned source with no dtype conversions, preserving its BF16 model weights and FP32 expert-score correction biases. Transformers strictly reloads the output natively as NemotronHForCausalLM with all 927 state tensors and no loading discrepancies.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-megatron-to-hf-gpu" tabindex="-1">
@@ -250,8 +247,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command exited successfully and wrote 225 source-native Hugging Face shards. All 51,023 tensors and 560,524,603,904 parameters matched the pinned source exactly in name, shape, dtype, and value, preserving BF16 model weights and FP32 expert-score correction biases. Semantic configuration, generation configuration, the 131,072-token vocabulary, special tokens, chat template, and representative encodings also matched, and the export reloaded natively with NemotronHConfig and architecture NemotronHForCausalLM.
-</p>
+        <p>The command exited successfully and wrote 225 source-native Hugging Face shards. All 51,023 tensors and 560,524,603,904 parameters matched the pinned source exactly in name, shape, dtype, and value, preserving BF16 model weights and FP32 expert-score correction biases. Semantic configuration, generation configuration, the 131,072-token vocabulary, special tokens, chat template, and representative encodings also matched, and the export reloaded natively with NemotronHConfig and architecture NemotronHForCausalLM.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-pretrain-h100" tabindex="-1">
@@ -309,8 +305,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>In the card&#x27;s current base container, the public BF16 library recipe must complete all 10 bounded RedPajama2 head_01 optimizer steps at TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. Megatron-FSDP, natural expert routing, standard all-to-all dispatch, FP32 gradient communication, numerical checks, full-layer block recompute, and the library optimizer and constant-LR schedule must remain active. Every keyed step must have finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations.
-</p>
+        <p>In the card&#x27;s current base container, the public BF16 library recipe must complete all 10 bounded RedPajama2 head_01 optimizer steps at TP4/PP1/CP1/EP64/ETP1, GBS/MBS 512/1, and sequence length 8192. Megatron-FSDP, natural expert routing, standard all-to-all dispatch, FP32 gradient communication, numerical checks, full-layer block recompute, and the library optimizer and constant-LR schedule must remain active. Every keyed step must have finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-pretrain-gb200" tabindex="-1">
@@ -368,8 +363,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>In the card&#x27;s current base container, the public checkpoint-initialized BF16 library recipe completed all 20 bounded RedPajama2 head_01 optimizer steps at TP4/PP4/CP1/EP16/ETP1, GBS/MBS 256/1, and sequence length 8192. Natural expert routing, non-FSDP distributed optimizer, HybridEP, targeted expert-activation offload, selective attention/layernorm recompute, numerical checks, and the library optimizer and constant-LR schedule remained active. Every keyed step had finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations, and durable Weights &amp; Biases telemetry was produced.
-</p>
+        <p>In the card&#x27;s current base container, the public checkpoint-initialized BF16 library recipe completed all 20 bounded RedPajama2 head_01 optimizer steps at TP4/PP4/CP1/EP16/ETP1, GBS/MBS 256/1, and sequence length 8192. Natural expert routing, non-FSDP distributed optimizer, HybridEP, targeted expert-activation offload, selective attention/layernorm recompute, numerical checks, and the library optimizer and constant-LR schedule remained active. Every keyed step had finite loss, throughput, and gradient norm with zero skipped and zero NaN iterations, and durable Weights &amp; Biases telemetry was produced.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-sft-h100" tabindex="-1">
@@ -414,13 +408,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 24 --gpus-per-node 8 --recipe nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config --mode sft --wait --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.hf_dataset.split=&quot;train_1M[:10%]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;}&#x27; dataset.hf_output_root=work/data/openmathinstruct2-ultra-4096-v1 dataset.seed=1234 dataset.offline_packing_specs.pad_seq_to_mult=2 validation.eval_iters=0 validation.eval_interval=0 --save_dir work/model-verification/nemotron-3-ultra-550b-a55b/sft-checkpoints --save_interval 100 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/sft-resolved.yaml logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 24 --gpus-per-node 8 --recipe nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config --mode sft --wait --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.hf_dataset.split=&quot;train_1M[:10%]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;&#125;&#x27; dataset.hf_output_root=work/data/openmathinstruct2-ultra-4096-v1 dataset.seed=1234 dataset.offline_packing_specs.pad_seq_to_mult=2 validation.eval_iters=0 validation.eval_interval=0 --save_dir work/model-verification/nemotron-3-ultra-550b-a55b/sft-checkpoints --save_interval 100 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/sft-resolved.yaml logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The public 192-H100 packed OpenMathInstruct-2 full-SFT recipe must use the pinned dataset revision and bounded train_1M first-ten-percent selection, complete 100 optimizer steps at sequence length 4096 and GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra contract is support verification rather than the 8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no skipped or NaN iterations, all five metrics, a persisted post-setup configuration, audited supervised-token counts, and a complete reloadable final checkpoint.
-</p>
+        <p>The public 192-H100 packed OpenMathInstruct-2 full-SFT recipe must use the pinned dataset revision and bounded train_1M first-ten-percent selection, complete 100 optimizer steps at sequence length 4096 and GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra contract is support verification rather than the 8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no skipped or NaN iterations, all five metrics, a persisted post-setup configuration, audited supervised-token counts, and a complete reloadable final checkpoint.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-sft-gb200" tabindex="-1">
@@ -464,8 +457,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No GB200-specific Ultra full-SFT configuration is verified by this PR. The H100 library recipe must be adapted and validated independently before GB200 SFT support is claimed.
-</p>
+        <p>No GB200-specific Ultra full-SFT configuration is verified by this PR. The H100 library recipe must be adapted and validated independently before GB200 SFT support is claimed.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-sft-long-context-h100" tabindex="-1">
@@ -509,8 +501,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Megatron Bridge does not publish a dedicated Ultra packed long-context recipe. The only published Ultra full-SFT recipe fixes sequence length 4096 and context parallelism one, so it cannot provide the required joint sequence-packing and CP-greater-than-one evidence and is not relabeled as long-context support.
-</p>
+        <p>Megatron Bridge does not publish a dedicated Ultra packed long-context recipe. The only published Ultra full-SFT recipe fixes sequence length 4096 and context parallelism one, so it cannot provide the required joint sequence-packing and CP-greater-than-one evidence and is not relabeled as long-context support.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-sft-long-context-gb200" tabindex="-1">
@@ -554,8 +545,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Megatron Bridge does not publish a dedicated Ultra packed long-context recipe for GB200.
-</p>
+        <p>Megatron Bridge does not publish a dedicated Ultra packed long-context recipe for GB200.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-peft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-peft-h100" tabindex="-1">
@@ -600,13 +590,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config --mode lora --wait --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.hf_dataset.split=&quot;train_1M[:10%]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;}&#x27; dataset.hf_output_root=work/data/openmathinstruct2-ultra-4096-v1 dataset.seed=1234 dataset.offline_packing_specs.pad_seq_to_mult=2 validation.eval_iters=0 validation.eval_interval=0 --save_dir work/model-verification/nemotron-3-ultra-550b-a55b/peft-checkpoints --save_interval 100 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/peft-resolved.yaml logger.tensorboard_dir=null</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config --mode lora --wait --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000 --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100 &#x27;dataset.hf_dataset.split=&quot;train_1M[:10%]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;469216e3f46f4dacf476b382e192485ea51a143e&quot;&#125;&#x27; dataset.hf_output_root=work/data/openmathinstruct2-ultra-4096-v1 dataset.seed=1234 dataset.offline_packing_specs.pad_seq_to_mult=2 validation.eval_iters=0 validation.eval_interval=0 --save_dir work/model-verification/nemotron-3-ultra-550b-a55b/peft-checkpoints --save_interval 100 ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true logger.log_interval=1 logger.log_throughput=true logger.save_config_filepath=work/model-verification/nemotron-3-ultra-550b-a55b/peft-resolved.yaml logger.tensorboard_dir=null</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The public 32-H100 packed OpenMathInstruct-2 LoRA recipe must use the same pinned bounded dataset and pad_seq_to_mult 2 as full SFT, match all declared attention, MLP, and Mamba adapter targets, and complete 100 optimizer steps at sequence length 4096 and GBS/MBS 128/1. This published Ultra contract is support verification rather than the 8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no skipped or NaN iterations, all five metrics, audited supervised-token counts, a persisted post-setup configuration, and a reloadable adapter checkpoint.
-</p>
+        <p>The public 32-H100 packed OpenMathInstruct-2 LoRA recipe must use the same pinned bounded dataset and pad_seq_to_mult 2 as full SFT, match all declared attention, MLP, and Mamba adapter targets, and complete 100 optimizer steps at sequence length 4096 and GBS/MBS 128/1. This published Ultra contract is support verification rather than the 8K/GBS8 qwen3_30b_a3b_convergence_v2 cohort. Loss must remain finite with no skipped or NaN iterations, all five metrics, audited supervised-token counts, a persisted post-setup configuration, and a reloadable adapter checkpoint.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-peft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-peft-gb200" tabindex="-1">
@@ -650,8 +639,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No GB200-specific Ultra PEFT configuration is verified by this PR.
-</p>
+        <p>No GB200-specific Ultra PEFT configuration is verified by this PR.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-pretrain-performance-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-pretrain-performance-gb200" tabindex="-1">
@@ -701,8 +689,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 256 GB200s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP2/PP1/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192 using Megatron-FSDP HSDP. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.1668 to 6.738161; the final ten steps average 3213.970 ms, 917.750 TFLOP/s/GPU, and 2548.873 tokens/s/GPU. The resolved configuration persists.
-</p>
+        <p>On exactly 256 GB200s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP2/PP1/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192 using Megatron-FSDP HSDP. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.1668 to 6.738161; the final ten steps average 3213.970 ms, 917.750 TFLOP/s/GPU, and 2548.873 tokens/s/GPU. The resolved configuration persists.</p>
       </section>
     </article>
     <article id="nemotron-3-ultra-550b-a55b-pretrain-performance-gb300" class="verification-model-detail" data-entry-detail="nemotron-3-ultra-550b-a55b-pretrain-performance-gb300" tabindex="-1">
@@ -752,11 +739,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 256 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.20118 to 7.019335; the final ten steps average 2282.400 ms, 1306.850 TFLOP/s/GPU, and 3589.204 tokens/s/GPU. The resolved configuration persists.
-</p>
+        <p>On exactly 256 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 256/1, and sequence length 8192. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.20118 to 7.019335; the final ten steps average 2282.400 ms, 1306.850 TFLOP/s/GPU, and 3589.204 tokens/s/GPU. The resolved configuration persists.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

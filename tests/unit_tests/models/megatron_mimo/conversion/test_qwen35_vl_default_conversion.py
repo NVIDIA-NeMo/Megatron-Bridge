@@ -25,7 +25,7 @@ from megatron.bridge.models.megatron_mimo.conversion import (
     supports_mimo_conversion,
     validate_route_table,
 )
-from megatron.bridge.models.megatron_mimo.conversion.orchestrator import _reset_registry_for_tests
+from megatron.bridge.models.megatron_mimo.conversion.orchestrator import _CONVERSION_SPECS, _reset_registry_for_tests
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -95,8 +95,12 @@ def _make_moe_language_provider() -> Qwen35VLMoEModelProvider:
 
 
 def _get_qwen35_conversion_spec(bridge_cls: type = Qwen35VLBridge):
+    saved_specs = _CONVERSION_SPECS.copy()
     _reset_registry_for_tests()
-    return get_mimo_conversion_spec(bridge_cls)
+    try:
+        return get_mimo_conversion_spec(bridge_cls)
+    finally:
+        _CONVERSION_SPECS.update(saved_specs)
 
 
 def _run_qwen35_conversion_spec(

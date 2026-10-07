@@ -14,7 +14,6 @@
 
 """Functional toy-model conversion tests for DeepSeek V4."""
 
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -31,28 +30,10 @@ def _has_dsv4_in_transformers() -> bool:
         return False
 
 
-def _has_dsv4_in_mcore() -> bool:
-    try:
-        return all(
-            importlib.util.find_spec(mod) is not None
-            for mod in (
-                "megatron.core.transformer.hyper_connection",
-                "megatron.core.transformer.experimental_attention_variant.csa",
-                "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
-            )
-        )
-    except ModuleNotFoundError:
-        return False
-
-
 pytestmark = [
     pytest.mark.skipif(
         not _has_dsv4_in_transformers(),
         reason="transformers does not yet ship DeepseekV4ForCausalLM (HF hub only via trust_remote_code).",
-    ),
-    pytest.mark.skipif(
-        not _has_dsv4_in_mcore(),
-        reason="megatron-core does not yet ship DSv4 prerequisites (PRs #3430 / #4458 / #4481 / #4518).",
     ),
 ]
 

@@ -4,7 +4,7 @@
 
 DeepSeek V3 models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -139,8 +139,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A CPU import of the pinned blockwise-FP8 Hugging Face checkpoint must dequantize every mapped weight correctly, persist a reloadable Megatron checkpoint, and pass a complete tensor audit. This workflow is deferred by this card.
-</p>
+        <p>A CPU import of the pinned blockwise-FP8 Hugging Face checkpoint must dequantize every mapped weight correctly, persist a reloadable Megatron checkpoint, and pass a complete tensor audit. This workflow is deferred by this card.</p>
       </section>
     </article>
     <article id="deepseek-v3-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="deepseek-v3-hf-to-megatron-gpu" tabindex="-1">
@@ -165,8 +164,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-GPU import completed all 4,583 mapping tasks, blockwise-dequantized the pinned FP8 source into BF16, and persisted a reloadable 32-shard distributed Megatron checkpoint. A strict paired export subsequently matched all 46,183 model tensors and 684,489,845,504 values exactly.
-</p>
+        <p>The 32-GPU import completed all 4,583 mapping tasks, blockwise-dequantized the pinned FP8 source into BF16, and persisted a reloadable 32-shard distributed Megatron checkpoint. A strict paired export subsequently matched all 46,183 model tensors and 684,489,845,504 values exactly.</p>
       </section>
     </article>
     <article id="deepseek-v3-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="deepseek-v3-megatron-to-hf-cpu" tabindex="-1">
@@ -191,8 +189,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-process distributed CPU export exits successfully and writes all 163 source-shaped shards. The index contains exactly 46,183 BF16 model tensors; an exhaustive audit matches all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors and 59 other declared dtype normalizations. Transformers strictly reloads the output as DeepseekV3ForCausalLM with all 967 state tensors and no loading discrepancies.
-</p>
+        <p>The 32-process distributed CPU export exits successfully and writes all 163 source-shaped shards. The index contains exactly 46,183 BF16 model tensors; an exhaustive audit matches all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors and 59 other declared dtype normalizations. Transformers strictly reloads the output as DeepseekV3ForCausalLM with all 967 state tensors and no loading discrepancies.</p>
       </section>
     </article>
     <article id="deepseek-v3-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="deepseek-v3-megatron-to-hf-gpu" tabindex="-1">
@@ -217,8 +214,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The command exited successfully and wrote all 163 source-shaped shards. The index contained exactly 46,183 BF16 model tensors; an exhaustive 32-rank audit matched all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors. The exported configuration instantiated natively as DeepseekV3ForCausalLM.
-</p>
+        <p>The command exited successfully and wrote all 163 source-shaped shards. The index contained exactly 46,183 BF16 model tensors; an exhaustive 32-rank audit matched all 684,489,845,504 values against the pinned source after blockwise dequantization of all 45,808 FP8 tensors. The exported configuration instantiated natively as DeepseekV3ForCausalLM.</p>
       </section>
     </article>
     <article id="deepseek-v3-pretrain-gb300" class="verification-model-detail" data-entry-detail="deepseek-v3-pretrain-gb300" tabindex="-1">
@@ -262,8 +258,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A bounded public-data DeepSeek V3 pretraining run must complete with finite loss, zero skipped or NaN iterations, all five metrics, a saved post-setup configuration, and a reloadable final checkpoint. Functional training is deferred by this card.
-</p>
+        <p>A bounded public-data DeepSeek V3 pretraining run must complete with finite loss, zero skipped or NaN iterations, all five metrics, a saved post-setup configuration, and a reloadable final checkpoint. Functional training is deferred by this card.</p>
       </section>
     </article>
     <article id="deepseek-v3-sft-gb300" class="verification-model-detail" data-entry-detail="deepseek-v3-sft-gb300" tabindex="-1">
@@ -307,8 +302,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A pinned-data full-SFT run must finish with finite loss, zero skipped or NaN iterations, all five metrics, a saved post-setup configuration, and a reloadable final checkpoint. Fine-tuning is deferred by this card.
-</p>
+        <p>A pinned-data full-SFT run must finish with finite loss, zero skipped or NaN iterations, all five metrics, a saved post-setup configuration, and a reloadable final checkpoint. Fine-tuning is deferred by this card.</p>
       </section>
     </article>
     <article id="deepseek-v3-sft-long-context-gb300" class="verification-model-detail" data-entry-detail="deepseek-v3-sft-long-context-gb300" tabindex="-1">
@@ -352,8 +346,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A dedicated packed long-context SFT run must complete with context parallelism, finite loss, zero skipped or NaN iterations, all five metrics, and a reloadable checkpoint. This workflow is deferred by this card.
-</p>
+        <p>A dedicated packed long-context SFT run must complete with context parallelism, finite loss, zero skipped or NaN iterations, all five metrics, and a reloadable checkpoint. This workflow is deferred by this card.</p>
       </section>
     </article>
     <article id="deepseek-v3-peft-gb300" class="verification-model-detail" data-entry-detail="deepseek-v3-peft-gb300" tabindex="-1">
@@ -397,8 +390,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A DeepSeek V3 PEFT recipe with an audited model-native attention adapter target set must complete with finite loss, zero skipped or NaN iterations, all five metrics, and a reloadable adapter checkpoint. This workflow is deferred by this card.
-</p>
+        <p>A DeepSeek V3 PEFT recipe with an audited model-native attention adapter target set must complete with finite loss, zero skipped or NaN iterations, all five metrics, and a reloadable adapter checkpoint. This workflow is deferred by this card.</p>
       </section>
     </article>
     <article id="deepseek-v3-pretrain-performance-h100" class="verification-model-detail" data-entry-detail="deepseek-v3-pretrain-performance-h100" tabindex="-1">
@@ -448,8 +440,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 1,024 H100 GPUs, the canonical 50-step mock-data BF16 recipe completed at TP2/PP8/VP4/CP1/EP64/ETP1 and GBS/MBS 16384/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 61,756.130 ms and 276.030 model TFLOP/s/GPU, passing gates of at most 62,000 ms and at least 275 TFLOP/s/GPU. Mock data and forced expert balancing make this benchmark-only evidence, not convergence evidence.
-</p>
+        <p>On exactly 1,024 H100 GPUs, the canonical 50-step mock-data BF16 recipe completed at TP2/PP8/VP4/CP1/EP64/ETP1 and GBS/MBS 16384/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 61,756.130 ms and 276.030 model TFLOP/s/GPU, passing gates of at most 62,000 ms and at least 275 TFLOP/s/GPU. Mock data and forced expert balancing make this benchmark-only evidence, not convergence evidence.</p>
       </section>
     </article>
     <article id="deepseek-v3-pretrain-performance-gb200" class="verification-model-detail" data-entry-detail="deepseek-v3-pretrain-performance-gb200" tabindex="-1">
@@ -499,8 +490,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 256 GB200 GPUs, the canonical 50-step mock-data MXFP8 recipe completed at TP1/PP4/VP4/CP1/EP64/ETP1 and GBS/MBS 4096/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 13,841.180 ms and 1,231.040 model TFLOP/s/GPU, passing gates of at most 14,000 ms and at least 1,200 TFLOP/s/GPU. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.
-</p>
+        <p>On exactly 256 GB200 GPUs, the canonical 50-step mock-data MXFP8 recipe completed at TP1/PP4/VP4/CP1/EP64/ETP1 and GBS/MBS 4096/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 13,841.180 ms and 1,231.040 model TFLOP/s/GPU, passing gates of at most 14,000 ms and at least 1,200 TFLOP/s/GPU. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.</p>
       </section>
     </article>
     <article id="deepseek-v3-pretrain-performance-gb300" class="verification-model-detail" data-entry-detail="deepseek-v3-pretrain-performance-gb300" tabindex="-1">
@@ -550,11 +540,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 256 GB300 GPUs, the canonical 50-step mock-data MXFP8 recipe completed at TP1/PP2/VP8/CP1/EP32/ETP1 and GBS/MBS 4096/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 10,667.300 ms and 1,597.310 model TFLOP/s/GPU, passing gates of at most 11,000 ms and at least 1,550 TFLOP/s/GPU. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.
-</p>
+        <p>On exactly 256 GB300 GPUs, the canonical 50-step mock-data MXFP8 recipe completed at TP1/PP2/VP8/CP1/EP32/ETP1 and GBS/MBS 4096/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 10,667.300 ms and 1,597.310 model TFLOP/s/GPU, passing gates of at most 11,000 ms and at least 1,550 TFLOP/s/GPU. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}
