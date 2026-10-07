@@ -285,7 +285,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     )
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Both language and vision towers use automatic TE backend selection.
@@ -306,12 +306,15 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContainer:
     """Return 128K BF16 Qwen3.5-VL SFT with TP2/CP8/EP16 on 32 GB200 GPUs.
 
-    Set ``dataset.path`` to the prepared Nemotron Image Training v3 ``clevr_2``
-    Energon shards and supply a pretrained checkpoint. After verifying the
-    source revision, use ``tutorials/data/energon/prepare_nemotron_image_v3.py``
-    with ``--subsets clevr_2 --skip-source-integrity-check``; its built-in
-    integrity manifest covers only ``turing``. Native Energon packing uses
-    one physical microbatch per 128K pack.
+    Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
+    Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
+    pretrained checkpoint.
+
+    Prepare the shards with `prepare_nemotron_image_v3.py
+    <https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/prepare_nemotron_image_v3.py>`_
+    using ``--subsets clevr_2 --skip-source-integrity-check`` after verifying
+    the source revision; the built-in integrity manifest covers only ``turing``.
+    Native Energon packing uses one physical microbatch per 128K pack.
     """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_mixed()
@@ -321,8 +324,15 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Return packed CLEVR2 128K MXFP8 SFT with BF16 parameter communication.
 
-    Set ``dataset.path`` to prepared CLEVR2 Energon shards and supply a
-    pretrained checkpoint, as for the BF16 variant.
+    Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
+    Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
+    pretrained checkpoint.
+
+    Prepare the shards with `prepare_nemotron_image_v3.py
+    <https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/prepare_nemotron_image_v3.py>`_
+    using ``--subsets clevr_2 --skip-source-integrity-check`` after verifying
+    the source revision; the built-in integrity manifest covers only ``turing``.
+    Native Energon packing uses one physical microbatch per 128K pack.
     """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_with_mxfp8_mixed()

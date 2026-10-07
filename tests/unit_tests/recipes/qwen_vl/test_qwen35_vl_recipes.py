@@ -730,6 +730,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert encoder.max_visual_tokens == 2048
         assert cfg.mixed_precision.grad_reduce_in_fp32 is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
+        assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
         assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
 
     assert bf16_cfg.mixed_precision.fp8 is None
