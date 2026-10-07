@@ -279,36 +279,28 @@ def test_legacy_renamed_weight_fails_closed_only_when_quantized(quantized):
         assert [weight.param_name for weight in output] == [legacy_key]
 
 
-def test_distributed_error_check_skips_object_gather_on_success(monkeypatch):
-    group = object()
-    monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 2)
-    monkeypatch.setattr(torch.distributed, "get_backend", lambda _group: "gloo")
-    monkeypatch.setattr(torch.distributed, "all_reduce", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        modelopt_utils,
-        "_all_gather_objects",
-        lambda *_args, **_kwargs: pytest.fail("success path used object gather"),
-    )
-
-    modelopt_utils._raise_distributed_errors(None, group, "capture")
-
-
-def test_distributed_error_check_gathers_messages_only_on_failure(monkeypatch):
+@pytest.mark.parametrize("remote_error", [None, "ValueError: rank-local failure"], ids=["success", "remote-failure"])
+def test_distributed_error_check_gathers_messages_only_on_failure(monkeypatch, remote_error):
     group = object()
     monkeypatch.setattr(modelopt_utils, "get_pg_size", lambda _group: 2)
     monkeypatch.setattr(torch.distributed, "get_backend", lambda _group: "gloo")
 
-    def report_remote_failure(failed, **_kwargs):
-        failed.fill_(1)
+    def reduce_status(failed, **_kwargs):
+        if remote_error is not None:
+            failed.fill_(1)
 
-    monkeypatch.setattr(torch.distributed, "all_reduce", report_remote_failure)
-    monkeypatch.setattr(
-        modelopt_utils,
-        "_all_gather_objects",
-        lambda _error, _group: [None, "ValueError: rank-local failure"],
-    )
+    monkeypatch.setattr(torch.distributed, "all_reduce", reduce_status)
 
-    with pytest.raises(RuntimeError, match="rank-local failure"):
+    def gather_errors(_error, _group):
+        assert remote_error is not None, "success path used object gather"
+        return [None, remote_error]
+
+    monkeypatch.setattr(modelopt_utils, "_all_gather_objects", gather_errors)
+
+    if remote_error is not None:
+        with pytest.raises(RuntimeError, match="rank-local failure"):
+            modelopt_utils._raise_distributed_errors(None, group, "capture")
+    else:
         modelopt_utils._raise_distributed_errors(None, group, "capture")
 
 
