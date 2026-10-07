@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Beam config, weight mapping, adapter geometry and output-layer tests."""
 
+from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -282,7 +283,8 @@ def test_provider_dataclass_round_trip(mock_pretrained):
 
     with pytest.warns(FutureWarning):
         provider = BeamBridge().provider_bridge(mock_pretrained)
-    restored = BeamModelProvider(**provider.asdict())
+    serialized = provider.asdict()
+    restored = BeamModelProvider(**{f.name: serialized[f.name] for f in fields(provider) if f.init})
     assert type(restored) is BeamModelProvider
     assert BeamBridge.megatron_to_hf_config(restored) == BeamBridge.megatron_to_hf_config(provider)
     assert restored.moe_router_fp32_params and restored.ssmax
@@ -483,7 +485,8 @@ class TestConfigConversion:
 class TestMappingRegistry:
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA model construction")
     @pytest.mark.parametrize("dense", [False, True])
-    def test_built_model_conversion_tasks(self, hf_config, dense):
+    @pytest.mark.parametrize("legacy_provider", [False, True])
+    def test_built_model_conversion_tasks(self, hf_config, dense, legacy_provider):
         from megatron.core.process_groups_config import ProcessGroupCollection
         from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
         from transformers import PretrainedConfig
@@ -494,11 +497,25 @@ class TestMappingRegistry:
             if dense:
                 hf_config.mlp_layer_types = ["dense"] * hf_config.num_hidden_layers
             bridge = BeamBridge()
-            cfg = bridge.hf_config_to_model_config(hf_config)
+            if legacy_provider:
+                with pytest.warns(FutureWarning):
+                    cfg = bridge.provider_bridge(SimpleNamespace(config=hf_config))
+            else:
+                cfg = bridge.hf_config_to_model_config(hf_config)
+            # Mapping coverage does not require the optional APEX wgrad extension.
+            cfg.gradient_accumulation_fusion = False
             cfg.finalize()
-            model = BeamModelBuilder(cfg).build_model(ProcessGroupCollection.use_mpu_process_groups())
+            groups = ProcessGroupCollection.use_mpu_process_groups()
+            if legacy_provider:
+                cfg._pg_collection = groups
+                model = cfg.provide()
+            else:
+                model = BeamModelBuilder(cfg).build_model(groups)
             # The registry lays out the hybrid layers from the HF config handed to the conversion.
-            pretrained = PretrainedConfig(**{k: getattr(hf_config, k) for k in BEAM_CFG})
+            # Generic HF RoPE validation rejects Beam's None-valued NoPE entries.
+            # This fixture only supplies metadata to the mapping registry.
+            pretrained = PretrainedConfig()
+            pretrained.update({k: getattr(hf_config, k) for k in BEAM_CFG})
             tasks = bridge.build_conversion_tasks(pretrained, [model])
             hf_names = [
                 name

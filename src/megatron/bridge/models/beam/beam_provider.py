@@ -31,6 +31,8 @@ class BeamModelProvider(HybridModelProvider, BeamTransformerConfig):
     New integrations should use BeamModelConfig and BeamModelBuilder.
     """
 
+    mtp_num_layers: int | None = None
+
     def finalize(self) -> None:
         """Split pipeline stages at Beam-layer boundaries and validate the architecture."""
         if self.virtual_pipeline_model_parallel_size is not None:
