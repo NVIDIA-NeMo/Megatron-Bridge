@@ -746,7 +746,7 @@ class TestLoadMegatronModel:
             assert isinstance(result, dict)
             assert result == expected_result
             mock_load_args.assert_called_once_with(ckpt_path)
-            mock_transformer_cfg.assert_called_once_with(mock_args)
+            mock_transformer_cfg.assert_called_once_with(mock_args, mp_overrides=None)
             mock_tokenizer_config_from_args.assert_called_once_with(mock_args)
             mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
             # Verify padded vocab size was calculated and set
