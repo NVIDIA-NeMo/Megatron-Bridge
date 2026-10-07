@@ -56,7 +56,13 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
-from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+from megatron.bridge.models.megatron_mimo.conversion import MIMOComponent, register_mimo_conversion_spec
+from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
+    NemotronOmniMimoRadioEncoder,
+    NemotronOmniModel,
+)
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
     NEMOTRON_OMNI_LLAVA_CONTRACT,
@@ -578,3 +584,35 @@ class NemotronOmniLlavaBridge(NemotronOmniBridge):
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         return self._llava_mapping_registry()
+
+
+# RADIO's own parameters (class token, position embeddings, patch/video
+# embedders) are replicated across TP ranks, exactly like ``RADIOViTModel``.
+AutoMapping.register_module_type(NemotronOmniMimoRadioEncoder.__name__, "replicated")
+
+
+@register_mimo_conversion_spec(NemotronOmniBridge)
+@register_mimo_conversion_spec(Nemotron35SuperVLBridge)
+def nemotron_omni_mimo_conversion_spec(
+    source_bridge: NemotronOmniBridge,
+    hf_pretrained: PreTrainedCausalLM,
+    parallelism_config: MegatronMIMOParallelismConfig,
+) -> tuple[MegatronMIMOProvider, list[MIMOComponent]]:
+    """Reuse Omni weight mappings with separate language and image grids.
+
+    The RADIO encoder and projector have separate routes sharing the image
+    component's process groups.
+    """
+    standard_provider = source_bridge.provider_bridge(hf_pretrained)
+    provider = MegatronMIMOProvider.from_standard_provider(standard_provider, parallelism_config)
+    routes = [
+        MIMOComponent("language", "language_model.", "language_model"),
+        MIMOComponent("images", "vision_model.", "modality_submodules.images.encoders.radio"),
+        MIMOComponent(
+            "projector",
+            "vision_projection.",
+            "modality_submodules.images.input_projections.0",
+            component_name="images",
+        ),
+    ]
+    return provider, routes
