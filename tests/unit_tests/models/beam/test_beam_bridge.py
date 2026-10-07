@@ -2,7 +2,7 @@
 """Beam config, weight mapping, adapter geometry and output-layer tests."""
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -238,10 +238,87 @@ def test_beam_settings_target_declared_fields(hf_config):
     assert set(_beam_settings(hf_config)) <= fields
 
 
-def test_provider_path_is_not_supported(mock_pretrained):
-    """The generic GPTModelProvider would build a model without the Beam modules; refuse it."""
-    with pytest.raises(NotImplementedError, match="get_model_config"):
-        BeamBridge().provider_bridge(mock_pretrained)
+@pytest.mark.unit
+def test_provider_matches_builder_config(mock_pretrained):
+    from megatron.bridge.models.beam.beam_provider import BeamModelProvider
+
+    bridge = BeamBridge()
+    with pytest.warns(FutureWarning, match="legacy compatibility"):
+        provider = bridge.provider_bridge(mock_pretrained)
+    assert isinstance(provider, BeamModelProvider)
+    config = bridge.hf_config_to_model_config(mock_pretrained.config)
+    for key in bridge.hf_config_to_model_config_kwargs(mock_pretrained.config):
+        assert getattr(provider, key) == getattr(config, key), key
+    assert bridge.megatron_to_hf_config(provider) == bridge.megatron_to_hf_config(config)
+
+
+@pytest.mark.unit
+def test_provider_pipeline_split_and_validation(mock_pretrained):
+    with pytest.warns(FutureWarning):
+        provider = BeamBridge().provider_bridge(mock_pretrained)
+    provider.pipeline_model_parallel_size = 2
+    provider.finalize()
+    assert provider.hybrid_layer_pattern == "*-*E|*E*E"
+    provider.pipeline_model_parallel_size = 1
+    provider.finalize()
+    assert provider.hybrid_layer_pattern == "*-*E*E*E"
+    provider.moe_router_dtype = None
+    with pytest.raises(ValueError, match="moe_router_dtype"):
+        provider.finalize()
+
+
+@pytest.mark.unit
+def test_provider_rejects_virtual_pipeline(mock_pretrained):
+    with pytest.warns(FutureWarning):
+        provider = BeamBridge().provider_bridge(mock_pretrained)
+    provider.virtual_pipeline_model_parallel_size = 2
+    with pytest.raises(ValueError, match="virtual pipeline"):
+        provider.finalize()
+
+
+@pytest.mark.unit
+def test_provider_dataclass_round_trip(mock_pretrained):
+    from megatron.bridge.models.beam.beam_provider import BeamModelProvider
+
+    with pytest.warns(FutureWarning):
+        provider = BeamBridge().provider_bridge(mock_pretrained)
+    restored = BeamModelProvider(**provider.asdict())
+    assert type(restored) is BeamModelProvider
+    assert BeamBridge.megatron_to_hf_config(restored) == BeamBridge.megatron_to_hf_config(provider)
+    assert restored.moe_router_fp32_params and restored.ssmax
+
+
+@pytest.mark.unit
+def test_provider_preserves_beam_stack_spec(mock_pretrained):
+    with pytest.warns(FutureWarning):
+        provider = BeamBridge().provider_bridge(mock_pretrained)
+    spec = provider._resolve_hybrid_stack_spec()
+    assert spec.submodules.attention_layer.module.__name__ == "BeamTransformerLayer"
+    assert spec.submodules.moe_layer.module.__name__ == "BeamMoETransformerLayer"
+    provider.hybrid_stack_spec = spec
+    with pytest.raises(ValueError, match="custom specs"):
+        provider._resolve_hybrid_stack_spec()
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("last_stage,cap", [(True, 30.0), (False, 30.0), (True, None)])
+def test_provider_applies_softcap_only_on_output_stage(mock_pretrained, last_stage, cap):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    with pytest.warns(FutureWarning):
+        provider = BeamBridge().provider_bridge(mock_pretrained)
+    provider.final_logit_softcapping = cap
+    model = SimpleNamespace(post_process=last_stage, output_layer=object())
+    with (
+        patch.object(HybridModelProvider, "provide", return_value=model) as build,
+        patch("megatron.bridge.models.beam.beam_provider.extend_instance") as extend,
+    ):
+        assert provider.provide(pre_process=True, post_process=last_stage) is model
+        build.assert_called_once_with(pre_process=True, post_process=last_stage, vp_stage=None)
+        if last_stage and cap:
+            extend.assert_called_once_with(model.output_layer, BeamOutputLayer)
+        else:
+            extend.assert_not_called()
 
 
 def test_per_layer_flags_land_on_attention_layers():

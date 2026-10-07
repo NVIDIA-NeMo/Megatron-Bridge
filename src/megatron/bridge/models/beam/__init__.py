@@ -8,6 +8,7 @@ from megatron.bridge.models.beam.beam_config import (
 from megatron.bridge.models.beam.beam_mappings import (
     BeamQKVGateMapping,
 )
+from megatron.bridge.models.beam.beam_provider import BeamModelProvider
 from megatron.bridge.models.beam.modeling_beam import (
     AttentionOutputGateBias,
     BeamMLPLayer,
@@ -27,6 +28,7 @@ __all__ = [
     "BeamBridge",
     "BeamMLPLayer",
     "BeamModelBuilder",
+    "BeamModelProvider",
     "BeamModelConfig",
     "BeamMoETransformerLayer",
     "BeamQKVGateMapping",

@@ -32,6 +32,7 @@ from megatron.bridge.models.beam import (
     BeamBridge,
     BeamModelBuilder,
     BeamModelConfig,
+    BeamModelProvider,
     BeamQKVGateMapping,
     BeamTransformerConfig,
 )
@@ -307,6 +308,7 @@ __all__ = [
     # Beam (Reflection AI) models
     "BeamBridge",
     "BeamModelBuilder",
+    "BeamModelProvider",
     "BeamModelConfig",
     "BeamQKVGateMapping",
     "BeamTransformerConfig",

@@ -11,6 +11,7 @@ The Megatron model is a ``HybridModel`` with two hybrid layers per Beam layer ``
 attention at ``decoder.layers.{2i}`` and the dense MLP or MoE at ``decoder.layers.{2i+1}``.
 """
 
+import warnings
 from typing import Any, Collection, Iterable, Mapping
 
 import torch
@@ -19,6 +20,7 @@ from megatron.core.models.hybrid.hybrid_model import HybridModel
 
 from megatron.bridge.models.beam.beam_config import BeamModelConfig
 from megatron.bridge.models.beam.beam_mappings import BeamQKVGateMapping, split_qkv_gate_weights
+from megatron.bridge.models.beam.beam_provider import BeamModelProvider
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -233,6 +235,7 @@ def _as_layer_list(value, num_layers: int, *, int_rule) -> list[int]:
 @MegatronModelBridge.register_bridge(
     source="BeamForCausalLM",
     target=HybridModel,
+    provider=BeamModelProvider,
     model_type="beam",
 )
 class BeamBridge(MegatronModelBridge):
@@ -244,7 +247,7 @@ class BeamBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
         >>> model = bridge.get_model(model_config)
 
-    Beam is builder-backed only: ``to_megatron_provider()`` is not supported.
+    The builder path is preferred; ``to_megatron_provider()`` remains available for legacy consumers.
     """
 
     MODEL_CONFIG_CLASS = BeamModelConfig
@@ -435,11 +438,14 @@ class BeamBridge(MegatronModelBridge):
         return hf_config
 
     def provider_bridge(self, hf_pretrained):
-        """Beam has no provider: the generic ``GPTModelProvider`` would build a model without the Beam modules."""
-        raise NotImplementedError(
-            "Beam is builder-backed only; use AutoBridge.get_model_config() / AutoBridge.get_model() "
-            "instead of to_megatron_provider()."
+        """Build a compatibility provider from the same config mapping as the builder."""
+        warnings.warn(
+            "BeamBridge.provider_bridge() is a legacy compatibility API; prefer "
+            "AutoBridge.get_model_config() / AutoBridge.get_model() for new integrations.",
+            FutureWarning,
+            stacklevel=2,
         )
+        return BeamModelProvider(**self.hf_config_to_model_config_kwargs(hf_pretrained.config))
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Map every Beam layer onto its two hybrid layers.
