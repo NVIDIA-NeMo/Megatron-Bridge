@@ -222,20 +222,20 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
     """Return 128K Qwen3.5-VL 35B-A3B SFT for 32 GB200 GPUs.
 
     Supply a pretrained checkpoint and multimodal data before training. The
-    one-sample microbatch uses unpacked sequences with TP2/CP8/EP32.
+    one-sample microbatch uses unpacked sequences with TP2/CP8/EP16.
     """
     cfg = _qwen35_vl_35b_a3b_sft_base_config(hf_revision=_QWEN35_35B_A3B_REVISION)
     cfg.model.calculate_per_token_loss = True
     cfg.ddp.average_in_collective = False
 
     cfg.model.seq_length = 131072
-    cfg.model.attention_backend = AttnBackend.flash
+    cfg.model.attention_backend = AttnBackend.auto
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 8
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.moe_token_dispatcher_type = "flex"
@@ -243,6 +243,18 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
+
+    # TP2/MBS1 fused GDN convolution backward requires an unsupported stride layout.
+    cfg.model.gdn_pre_gated_delta_rule_fusion = False
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["gdn_norm_out", "moe"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.vision_recompute_granularity = "full"
+    cfg.model.vision_recompute_method = "uniform"
+    cfg.model.vision_recompute_num_layers = 1
+    cfg.model.vision_recompute_modules = None
 
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
@@ -256,13 +268,13 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.env_vars = {
         **cfg.env_vars,
-        # Avoid the excessive cuDNN backward workspace for many packed vision frames.
-        "NVTE_FUSED_ATTN": 0,
+        # Both language and vision towers use automatic TE backend selection.
+        "NVTE_FUSED_ATTN": 1,
         "NVTE_FLASH_ATTN": 1,
-        "NVTE_UNFUSED_ATTN": 0,
+        "NVTE_UNFUSED_ATTN": 1,
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 16,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,

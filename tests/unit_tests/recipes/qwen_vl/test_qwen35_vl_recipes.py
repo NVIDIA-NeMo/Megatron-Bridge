@@ -677,13 +677,26 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.model.pipeline_dtype is None
         assert cfg.model.virtual_pipeline_model_parallel_size is None
         assert cfg.model.context_parallel_size == 8
-        assert cfg.model.expert_model_parallel_size == 32
+        assert cfg.model.expert_model_parallel_size == 16
         assert cfg.model.expert_tensor_parallel_size == 1
         assert cfg.model.sequence_parallel is True
         assert cfg.model.moe_token_dispatcher_type == "flex"
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 32
         assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+        assert cfg.model.gdn_pre_gated_delta_rule_fusion is False
+        assert cfg.model.cross_entropy_fusion_impl == "te"
+        assert cfg.model.recompute_granularity == "selective"
+        assert cfg.model.recompute_modules == ["gdn_norm_out", "moe"]
+        assert cfg.model.recompute_method is None
+        assert cfg.model.recompute_num_layers is None
+        assert cfg.model.vision_recompute_granularity == "full"
+        assert cfg.model.vision_recompute_method == "uniform"
+        assert cfg.model.vision_recompute_num_layers == 1
+        assert cfg.model.vision_recompute_modules is None
+        assert cfg.model.attention_backend.name == "auto"
+        for variable in ("NVTE_FUSED_ATTN", "NVTE_FLASH_ATTN", "NVTE_UNFUSED_ATTN"):
+            assert cfg.env_vars[variable] == 1
         assert cfg.train.global_batch_size == 32
         assert cfg.train.micro_batch_size == 1
         assert cfg.dataset.seq_length == 131072
@@ -694,7 +707,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.dataset.in_batch_packing_pad_to_multiple_of == 16
         assert cfg.mixed_precision.grad_reduce_in_fp32 is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
-        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+        assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 16
 
     assert bf16_cfg.mixed_precision.fp8 is None
     assert fp8mx_cfg.mixed_precision.fp8_recipe == "mxfp8"
