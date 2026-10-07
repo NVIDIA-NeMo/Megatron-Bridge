@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.nemotron_omni.gb200.nemotron_35_super_vl import *  # noqa: F403
+from megatron.bridge.models.bert.bert_bridge import BertBridge  # noqa: F401
+from megatron.bridge.models.bert.bert_provider import BertModelProvider
 
 
 __all__ = [
-    "nemotron_35_super_vl_peft_16gpu_gb200_bf16_config",
-    "nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config",
-    "nemotron_35_super_vl_sft_64gpu_gb200_bf16_config",
-    "nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config",
+    "BertModelProvider",
 ]

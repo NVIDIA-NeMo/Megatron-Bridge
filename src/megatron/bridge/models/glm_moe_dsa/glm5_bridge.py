@@ -35,6 +35,43 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 logger = logging.getLogger(__name__)
 
 
+def _partition_layer_groups(group_sizes: list[int], num_stages: int) -> list[int]:
+    """Split ordered layer groups into contiguous stages that minimize the largest stage.
+
+    Args:
+        group_sizes: Number of layers in each group, in layer order.
+        num_stages: Number of stages; must not exceed the number of groups.
+
+    Returns:
+        Number of layers in each stage. Every stage receives at least one whole group.
+    """
+
+    def stages_needed(capacity: int) -> int:
+        count, load = 1, 0
+        for size in group_sizes:
+            if load + size > capacity:
+                count, load = count + 1, 0
+            load += size
+        return count
+
+    capacity = max(group_sizes)
+    while stages_needed(capacity) > num_stages:
+        capacity += 1
+
+    stage_sizes: list[int] = []
+    start = 0
+    for stage_index in range(num_stages):
+        # Fill each stage up to the minimal capacity while leaving one group for every later stage.
+        last_start = len(group_sizes) - (num_stages - stage_index - 1)
+        end, load = start + 1, group_sizes[start]
+        while end < last_start and load + group_sizes[end] <= capacity:
+            load += group_sizes[end]
+            end += 1
+        stage_sizes.append(load)
+        start = end
+    return stage_sizes
+
+
 @MegatronModelBridge.register_bridge(
     source=GlmMoeDsaForCausalLM, target=GPTModel, provider=MLAModelProvider, model_type="glm_moe_dsa"
 )
@@ -163,6 +200,57 @@ class GLM5Bridge(MegatronModelBridge):
         hf_config = super().megatron_to_hf_config(provider)
         hf_config.pop("max_position_embeddings", None)
         return hf_config
+
+    def generate_pipeline_layout(self, num_layers: int, pp: int, mtp_layers: int = 0) -> list[list[str]] | None:
+        """Generate a conversion pipeline layout that keeps DSA top-k sharing groups on one stage.
+
+        GLM-5.2 decoder layers reuse the DSA top-k indices computed by an earlier
+        layer (``index_topk_freq`` and ``index_skip_topk_offset`` in the HF config).
+        Megatron-Core rejects a pipeline split that separates a reusing layer from
+        its source, and no uniform split of GLM-5.2's 78 decoder layers satisfies
+        that constraint for PP > 1. The conversion launcher calls this hook so every
+        stage starts on a layer that computes its own top-k indices. Sharing groups
+        are assigned to contiguous stages to minimize the largest stage, with
+        embeddings on the first stage and MTP plus loss on the last stage.
+
+        Args:
+            num_layers: Number of decoder layers.
+            pp: Pipeline parallel size.
+            mtp_layers: Number of MTP layers in the converted model.
+
+        Returns:
+            A flexible pipeline layout with exactly ``pp`` stages, or ``None`` when
+            the checkpoint does not share DSA top-k indices across layers and the
+            default pipeline split applies.
+
+        Raises:
+            ValueError: If ``pp`` exceeds the number of DSA top-k sharing groups.
+        """
+        topk_freq = getattr(self.hf_config, "index_topk_freq", 1)
+        if topk_freq <= 1:
+            return None
+
+        from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
+
+        skip_topk_offset = getattr(self.hf_config, "index_skip_topk_offset", 0)
+        # Each group starts on a layer that computes top-k indices and includes the layers that reuse them.
+        group_sizes: list[int] = []
+        for layer_number in range(1, num_layers + 1):
+            if is_dsa_skip_topk_layer(layer_number, skip_topk_offset, topk_freq):
+                group_sizes[-1] += 1
+            else:
+                group_sizes.append(1)
+        if pp > len(group_sizes):
+            raise ValueError(
+                f"PP={pp} exceeds the {len(group_sizes)} DSA top-k sharing groups in {num_layers} decoder layers; "
+                "each pipeline stage must start on a layer that computes its own top-k indices."
+            )
+
+        layout = [["decoder"] * stage_size for stage_size in _partition_layer_groups(group_sizes, pp)]
+        layout[0].insert(0, "embedding")
+        layout[-1].extend(["mtp"] * mtp_layers)
+        layout[-1].append("loss")
+        return layout
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
