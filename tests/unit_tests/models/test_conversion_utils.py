@@ -58,7 +58,6 @@ def test_remove_non_pickleables_reads_raw_config_attributes():
 @pytest.mark.parametrize("max_depth", [2, 3])
 def test_remove_non_pickleables_serializes_nested_peft_hooks_without_mutation(max_depth):
     import pickle
-    from collections import OrderedDict
     from types import SimpleNamespace
 
     hook = lambda model: model
@@ -66,9 +65,8 @@ def test_remove_non_pickleables_serializes_nested_peft_hooks_without_mutation(ma
         num_attention_heads=4,
         num_query_groups=2,
         kv_channels=8,
-        _pre_wrap_hooks=OrderedDict([(0, hook)]),
-        _megatron_bridge_setup_pre_wrap_hooks={"peft": [hook]},
-        nested=SimpleNamespace(callbacks={"peft": [hook]}),
+        _pre_wrap_hooks=[hook],
+        _megatron_bridge_setup_pre_wrap_hooks={"peft": hook},
         safe_metadata={"layers": [1, 2, 3]},
     )
     cleaned = remove_non_pickleables(original, max_depth=max_depth)
@@ -78,5 +76,38 @@ def test_remove_non_pickleables_serializes_nested_peft_hooks_without_mutation(ma
     assert restored.kv_channels == 8
     assert restored.safe_metadata == original.safe_metadata
     assert original._pre_wrap_hooks[0] is hook
-    assert original._megatron_bridge_setup_pre_wrap_hooks["peft"][0] is hook
-    assert original.nested.callbacks["peft"][0] is hook
+    assert original._megatron_bridge_setup_pre_wrap_hooks["peft"] is hook
+    assert "_pre_wrap_hooks" not in vars(cleaned)
+    assert "_megatron_bridge_setup_pre_wrap_hooks" not in vars(cleaned)
+
+
+@pytest.mark.parametrize("max_depth", [2, 3])
+def test_remove_non_pickleables_preserves_mapping_metadata(max_depth):
+    import pickle
+    from collections import OrderedDict, defaultdict
+    from types import SimpleNamespace
+
+    hook = lambda: None
+    registry = OrderedDict([(0, hook), (1, 8)])
+    registry.description = "head dimensions"
+    original = SimpleNamespace(registry=registry, defaults=defaultdict(int, head_dim=8))
+    cleaned = remove_non_pickleables(original, max_depth=max_depth)
+    restored = pickle.loads(pickle.dumps(cleaned))
+    assert isinstance(restored.registry, OrderedDict)
+    assert list(restored.registry.items()) == [(0, None), (1, 8)]
+    assert restored.registry.description == registry.description
+    assert restored.defaults.default_factory is int
+    assert restored.defaults["head_dim"] == 8
+    assert original.registry[0] is hook
+
+
+def test_remove_non_pickleables_rejects_unsafe_subtree_without_losing_metadata():
+    from types import SimpleNamespace
+
+    hook = lambda: None
+    original = SimpleNamespace(nested={"metadata": {"head_dim": 8, "callback": hook}})
+    with pytest.raises(TypeError, match="attribute 'nested'.*max_depth=2"):
+        remove_non_pickleables(original, max_depth=2)
+    assert original.nested["metadata"] == {"head_dim": 8, "callback": hook}
+    cleaned = remove_non_pickleables(original, max_depth=3)
+    assert cleaned.nested["metadata"] == {"head_dim": 8, "callback": None}

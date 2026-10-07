@@ -225,18 +225,11 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
 
     Returns:
         The cleaned object with non-pickleables removed
-    """
 
-    # A depth limit must not let a nested setup-hook closure escape into an
-    # object collective. Preserve safe metadata at the boundary, but discard
-    # subtrees that cannot be serialized. Work on copies throughout so live
-    # training hooks remain installed after export.
-    if current_depth >= max_depth:
-        try:
-            pickle.dumps(obj)
-        except (pickle.PicklingError, TypeError, AttributeError, RecursionError):
-            return None
-        return obj
+    Raises:
+        TypeError: Metadata at the recursion limit cannot be serialized. Unknown
+            metadata is never silently discarded to make serialization succeed.
+    """
 
     # Handle None
     if obj is None:
@@ -262,6 +255,18 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
         ):  # bound methods
             return None
 
+    # Remove known runtime leaves even at the boundary, but do not discard an
+    # entire metadata subtree merely because one of its descendants is unsafe.
+    if current_depth >= max_depth:
+        try:
+            pickle.dumps(obj)
+        except (pickle.PicklingError, TypeError, AttributeError, RecursionError) as exc:
+            raise TypeError(
+                f"Cannot serialize conversion metadata of type {type(obj).__name__} "
+                f"at max_depth={max_depth}; separate runtime state from conversion metadata."
+            ) from exc
+        return obj
+
     # Check containers before objects: OrderedDict has a __dict__, but its
     # hook values are mapping entries rather than object attributes.
     if isinstance(obj, list):
@@ -269,23 +274,41 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     if isinstance(obj, tuple):
         return tuple(remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj)
     if isinstance(obj, dict):
-        return {key: remove_non_pickleables(value, max_depth, current_depth + 1) for key, value in obj.items()}
+        # A shallow copy retains OrderedDict/defaultdict behavior and attributes.
+        cleaned_obj = copy.copy(obj)
+        for key, value in obj.items():
+            cleaned_obj[key] = remove_non_pickleables(value, max_depth, current_depth + 1)
+    else:
+        cleaned_obj = None
 
     # Handle dataclass/object with attributes
     if hasattr(obj, "__dict__"):
         # Create a copy to avoid modifying the original
-        cleaned_obj = copy.copy(obj)
+        if cleaned_obj is None:
+            cleaned_obj = copy.copy(obj)
 
         # Read stored attributes from ``__dict__`` directly. Configuration classes may
         # deliberately reject dynamic attribute access for values whose meaning is
         # layer-dependent, even though the raw value still needs to be copied for IPC.
         for attr_name, attr_value in list(vars(cleaned_obj).items()):
+            # Setup recreates these registries when constructing a model. They
+            # are not conversion metadata; keep them off the detached IPC copy
+            # without unregistering any hooks on the live training provider.
+            if attr_name in {"_pre_wrap_hooks", "_megatron_bridge_setup_pre_wrap_hooks"}:
+                delattr(cleaned_obj, attr_name)
+                continue
             # Recursively clean attribute
-            cleaned_value = remove_non_pickleables(attr_value, max_depth, current_depth + 1)
+            try:
+                cleaned_value = remove_non_pickleables(attr_value, max_depth, current_depth + 1)
+            except TypeError as exc:
+                raise TypeError(f"Cannot clean conversion metadata attribute {attr_name!r}: {exc}") from exc
 
             # Set the cleaned value (or None if it was removed)
             setattr(cleaned_obj, attr_name, cleaned_value)
 
+        return cleaned_obj
+
+    if cleaned_obj is not None:
         return cleaned_obj
 
     # For primitive types and other safe objects, return as-is
