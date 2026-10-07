@@ -1650,3 +1650,56 @@ def test_build_conversion_tasks_allows_explicit_hf_name_mismatch(monkeypatch):
     assert len(tasks) == 1
     assert tasks[0].global_param_name == "decoder.weight"
     assert tasks[0].megatron_module is None
+
+
+def test_conversion_discovery_excludes_complete_module_subtrees():
+    class Excluded(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.ones(1))
+            self.register_buffer("amax", torch.ones(1))
+            self.child = torch.nn.Linear(1, 1, bias=False)
+
+    model = torch.nn.Module()
+    model.quantizer = Excluded()
+    model.quantizer_neighbor = torch.nn.Linear(1, 1, bias=False)
+    ordinary = dict(model_bridge_module._named_conversion_parameters(model))
+
+    filtered = dict(model_bridge_module._named_conversion_parameters(model, (Excluded,)))
+
+    assert set(filtered) == {"quantizer_neighbor.weight"}
+    assert "quantizer.amax" in ordinary
+    assert "quantizer.child.weight" in ordinary
+    assert dict(model_bridge_module._named_conversion_parameters(model)).keys() == ordinary.keys()
+    assert list(model_bridge_module._named_conversion_parameters(model.quantizer, (Excluded,))) == []
+
+
+@pytest.mark.parametrize("model_family", ["kimi_k3", "kimi_k25"])
+def test_kimi_conversion_tasks_forward_module_exclusions(monkeypatch, model_family):
+    from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
+    from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
+
+    bridge_cls = KimiK3Bridge if model_family == "kimi_k3" else KimiK25VLBridge
+    keys = ["expert.weight_packed", "expert.weight_scale", "expert.weight_shape"]
+    get_all_keys = lambda: keys
+    source = SimpleNamespace(get_all_keys=get_all_keys)
+    pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+    tasks = []
+
+    def build_tasks(_self, hf_pretrained, model, *, weight_dtype, exclude_module_types):
+        assert model == []
+        assert weight_dtype == torch.bfloat16
+        assert exclude_module_types == (torch.nn.ReLU,)
+        assert "expert.weight" in hf_pretrained.state.source.get_all_keys()
+        return tasks
+
+    monkeypatch.setattr(MegatronModelBridge, "build_conversion_tasks", build_tasks)
+    bridge = bridge_cls()
+
+    assert (
+        bridge.build_conversion_tasks(
+            pretrained, [], weight_dtype=torch.bfloat16, exclude_module_types=(torch.nn.ReLU,)
+        )
+        is tasks
+    )
+    assert source.get_all_keys is get_all_keys

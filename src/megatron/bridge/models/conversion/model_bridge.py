@@ -107,6 +107,25 @@ MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
 
 
+def _named_conversion_parameters(
+    model: torch.nn.Module,
+    exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+) -> Iterable[tuple[str, torch.Tensor]]:
+    """Iterate parameters and persistent buffers outside excluded module subtrees."""
+    parameters = itertools.chain(model.named_parameters(), persistent_buffers(model))
+    if not exclude_module_types:
+        yield from parameters
+        return
+
+    excluded_names = {name for name, module in model.named_modules() if isinstance(module, exclude_module_types)}
+    for name, tensor in parameters:
+        parent_name = name.rpartition(".")[0]
+        while parent_name and parent_name not in excluded_names:
+            parent_name = parent_name.rpartition(".")[0]
+        if parent_name not in excluded_names:
+            yield name, tensor
+
+
 class ModelConfigNotSupportedError(NotImplementedError):
     """Raised when a bridge has no builder-backed model config path."""
 
@@ -1045,11 +1064,14 @@ class MegatronModelBridge(
         raise NotImplementedError("Subclass must implement mapping_registry method")
 
     def _megatron_global_param_names_all_pp_ranks(
-        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        *,
+        exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
     ) -> List[str]:
         """Get all parameter names across all pipeline parallel ranks."""
-        # Cache the result after first call
-        if hasattr(self, "_cached_param_names"):
+        # Filtered discovery must neither reuse nor replace ordinary conversion's cache.
+        if not exclude_module_types and hasattr(self, "_cached_param_names"):
             return self._cached_param_names
 
         # Compute the result
@@ -1061,8 +1083,7 @@ class MegatronModelBridge(
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
-            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
-            for local_param_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+            for local_param_name, _ in _named_conversion_parameters(model, exclude_module_types):
                 if "_extra_state" in local_param_name:
                     continue
                 local_param_name = self._unwrap_name(local_param_name)
@@ -1085,10 +1106,10 @@ class MegatronModelBridge(
         # change this might cause a hang
         gathered_global_param_names = sorted(flattened_names, key=extract_sort_key)
 
-        # Cache the result
-        self._cached_param_names = gathered_global_param_names
+        if not exclude_module_types:
+            self._cached_param_names = gathered_global_param_names
 
-        return self._cached_param_names
+        return gathered_global_param_names
 
     def _with_progress_tracking(self, tasks, description: str, show_progress: bool = True):
         """Helper method to wrap an iterable with progress tracking.
@@ -2233,11 +2254,15 @@ class MegatronModelBridge(
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
         weight_dtype: Optional[torch.dtype] = None,
+        *,
+        exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
     ) -> List[WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
 
         Args:
             weight_dtype: Export dtype recorded on each task. Overrides must forward it.
+            exclude_module_types: Module types whose parameters and persistent buffers
+                are excluded from discovery. Remaining parameters still require mappings.
 
         The algorithm walks over every parameter of every destination model,
         asks the :class:`MegatronMappingRegistry` whether it has a mapping for that
@@ -2263,7 +2288,10 @@ class MegatronModelBridge(
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
         pp_rank = _get_pp_rank(megatron_model)
-        sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
+        sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(
+            megatron_model,
+            **({"exclude_module_types": exclude_module_types} if exclude_module_types else {}),
+        )
 
         # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
         # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
@@ -2284,8 +2312,7 @@ class MegatronModelBridge(
 
         pending_tasks: list[WeightConversionTask | None] = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
-            # persistent buffers are part of the model's state_dict, but not the named_parameters, so we must include them here separately
-            for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
+            for local_name, _ in _named_conversion_parameters(model, exclude_module_types):
                 if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
                     continue
 

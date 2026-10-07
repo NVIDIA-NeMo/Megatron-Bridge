@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from transformers import PretrainedConfig
 
 
 mtq = pytest.importorskip("modelopt.torch.quantization")
@@ -25,6 +26,7 @@ weight_export = pytest.importorskip("modelopt.torch.export.quantized_weight_expo
 
 from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
@@ -117,6 +119,95 @@ def test_build_plan_delegates_fp8_packing_and_config_to_modelopt():
     assert exported[hf_name].dtype == torch.float8_e4m3fn
     assert plan.quantization_config["quant_algo"] == "FP8"
     assert plan.quantization_config["config_groups"]["group_0"]["targets"] == ["Linear"]
+
+
+@pytest.mark.parametrize("cached_names", [False, True])
+@pytest.mark.parametrize("quantization", ["fp8", "static_nvfp4"])
+def test_public_modelopt_plan_excludes_quantizer_state_before_mapping_validation(
+    monkeypatch, cached_names, quantization
+):
+    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "1")
+
+    class ProjectionBridge(MegatronModelBridge):
+        def provider_bridge(self, hf_pretrained):
+            raise NotImplementedError
+
+        def mapping_registry(self):
+            return MegatronMappingRegistry(ColumnParallelMapping("projection.weight", "model.projection.weight"))
+
+    implementation = ProjectionBridge()
+    monkeypatch.setattr(implementation, "_megatron_global_adapters_info_all_pp_ranks", lambda _models: [])
+
+    class ProjectionAutoBridge(AutoBridge):
+        @property
+        def _model_bridge(self):
+            return implementation
+
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    if quantization == "static_nvfp4":
+        model.projection = mtq.quantize(
+            torch.nn.Linear(16, 4, bias=False),
+            {
+                "quant_cfg": [
+                    {"quantizer_name": "*", "enable": False},
+                    {
+                        "quantizer_name": "*weight_quantizer",
+                        "enable": True,
+                        "cfg": {
+                            "num_bits": (2, 1),
+                            "block_sizes": {-1: 16, "type": "static", "scale_bits": (4, 3)},
+                        },
+                    },
+                ],
+                "algorithm": "max",
+            },
+            lambda candidate: candidate(torch.ones(2, 16)),
+        )
+        assert isinstance(model.projection.weight_quantizer, mtq.nn.NVFP4StaticQuantizer)
+        assert model.projection.weight_quantizer.global_amax is not None
+    else:
+        model.projection = _fp8_linear()
+    original_state = dict(model.named_buffers())
+    model_bridge = modelopt_utils.model_bridge_utils
+    monkeypatch.setattr(model_bridge, "_get_pg_collection_from_model", lambda _model: None)
+    monkeypatch.setattr(model_bridge, "_get_pp_group", lambda _model: SimpleNamespace(size=lambda: 1))
+    monkeypatch.setattr(model_bridge, "_get_pp_rank", lambda _model: 0)
+    monkeypatch.setattr(model_bridge, "unwrap_model", lambda candidate: candidate)
+    monkeypatch.setattr(model_bridge, "_megatron_local_name_to_global", lambda _models, _config, name, _vp: name)
+    monkeypatch.setattr(
+        torch.distributed, "all_gather_object", lambda output, value, group: output.__setitem__(0, value)
+    )
+    monkeypatch.setattr(model_bridge.parallel_state, "get_tensor_model_parallel_group", lambda: None)
+    monkeypatch.setattr(model_bridge.parallel_state, "get_expert_tensor_parallel_group", lambda: None)
+    monkeypatch.setattr(model_bridge.parallel_state, "get_expert_model_parallel_group", lambda: None)
+    bridge = ProjectionAutoBridge(PretrainedConfig())
+    if cached_names:
+        implementation._megatron_global_param_names_all_pp_ranks([model])
+
+    plan = bridge.build_hf_modelopt_export_plan(model)
+
+    assert [task.global_param_name for task in plan.conversion_tasks] == ["projection.weight"]
+    assert hasattr(implementation, "_cached_param_names") == cached_names
+    exported = dict(bridge.export_hf_weights_modelopt(model, cpu=True, show_progress=False, export_plan=plan))
+    if quantization == "static_nvfp4":
+        assert exported["model.projection.weight"].dtype == torch.uint8
+        expected_scale = model.projection.weight_quantizer.global_amax / (6 * 448)
+        torch.testing.assert_close(exported["model.projection.weight_scale_2"], expected_scale)
+        assert "model.projection.weight_scale" in exported
+    else:
+        assert exported["model.projection.weight"].dtype == torch.float8_e4m3fn
+    assert dict(model.named_buffers()).keys() == original_state.keys()
+    assert all(dict(model.named_buffers())[name] is value for name, value in original_state.items())
+    if quantization == "static_nvfp4":
+        with pytest.raises(ValueError, match="_global_amax"):
+            implementation.build_conversion_tasks(bridge.hf_pretrained, [model])
+    else:
+        ordinary_tasks = implementation.build_conversion_tasks(bridge.hf_pretrained, [model])
+        assert any(isinstance(task.mapping, AmaxMapping) for task in ordinary_tasks)
+    model.register_buffer("unmapped_buffer", torch.tensor(1.0))
+    with pytest.raises(ValueError, match="unmapped_buffer"):
+        bridge.build_hf_modelopt_export_plan(model)
 
 
 def test_numbered_grouped_weight_uses_exact_modelopt_quantizer():

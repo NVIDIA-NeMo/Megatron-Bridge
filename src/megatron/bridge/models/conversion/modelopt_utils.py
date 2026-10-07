@@ -47,7 +47,7 @@ class ModelOptExportPlan(NamedTuple):
     conversion_tasks: list[WeightConversionTask]
     quantization_config: dict[str, Any]
     quantized_params: frozenset[str]
-    local_quantization_specs: dict[str, tuple[object | None, bool]]
+    local_quantization_specs: dict[str, object | None]
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,6 @@ class _SourceState:
     parallelism: str | None = None
     qkv_layout: tuple[int, int, int, int, bool] | None = None
     weight_dtype: torch.dtype | None = None
-    input_quantizer_enabled: bool = False
 
 
 def _same_storage(left: object, right: object) -> bool:
@@ -163,22 +162,16 @@ def _capture_source_spec(task: WeightConversionTask) -> _SourceState | None:
         return _SourceState(None, tuple(task.param_weight.shape), weight_dtype=task.param_weight.dtype)
 
     from modelopt.torch.export.quantized_weight_export import get_quantized_weight_export_spec
-    from modelopt.torch.quantization.utils import quantizer_attr_names
 
     spec = get_quantized_weight_export_spec(task.megatron_module, weight_name)
-    input_quantizer = None
     if spec is not None:
         _validate_quantized_task(task)
-        input_quantizer = getattr(task.megatron_module, quantizer_attr_names(weight_name).input_quantizer, None)
-        if input_quantizer is None:
-            input_quantizer = getattr(task.megatron_module, "input_quantizer", None)
     return _SourceState(
         spec,
         tuple(task.param_weight.shape),
         _mapping_parallelism(task.mapping, task.megatron_module) if spec is not None else None,
         _qkv_layout(task.mapping, task.megatron_module) if spec is not None else None,
         task.param_weight.dtype,
-        input_quantizer is not None and input_quantizer.is_enabled,
     )
 
 
@@ -786,7 +779,7 @@ def build_modelopt_export_plan(
         export_tasks,
         quantization_config,
         quantized_params,
-        {name: (source.state, source.input_quantizer_enabled) for name, source in local_specs.items()},
+        {name: source.state for name, source in local_specs.items()},
     )
 
 
@@ -798,11 +791,7 @@ def prepare_modelopt_export_tasks(plan: ModelOptExportPlan) -> list[WeightConver
             if task.global_param_name not in plan.local_quantization_specs:
                 continue
             source = _capture_source_spec(task)
-            if (
-                source is None
-                or (source.state, source.input_quantizer_enabled)
-                != plan.local_quantization_specs[task.global_param_name]
-            ):
+            if source is None or source.state != plan.local_quantization_specs[task.global_param_name]:
                 raise ValueError(f"ModelOpt quantization configuration changed for {task.global_param_name}")
     except Exception as error:
         validation_error = f"{type(error).__name__}: {error}"

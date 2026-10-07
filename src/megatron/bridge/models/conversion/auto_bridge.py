@@ -888,7 +888,12 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(model, list):
             model = [model]
         if conversion_tasks is None:
-            conversion_tasks = self._model_bridge.build_conversion_tasks(self.hf_pretrained, model)
+            from modelopt.torch.quantization.nn import AnyQuantizer
+
+            # ModelOpt reads quantizer state from each owning weight, not separate HF mappings.
+            conversion_tasks = self._model_bridge.build_conversion_tasks(
+                self.hf_pretrained, model, exclude_module_types=AnyQuantizer
+            )
         return build_modelopt_export_plan(
             conversion_tasks,
             model=model,

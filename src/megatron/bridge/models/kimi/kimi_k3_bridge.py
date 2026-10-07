@@ -345,6 +345,8 @@ class KimiK3Bridge(MegatronModelBridge):
         hf_pretrained,
         megatron_model,
         weight_dtype=None,
+        *,
+        exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
     ) -> list[WeightConversionTask]:
         """Expose virtual BF16 expert weights for MXFP4 packed/scale pairs."""
         original_get_all_keys = hf_pretrained.state.source.get_all_keys
@@ -362,7 +364,12 @@ class KimiK3Bridge(MegatronModelBridge):
 
         hf_pretrained.state.source.get_all_keys = _get_all_keys_with_virtual
         try:
-            return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
+            return super().build_conversion_tasks(
+                hf_pretrained,
+                megatron_model,
+                weight_dtype=weight_dtype,
+                **({"exclude_module_types": exclude_module_types} if exclude_module_types else {}),
+            )
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys
 
