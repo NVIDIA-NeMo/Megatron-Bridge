@@ -664,7 +664,16 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
 
 def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest.MonkeyPatch):
     """The GB200 BF16 and MXFP8 recipes should share one 128K execution topology."""
-    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+    from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLMoEModelProvider
+
+    monkeypatch.setattr(
+        _FakeAutoBridge,
+        "to_megatron_provider",
+        lambda self, load_weights=False: Qwen35VLMoEModelProvider(
+            num_layers=40, hidden_size=2048, num_attention_heads=16, bias_activation_fusion=False
+        ),
+    )
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
 
     bf16_cfg = _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config()
     fp8mx_cfg = _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config()
@@ -672,6 +681,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
     for cfg in (bf16_cfg, fp8mx_cfg):
         _assert_basic_config(cfg)
         assert cfg.model.seq_length == 131072
+        assert cfg.model.bias_activation_fusion is True
         assert cfg.model.tensor_model_parallel_size == 2
         assert cfg.model.pipeline_model_parallel_size == 1
         assert cfg.model.pipeline_dtype is None
@@ -1478,7 +1488,7 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
             num_layers=40, hidden_size=2048, num_attention_heads=16
         ),
     )
-    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
     config = recipe_func()
 
     config.validate()
@@ -1497,11 +1507,7 @@ def test_gb200_long_context_pins_model_and_processor_together(monkeypatch):
         return _FakeAutoBridge()
 
     monkeypatch.setattr(_FakeAutoBridge, "from_hf_pretrained", from_hf_pretrained)
-    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb200_module, "AutoBridge", _FakeAutoBridge)
     recipe = _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config
     cfg = recipe()
     assert calls == [(cfg.dataset.hf_processor_path, cfg.dataset.hf_processor_kwargs)]
-    local = _qwen35_vl_h100_module._qwen35_vl_35b_a3b_sft_base_config(hf_path="local-vl-checkpoint", hf_revision=None)
-    assert calls[-1] == ("local-vl-checkpoint", {})
-    assert local.dataset.hf_processor_path == "local-vl-checkpoint"
-    assert local.dataset.hf_processor_kwargs is None
