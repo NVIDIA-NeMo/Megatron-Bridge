@@ -635,11 +635,13 @@ class TestTEFusedLoRALinear:
     def test_fused_lora_merge_matches_unfused_forward_and_backward(self, te_linear, parallel_linear_adapter):
         x = torch.randn(3, 10, device="cuda", requires_grad=True)
         unfused = LoRALinear(te_linear, parallel_linear_adapter)
-        expected, _ = unfused(x)
+        expected = unfused(x)
+        assert isinstance(expected, torch.Tensor)
         expected = expected.detach()
         fused = TEFusedLoRAMergeLinear(te_linear, parallel_linear_adapter)
 
-        actual, _ = fused(x)
+        actual = fused(x)
+        assert isinstance(actual, torch.Tensor)
         torch.testing.assert_close(actual, expected)
         assert not any(name.startswith("_fused_lora") for name, _ in fused.named_modules())
         actual.sum().backward()
