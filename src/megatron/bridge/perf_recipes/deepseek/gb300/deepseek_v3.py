@@ -331,6 +331,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
+    cfg.ddp.megatron_fsdp_version = 2
 
     cfg.optimizer.lr = 3e-7
     cfg.optimizer.min_lr = 1e-7
