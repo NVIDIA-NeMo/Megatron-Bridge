@@ -53,3 +53,30 @@ def test_remove_non_pickleables_reads_raw_config_attributes():
     assert vars(cleaned)["num_key_value_heads"] == 8
     assert cleaned.callback is None
     assert vars(original)["callback"] is not None
+
+
+@pytest.mark.parametrize("max_depth", [2, 3])
+def test_remove_non_pickleables_serializes_nested_peft_hooks_without_mutation(max_depth):
+    import pickle
+    from collections import OrderedDict
+    from types import SimpleNamespace
+
+    hook = lambda model: model
+    original = SimpleNamespace(
+        num_attention_heads=4,
+        num_query_groups=2,
+        kv_channels=8,
+        _pre_wrap_hooks=OrderedDict([(0, hook)]),
+        _megatron_bridge_setup_pre_wrap_hooks={"peft": [hook]},
+        nested=SimpleNamespace(callbacks={"peft": [hook]}),
+        safe_metadata={"layers": [1, 2, 3]},
+    )
+    cleaned = remove_non_pickleables(original, max_depth=max_depth)
+    restored = pickle.loads(pickle.dumps(cleaned))
+    assert restored.num_attention_heads == 4
+    assert restored.num_query_groups == 2
+    assert restored.kv_channels == 8
+    assert restored.safe_metadata == original.safe_metadata
+    assert original._pre_wrap_hooks[0] is hook
+    assert original._megatron_bridge_setup_pre_wrap_hooks["peft"][0] is hook
+    assert original.nested.callbacks["peft"][0] is hook
