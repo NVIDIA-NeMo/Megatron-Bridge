@@ -153,6 +153,54 @@ def test_reused_plan_recaptures_mutable_quantizer_state():
     )
 
 
+@pytest.mark.parametrize(
+    "change", ["input_disabled", "fp8_input_disabled", "weight_disabled", "block_size", "newly_quantized"]
+)
+def test_reused_plan_rejects_quantization_config_changes(change):
+    module = _fp8_linear() if change == "fp8_input_disabled" else _nvfp4_linear(in_features=32)
+    if change == "newly_quantized":
+        module.weight_quantizer.disable()
+        module.input_quantizer.disable()
+    tasks = [
+        _task(ColumnParallelMapping("projection.weight", "model.projection.weight"), module),
+        _task(
+            ColumnParallelMapping("stable.weight", "model.stable.weight"),
+            _fp8_linear(),
+            global_name="stable.weight",
+        ),
+    ]
+    plan = modelopt_utils.build_modelopt_export_plan(tasks, model=[module])
+    original_config = copy.deepcopy(plan.quantization_config)
+
+    if change in ("input_disabled", "fp8_input_disabled"):
+        module.input_quantizer.disable()
+    elif change == "weight_disabled":
+        module.weight_quantizer.disable()
+    elif change == "block_size":
+        module.weight_quantizer.block_sizes = {**module.weight_quantizer.block_sizes, -1: 32}
+    else:
+        module.weight_quantizer.enable()
+        module.input_quantizer.enable()
+
+    with pytest.raises(RuntimeError, match="ModelOpt export plan validation failed"):
+        modelopt_utils.prepare_modelopt_export_tasks(plan)
+    assert plan.quantization_config == original_config
+
+
+def test_direct_weight_name_rejects_partial_storage_views():
+    module = torch.nn.Linear(4, 4, bias=False)
+
+    assert modelopt_utils._direct_weight_name(module, module.weight.detach()) == "weight"
+    assert modelopt_utils._direct_weight_name(module, module.weight[:2]) is None
+
+
+@pytest.mark.parametrize("method", ["export_hf_weights_modelopt", "export_hf_weight_groups_modelopt"])
+def test_modelopt_export_options_are_keyword_only(method):
+    bridge = object.__new__(AutoBridge)
+    with pytest.raises(TypeError):
+        getattr(bridge, method)(torch.nn.Linear(1, 1), "nvfp4")
+
+
 def test_build_plan_rejects_quantized_adapter_weights():
     module = _fp8_linear()
     task = _task(
@@ -684,6 +732,11 @@ def _distributed_topology_worker(rank, world_size, init_file):
         expected_weights = {f"model.layers.0.mlp.experts.{expert}.down_proj.weight" for expert in range(world_size)}
         assert expected_weights.issubset(exported)
         assert {f"{name.removesuffix('.weight')}.weight_scale" for name in expected_weights}.issubset(exported)
+
+        if rank == 0:
+            module.weight_quantizer[0].disable()
+        with pytest.raises(RuntimeError, match="ModelOpt export plan validation failed"):
+            modelopt_utils.prepare_modelopt_export_tasks(plan)
     finally:
         torch.distributed.destroy_process_group()
 
@@ -806,7 +859,7 @@ def test_four_rank_capture_failure_topologies(tmp_path):
 
 def test_auto_bridge_can_reuse_a_prepared_plan():
     task = SimpleNamespace(name="task", global_param_name="model.weight")
-    plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset())
+    plan = modelopt_utils.ModelOptExportPlan([task], {"quantized_layers": {}}, frozenset(), {})
 
     class FakeBridge:
         def __init__(self):

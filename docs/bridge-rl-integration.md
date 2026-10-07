@@ -370,6 +370,8 @@ Stream tensors from the training side to your inference runtime without writing 
 
 Mappings that require transpose, permutation, interleaving, or grouped-export transforms return no specs unless they provide an explicit safe override. A transport must validate support across all parameters and separately qualify the destination backend and source/destination topology before selecting an M-to-N path.
 
+`FusedExpertMapping` and `FusedGatedExpertMapping` provide such an override: their specs describe canonical per-expert views before grouped destination assembly and transposition. A non-empty spec does not qualify that grouped destination for direct transport. In particular, native MXFP8 export still rejects `transpose_on_export`; transports must retain the normal conversion fallback for those mappings.
+
 This contract is not BF16-only. For MXFP8 refit, a transport may materialize canonical logical views from quantized training storage and requantize persistent MXFP8 inference destinations in place. Direct transfer of packed MXFP8 data and scales is a different optimization and is valid only when the source and destination storage layouts, quantization backends, and topology are explicitly compatible.
 
 ```python

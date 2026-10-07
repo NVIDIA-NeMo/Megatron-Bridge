@@ -146,6 +146,11 @@ state is captured as each weight is streamed. Megatron-Bridge supplies canonical
 owns packed values, relative sidecar names, and formats. Unquantized parameters retain their regular Hugging Face
 names.
 
+Plan reuse requires unchanged quantizer enablement, formats, and block sizes. Each stream validates these metadata
+before conversion; amax and scale updates remain supported. If the quantization configuration changes, rebuild the
+plan and reinitialize the consumer with its new configuration. Export exclusions must be expressed by disabled
+quantizers in the ModelOpt recipe; this API does not apply a separate ignore list.
+
 ```python
 from safetensors.torch import save_file
 

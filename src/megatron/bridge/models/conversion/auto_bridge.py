@@ -897,6 +897,7 @@ class AutoBridge(Generic[MegatronModelT]):
     def export_hf_weight_groups_modelopt(
         self,
         model: MegatronModelT | list[MegatronModelT],
+        *,
         cpu: bool = False,
         show_progress: bool = True,
         export_plan: Optional["ModelOptExportPlan"] = None,
@@ -959,6 +960,7 @@ class AutoBridge(Generic[MegatronModelT]):
     def export_hf_weights_modelopt(
         self,
         model: MegatronModelT | list[MegatronModelT],
+        *,
         cpu: bool = False,
         show_progress: bool = True,
         export_plan: Optional["ModelOptExportPlan"] = None,
