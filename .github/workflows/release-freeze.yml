@@ -32,10 +32,15 @@ on:
         description: Dry-run of code-freeze
         required: false
         default: true
+permissions:
+  contents: read
+
 jobs:
   code-freeze:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@bfdb5e35067fd8cd91ce21fca4eb1072ffd7ab8c # v1.4.2
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_code_freeze.yml@493e7ad25cbbd9467e606fde716f5d3353ebed17 # github app authentication
     with:
+      app-id: ${{ vars.BOT_ID }}
+      environment-name: main
       library-name: Megatron-Bridge
       python-package: megatron.bridge
       has-src-dir: true
@@ -44,11 +49,10 @@ jobs:
       dry-run: ${{ inputs.dry-run }}
       next-pre-release: ""
       next-dev: ""
-      use-pat: true
     secrets:
       SLACK_WEBHOOK: ${{ secrets.SLACK_MAIN_CHANNEL_WEBHOOK }}
       SLACK_WEBHOOK_ADMIN: ${{ secrets.SLACK_TEAM_GROUP_ID }}
-      PAT: ${{ secrets.PAT }}
+      BOT_KEY: ${{ secrets.BOT_KEY }}
 
   bump-docs-versions:
     needs: [code-freeze]
@@ -57,11 +61,20 @@ jobs:
       VERSION: ${{ needs.code-freeze.outputs.release-branch }}
       DRY_RUN: ${{ inputs.dry-run }}
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BOT_ID }}
+          private-key: ${{ secrets.BOT_KEY }}
+          permission-contents: write
+          permission-administration: write
+
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: main
-          token: ${{ secrets.PAT }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure git
         run: |
