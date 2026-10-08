@@ -28,7 +28,7 @@ from megatron.training.config.utils import (
     sanitize_dataclass_config as _sanitize_dataclass_config,  # noqa: F401
 )
 from megatron.training.utils.checkpoint_utils import (
-    apply_run_config_backward_compat,  # noqa: F401
+    apply_run_config_backward_compat as _mcore_apply_run_config_backward_compat,
 )
 from transformers import PreTrainedConfig
 
@@ -204,3 +204,18 @@ def create_ddp_config(
     if finalize:
         config.finalize()
     return config
+
+
+def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Apply backward compatibility fixes to a run config dictionary.
+
+    Materializes GTP weight shard counts from runtime remat sizes before delegating
+    to the MCore implementation, which drops init=False fields.
+
+    Args:
+        config_dict: The run config dictionary loaded from a checkpoint.
+
+    Returns:
+        The config dictionary with backward compatibility fixes applied.
+    """
+    return _mcore_apply_run_config_backward_compat(_materialize_gtp_weight_shards(config_dict))
