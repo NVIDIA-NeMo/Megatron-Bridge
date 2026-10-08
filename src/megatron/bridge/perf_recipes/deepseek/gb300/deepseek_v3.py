@@ -474,6 +474,29 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdpv2_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× GB300, MXFP8, Megatron Hybrid FSDP (HSDP) v2.
+
+    The 64-GPU fsdpv2 recipe scaled to 128 GPUs. Everything except the settings below is
+    inherited unchanged, so the two stay comparable as the v2 configuration evolves.
+    """
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config()
+
+    # Two optimizer instances give an outer data-parallel axis, which is what makes this HSDP
+    # rather than plain FSDP. "optim" shards optimizer state across that axis; MFSDP only
+    # permits a non-"no_shard" outer strategy when instances > 1, so the pair moves together.
+    # expert_outer_dp_sharding_strategy stays "no_shard", matching the 256-GPU HSDP recipe.
+    cfg.ddp.num_distributed_optimizer_instances = 2
+    cfg.ddp.outer_dp_sharding_strategy = "optim"
+
+    # Doubling GPUs doubles the data-parallel size, so double the global batch to hold
+    # micro_batch_size at 2 and keep the same 2 gradient-accumulation steps per iteration:
+    # 512 / (DP 128 * mbs 2) == 256 / (DP 64 * mbs 2).
+    cfg.train.global_batch_size = 512
+
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
     cfg = deepseek_v3_pretrain_config()
@@ -491,7 +514,9 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
-    cfg.ddp.megatron_fsdp_version = 2
+    # Stays on v1: this recipe is the measured 256-GPU baseline and v1 is what produced it.
+    # Megatron-FSDP v2 is exercised by the 64-GPU fsdpv2 and 128-GPU hsdpv2 recipes instead.
+    cfg.ddp.megatron_fsdp_version = 1
 
     cfg.optimizer.lr = 3e-7
     cfg.optimizer.min_lr = 1e-7
