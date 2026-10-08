@@ -12,9 +12,9 @@ summary: >
   reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A
   2-GPU structural MoE/MTP proxy also completed three
   finite optimizer steps and saved checkpoints, but does not substitute for a
-  full-model training item. A memory-bounded reference forward processed all
-  78 Hugging Face decoder layers for a Korean prompt; Megatron matched its
-  next token with 0.999993 cosine similarity. Complete-model deterministic
+  full-model training item. The manual forward-pass comparison against the
+  78-layer Hugging Face reference is pending re-verification at a public
+  Bridge revision. Complete-model deterministic
   inference generated and independently confirmed exactly 16 new tokens. The
   implementation fixes are committed; GPU export remains unverified pending
   its own clean-commit rerun and exact audit.
@@ -22,12 +22,12 @@ verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
-      - manual_forward_pass
       - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -106,9 +106,8 @@ items:
       the clean-commit export and exact audit rerun complete.
 
   manual_forward_pass:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: 68d7e875d3bcfad5cd0e7e7d18770cc7e5630034  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=48
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -118,13 +117,16 @@ items:
       --hf-logits-path work/model-verification/k-exaone-2/full-forward/hf_logits_korean.pt
       --model_class ExaoneMoeForCausalLM --prompt "대한민국의 수도는"
       --tp 1 --pp 3 --ep 16 --etp 1
-    last_verified: 2026-07-31
+    last_verified: null
     expected_result: >
-      The memory-bounded Hugging Face reference processed all 78 decoder
-      layers for the shared Korean prompt. Hugging Face and Megatron processed
-      identical input IDs; the next-token matches at token 392 (literal "?").
-      Cosine similarity is 0.999993; maximum and mean absolute logit
-      differences are 7.500000 and 1.621717.
+      Verification is pending on the card default revision. The original
+      recorded revision is not retrievable from the public repository, so its
+      verification date and measurements are not attributed to this command.
+      A fresh run must process all 78 decoder layers of the memory-bounded
+      Hugging Face reference for the shared Korean prompt, with Hugging Face
+      and Megatron processing identical input IDs and matching next tokens.
+      Record the cosine similarity and maximum and mean absolute logit
+      differences from that run before marking this item verified.
 
   inference:
     status: verified
