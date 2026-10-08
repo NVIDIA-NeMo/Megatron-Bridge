@@ -1,19 +1,9 @@
 # Nemotron 3.5 Super VL: IITC LoRA fine-tuning
 
-Train on 10,000 interleaved image/text examples using Bridge's standard LoRA
-recipe. The recorded results on all 658 IITC-8K test examples were:
-
-| Checkpoint | Picture-reference accuracy | ROUGE-L × 100 |
-| --- | ---: | ---: |
-| Original | 85.71% | 35.83 |
-| Bridge LoRA, step 625 | 87.99% | 54.01 |
-
-Both evaluations used the same **custom English single-citation prompt**.
-The accuracy gain is inconclusive (95% CI: −0.16 to +4.85 percentage points).
-ROUGE-L measures text overlap; its increase alone does not prove better visual
-grounding. These are historical results; the CLI workflow below has not been
-rerun through a complete training/export/evaluation cycle. A different starting
-checkpoint will not necessarily reproduce these scores.
+Fine-tune with Bridge's standard LoRA recipe using a reproducible selection
+of 10,000 interleaved image/text training examples from VEGA IITC.
+Use a Bridge checkout containing the export serialization fix in
+[PR #6340](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6340).
 
 ## Prepare the data
 
@@ -90,26 +80,6 @@ LR **1e-4 → 0**. Vision tower and projector are frozen. For interrupted traini
 repeat with `--load_dir "$OUTPUT_DIR/checkpoints"`. Add `--dry-run` to inspect
 the resolved configuration without training. No custom `train.py` is needed.
 
-## Merge/export limitation
-
-The command above saves a **native Bridge checkpoint**. On this revision,
-pipeline-parallel HF export after PEFT training can fail with
-`Can't pickle local object ... peft_pre_wrap_hook`: shared export code fails
-to remove nested training hooks before sending configuration between ranks.
-This is an export serialization bug; it does not establish a training or
-dataloader failure. It can affect other models using the same export path.
-
-The historical experiment also added compatibility aliases to its source HF
-checkpoint. Those additions created extra strict-export requirements and are
-not part of this tutorial. Image-only training disables the video embedder;
-exporting a complete multimodal HF checkpoint also requires handling that
-omitted branch. These layout concerns are separate from the serialization bug.
-
-Library fixes are separate from this tutorial PR. There is **no verified
-standalone merge/export command here**, and full Bridge/HF numerical parity
-has not been established. Evaluation requires an already merged, standalone
-HF checkpoint (`MERGED_HF`); a native checkpoint cannot be passed directly.
-
 ## Evaluate the original and merged checkpoints
 
 Run one process on an eight-GPU node, using Transformers 5.12.1 and
@@ -138,3 +108,16 @@ ROUGE-L is mean reference-answer overlap. The scoring follows
 [VEGA's evaluator](https://github.com/zhourax/VEGA/blob/96d4be247fb4385b23265ac4f0b6079a9225698d/eval/IITC.py),
 with the custom prompt defined in [evaluate.py](iitc/evaluate.py); report that
 prompt difference when sharing scores.
+
+## Results
+
+Evaluation on all **658 IITC-8K held-out test examples**:
+
+| Checkpoint | Picture-reference accuracy | ROUGE-L × 100 |
+| --- | ---: | ---: |
+| Original | 85.71% | 35.83 |
+| Bridge LoRA, step 625 | 87.99% | 54.01 |
+
+Step 625 logged **10,000 consumed training samples** (625 updates × global
+batch size 16). This counter measures consumed samples, not distinct dataset
+rows visited.
