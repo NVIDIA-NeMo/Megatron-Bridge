@@ -441,6 +441,10 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg = deepseek_v3_pretrain_config()
     _apply_deepseek_v3_64gpu_gb300_fp8mx_perf_overrides(cfg)
     cfg.ddp.megatron_fsdp_version = 2
+    # ZeRO-3 for the dense parameters, overriding the "optim_grads" (ZeRO-2) that the shared
+    # 64-GPU FSDP helper applies. MFSDP v2 owns its sharded parameter and gradient storage and
+    # its own contract sets this; that contract currently does not run, so set it here.
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     return cfg
 
 
