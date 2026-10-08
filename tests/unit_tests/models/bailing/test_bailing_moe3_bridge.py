@@ -1,5 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -551,6 +552,80 @@ def test_megatron_to_hf_config_restores_logical_architecture(
     assert exported["num_nextn_predict_layers"] == expected_mtp_layers
 
 
+def _export_provider(config_factory: Callable[..., SimpleNamespace]) -> SimpleNamespace:
+    """Describe the export contract without constructing a native MCore model."""
+    flash = config_factory is _flash_config
+    return SimpleNamespace(
+        hybrid_layer_pattern=_FLASH_GOLDEN_PATTERN if flash else _TINY_GOLDEN_PATTERN,
+        normalization="RMSNorm",
+        gated_linear_unit=True,
+        add_bias_linear=False,
+        add_qkv_bias=False,
+        share_embeddings_and_output_weights=False,
+        position_embedding_type="rope",
+        qk_layernorm=True,
+        attention_output_gate=True,
+        gated_attention_proj_granularity="headwise",
+        rotary_percent=1.0,
+        rotary_interleaved=False,
+        rope_type="rope",
+        moe_grouped_gemm=True,
+        moe_router_score_function="sigmoid",
+        moe_router_dtype="fp32",
+        moe_router_load_balancing_type="none",
+        moe_router_enable_expert_bias=True,
+        mtp_use_repeated_layer=False,
+        mtp_num_layers=1 if flash else 0,
+        mtp_hybrid_override_pattern="+E" if flash else None,
+        q_lora_rank=None if flash else 256,
+        kv_channels=128,
+        linear_key_head_dim=128,
+        linear_value_head_dim=128,
+        linear_num_key_heads=32 if flash else 16,
+        linear_num_value_heads=32 if flash else 16,
+        num_attention_heads=32 if flash else 16,
+        moe_shared_expert_intermediate_size=768 if flash else 512,
+        qk_head_dim=128,
+        qk_pos_emb_head_dim=64,
+    )
+
+
+@pytest.mark.parametrize(
+    ("config_factory", "layers", "group", "dense", "mtp"),
+    [(_tiny_config, 24, 4, 1, 0), (_flash_config, 42, 6, 2, 1)],
+)
+def test_export_logical_architecture_without_native_mcore(
+    config_factory: Callable[..., SimpleNamespace], layers: int, group: int, dense: int, mtp: int
+) -> None:
+    exported = BailingMoeV3Bridge.megatron_to_hf_config(_export_provider(config_factory))
+    assert exported["num_hidden_layers"] == layers
+    assert exported["layer_group_size"] == group
+    assert exported["first_k_dense_replace"] == dense
+    assert exported["num_nextn_predict_layers"] == mtp
+    assert exported["qk_head_dim"] == 192
+    assert exported["partial_rotary_factor"] == 0.5
+    assert exported["norm_topk_prob"] is True
+
+
+@pytest.mark.parametrize("pattern", [None, "K-", f"{_TINY_GOLDEN_PATTERN}/+E"])
+def test_export_rejects_invalid_pattern_without_native_mcore(pattern: str | None) -> None:
+    provider = _export_provider(_tiny_config)
+    provider.hybrid_layer_pattern = pattern
+    with pytest.raises(ValueError, match="hybrid_layer_pattern|Hybrid pattern|MTP pattern suffixes"):
+        BailingMoeV3Bridge.megatron_to_hf_config(provider)
+
+
+@pytest.mark.parametrize("config_factory", [_tiny_config, _flash_config])
+def test_export_mtp_suffix_without_native_mcore(config_factory: Callable[..., SimpleNamespace]) -> None:
+    provider = _export_provider(config_factory)
+    provider.mtp_num_layers = 1
+    provider.mtp_hybrid_override_pattern = "+E"
+    provider.hybrid_layer_pattern += "/+E"
+    exported = BailingMoeV3Bridge.megatron_to_hf_config(provider)
+    assert exported["num_nextn_predict_layers"] == 1
+    assert exported["num_hidden_layers"] == (24 if config_factory is _tiny_config else 42)
+
+
 @pytest.mark.parametrize(
     ("config_factory", "invalid_mtp_layers"),
     [
@@ -558,20 +633,18 @@ def test_megatron_to_hf_config_restores_logical_architecture(
         (_flash_config, 0),
     ],
 )
-@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_non_public_mtp_layout(config_factory, invalid_mtp_layers: int) -> None:
     bridge = BailingMoeV3Bridge()
-    provider = bridge.provider_bridge(SimpleNamespace(config=config_factory()))
+    provider = _export_provider(config_factory)
     provider.mtp_num_layers = invalid_mtp_layers
 
     with pytest.raises(ValueError, match="export requires mtp_num_layers"):
         bridge.megatron_to_hf_config(provider)
 
 
-@requires_ling_mcore
 def test_megatron_to_hf_config_does_not_infer_norm_topk_prob_from_pre_softmax() -> None:
     bridge = BailingMoeV3Bridge()
-    provider = bridge.provider_bridge(SimpleNamespace(config=_tiny_config()))
+    provider = _export_provider(_tiny_config)
     provider.moe_router_pre_softmax = True
 
     exported = bridge.megatron_to_hf_config(provider)
@@ -588,10 +661,9 @@ def test_megatron_to_hf_config_does_not_infer_norm_topk_prob_from_pre_softmax() 
         ("moe_router_enable_expert_bias", False),
     ],
 )
-@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_incompatible_router_semantics(name: str, value: object) -> None:
     bridge = BailingMoeV3Bridge()
-    provider = bridge.provider_bridge(SimpleNamespace(config=_tiny_config()))
+    provider = _export_provider(_tiny_config)
     if not hasattr(provider, name):
         raise ValueError(f"Unknown provider override: {name}")
     setattr(provider, name, value)
@@ -617,7 +689,6 @@ def test_megatron_to_hf_config_rejects_incompatible_router_semantics(name: str, 
         (_tiny_config, "moe_shared_expert_intermediate_size", 0, "shared expert"),
     ],
 )
-@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_incompatible_structure(
     config_factory,
     name: str,
@@ -625,7 +696,7 @@ def test_megatron_to_hf_config_rejects_incompatible_structure(
     match: str,
 ) -> None:
     bridge = BailingMoeV3Bridge()
-    provider = bridge.provider_bridge(SimpleNamespace(config=config_factory()))
+    provider = _export_provider(config_factory)
     if not hasattr(provider, name):
         raise ValueError(f"Unknown provider override: {name}")
     setattr(provider, name, value)
@@ -634,11 +705,9 @@ def test_megatron_to_hf_config_rejects_incompatible_structure(
         bridge.megatron_to_hf_config(provider)
 
 
-@requires_ling_mcore
 def test_megatron_to_hf_config_rejects_incompatible_mtp_pattern() -> None:
     bridge = BailingMoeV3Bridge()
-    provider = bridge.provider_bridge(SimpleNamespace(config=_flash_config()))
-    provider.finalize()
+    provider = _export_provider(_flash_config)
     provider.hybrid_layer_pattern = f"{_FLASH_GOLDEN_PATTERN}/KE"
 
     with pytest.raises(ValueError, match="MTP pattern suffixes"):

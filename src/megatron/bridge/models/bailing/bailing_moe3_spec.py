@@ -50,8 +50,10 @@ def _validate_mcore_support() -> None:
     if missing:
         raise RuntimeError(
             f"Ling 3.0 requires Megatron-Core support for {', '.join(missing)}. "
-            "Use `bash scripts/switch_mcore.sh dev` and install the selected MCore "
-            "with both native HybridModel KDA and head-wise MLA output gating."
+            "Install a compatible Bridge/MCore combination with both native HybridModel KDA "
+            "and head-wise MLA output gating. Selecting `bash scripts/switch_mcore.sh dev` "
+            "alone does not guarantee compatibility. See docs/models/bailing/ling-3.md "
+            "and the Ling 3.0 Tiny Base verification card for limitations and verified revisions."
         )
 
 

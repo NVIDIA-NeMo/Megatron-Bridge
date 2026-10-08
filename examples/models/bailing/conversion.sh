@@ -16,7 +16,7 @@
 set -euo pipefail
 
 WORKSPACE=${WORKSPACE:-/workspace}
-HF_MODEL_ID=${HF_MODEL_ID:-inclusionAI/Ling-3.0-tiny}
+HF_MODEL_ID=${HF_MODEL_ID:-inclusionAI/${MODEL_NAME:-Ling-3.0-tiny}}
 MODEL_NAME=${MODEL_NAME:-${HF_MODEL_ID##*/}}
 
 MEGATRON_PATH=${MEGATRON_PATH:-${WORKSPACE}/models/${MODEL_NAME}}

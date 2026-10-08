@@ -13,8 +13,13 @@ summary: >
   the current MCore KDA implementation does not provide the inference path. The
   conversion runs and the attempted 8-GPU SFT validation used Megatron-Core dev
   commit 4d197408bfd8513289cc69a9112f37798e6fdd4c, not the default main pin.
-  Ling requires native HybridModel KDA and head-wise MLA output gating; select
-  the dev pin with bash scripts/switch_mcore.sh dev before conversion or SFT.
+  Ling requires native HybridModel KDA and head-wise MLA output gating.
+  Selecting bash scripts/switch_mcore.sh dev alone does not guarantee compatibility:
+  revalidation with Bridge faf7687e842b7a97ae805e1289cd30be2899c446 and MCore dev
+  4a4de865795f123eda422ebf0a4c13d2418cf3cb was blocked by shared Bridge imports of
+  set_default_log_ranks and FullyShardedDataParallelV1, absent from that MCore pin.
+  The verified conversion results apply only to the historical Bridge/MCore
+  combination recorded here, not to the current Bridge with an older MCore alone.
   The historical SFT attempt reached forward/backward but stopped in MoE metrics
   logging because that MCore dev revision lacked the num_moe_layers argument
   passed by Bridge. SFT remains unverified; this is not a claim that the same

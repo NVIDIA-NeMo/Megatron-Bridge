@@ -17,6 +17,7 @@ The following environment variables select the model and parallel topology:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `HF_MODEL_ID` | `inclusionAI/Ling-3.0-tiny` | Hub model ID or local Hugging Face directory |
+| `MODEL_NAME` | Basename of `HF_MODEL_ID` | Output directory name; also selects `inclusionAI/<MODEL_NAME>` when `HF_MODEL_ID` is unset |
 | `TP`, `PP`, `EP`, `ETP` | `1` | Megatron parallelism sizes |
 | `NPROC_PER_NODE` | `TP * PP * EP` | Local GPU process count |
 | `MEGATRON_PATH` | `${WORKSPACE}/models/<model>` | Imported Megatron checkpoint directory |
@@ -52,7 +53,7 @@ bash examples/models/bailing/inference.sh
 
 ## Ling 3.0
 
-Conversion and SFT require native MCore `HybridModel` KDA and head-wise MLA output gating. Select the dev pin with `bash scripts/switch_mcore.sh dev` and follow the repository's dependency setup before running these examples. The default main pin does not yet provide both features; unsupported runtimes fail before Ling provider construction. Ling 2.0 does not have this requirement. See `examples/model_verification_cards/ling-3.0-tiny-base/card.yaml` for the revisions used in completed validation; SFT remains unverified.
+Conversion and SFT require native MCore `HybridModel` KDA and head-wise MLA output gating. The default main pin does not yet provide both features. Selecting `bash scripts/switch_mcore.sh dev` alone is also insufficient: the latest PR validation was blocked by shared Bridge imports unavailable in that dev pin. See [Ling 3.0 requirements](../../../docs/models/bailing/ling-3.md#megatron-core-requirements) for the limitations and `examples/model_verification_cards/ling-3.0-tiny-base/card.yaml` for the historical Bridge/MCore combination used in completed conversion validation. That combination does not establish compatibility with the current Bridge; SFT remains unverified. Ling 2.0 does not have this requirement.
 
 | Variant | Hugging Face ID | Architecture notes |
 |---------|-----------------|--------------------|
