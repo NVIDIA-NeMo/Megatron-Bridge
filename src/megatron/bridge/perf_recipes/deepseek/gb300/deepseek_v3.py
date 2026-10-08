@@ -437,14 +437,26 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv1_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron-FSDP v2."""
-    cfg = deepseek_v3_pretrain_config()
-    _apply_deepseek_v3_64gpu_gb300_fp8mx_perf_overrides(cfg)
-    cfg.ddp.megatron_fsdp_version = 2
-    # ZeRO-3 for the dense parameters, overriding the "optim_grads" (ZeRO-2) that the shared
-    # 64-GPU FSDP helper applies. MFSDP v2 owns its sharded parameter and gradient storage and
-    # its own contract sets this; that contract currently does not run, so set it here.
+    """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron-FSDP v2.
+
+    Deliberately built on the established 64-GPU FSDP recipe -- selective recompute, activation
+    offloading and ZeRO-3 -- rather than the ported 256-GPU perf tuning that the v1 variant uses.
+    That configuration is the memory-conservative one, and its ZeRO-3 dense sharding is what
+    MFSDP v2 requires anyway.
+    """
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
+
+    # Restore the shared helper's pre-change values. The helper now selects ZeRO-2 for the dense
+    # parameters and drops recompute plus fine-grained activation offloading; this recipe is
+    # meant to run the earlier configuration, and MFSDP v2 rejects anything other than
+    # "optim_grads_params" for the dense sharding strategy.
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.expert_data_parallel_sharding_strategy = None
+    cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+
+    cfg.ddp.megatron_fsdp_version = 2
     return cfg
 
 
