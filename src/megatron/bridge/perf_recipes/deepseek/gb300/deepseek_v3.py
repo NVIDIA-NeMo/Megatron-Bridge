@@ -509,7 +509,10 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
 
     cfg.model.expert_model_parallel_size = 64
     cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 1024
+    # 2048 over DP 256 at mbs 1 is 8 gradient-accumulation steps, double the previous 4. More
+    # accumulation amortizes the per-step fixed costs over more work without changing
+    # per-microbatch activation memory.
+    cfg.train.global_batch_size = 2048
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
@@ -541,7 +544,10 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # cost measurable throughput on this recipe, and 1.5 also sits below the >=2.0 that the
     # paged stash expects.
     cfg.model.moe_expert_rank_capacity_factor = 5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    # Positive sign means average-based sizing with the magnitude as headroom, so 1.5 is 50%
+    # over the perfectly balanced case. Undersizing causes stash overflow, which makes the
+    # paged-stash runner rerun the step.
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
