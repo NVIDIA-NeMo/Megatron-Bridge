@@ -14,6 +14,7 @@
 
 """NemotronLabsDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
 
+import inspect
 import math
 from dataclasses import dataclass
 from typing import Optional
@@ -40,10 +41,31 @@ from megatron.bridge.diffusion.common.dllm import asymmetric_semi_ar_mask_mod, c
 # ---------------------------------------------------------------------------
 
 
+_FLEX_SUPPORTS_GQA = "enable_gqa" in inspect.signature(flex_attention).parameters
+
+
 @torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs", dynamic=False)
 def fused_flex_attention(q, k, v, score_mod=None, block_mask=None, return_lse=False):
-    """Thin compiled wrapper around flex_attention."""
-    return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask, return_lse=return_lse)
+    """Run compiled FlexAttention with native GQA when supported by PyTorch."""
+    if _FLEX_SUPPORTS_GQA:
+        return flex_attention(
+            q,
+            k,
+            v,
+            score_mod=score_mod,
+            block_mask=block_mask,
+            return_lse=return_lse,
+            enable_gqa=q.shape[1] != k.shape[1],
+        )
+    n_rep = q.shape[1] // k.shape[1]
+    return flex_attention(
+        q,
+        repeat_kv(k, n_rep),
+        repeat_kv(v, n_rep),
+        score_mod=score_mod,
+        block_mask=block_mask,
+        return_lse=return_lse,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -368,8 +390,6 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         if self.beta is not None:
             scale = _get_llama_4_attn_scale(positions, self.beta, self.max_position_embeddings)
             query = query * scale.to(query.dtype).unsqueeze(1)
-        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
-        key, value = repeat_kv(key, n_rep), repeat_kv(value, n_rep)
         if metadata.block_mask is None:
             mask_mod = asymmetric_semi_ar_mask_mod(
                 block_size=self.block_size,
@@ -453,11 +473,6 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             query = query * _get_llama_4_attn_scale(cache_position, self.beta, self.max_position_embeddings).to(
                 query.dtype
             )
-
-        # GQA: expand KV heads
-        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
-        key = repeat_kv(key, n_rep)
-        value = repeat_kv(value, n_rep)
 
         if self.mask is None:
             self.mask = compute_block_mask(

@@ -82,7 +82,10 @@ def test_forward_and_backward_match_dense_logical_position_oracle(device, offset
     # still execute. CUDA exercises the real compiled flex forward and backward.
     def dense_kernel(q, k, v, *, block_mask):
         assert block_mask is not None
-        return F.scaled_dot_product_attention(q, k, v, attn_mask=dense_mask)
+        n_rep = q.shape[1] // k.shape[1]
+        return F.scaled_dot_product_attention(
+            q, attention_module.repeat_kv(k, n_rep), attention_module.repeat_kv(v, n_rep), attn_mask=dense_mask
+        )
 
     if device == "cpu":
         with patch.object(attention_module, "fused_flex_attention", dense_kernel):
