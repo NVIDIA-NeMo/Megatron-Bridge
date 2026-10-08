@@ -819,7 +819,7 @@
             }
           ],
           "commands": [
-            "./scripts/inference/infer.sh --task model-comparison --nodes 1 --gpus-per-node 4 --ep 4 --hf_model_path deepseek-ai/DeepSeek-V4-Flash --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --pp 1 --ep 4 --prompt \"The capital of France is the city of\" --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1"
+            "./scripts/inference/infer.sh --task model-comparison --nodes 1 --gpus-per-node 4 --hf_model_path deepseek-ai/DeepSeek-V4-Flash --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --pp 1 --ep 4 --prompt \"The capital of France is the city of\" --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -4469,10 +4469,10 @@
     {
       "architecture": "NemotronHForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.06",
-      "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+      "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
       "entries": [
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "nodes": "1"
@@ -4576,7 +4576,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -4653,7 +4653,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "2",
@@ -4686,7 +4686,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4721,7 +4721,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -4756,7 +4756,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "expert_parallel": "16",
@@ -4787,7 +4787,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "expert_parallel": "16",
@@ -4854,7 +4854,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -4890,7 +4890,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4960,7 +4960,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4992,7 +4992,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "2",
@@ -7926,10 +7926,10 @@
     {
       "architecture": "GptOssForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.06",
-      "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+      "bridge_commit": "8a84d716600a99358b0424ccc9628aa20ebc5142",
       "entries": [
         {
-          "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+          "bridge_commit": "8a84d716600a99358b0424ccc9628aa20ebc5142",
           "command_topologies": [
             {
               "nodes": "1"
@@ -8188,7 +8188,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+          "bridge_commit": "8a84d716600a99358b0424ccc9628aa20ebc5142",
           "command_topologies": [
             {
               "context_parallel": "2",
@@ -8209,19 +8209,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "gpt-oss-20b-sft-long-context-h100",
-          "expected_result": "Completed 20 optimizer steps using the 32K SFT recipe, immutable Tulu3 data selection, offline packing, TP4, CP2, sequence parallelism, non-fused cross entropy, and full activation recompute. The run loaded 120 packed rows, recorded 99.79% packing efficiency with 83.333 source sequences per pack on average, produced finite loss from 2.235548 to 1.175326, and reported zero skipped and zero NaN iterations.\n",
+          "expected_result": "Verification is pending on the card default revision, which contains the 32K recipe. The original recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete 20 optimizer steps with the pinned Tulu3 selection, offline packing, TP4/CP2, sequence parallelism, non-fused cross entropy, and full activation recompute, with finite losses and zero skipped or NaN iterations. Record all five metrics from that run before marking this item verified.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-10",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 1.175326,
-            "initial_loss": 2.235548,
-            "last_10_steps_model_tflops_per_gpu_avg": 13.43,
-            "last_10_steps_step_time_ms_avg": 306108.17,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 428.189
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -8299,7 +8299,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "gpt-oss-20b",
       "source_card": "examples/model_verification_cards/gpt-oss-20b/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. GPT-OSS 20B H100 support verification has completed GPU HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass correlation, deterministic Megatron inference, bounded pretraining, full SFT, SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint resume; CPU import remains pending.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. GPT-OSS 20B H100 support verification has completed GPU HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass correlation, deterministic Megatron inference, bounded pretraining, full SFT, SFT export/inference, LoRA PEFT, and direct checkpoint resume. CPU import and long-context SFT remain pending; the recorded long-context command did not exist at its originally attributed revision.\n",
       "title": "gpt_oss_20b"
     },
     {
