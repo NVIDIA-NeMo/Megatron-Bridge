@@ -70,9 +70,7 @@ def test_import_preserves_tokenizers_fork_safety():
         capture_output=True,
         env=environment,
         text=True,
-        # Allow cold Bridge imports time to finish; the forked encode still has
-        # its own 10-second deadline above to catch tokenizer deadlocks.
-        timeout=180,
+        timeout=30,
         check=False,
     )
     assert result.returncode == 0, result.stderr
