@@ -77,6 +77,7 @@ def _write_hf_fixture(root: Path) -> Path:
 def test_saved_hf_text_weights_and_forward(tmp_path, grouped_experts):
     from megatron.core import parallel_state
     from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+    from megatron.core.utils import unwrap_model
     from transformers import DiffusionGemmaForBlockDiffusion
 
     from megatron.bridge import AutoBridge
@@ -93,8 +94,10 @@ def test_saved_hf_text_weights_and_forward(tmp_path, grouped_experts):
         provider.moe_grouped_gemm = grouped_experts
         provider.moe_permute_fusion = False
         provider.gradient_accumulation_fusion = False
-        model = provider.provide().cuda().eval()
-        provider.pre_wrap_hook([model])
+        provider.finalize()
+        models = provider.provide_distributed_model(wrap_with_ddp=False)
+        assert len(models) == 1
+        model = unwrap_model(models[0]).eval()
         _assert_hf_text_weights(model, checkpoint, bridge=bridge)
 
         reference = DiffusionGemmaForBlockDiffusion.from_pretrained(checkpoint, dtype=torch.bfloat16).cuda().eval()

@@ -233,11 +233,11 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
 | [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite (deprecated), DeepSeek V3, DeepSeek V4 / V4 Flash |
-| [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
+| [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | [DiffusionGemma (text SFT)](docs/models/gemma/diffusion-gemma.md), FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
 | **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
 | [**EXAONE**](docs/models/exaone/exaone.md) | EXAONE 4.0, EXAONE 4.5 VL, K-EXAONE MoE |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
-| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2 (deprecated), Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2 (deprecated), Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE), [DiffusionGemma (text SFT)](docs/models/gemma/diffusion-gemma.md) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / GLM-4.7 / GLM-4.7-Flash, GLM-4.5V, GLM-5 / GLM-5.1 / GLM-5.2 / [GLM-5.3](docs/models/glm/glm5-2.md) |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
