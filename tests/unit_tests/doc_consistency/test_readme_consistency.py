@@ -28,6 +28,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+README = REPO_ROOT / "README.md"
+DOCS_MODELS = REPO_ROOT / "docs" / "models"
+SUPPORTED_MODELS_HEADING = "## Supported Models"
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
 PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
@@ -58,6 +61,7 @@ DATA_PREPARATION_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
 )
 QWEN3_VL_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+MEGATRON_BERT_README = REPO_ROOT / "examples" / "models" / "bert" / "megatron-bert" / "README.md"
 QWEN25_VL_DOCS = (
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
@@ -198,6 +202,17 @@ def test_shell_conversion_launcher_is_not_run_through_python():
                 offenders.append(str(path.relative_to(REPO_ROOT)))
 
     assert not offenders, f"convert.sh is invoked through Python or torchrun: {offenders}"
+
+
+def test_model_example_scripts_reference_existing_conversion_scripts():
+    """Every examples/conversion/*.py path in a model example shell script exists in the repo."""
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "examples" / "models").rglob("*.sh")):
+        for ref in sorted(set(re.findall(r"examples/conversion/[\w./-]+\.py", _read(path)))):
+            if not (REPO_ROOT / ref).is_file():
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {ref}")
+
+    assert not offenders, f"model example scripts reference missing conversion scripts: {offenders}"
 
 
 def test_llama_readme_gptdataset_field_name():
@@ -605,11 +620,97 @@ def test_qwen3_model_guides_match_fern_and_reference_exported_recipes():
         assert not missing, f"{sphinx_path.relative_to(REPO_ROOT)} references unknown recipes: {missing}"
 
 
+def _normalize(text: str) -> str:
+    """Lowercase and drop every non-alphanumeric character, so separators and case do not matter."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _supported_models_rows() -> list[tuple[str, str]]:
+    """`(family_cell, variants_cell)` for every data row of the README Supported Models table."""
+    text = _read(README)
+    assert SUPPORTED_MODELS_HEADING in text, f"README.md has no {SUPPORTED_MODELS_HEADING!r} section"
+    body = text.split(SUPPORTED_MODELS_HEADING, 1)[1]
+    following = re.search(r"^## ", body, flags=re.MULTILINE)
+    table = body[: following.start()] if following else body
+
+    rows: list[tuple[str, str]] = []
+    for line in table.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "---" in line or line.count("|") < 3:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if not cells[0].lower().startswith("family"):
+            rows.append((cells[0], cells[1] if len(cells) > 1 else ""))
+    return rows
+
+
+def _row_for_family(rows: list[tuple[str, str]], family: str) -> tuple[str, str] | None:
+    """The row claiming `family`, matched by its docs link or by name, or None."""
+    for cell, variants in rows:
+        if f"docs/models/{family}/" in cell:
+            return cell, variants
+    for cell, variants in rows:
+        if _normalize(family) in _normalize(cell):
+            return cell, variants
+    return None
+
+
+def test_readme_supported_models_table_lists_every_shipped_model_family():
+    """Every documented model family with code in the tree has a Supported Models row."""
+    rows = _supported_models_rows()
+    assert len(rows) >= 15, f"only {len(rows)} Supported Models rows parsed — the table layout has changed"
+
+    missing = []
+    for family_dir in sorted(path for path in DOCS_MODELS.iterdir() if path.is_dir()):
+        name = family_dir.name
+        shipped = (REPO_ROOT / "examples" / "models" / name).is_dir() or (
+            REPO_ROOT / "src" / "megatron" / "bridge" / "models" / name
+        ).is_dir()
+        if shipped and _row_for_family(rows, name) is None:
+            missing.append(f"docs/models/{name}/")
+    assert not missing, f"documented, shipped model families have no Supported Models row: {missing}"
+
+
+def test_readme_supported_models_rows_name_every_shipped_model_variant():
+    """Every documented variant page with runnable examples is named in its family's row."""
+    rows = _supported_models_rows()
+    checked, missing = [], []
+    for page in sorted(DOCS_MODELS.glob("*/*.md")):
+        if page.name == "index.md":
+            continue
+        examples = re.findall(r"(examples/[A-Za-z0-9_./-]+)", _read(page))
+        if not any((REPO_ROOT / path.rstrip("/.")).exists() for path in examples):
+            continue  # nothing runnable behind this page yet, so the table cannot be expected to name it
+        row = _row_for_family(rows, page.parent.name)
+        if row is None:
+            continue  # already reported at family granularity
+        checked.append(page.name)
+        named = _normalize(" ".join(row))
+        tokens = [token for token in re.split(r"[-_]", page.stem) if token]
+        if _normalize(page.stem) in named or all(_normalize(token) in named for token in tokens):
+            continue
+        missing.append(f"docs/models/{page.parent.name}/{page.name}")
+
+    assert checked, "no documented variant page cleared the shipped gate — the docs layout has changed"
+    assert not missing, f"documented, shipped model variants are not named in their README row: {missing}"
+
+
 def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
     """Sphinx must not treat repository-root tutorials as source documents."""
     for path in SPHINX_TUTORIAL_LINK_DOCS:
         relative_tutorial_links = re.findall(r"\]\((?:\.\./)+tutorials/[^)]+\)", _read(path))
         assert not relative_tutorial_links, f"{path} has out-of-tree Sphinx links: {relative_tutorial_links}"
+
+
+def test_megatron_bert_readme_saves_a_bert_tokenizer():
+    """The Megatron BERT README must load the Hub tokenizer through a BERT tokenizer class."""
+    loaders = re.findall(
+        r"(\w+)\.from_pretrained\(\s*[\"']nvidia/megatron-bert-uncased-345m[\"']", _read(MEGATRON_BERT_README)
+    )
+    assert loaders, f"{MEGATRON_BERT_README} no longer loads the nvidia/megatron-bert-uncased-345m tokenizer"
+    assert all(re.fullmatch(r"BertTokenizer(Fast)?", name) for name in loaders), (
+        f"non-BERT tokenizer loaders: {loaders}"
+    )
 
 
 if __name__ == "__main__":

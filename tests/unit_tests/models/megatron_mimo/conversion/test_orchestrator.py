@@ -70,6 +70,7 @@ def test_register_mimo_conversion_spec_allows_same_function_reregistration():
     def conversion_spec(source_bridge, hf_pretrained, parallelism_config):
         return None, []
 
+    saved_specs = orchestrator_module._CONVERSION_SPECS.copy()
     orchestrator_module._reset_registry_for_tests()
     try:
         assert register_mimo_conversion_spec(_Bridge)(conversion_spec) is conversion_spec
@@ -77,6 +78,7 @@ def test_register_mimo_conversion_spec_allows_same_function_reregistration():
         assert get_mimo_conversion_spec(_Bridge) is conversion_spec
     finally:
         orchestrator_module._reset_registry_for_tests()
+        orchestrator_module._CONVERSION_SPECS.update(saved_specs)
 
 
 def test_default_mimo_routes_require_metadata_and_matching_keys():
@@ -94,6 +96,23 @@ def test_default_mimo_routes_require_metadata_and_matching_keys():
     standard_provider = type("Provider", (), {"modality_keys": {"images": "clip"}})()
     with pytest.raises(ValueError, match="Missing"):
         orchestrator_module._build_default_mimo_routes(source_bridge, standard_provider)
+
+
+def test_dedupe_hf_weight_stream_drops_repeated_names():
+    first = torch.zeros(1)
+    stream = iter(
+        [
+            ("a.weight", first),
+            ("shared.buffer", torch.ones(1)),
+            ("b.weight", torch.zeros(1)),
+            ("shared.buffer", torch.ones(1)),
+        ]
+    )
+
+    deduped = list(orchestrator_module._dedupe_hf_weight_stream(stream))
+
+    assert [name for name, _ in deduped] == ["a.weight", "shared.buffer", "b.weight"]
+    assert deduped[0][1] is first
 
 
 class _FakeMimoModel(nn.Module):
@@ -380,6 +399,30 @@ class TestImportHfToMegatronMimo:
 class TestExportMegatronMimoToHf:
     def setup_method(self):
         _RecordingBridge.reset()
+
+    def test_shared_component_routes_keep_separate_tasks(self):
+        model = _FakeMimoModel()
+        routes = [
+            MIMOComponent("encoder", "language_model.", "language_model", component_name="images"),
+            MIMOComponent("projector", "vision_branch.", "vision_branch", component_name="images"),
+        ]
+        groups = {"images": _PgCollection("images")}
+        tasks = {"encoder": ["encoder-task"], "projector": ["projector-task"]}
+        list(
+            export_megatron_mimo_to_hf(
+                source_bridge=_RecordingBridge(),
+                hf_pretrained="hf",
+                mimo_model=model,
+                routes=routes,
+                pg_collections=groups,
+                conversion_tasks=tasks,
+            )
+        )
+        assert [call["conversion_tasks"] for call in _RecordingBridge.calls_export] == list(tasks.values())
+        assert all(
+            call["submodule_pg_collection_at_call"] is groups["images"] for call in _RecordingBridge.calls_export
+        )
+        assert list(orchestrator_module._iter_active_routes(routes, {"images": None})) == []
 
     def test_yields_from_each_route_in_order(self):
         bridge = _RecordingBridge()

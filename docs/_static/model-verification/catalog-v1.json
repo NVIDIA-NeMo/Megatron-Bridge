@@ -819,7 +819,7 @@
             }
           ],
           "commands": [
-            "./scripts/inference/infer.sh --task model-comparison --nodes 1 --gpus-per-node 4 --ep 4 --hf_model_path deepseek-ai/DeepSeek-V4-Flash --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --pp 1 --ep 4 --prompt \"The capital of France is the city of\" --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1"
+            "./scripts/inference/infer.sh --task model-comparison --nodes 1 --gpus-per-node 4 --hf_model_path deepseek-ai/DeepSeek-V4-Flash --megatron_model_path work/model-verification/dsv4-flash/import-gpu/iter_0000000 --pp 1 --ep 4 --prompt \"The capital of France is the city of\" --hf-revision 60d8d70770c6776ff598c94bb586a859a38244f1"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -4469,10 +4469,10 @@
     {
       "architecture": "NemotronHForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.06",
-      "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+      "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
       "entries": [
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "nodes": "1"
@@ -4576,7 +4576,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -4653,7 +4653,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "2",
@@ -4686,7 +4686,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4721,7 +4721,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -4756,7 +4756,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "expert_parallel": "16",
@@ -4787,7 +4787,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "expert_parallel": "16",
@@ -4854,7 +4854,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -4890,7 +4890,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4960,7 +4960,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4970,7 +4970,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_pretrain_config --mode pretrain --dataset megatron-indexed --max_steps 100 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/nemotron-3-super-120b-a12b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2-tokenizer/tokenizer.model rng.seed=1234 dataset.random_seed=1234 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false --load_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-reference checkpoint.ckpt_step=50 --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-config/ConfigContainer.yaml"
+            "./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_pretrain_config --mode pretrain --dataset megatron-indexed --max_steps 100 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/nemotron-3-super-120b-a12b/rp2 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2-tokenizer/tokenizer.model rng.seed=1234 dataset.random_seed=1234 validation.eval_iters=0 validation.eval_interval=0 checkpoint.ckpt_format=torch_dist checkpoint.async_save=false --load_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-reference checkpoint.ckpt_step=50 --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3-super-120b-a12b/h100-pretrain-resumed/ConfigContainer.yaml"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -4992,7 +4992,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "ae2c24890ecd1cf1d535b9e4aa473af1bc94ab71",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "2",
@@ -6000,7 +6000,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe nemotron_3_5_lightning_sft_openmathinstruct2_packed_config --mode sft --max_steps 100 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning-h100/imported-megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-lightning-h100/sft-checkpoints"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe nemotron_3_5_lightning_sft_openmathinstruct2_packed_config --mode sft --max_steps 100 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-lightning-h100/sft-checkpoints"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -6035,7 +6035,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --additional-slurm-params segment=2 --recipe nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config --mode sft --max_steps 100 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning-gb200/imported-megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-lightning-gb200/sft-checkpoints"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --additional-slurm-params segment=2 --recipe nemotron_3_5_lightning_sft_openmathinstruct2_packed_tp1_config --mode sft --max_steps 100 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-lightning-gb200/sft-checkpoints"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -6139,7 +6139,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning-h100/imported-megatron/iter_0000000 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}' model.sequence_parallel=true model.cp_comm_type=p2p model.cross_entropy_loss_fusion=true model.calculate_per_token_loss=true model.recompute_granularity=full model.recompute_modules=null model.recompute_method=uniform model.recompute_num_layers=1 model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-h100/long-sft-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}' model.sequence_parallel=true model.cp_comm_type=p2p model.cross_entropy_loss_fusion=true model.calculate_per_token_loss=true model.recompute_granularity=full model.recompute_modules=null model.recompute_method=uniform model.recompute_num_layers=1 model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-h100/long-sft-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -6179,7 +6179,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning-gb200/imported-megatron/iter_0000000 model.moe_flex_dispatcher_backend=hybridep 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}' model.cp_comm_type=a2a model.cross_entropy_loss_fusion=false model.calculate_per_token_loss=true model.recompute_granularity=selective 'model.recompute_modules=[moe,layernorm,core_attn,mlp]' model.recompute_method=null model.recompute_num_layers=null model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 model.moe_flex_dispatcher_backend=hybridep 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}' model.cp_comm_type=a2a model.cross_entropy_loss_fusion=false model.calculate_per_token_loss=true model.recompute_granularity=selective 'model.recompute_modules=[moe,layernorm,core_attn,mlp]' model.recompute_method=null model.recompute_num_layers=null model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -6219,7 +6219,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe nemotron_3_5_lightning_peft_config --mode lora --dataset openmathinstruct2 --max_steps 100 --seq_length 4096 --lr 1e-4 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning-h100/imported-megatron/iter_0000000 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}' model.sequence_parallel=true ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-h100/peft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe nemotron_3_5_lightning_peft_config --mode lora --dataset openmathinstruct2 --max_steps 100 --seq_length 4096 --lr 1e-4 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}' model.sequence_parallel=true ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-h100/peft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -6258,7 +6258,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_peft_config --mode lora --dataset openmathinstruct2 --max_steps 100 --seq_length 4096 --lr 1e-4 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning-gb200/imported-megatron/iter_0000000 model.moe_flex_dispatcher_backend=hybridep 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}' model.sequence_parallel=true ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/peft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 2 --gpus-per-node 4 --recipe nemotron_3_5_lightning_peft_config --mode lora --dataset openmathinstruct2 --max_steps 100 --seq_length 4096 --lr 1e-4 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 model.moe_flex_dispatcher_backend=hybridep 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}' model.sequence_parallel=true ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-gb200/peft-checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -7926,10 +7926,10 @@
     {
       "architecture": "GptOssForCausalLM",
       "base_container": "nvcr.io/nvidia/nemo:26.06",
-      "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+      "bridge_commit": "8a84d716600a99358b0424ccc9628aa20ebc5142",
       "entries": [
         {
-          "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+          "bridge_commit": "8a84d716600a99358b0424ccc9628aa20ebc5142",
           "command_topologies": [
             {
               "nodes": "1"
@@ -8188,7 +8188,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "6799f099712c961f15cf92d6bd88998f029d672d",
+          "bridge_commit": "8a84d716600a99358b0424ccc9628aa20ebc5142",
           "command_topologies": [
             {
               "context_parallel": "2",
@@ -8209,19 +8209,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "gpt-oss-20b-sft-long-context-h100",
-          "expected_result": "Completed 20 optimizer steps using the 32K SFT recipe, immutable Tulu3 data selection, offline packing, TP4, CP2, sequence parallelism, non-fused cross entropy, and full activation recompute. The run loaded 120 packed rows, recorded 99.79% packing efficiency with 83.333 source sequences per pack on average, produced finite loss from 2.235548 to 1.175326, and reported zero skipped and zero NaN iterations.\n",
+          "expected_result": "Verification is pending on the card default revision, which contains the 32K recipe. The original recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete 20 optimizer steps with the pinned Tulu3 selection, offline packing, TP4/CP2, sequence parallelism, non-fused cross entropy, and full activation recompute, with finite losses and zero skipped or NaN iterations. Record all five metrics from that run before marking this item verified.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-10",
+          "last_verified": null,
           "metrics": {
-            "final_loss": 1.175326,
-            "initial_loss": 2.235548,
-            "last_10_steps_model_tflops_per_gpu_avg": 13.43,
-            "last_10_steps_step_time_ms_avg": 306108.17,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 428.189
+            "final_loss": null,
+            "initial_loss": null,
+            "last_10_steps_model_tflops_per_gpu_avg": null,
+            "last_10_steps_step_time_ms_avg": null,
+            "last_10_steps_tokens_per_second_per_gpu_avg": null
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -8299,7 +8299,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "gpt-oss-20b",
       "source_card": "examples/model_verification_cards/gpt-oss-20b/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. GPT-OSS 20B H100 support verification has completed GPU HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass correlation, deterministic Megatron inference, bounded pretraining, full SFT, SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint resume; CPU import remains pending.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. GPT-OSS 20B H100 support verification has completed GPU HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass correlation, deterministic Megatron inference, bounded pretraining, full SFT, SFT export/inference, LoRA PEFT, and direct checkpoint resume. CPU import and long-context SFT remain pending; the recorded long-context command did not exist at its originally attributed revision.\n",
       "title": "gpt_oss_20b"
     },
     {
@@ -11139,21 +11139,23 @@
       "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
       "entries": [
         {
-          "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
+          "bridge_commit": "4566ea87f76c51eeae6c4a1467aed13db2899319",
           "command_topologies": [
             {
-              "nodes": "1"
+              "gpus_per_node": "1",
+              "nodes": "1",
+              "total_gpus": 1
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --torch-dtype bfloat16"
+            "./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --torch-dtype bfloat16"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-hf-to-megatron-cpu",
-          "expected_result": "Import exits successfully and creates a reloadable CPU checkpoint. Its strict round-trip comparison matches all 59,585 BF16 tensors and 753,329,940,480 elements bitwise against the immutable HF revision.\n",
+          "expected_result": "Import exits successfully at about 1.4 TiB peak process RSS and creates a reloadable CPU checkpoint. Weights stay on CPU, but one GPU must be visible because the DSA indexer builds its rotary embedding on a CUDA device. The 791 tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and are not imported; the CPU export of this checkpoint matches the remaining 58,794 tensors and 743,377,019,904 elements bitwise against the immutable HF revision. Verified in a NeMo Framework 26.10 release-candidate container, not the card's base container, with its bundled, unmodified Bridge.\n",
           "hardware": null,
-          "last_verified": "2026-07-22",
+          "last_verified": "2026-10-02",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.hf_to_megatron_cpu",
@@ -11191,21 +11193,25 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
+          "bridge_commit": "4566ea87f76c51eeae6c4a1467aed13db2899319",
           "command_topologies": [
             {
-              "nodes": "1"
+              "expert_parallel": "32",
+              "expert_tensor_parallel": "1",
+              "nodes": "4",
+              "pipeline_parallel": "1",
+              "tensor_parallel": "1"
             }
           ],
           "commands": [
-            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --hf-path work/model-verification/glm5-2/cpu-hf-export --torch-dtype bfloat16"
+            "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5.2 --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88 --megatron-path work/model-verification/glm5-2/cpu-megatron --hf-path work/model-verification/glm5-2/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-megatron-to-hf-cpu",
-          "expected_result": "Export exits successfully; all 59,585 BF16 tensors and 753,329,940,480 elements match the immutable HF revision bitwise. Transformers 5.12.1 strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters.\n",
+          "expected_result": "The 32-process distributed CPU export exits successfully and writes 280 safetensors shards at about 0.9 TiB peak summed process RSS per node. All 58,794 exported tensors (58,719 BF16 and 75 FP32) and 743,377,019,904 elements match the immutable HF revision bitwise. The 791 tensors under model.layers.78 belong only to the intentionally disabled appended MTP auxiliary layer and remain outside this item. Transformers 5.15.0 strictly reloads the output as GlmMoeDsaForCausalLM with 743,377,000,704 parameters and no loading discrepancies. config.json is regenerated from the checkpoint; as loaded by Transformers it matches the reference except num_nextn_predict_layers, which is null because the MTP layer is not exported. generation_config.json, tokenizer.json, and chat_template.jinja are identical. A single-process export is OOM-killed above 1.9 TiB on 2 TB nodes, so EP32 splits the routed experts across 32 processes and each process keeps a full copy of the non-expert weights. PP stays 1 because convert.sh creates only uniform pipeline splits, and no uniform split of the 78 layers starts every stage on a layer that computes DSA top-k indices. The distributed CPU launcher requests no GPUs, but the exclusive nodes must expose one, because the DSA indexer builds its rotary embedding on a CUDA device. Verified in a NeMo Framework 26.10 release-candidate container, not the card's base container, with its bundled, unmodified Bridge.\n",
           "hardware": null,
-          "last_verified": "2026-07-22",
+          "last_verified": "2026-10-02",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.megatron_to_hf_cpu",
@@ -11298,7 +11304,7 @@
           "workflow": "inference"
         },
         {
-          "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
+          "bridge_commit": "d23c1f981596c227b13d98c95b09afb865d80258",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -11310,22 +11316,22 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL' --save_dir work/model-verification/glm5-2/pretrain-reference/checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 2048 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-h100 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false model.moe_flex_dispatcher_backend=hybridep dist.distributed_timeout_minutes=60 model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL' checkpoint.load=null --save_dir work/model-verification/glm5-2/pretrain-wikitext-h100/checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-h100/resolved-config.yaml"
           ],
           "dimensions": {},
           "enabled_features": {
-            "moe_dispatcher": "deepep"
+            "moe_dispatcher": "hybridep"
           },
           "entry_id": "glm5-2-pretrain-h100",
-          "expected_result": "The uninterrupted 352-H100 TP1/PP11/CP1/EP32/ETP1 run completed 100 real-data steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and flex/DeepEP dispatch. Loss remained finite from 13.15907 to 6.385243, final grad norm was 0.796, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 31,204.920 ms and 54.595 TFLOPS/GPU; peak observed GPU memory was 80,999 MiB. The matching step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state; the step-50 checkpoint reloads successfully.\n",
+          "expected_result": "The 352-H100 TP1/PP11/CP1/EP32/ETP1 run warm-starts from a Bridge GPU import of the GLM-5.2 weights that includes the MTP layer and completes exactly 20 bounded steps at GBS/MBS 1024/1 and sequence length 2048 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, HybridEP flex expert dispatch, and natural routing, without deterministic mode. Data is the WikiText-103 raw train split grouped into 29,444 articles and tokenized with the pinned GLM-5.2 tokenizer (120,372,951 tokens). The learning rate warms up to 3e-6 at step 10 and decays to 3e-7 at step 20. Loss decreases from 1.078868 to 0.9303461 with a maximum grad norm of 4.478, a final grad norm of 1.725, and zero skipped or NaN iterations. HybridEP JIT-compiles its kernels at each pipeline stage's first dispatch, one stage after another, so step 1 takes 1,558.3 s and the distributed timeout is raised from 10 to 60 minutes. Steps 11-20 average 16,505.840 ms, 103.280 model TFLOP/s/GPU, and 360.952 token slots/s/GPU. The step-10 and step-20 checkpoints each contain model, optimizer, scheduler, data-order, and RNG state in 359 files (about 10.56 TB).\n",
           "hardware": "H100",
-          "last_verified": "2026-07-23",
+          "last_verified": "2026-10-01",
           "metrics": {
-            "final_loss": 6.385243,
-            "initial_loss": 13.15907,
-            "last_10_steps_model_tflops_per_gpu_avg": 54.595,
-            "last_10_steps_step_time_ms_avg": 31204.92,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 190.926
+            "final_loss": 0.9303461,
+            "initial_loss": 1.078868,
+            "last_10_steps_model_tflops_per_gpu_avg": 103.28,
+            "last_10_steps_step_time_ms_avg": 16505.84,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 360.952
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H100",
@@ -11334,7 +11340,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "e79f756196e0b97ee3ad94263a896c120b32c1e5",
+          "bridge_commit": "6c219485815bf8afee4c22db721156a9176351c6",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11345,20 +11351,20 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.pretrained_checkpoint=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --save_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --save_dir work/model-verification/glm5-2/pretrain-wikitext-gb200/checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-gb200/resolved-config.yaml"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-pretrain-gb200",
-          "expected_result": "The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100 RP2 head_01 pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch. The RP2 Llama SentencePiece tokenizer is used while retaining GLM-5.2's configured vocabulary size, so this is support verification rather than a cross-tokenizer convergence claim. Loss remained finite from 13.168150 to 6.523522, final grad norm was 2.775, and every step recorded zero skipped and NaN iterations. The final 10 steps averaged 64,786.540 ms and 102.520 TFLOPS/GPU. Step-50 and step-100 checkpoints contain model, optimizer, scheduler, data-order, and RNG state.\n",
+          "expected_result": "The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run uses the recipe's [14, 16, 12, 12, 12, 12] decoder-layer pipeline layout, with the MTP layer and loss on the last stage. It warm-starts from a Bridge GPU import of the GLM-5.2 weights that includes the MTP layer (published GLM-5.2 revisions ship byte-identical weight files) and completes exactly 20 bounded steps at GBS/MBS 1024/1 and sequence length 4096 with cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, all-to-all expert dispatch, and natural routing, without deterministic mode. Data is the WikiText-103 raw train split grouped into 29,444 articles and tokenized with the pinned GLM-5.2 tokenizer (120,372,951 tokens). The learning rate warms up to 3e-6 at step 10 and decays to 3e-7 at step 20; the random-initialization peak of 3e-4 destabilizes the pretrained weights. Loss decreases from 1.044211 to 0.8772652 with a maximum grad norm of 4.567, a final grad norm of 0.711, and zero skipped or NaN iterations. Steps 11-20 average 34,334.290 ms, 196.950 model TFLOP/s/GPU, and 636.254 token slots/s/GPU. The step-10 checkpoint contains model, optimizer, scheduler, data-order, and RNG state in 199 files (about 10.56 TB).\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-04",
+          "last_verified": "2026-09-30",
           "metrics": {
-            "final_loss": 6.523522,
-            "initial_loss": 13.16815,
-            "last_10_steps_model_tflops_per_gpu_avg": 102.52,
-            "last_10_steps_step_time_ms_avg": 64786.54,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 337.189
+            "final_loss": 0.8772652,
+            "initial_loss": 1.044211,
+            "last_10_steps_model_tflops_per_gpu_avg": 196.95,
+            "last_10_steps_step_time_ms_avg": 34334.29,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 636.254
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.GB200",
@@ -11373,13 +11379,13 @@
               "context_parallel": "2",
               "gpus_per_node": "8",
               "nodes": "52",
-              "recipe": "glm52_sft_416gpu_h100_bf16_config",
+              "recipe": "glm52_h100_sft_config",
               "sequence_length": "2048",
               "total_gpus": 416
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 52 --gpus-per-node 8 --recipe glm52_sft_416gpu_h100_bf16_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 --max_steps 100 --seq_length 2048 dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32 model.context_parallel_size=2 model.virtual_pipeline_model_parallel_size=null model.pipeline_model_parallel_layout='Etttttt|tttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|tttt|tttt|tttt|ttttmL' --save_dir work/model-verification/glm5-2/sft-functional/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 52 --gpus-per-node 8 --recipe glm52_h100_sft_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000 --max_steps 100 --seq_length 2048 dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32 model.context_parallel_size=2 model.virtual_pipeline_model_parallel_size=null model.pipeline_model_parallel_layout='Etttttt|tttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|tttt|tttt|tttt|ttttmL' --save_dir work/model-verification/glm5-2/sft-functional/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -11410,12 +11416,12 @@
             {
               "gpus_per_node": "4",
               "nodes": "48",
-              "recipe": "glm52_sft_192gpu_gb200_bf16_config",
+              "recipe": "glm52_gb200_sft_config",
               "total_gpus": 192
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_sft_192gpu_gb200_bf16_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 --max_steps 100 tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja --save_dir work/model-verification/glm5-2/sft-gb200-cudnn/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_gb200_sft_config --mode sft --pretrained_checkpoint work/model-verification/glm5-2/hf-4d67f66cc64d3219133b767c253b2ad1425c6c88 --max_steps 100 tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja --save_dir work/model-verification/glm5-2/sft-gb200-cudnn/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -11632,7 +11638,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "8645cda8738cbb87b8b998ad2d09341eef2510c7",
+          "bridge_commit": "d23c1f981596c227b13d98c95b09afb865d80258",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -11644,20 +11650,20 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL' --load_dir work/model-verification/glm5-2/pretrain-reference/checkpoints --save_dir work/model-verification/glm5-2/pretrain-resume/checkpoints --save_interval 0 checkpoint.ckpt_step=50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 44 --gpus-per-node 8 --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 2048 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-h100 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false model.moe_flex_dispatcher_backend=hybridep dist.distributed_timeout_minutes=60 model.pipeline_model_parallel_size=11 model.virtual_pipeline_model_parallel_size=null model.microbatch_group_size_per_vp_stage=null model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL' checkpoint.ckpt_step=10 --load_dir work/model-verification/glm5-2/pretrain-wikitext-h100/checkpoints --save_dir work/model-verification/glm5-2/pretrain-wikitext-resume-h100/checkpoints --save_interval 0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-resume-h100/resolved-config.yaml"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-checkpoint-resume-h100",
-          "expected_result": "The run reloads the corrected reference's step-50 model, optimizer, scheduler, data-order, and RNG state and completes steps 51-100 with zero skipped or NaN iterations. Step 51 matches exactly at 7.219822. Step 100 is 6.372624 versus the uninterrupted reference's 6.385243, an absolute difference of 0.012619 within the allowed 0.063853. Final grad norm is 2.169; the last 10 steps average 32,002.290 ms and 53.235 TFLOPS/GPU. Peak observed allocator memory is 65.230 GiB allocated and 69.684 GiB reserved.\n",
+          "expected_result": "The run reloads the warm-start reference's step-10 model, optimizer, scheduler, data-order, and RNG state and completes steps 11-20 into a new root with zero skipped or NaN iterations. Step 11 is 0.9305546, identical to the uninterrupted reference, and step 20 is 0.9313419 versus 0.9303461, a relative difference of 0.107%. Every resumed LM and MTP loss stays within the declared bound, with a largest LM relative difference of 0.113% at step 19. The resolved reference and resume configs differ only in the checkpoint source, step, pretrained-checkpoint fallback, and output paths. The resume requires PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True in the launch environment; the reference ran without it. The recipe's own allocator setting is applied after CUDA initializes and does not take effect, and without expandable segments the first resumed step exhausts device memory when NCCL allocates buffers for the data-parallel gradient reduce-scatter on the 8-layer pipeline stages. The final-10-step window is the whole resumed segment, so its averages include HybridEP JIT compilation at step 11 (1,835.1 s); steps 12-20 average 17,201.3 ms.\n",
           "hardware": "H100",
-          "last_verified": "2026-07-23",
+          "last_verified": "2026-10-02",
           "metrics": {
-            "final_loss": 6.372624,
-            "initial_loss": 7.219822,
-            "last_10_steps_model_tflops_per_gpu_avg": 53.235,
-            "last_10_steps_step_time_ms_avg": 32002.29,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 186.168
+            "final_loss": 0.9313419,
+            "initial_loss": 0.9305546,
+            "last_10_steps_model_tflops_per_gpu_avg": 89.34,
+            "last_10_steps_step_time_ms_avg": 198991.51,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 29.94
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.H100",
@@ -11666,7 +11672,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "e79f756196e0b97ee3ad94263a896c120b32c1e5",
+          "bridge_commit": "6c219485815bf8afee4c22db721156a9176351c6",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -11677,20 +11683,20 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40 'dataset.blend=[[\"work/data/rp2/head_01_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/rp2-head-01-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.tokenizer_type=SentencePieceTokenizer tokenizer.tokenizer_model=work/data/rp2/tokenizer/tokenizer.model tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false checkpoint.ckpt_step=50 checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --load_dir work/model-verification/glm5-2/pretrain-rp2-gb200/checkpoints --save_dir work/model-verification/glm5-2/pretrain-rp2-resume-gb200/checkpoints --save_interval 0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 48 --gpus-per-node 4 --recipe glm52_pretrain_192gpu_gb200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 20 --lr 3e-6 --min_lr 3e-7 --warmup_iters 10 'dataset.blend=[[\"work/data/wikitext103/wikitext103_glm52_text_document\"],null]' dataset.path_to_cache=work/cache/glm5-2/wikitext-glm52-gb200 dataset.random_seed=1234 dataset.num_workers=8 tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=20 model.moe_router_force_load_balancing=false checkpoint.ckpt_step=10 checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --load_dir work/model-verification/glm5-2/pretrain-wikitext-gb200/checkpoints --save_dir work/model-verification/glm5-2/pretrain-wikitext-resume-gb200/checkpoints --save_interval 0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5-2/pretrain-wikitext-resume-gb200/resolved-config.yaml"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-checkpoint-resume-gb200",
-          "expected_result": "The run reloads the RP2 reference's step-50 model, optimizer, scheduler, data-order, and RNG state and completes steps 51-100 with zero skipped or NaN iterations. Step 51 is 7.233636 versus 7.233639 in the uninterrupted reference, a relative difference of 4.1e-7. Step 100 is 6.503141 versus 6.523522, a relative difference of 0.003124; both satisfy the 1e-6 absolute plus 1% relative tolerance. Final grad norm is 1.690; the last 10 steps average 60,079.390 ms and 110.552 TFLOPS/GPU.\n",
+          "expected_result": "The run reloads the warm-start reference's step-10 model, optimizer, scheduler, data-order, and RNG state and completes steps 11-20 into a new root with zero skipped or NaN iterations. Step 11 is 0.9189469 versus 0.9189264 in the uninterrupted reference, a relative difference of 0.002%, and step 20 is 0.8775815 versus 0.8772652, a relative difference of 0.036%. Every resumed LM and MTP loss stays within the declared bound, with a largest LM relative difference of 0.078% at step 18. The resolved reference and resume configs differ only in the checkpoint source, step, pretrained-checkpoint fallback, and output paths. The final-10-step window is the whole resumed segment, so its averages include first-iteration kernel autotuning at step 11 (534,984.2 ms); steps 11-20 average 82,761.520 ms, 189.670 model TFLOP/s/GPU, and 263.955 token slots/s/GPU.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-04",
+          "last_verified": "2026-09-30",
           "metrics": {
-            "final_loss": 6.503141,
-            "initial_loss": 7.233636,
-            "last_10_steps_model_tflops_per_gpu_avg": 110.552,
-            "last_10_steps_step_time_ms_avg": 60079.39,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 363.608
+            "final_loss": 0.8775815,
+            "initial_loss": 0.9189469,
+            "last_10_steps_model_tflops_per_gpu_avg": 189.67,
+            "last_10_steps_step_time_ms_avg": 82761.52,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 263.955
           },
           "precision": "bf16",
           "source_pointer": "items.checkpoint_resume.GB200",
@@ -11704,7 +11710,7 @@
       "min_transformers_version": "5.12.1",
       "slug": "glm5-2",
       "source_card": "examples/model_verification_cards/glm5-2/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. GLM-5.2 H100 support verification currently covers exact GPU checkpoint round-trip on CPU and GPU, HF-to-Megatron forward equivalence, bounded full SFT with export/reload inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with a reloadable middle checkpoint and verified continuation. GB200 support verification currently covers bounded pretraining, bounded full SFT, 128K packed long-context SFT, bounded PEFT, bounded checkpoint resume, and deterministic legacy Megatron inference; post-SFT export/reload inference remains pending.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. GLM-5.2 H100 support verification currently covers exact GPU checkpoint round-trip on CPU and GPU (the CPU path excludes the disabled MTP layer), HF-to-Megatron forward equivalence, bounded full SFT with export/reload inference, 200K-context CP32 SFT, bounded PEFT, bounded warm-start pretraining, and bounded checkpoint resume from its step-10 checkpoint. GB200 support verification currently covers bounded warm-start pretraining, bounded full SFT, 128K packed long-context SFT, bounded PEFT, bounded checkpoint resume, and deterministic legacy Megatron inference; post-SFT export/reload inference remains pending.\n",
       "title": "glm5_2"
     }
   ],

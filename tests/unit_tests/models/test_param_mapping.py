@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -40,6 +41,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     split_kv_weights,
     split_qkv_biases,
     split_qkv_weights,
+    split_qkv_weights_scale,
+    split_qkvg_weights,
 )
 
 
@@ -501,6 +504,43 @@ class TestHelperFunctions:
         assert torch.equal(k, k_s)
         assert torch.equal(v, v_s)
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="checks CUDA stream synchronization")
+    @pytest.mark.parametrize("attention_output_gate", [False, True])
+    def test_split_helpers_index_on_input_device(self, attention_output_gate):
+        """Splitting a CUDA tensor must not copy CPU index tensors to the device."""
+        config = SimpleNamespace(
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=8,
+            hidden_size=32,
+            attention_output_gate=attention_output_gate,
+        )
+        qkv_rows = (2 * 4 + 2 * 2 if attention_output_gate else 4 + 2 * 2) * 8
+        kv_rows = 2 * 2 * 8
+        cases = [
+            (split_qkv_weights, torch.randn(qkv_rows, 32)),
+            (split_qkv_biases, torch.randn(qkv_rows)),
+            (partial(split_qkv_weights_scale, quant_block_size=(4, 4)), torch.randn(qkv_rows // 4, 8)),
+            (split_kv_weights, torch.randn(kv_rows, 32)),
+            (split_kv_biases, torch.randn(kv_rows)),
+        ]
+        if attention_output_gate:
+            cases.append((split_qkvg_weights, torch.randn(qkv_rows, 32)))
+
+        for split_fn, cpu_input in cases:
+            expected = split_fn(config, cpu_input)
+            cuda_input = cpu_input.cuda()
+            previous_mode = torch.cuda.get_sync_debug_mode()
+            torch.cuda.set_sync_debug_mode("error")
+            try:
+                actual = split_fn(config, cuda_input)
+            finally:
+                torch.cuda.set_sync_debug_mode(previous_mode)
+            assert len(actual) == len(expected)
+            for actual_part, expected_part in zip(actual, expected):
+                assert actual_part.device == cuda_input.device
+                assert torch.equal(actual_part.cpu(), expected_part)
+
 
 class TestQKVMapping:
     def test_hf_to_megatron(self, mock_distributed_env, transformer_config):
@@ -518,6 +558,19 @@ class TestQKVMapping:
             mock_hf_to_megatron.assert_called_once()
             merged_weight = mock_hf_to_megatron.call_args[0][0]
             assert merged_weight.shape == (64, 32)
+
+    def test_megatron_to_hf_scale_uses_explicit_mxfp8_row_block_size(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        mapping = QKVMapping(megatron_param="qkv.weight", q="q.weight", k="k.weight", v="v.weight")
+        megatron_module = MockModule(transformer_config, weight_shape=(64, 32))
+        packed_scale = torch.arange(64, dtype=torch.uint8).reshape(64, 1)
+
+        with patch.object(mapping._tp_mapping, "megatron_to_hf", return_value={"qkv.weight": packed_scale}):
+            result = mapping.megatron_to_hf_scale(packed_scale, megatron_module, row_block_size=1)
+
+        torch.testing.assert_close(result["q.weight"], torch.cat((packed_scale[:16], packed_scale[32:48])))
+        torch.testing.assert_close(result["k.weight"], torch.cat((packed_scale[16:24], packed_scale[48:56])))
+        torch.testing.assert_close(result["v.weight"], torch.cat((packed_scale[24:32], packed_scale[56:64])))
 
 
 class TestKVMapping:

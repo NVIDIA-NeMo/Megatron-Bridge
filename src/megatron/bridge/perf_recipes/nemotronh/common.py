@@ -32,6 +32,7 @@ from megatron.bridge.training.mixed_precision import (
     nemotron_3_super_bf16_with_nvfp4_mixed,
     nemotron_3_ultra_bf16_with_nvfp4_mixed,
 )
+from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -140,6 +141,20 @@ def _enable_nemotron_3_super_full_iteration(cfg: ConfigContainer) -> None:
     cfg.comm_overlap = None
     cfg.model.overlap_moe_expert_parallel_comm = False
     cfg.model.delay_wgrad_compute = False
+
+
+def _enable_nemotron_3_5_lightning_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable full-iteration capture with static MoE buffers for Lightning."""
+    set_full_iteration_cuda_graph(cfg.model)
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    # Static receive capacity avoids dispatcher CPU synchronization during capture.
+    # The training loop retries capacity overflows without padding.
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.moe_paged_stash = False
+    cfg.model.offload_modules = []
 
 
 def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:

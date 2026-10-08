@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from functools import partial
-from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import modelopt.torch.distill as mtd
@@ -21,8 +20,10 @@ import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _cu_seqlens_for_cp_partition,
@@ -37,6 +38,7 @@ from megatron.bridge.training.gpt_step import (
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 
 
 class _Iterator:
@@ -745,40 +747,86 @@ class TestGetBatch:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("cp_size", [1, 2, 8])
-    @pytest.mark.parametrize("full_seq_length", [16, 32])
+    @pytest.mark.parametrize("config_kind", ["provider", "builder"])
     @pytest.mark.parametrize("has_input_ids", [False, True])
-    @pytest.mark.parametrize("vp_stage", [None, 1])
-    def test_forward_common_counts_dense_flops_with_nested_model_config(
-        self, monkeypatch, cp_size, full_seq_length, has_input_ids, vp_stage
+    @pytest.mark.parametrize("configured_seq_length", [32, 128])
+    def test_forward_common_counts_full_dense_sequence_under_cp(
+        self, monkeypatch, cp_size, config_kind, has_input_ids, configured_seq_length
     ):
-        """Builder configs omit seq_length; count actual dense CP shards, including shorter batches."""
-        tokens = torch.arange(full_seq_length // cp_size).repeat(2, 1)
+        """The same dense batch has the same FLOPs with either model-config API."""
+        model_fields = dict(num_layers=2, hidden_size=16, num_attention_heads=2, ffn_hidden_size=32)
+        if config_kind == "builder":
+            model_cfg = BridgeGPTModelConfig(
+                transformer=TransformerConfig(**model_fields), seq_length=configured_seq_length
+            )
+            runtime_config = model_cfg.transformer
+            assert not hasattr(runtime_config, "seq_length")
+        else:
+            model_cfg = GPTModelProvider(**model_fields, seq_length=configured_seq_length)
+            runtime_config = model_cfg
+        tokens = torch.arange(32 // cp_size).unsqueeze(0)
         labels = tokens + 1
         loss_mask = torch.ones_like(tokens, dtype=torch.float32)
-        model = _RecordingModel(vp_stage=vp_stage)
-        model.config = TransformerConfig(num_layers=2, hidden_size=32, num_attention_heads=4)
-        assert not hasattr(model.config, "seq_length")
-        state = SimpleNamespace(
-            cfg=SimpleNamespace(model=SimpleNamespace(seq_length=128)),
-            timers=_NoopTimer(),
-            straggler_timer=_NoopTimer(),
-            _flops_seqlen_sum=0,
-            _flops_seqlen_sq_sum=0,
-            _flops_requires_global_reduce=False,
-        )
+        model = _RecordingModel()
+        model.config = runtime_config
+        state = Mock()
+        state.cfg = _make_cfg()
+        state.cfg.model = model_cfg
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
         )
-        get_batch_mock = Mock(return_value=(tokens if has_input_ids else None, labels, loss_mask, None, None, None))
+        get_batch_mock = Mock(return_value=(tokens if has_input_ids else None, labels, loss_mask, None, tokens, None))
 
         _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
 
-        expected_batches = 2 if vp_stage is None else 0
-        assert state._flops_seqlen_sum == expected_batches * full_seq_length
-        assert state._flops_seqlen_sq_sum == expected_batches * full_seq_length**2
-        assert not state._flops_requires_global_reduce
-        assert model.forward_kwargs["input_ids"] is (tokens if has_input_ids else None)
+        assert state._flops_seqlen_sum == 32
+        assert state._flops_seqlen_sq_sum == 32**2
         assert model.forward_kwargs["labels"] is labels
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("cp_size", [1, 2])
+    def test_forward_common_keeps_scheduler_flops_totals(self, monkeypatch, cp_size):
+        """Global-batch packing batches leave the scheduler's FLOPs totals untouched.
+
+        train_step seeds the accumulators with the scheduler's DP-global totals, so
+        accumulating the CP-local pack again here would double count.
+        """
+        tokens = torch.arange(32 // cp_size).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.ones_like(tokens, dtype=torch.float32)
+        scheduled = PackedSeqParams(qkv_format="thd", cu_seqlens_q=torch.tensor([0, 32], dtype=torch.int32))
+        model = _RecordingModel()
+        state = Mock()
+        state.cfg = _make_cfg()
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 90_000
+        state._flops_requires_global_reduce = True
+        config = type(
+            "Config",
+            (),
+            {"is_hybrid_model": False, "mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False},
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
+        )
+        accumulate_spy = Mock(wraps=accumulate_flops_metadata)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.accumulate_flops_metadata", accumulate_spy)
+        get_batch_mock = Mock(
+            return_value=(tokens, labels, loss_mask, None, tokens.clone(), {"packed_seq_params": scheduled})
+        )
+
+        _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
+
+        accumulate_spy.assert_not_called()
+        assert state._flops_seqlen_sum == 1000
+        assert state._flops_seqlen_sq_sum == 90_000
+        assert state._flops_requires_global_reduce is True
+        assert model.forward_kwargs["packed_seq_params"] is scheduled
 
     @pytest.mark.unit
     @pytest.mark.parametrize("cp_size", [1, 2, 8])

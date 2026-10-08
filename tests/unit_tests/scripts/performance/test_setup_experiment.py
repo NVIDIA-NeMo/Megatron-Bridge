@@ -88,7 +88,8 @@ def test_recipe_arguments_are_forwarded_unchanged() -> None:
     ]
 
 
-def test_submission_dry_run_does_not_import_bridge_or_mcore(tmp_path: Path) -> None:
+@pytest.mark.parametrize("is_long_convergence_run", [False, True])
+def test_submission_dry_run_does_not_import_bridge_or_mcore(tmp_path: Path, is_long_convergence_run: bool) -> None:
     blocker_dir = tmp_path / "login_node"
     blocker_dir.mkdir()
     (blocker_dir / "sitecustomize.py").write_text(
@@ -103,6 +104,11 @@ class _RejectMegatron(importlib.abc.MetaPathFinder):
         return None
 
 sys.meta_path.insert(0, _RejectMegatron())
+
+# Exercise the W&B 0.29 API surface even when testing with an older SDK.
+import wandb
+if hasattr(wandb.util, "generate_id"):
+    del wandb.util.generate_id
 """
     )
     environment = os.environ.copy()
@@ -133,6 +139,8 @@ sys.meta_path.insert(0, _RejectMegatron())
         "none",
         "--dryrun",
     ]
+    if is_long_convergence_run:
+        command.append("--is_long_convergence_run")
 
     result = subprocess.run(
         command,
@@ -148,4 +156,61 @@ sys.meta_path.insert(0, _RejectMegatron())
     assert result.returncode == 0, output
     assert "bootstrap.py" in output
     assert "pretrain_llama3_8b_bf16_gpus8_h100" in output
+    assert "WANDB_RUN_ID" in output
+    assert "WANDB_RESUME" in output
     assert "login-node import forbidden" not in output
+
+
+def test_dryrun_short_flag_is_filtered_from_recipe_args() -> None:
+    """-d (short form of --dryrun) must be stripped from args forwarded to the recipe script."""
+    argv = ["-d", "--tensor_model_parallel_size", "2"]
+    assert "-d" not in setup_experiment._filter_run_script_args(argv)
+
+
+def test_nvcre_flags_are_filtered_from_recipe_args() -> None:
+    """All --nvcre_* flags and their values must be stripped before forwarding to the recipe."""
+    argv = [
+        "--nvcre_namespace",
+        "nemo-perf",
+        "--nvcre_image_pull_secret=ngc-secret",
+        "--tensor_model_parallel_size",
+        "2",
+    ]
+    filtered = setup_experiment._filter_run_script_args(argv)
+    assert filtered == ["--tensor_model_parallel_size", "2"]
+
+
+# ── _nvcre_env_vars ───────────────────────────────────────────────────────────
+
+
+def test_nvcre_env_vars_without_hf_token_secret() -> None:
+    """Custom env vars must be forwarded unchanged when no HF token secret is configured."""
+    custom = {"NCCL_TIMEOUT": "1800", "MY_VAR": "1"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name=None)
+    assert result == custom
+    assert result is not custom  # must be an independent copy
+
+
+def test_nvcre_env_vars_with_hf_token_secret_enables_online_mode() -> None:
+    """When an HF secret is configured, offline-mode flags must be overridden to allow pod access."""
+    result = setup_experiment._nvcre_env_vars({}, hf_token_secret_name="hf-token-secret")
+    assert result["HF_HUB_OFFLINE"] == "0"
+    assert result["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" not in result  # token is injected via secret_env_vars, not here
+
+
+def test_nvcre_env_vars_hf_token_secret_forces_online_mode() -> None:
+    """HF secret must override any caller-supplied offline flag so the pod can reach HuggingFace."""
+    custom = {"HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name="hf-token-secret")
+    assert result["HF_HUB_OFFLINE"] == "0"
+    assert result["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" not in result
+
+
+def test_nvcre_env_vars_strips_plain_hf_token_when_secret_configured() -> None:
+    """Plain HF_TOKEN from cluster_config environment: or --env flags must be stripped when a secret is set."""
+    custom = {"HF_TOKEN": "hf_leaked_token", "NCCL_TIMEOUT": "1800"}
+    result = setup_experiment._nvcre_env_vars(custom, hf_token_secret_name="hf-token-secret")
+    assert "HF_TOKEN" not in result
+    assert result["NCCL_TIMEOUT"] == "1800"
