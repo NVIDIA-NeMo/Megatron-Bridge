@@ -24,11 +24,14 @@ import pytest
 from megatron.bridge.utils.gdn_utils import (
     CUDNN_FRONTEND_GDN_NAN_FREE_VERSION,
     CUTLASS_DSL_GDN_MIN_VERSION,
+    TRANSFORMER_ENGINE_GDN_FP8_VERSION,
+    TRANSFORMER_ENGINE_GDN_MIN_VERSION,
     _release_tuple,
     _version_str,
     cudnn_gdn_stack_issues,
     is_te_gdn_available,
     probe_cudnn_gdn_stack_issues,
+    te_gdn_fp8_issues,
     validate_cudnn_gdn_stack,
 )
 from megatron.bridge.utils.import_utils import get_distribution_version
@@ -105,6 +108,41 @@ class TestCudnnGdnStackValidation:
     def test_unparsable_frontend_version_is_not_flagged(self):
         assert cudnn_gdn_stack_issues(**{**self._COMPLETE, "cudnn_frontend_version": "unknown"}) == []
 
+    @pytest.mark.parametrize("version", ["2.19.0", "2.19.0+5e52befd", "2.19.1", "2.19"])
+    @pytest.mark.parametrize(
+        ("fp8", "fp4", "fragment"),
+        [
+            pytest.param(True, False, "training fails in the first forward pass", id="fp8"),
+            pytest.param(True, True, "training fails in the first forward pass", id="fp8-and-fp4"),
+            pytest.param(False, True, "model.fp4 runs GatedDeltaNet under it in Megatron-Core's", id="fp4-only"),
+        ],
+    )
+    def test_te219_under_fp8_or_fp4_is_reported(self, version, fp8, fp4, fragment):
+        """Transformer Engine 2.19's GatedDeltaNetAttention raises under the FP8 autocast that fp8 or fp4 enables."""
+        issues = te_gdn_fp8_issues(transformer_engine_version=version, fp8=fp8, fp4=fp4)
+        assert len(issues) == 1
+        assert f"transformer-engine {version}'s GatedDeltaNetAttention raises under FP8 autocast" in issues[0]
+        assert fragment in issues[0]
+        assert f"transformer-engine {_version_str(TRANSFORMER_ENGINE_GDN_FP8_VERSION)} and later" in issues[0]
+
+    @pytest.mark.parametrize(
+        ("version", "fp8", "fp4"),
+        [
+            pytest.param("2.19.0", False, False, id="te-2.19-bf16"),
+            pytest.param("2.20.0", True, False, id="te-2.20.0-fp8"),
+            pytest.param("2.20.1", True, False, id="te-2.20.1-fp8"),
+            pytest.param("2.20.2+6ea2a74a", True, True, id="te-2.20.2-fp8-fp4"),
+            pytest.param("2.21.0", False, True, id="te-2.21-fp4"),
+            # No GatedDeltaNetAttention before 2.19; cudnn_gdn_stack_issues reports that case.
+            pytest.param("2.18.0", True, False, id="te-2.18-fp8"),
+            pytest.param("dev", True, False, id="unparsable"),
+            pytest.param(None, True, False, id="te-missing"),
+        ],
+    )
+    def test_te_fp8_combinations_that_are_not_flagged(self, version, fp8, fp4):
+        """Only the 2.19 family is flagged, not every release below 2.20.2."""
+        assert te_gdn_fp8_issues(transformer_engine_version=version, fp8=fp8, fp4=fp4) == []
+
     @pytest.mark.parametrize(
         ("versions", "fragment"),
         [
@@ -173,6 +211,7 @@ class TestCudnnGdnStackValidation:
         mock_warn.assert_called_once()
         message = mock_warn.call_args[0][0]
         assert "ISSUE-A; ISSUE-B" in message
+        assert f"transformer-engine>={_version_str(TRANSFORMER_ENGINE_GDN_MIN_VERSION)}," in message
         assert f"nvidia-cudnn-frontend>={_version_str(CUDNN_FRONTEND_GDN_NAN_FREE_VERSION)}" in message
         assert f"nvidia-cutlass-dsl[cu13]>={self._DSL_FLOOR}" in message
         assert "model.gdn_kernel_backend=fla" in message
@@ -184,6 +223,63 @@ class TestCudnnGdnStackValidation:
         validate_cudnn_gdn_stack(SimpleNamespace(gdn_kernel_backend="transformer_engine"))
         mock_probe.assert_called_once()
         mock_warn.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("quantization", "fragment"),
+        [
+            pytest.param({"fp8": "e4m3"}, "training fails in the first forward pass", id="fp8-e4m3"),
+            pytest.param({"fp8": "hybrid"}, "training fails in the first forward pass", id="fp8-hybrid"),
+            pytest.param({"fp4": "e2m1"}, "model.fp4 runs GatedDeltaNet under it", id="fp4-e2m1"),
+        ],
+    )
+    @patch("megatron.bridge.utils.gdn_utils.get_distribution_version", return_value="2.19.0")
+    @patch("megatron.bridge.utils.gdn_utils.probe_cudnn_gdn_stack_issues", side_effect=lambda: [])
+    @patch("megatron.bridge.utils.gdn_utils.warn_rank_0")
+    def test_cudnn_gdn_warns_for_te219_fp8(self, mock_warn, mock_probe, mock_version, quantization, fragment):
+        """A complete cuDNN stack still warns when Transformer Engine 2.19 meets an FP8 or FP4 recipe."""
+        model = SimpleNamespace(gdn_kernel_backend="transformer_engine", **quantization)
+        validate_cudnn_gdn_stack(model)
+        mock_version.assert_called_once_with("transformer-engine")
+        mock_warn.assert_called_once()
+        message = mock_warn.call_args[0][0]
+        assert message.count("transformer-engine 2.19.0's GatedDeltaNetAttention raises under FP8 autocast") == 1
+        assert fragment in message
+        assert f"transformer-engine>={_version_str(TRANSFORMER_ENGINE_GDN_FP8_VERSION)}," in message
+        assert "model.gdn_kernel_backend=fla" in message
+        assert vars(model) == {
+            "gdn_kernel_backend": "transformer_engine",
+            **quantization,
+        }  # backend and precision kept
+
+    @patch("megatron.bridge.utils.gdn_utils.get_distribution_version", return_value="2.19.0")
+    @patch("megatron.bridge.utils.gdn_utils.probe_cudnn_gdn_stack_issues", side_effect=lambda: [])
+    @patch("megatron.bridge.utils.gdn_utils.warn_rank_0")
+    def test_te219_without_fp8_or_fp4_is_silent(self, mock_warn, mock_probe, mock_version):
+        validate_cudnn_gdn_stack(SimpleNamespace(gdn_kernel_backend="transformer_engine", fp8=None, fp4=None))
+        mock_version.assert_not_called()
+        mock_warn.assert_not_called()
+
+    @patch("megatron.bridge.utils.gdn_utils.get_distribution_version", return_value="2.20.2+6ea2a74a")
+    @patch("megatron.bridge.utils.gdn_utils.probe_cudnn_gdn_stack_issues", side_effect=lambda: [])
+    @patch("megatron.bridge.utils.gdn_utils.warn_rank_0")
+    def test_fp8_with_a_fixed_te_is_silent(self, mock_warn, mock_probe, mock_version):
+        """The FP8-CS and MXFP8 recipes on a complete stack with Transformer Engine 2.20.2 do not warn."""
+        validate_cudnn_gdn_stack(SimpleNamespace(gdn_kernel_backend="transformer_engine", fp8="hybrid"))
+        mock_version.assert_called_once_with("transformer-engine")
+        mock_warn.assert_not_called()
+
+    @patch("megatron.bridge.utils.gdn_utils.get_distribution_version", return_value="2.20.2+6ea2a74a")
+    @patch("megatron.bridge.utils.gdn_utils.probe_cudnn_gdn_stack_issues", side_effect=lambda: ["GAP"])
+    @patch("megatron.bridge.utils.gdn_utils.warn_rank_0")
+    def test_fp8_asks_for_the_fixed_te_with_other_gaps(self, mock_warn, mock_probe, mock_version):
+        """With FP8 set, the install hint asks for the Transformer Engine that runs GatedDeltaNet under FP8."""
+        validate_cudnn_gdn_stack(SimpleNamespace(gdn_kernel_backend="transformer_engine", fp8="e4m3"))
+        message = mock_warn.call_args[0][0]
+        assert (
+            f"environment: GAP. Install transformer-engine>={_version_str(TRANSFORMER_ENGINE_GDN_FP8_VERSION)},"
+            in message
+        )
+        assert "raises under FP8 autocast" not in message
 
     @staticmethod
     def _require_frost_frontend() -> None:

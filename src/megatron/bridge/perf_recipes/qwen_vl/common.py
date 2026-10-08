@@ -135,8 +135,8 @@ def _select_gdn_kernel_backend(cfg: ConfigContainer, backend: Literal["transform
     cuTile engine, which takes 86% longer than FLA at the 35B shape. Transformer Engine 2.19 also raises under the FP8
     autocast that the FP8-CS and MXFP8 recipes enable unless Megatron-Core turns it off around the GDN call, which
     #7583 does not; 2.20.2 and later ignore FP8 autocast in GDN. ``ConfigContainer.validate`` warns about missing or
-    too-old packages (it cannot see the FP8 case) instead of this helper switching backends, so a recipe builds the
-    same config in every environment. Compare against FLA with ``model.gdn_kernel_backend=fla``.
+    too-old packages, and about Transformer Engine 2.19 with FP8 or FP4, instead of this helper switching backends, so
+    a recipe builds the same config in every environment. Compare against FLA with ``model.gdn_kernel_backend=fla``.
 
     Assigning an unknown field on the model config does not raise: on a Megatron-Core without the field it would
     create an unused attribute and leave the recipe looking enabled while running FLA, so the assignment is
