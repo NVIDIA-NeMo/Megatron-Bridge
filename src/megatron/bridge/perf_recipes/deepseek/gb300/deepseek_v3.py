@@ -458,6 +458,13 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_impl = "none"
 
+    # Use TransformerEngine's RNG tracker rather than Megatron's. Both must be set: rng.* drives
+    # initialize_rng_tracker(), model.* is what the model config carries. TE's tracker is what
+    # TE modules already expect in reset_parameters(), and unlike Megatron's it does not compare
+    # CPU RNG state on every fork exit -- which this recipe triggers once per materialized module
+    # under init_model_with_meta_device.
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
     cfg.ddp.megatron_fsdp_version = 2
     return cfg
 
