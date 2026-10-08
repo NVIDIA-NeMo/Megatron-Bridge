@@ -369,7 +369,7 @@ def _apply_deepseek_v3_64gpu_gb300_fp8mx_perf_overrides(cfg: ConfigContainer) ->
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+    # cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
     # Recompute stays off, matching the 256-GPU recipe. core_attn offloading is deliberately
     # kept, where the 256-GPU recipe clears offload_modules entirely: the expert data-parallel
@@ -511,7 +511,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+    # cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
     # Run the attention activations neither recomputed nor offloaded, to establish whether the
     # model fits without either. recompute_granularity/recompute_modules are set explicitly
