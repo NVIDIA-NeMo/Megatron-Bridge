@@ -43,6 +43,11 @@ from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config,
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
 )
+from megatron.bridge.perf_recipes.qwen_vl.vr200.qwen35_vl import (
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+)
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -340,3 +345,31 @@ def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.Mon
 
     assert config.model.cuda_graph_impl == "none"
     assert cuda_graph_module_names(config.model) == []
+
+
+@pytest.mark.parametrize(
+    "recipe_fn",
+    [
+        qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+    ],
+)
+def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
+    recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The VR200 aliases inherit EP from GB300 but restate the HybridEP env inline.
+
+    HybridEP asserts that the EP group size is divisible by
+    ``NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN``, and the launcher only re-derives
+    that env when a CLI override changes EP, so the two must stay in sync here.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert config.model.moe_flex_dispatcher_backend == "hybridep"
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == config.model.expert_model_parallel_size

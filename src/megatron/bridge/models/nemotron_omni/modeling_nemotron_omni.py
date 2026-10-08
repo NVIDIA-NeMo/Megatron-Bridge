@@ -135,6 +135,34 @@ def _pad_patch_grid_to_even(
     return grid.reshape(1, padded_height * padded_width, -1), padded_height, padded_width
 
 
+def _postprocess_radio_embeddings(
+    encoded: torch.Tensor,
+    imgs_sizes: torch.Tensor,
+    *,
+    patch_dim: int,
+    class_tokens: int,
+    pad_patch_grid: bool = False,
+) -> torch.Tensor:
+    """Remove per-image class tokens and pixel-shuffle dynamic RADIO patch grids.
+
+    Context-parallel shards may contain odd-sized placeholder grids, which
+    require padding before pixel shuffle. Unsharded inputs retain strict grid
+    validation.
+    """
+    sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
+    patch_counts = [(height // patch_dim) * (width // patch_dim) for height, width in sizes]
+    chunks = torch.split(encoded.squeeze(0), [count + class_tokens for count in patch_counts], dim=0)
+    shuffled = []
+    for chunk, (height, width) in zip(chunks, sizes):
+        features = chunk[class_tokens:].unsqueeze(0)
+        grid_height = height // patch_dim
+        grid_width = width // patch_dim
+        if pad_patch_grid:
+            features, grid_height, grid_width = _pad_patch_grid_to_even(features, height=grid_height, width=grid_width)
+        shuffled.append(_pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0))
+    return torch.cat(shuffled, dim=0)
+
+
 def _project_multimodal_embeddings(
     projection: torch.nn.Module,
     embeddings: torch.Tensor,
@@ -155,6 +183,120 @@ def _project_multimodal_embeddings(
 
     projected = projection(flat_embeddings)[:num_embeddings]
     return projected.reshape(*input_shape, projected.shape[-1])
+
+
+def patchify_dynamic_images(images: torch.Tensor, imgs_sizes: torch.Tensor, *, patch_dim: int) -> torch.Tensor:
+    """Convert padded processor pixels to RADIO's packed patch representation.
+
+    Accepts ``[num_images, channels, padded_height, padded_width]`` pixels and
+    returns ``[1, total_patches, channels * patch_dim**2]``. Already-patchified
+    inputs (``[total_patches, C*P*P]`` or ``[1, total_patches, C*P*P]``) pass
+    through unchanged.
+    """
+
+    patch_features = 3 * patch_dim * patch_dim
+
+    if images.ndim == 2 and images.shape[-1] == patch_features:
+        return images.unsqueeze(0)
+    if images.ndim == 3 and images.shape[0] == 1:
+        if images.shape[-1] != patch_features:
+            raise ValueError(
+                f"Patchified RADIO input has the wrong feature width: expected {patch_features}, got {images.shape[-1]}."
+            )
+        return images
+    if images.ndim != 4:
+        raise ValueError(
+            "Dynamic-resolution RADIO input must be padded pixels [N,C,H,W] "
+            "or packed patches [1,total_patches,C*P*P]; "
+            f"got shape {tuple(images.shape)}."
+        )
+    if images.shape[0] != imgs_sizes.shape[0]:
+        raise ValueError(f"Received {images.shape[0]} images but {imgs_sizes.shape[0]} image sizes.")
+
+    patches = []
+    for image, size in zip(images, imgs_sizes):
+        height, width = (int(value) for value in size.tolist())
+        if height % patch_dim or width % patch_dim:
+            raise ValueError(f"Image size {(height, width)} is not divisible by patch_dim={patch_dim}.")
+        image = image[:, :height, :width]
+        channels = image.shape[0]
+        rows = height // patch_dim
+        columns = width // patch_dim
+        image_patches = (
+            image.reshape(channels, rows, patch_dim, columns, patch_dim)
+            .permute(1, 3, 0, 2, 4)
+            .reshape(rows * columns, channels * patch_dim * patch_dim)
+        )
+        patches.append(image_patches)
+    return torch.cat(patches, dim=0).unsqueeze(0).contiguous()
+
+
+class NemotronOmniMimoRadioEncoder(RADIOViTModel):
+    """RADIO encoder returning one pixel-shuffled row per Nemotron image token.
+
+    Output is ``[num_image_tokens, 4 * hidden_size]``: the matching
+    ``MultimodalProjector`` input projection maps it to the language hidden size.
+    """
+
+    def forward(  # type: ignore[override]
+        self,
+        pixel_values: Optional[torch.Tensor] = None,
+        imgs_sizes: Optional[torch.Tensor] = None,
+        num_frames: Optional[torch.Tensor] = None,
+        vision_packed_seq_params: Optional[PackedSeqParams] = None,
+        *,
+        images: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Encode dynamic-resolution images (or temporal tubelets) into projected-ready rows.
+
+        Args:
+            pixel_values: Padded pixels ``[N, C, H, W]`` or packed patches
+                ``[1, total_patches, C*P*P]``.
+            imgs_sizes: Per-image ``(height, width)`` after resize, ``[N, 2]``.
+            num_frames: Frames per media item; required when the encoder has a
+                temporal patch dimension greater than one.
+            vision_packed_seq_params: Optional THD boundaries; derived from
+                ``imgs_sizes`` when omitted.
+            images: Alias for ``pixel_values``.
+            attention_mask: Unused; accepted for encoder-interface compatibility.
+        """
+        del attention_mask
+        if pixel_values is None:
+            pixel_values = images
+        if pixel_values is None:
+            raise ValueError("NemotronOmniMimoRadioEncoder requires pixel_values.")
+        if imgs_sizes is None or imgs_sizes.numel() == 0:
+            raise ValueError("NemotronOmniMimoRadioEncoder requires imgs_sizes for dynamic-resolution RADIO.")
+
+        parameter = next(self.parameters())
+        pixel_values = pixel_values.to(device=parameter.device, dtype=parameter.dtype)
+        imgs_sizes = imgs_sizes.to(device=parameter.device)
+        patches = patchify_dynamic_images(pixel_values, imgs_sizes, patch_dim=self.patch_dim)
+        if vision_packed_seq_params is None:
+            vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes, self.patch_dim)
+
+        use_temporal = getattr(self, "temporal_patch_dim", 1) > 1
+        if use_temporal and num_frames is None:
+            raise ValueError("num_frames is required by the configured temporal RADIO encoder.")
+
+        vision_output = super().forward(
+            patches,
+            imgs_sizes=imgs_sizes,
+            packed_seq_params=vision_packed_seq_params,
+            num_frames=num_frames,
+        )
+        if use_temporal:
+            encoded, imgs_sizes, _ = vision_output
+        else:
+            encoded = vision_output
+
+        return _postprocess_radio_embeddings(
+            encoded,
+            imgs_sizes,
+            patch_dim=self.patch_dim,
+            class_tokens=self.class_token_len if getattr(self, "add_class_token", False) else 0,
+        ).contiguous()
 
 
 class NemotronOmniModel(MegatronModule):
@@ -504,30 +646,15 @@ class NemotronOmniModel(MegatronModule):
                 encoded, imgs_sizes, _ = vision_output
             else:
                 encoded = vision_output
-            sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
-            class_tokens = (
-                self.vision_model.class_token_len if getattr(self.vision_model, "add_class_token", False) else 0
+            encoded = _postprocess_radio_embeddings(
+                encoded,
+                imgs_sizes,
+                patch_dim=self.patch_dim,
+                class_tokens=self.vision_model.class_token_len
+                if getattr(self.vision_model, "add_class_token", False)
+                else 0,
+                pad_patch_grid=shard_vision,
             )
-            patch_counts = [(height // self.patch_dim) * (width // self.patch_dim) for height, width in sizes]
-            chunks = torch.split(
-                encoded.squeeze(0),
-                [patch_count + class_tokens for patch_count in patch_counts],
-                dim=0,
-            )
-            chunks = [chunk[class_tokens:] for chunk in chunks]
-            shuffled = []
-            for chunk, (height, width) in zip(chunks, sizes):
-                grid_height = height // self.patch_dim
-                grid_width = width // self.patch_dim
-                features = chunk.unsqueeze(0)
-                if shard_vision:
-                    features, grid_height, grid_width = _pad_patch_grid_to_even(
-                        features, height=grid_height, width=grid_width
-                    )
-                shuffled.append(
-                    _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
-                )
-            encoded = torch.cat(shuffled, dim=0)
 
             if shard_vision:
                 # Project before the gather so the projector stays sharded, then
@@ -601,48 +728,7 @@ class NemotronOmniModel(MegatronModule):
         accepted for Bridge/SFT callers.
         """
 
-        patch_features = 3 * self.patch_dim * self.patch_dim
-
-        if images.ndim == 2 and images.shape[-1] == patch_features:
-            return images.unsqueeze(0)
-        if images.ndim == 3 and images.shape[0] == 1:
-            if images.shape[-1] != patch_features:
-                raise ValueError(
-                    "Patchified RADIO input has the wrong feature width: "
-                    f"expected {patch_features}, got {images.shape[-1]}."
-                )
-            return images
-        if images.ndim != 4:
-            raise ValueError(
-                "Dynamic-resolution RADIO input must be padded pixels [N,C,H,W] "
-                "or packed patches [1,total_patches,C*P*P]; "
-                f"got shape {tuple(images.shape)}."
-            )
-        if images.shape[0] != imgs_sizes.shape[0]:
-            raise ValueError(f"Received {images.shape[0]} images but {imgs_sizes.shape[0]} image sizes.")
-
-        patches = []
-        for image, size in zip(images, imgs_sizes):
-            height, width = (int(value) for value in size.tolist())
-            if height % self.patch_dim or width % self.patch_dim:
-                raise ValueError(f"Image size {(height, width)} is not divisible by patch_dim={self.patch_dim}.")
-            image = image[:, :height, :width]
-            channels = image.shape[0]
-            rows = height // self.patch_dim
-            columns = width // self.patch_dim
-            image_patches = (
-                image.reshape(
-                    channels,
-                    rows,
-                    self.patch_dim,
-                    columns,
-                    self.patch_dim,
-                )
-                .permute(1, 3, 0, 2, 4)
-                .reshape(rows * columns, channels * self.patch_dim * self.patch_dim)
-            )
-            patches.append(image_patches)
-        return torch.cat(patches, dim=0).unsqueeze(0).contiguous()
+        return patchify_dynamic_images(images, imgs_sizes, patch_dim=self.patch_dim)
 
     @staticmethod
     def _select_sequence(tensor: Optional[torch.Tensor], index: torch.Tensor, *, dim: int) -> Optional[torch.Tensor]:

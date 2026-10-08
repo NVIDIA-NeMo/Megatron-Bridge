@@ -51,7 +51,6 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("gpt-oss-120b", "pretrain_performance", "GB300"): (4096, 1280, 64),
     ("gpt-oss-20b", "pretrain", "H100"): (4096, 512, 16),
     ("gpt-oss-20b", "sft", "H100"): (2048, 128, 8),
-    ("gpt-oss-20b", "sft_long_context", "H100"): (32768, 32, 8),
     ("gpt-oss-20b", "peft", "H100"): (2048, 128, 1),
     ("gpt-oss-20b", "checkpoint_resume", "H100"): (4096, 512, 16),
     ("moonlight-16b-a3b", "pretrain", "H100"): (4096, 1024, 16),
@@ -59,7 +58,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("moonlight-16b-a3b", "sft_long_context", "H100"): (8192, 128, 8),
     ("moonlight-16b-a3b", "peft", "H100"): (2048, 32, 4),
     ("moonlight-16b-a3b", "checkpoint_resume", "H100"): (4096, 1024, 16),
-    ("muse-glimmer-30b", "pretrain", "H100"): (4096, 2, 32),
+    ("muse-glimmer-30b", "pretrain", "H100"): (4096, 1024, 32),
     ("muse-glimmer-30b", "sft", "H100"): (4096, 8, 32),
     ("muse-glimmer-30b", "sft_long_context", "H100"): (8192, 8, 32),
     ("muse-glimmer-30b", "peft", "H100"): (8192, 8, 8),
@@ -137,7 +136,9 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
     ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
+    ("qwen3.8-27b", "checkpoint_resume", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "pretrain_performance", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "pretrain_performance", "H100"): (4096, 32, 16),
 }
 
 

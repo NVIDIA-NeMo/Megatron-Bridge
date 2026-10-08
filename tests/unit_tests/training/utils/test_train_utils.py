@@ -4568,3 +4568,26 @@ class TestZeroTokenIterationTracking:
     def test_mocked_state_does_not_masquerade_as_a_counter(self):
         # getattr on a MagicMock returns a child mock rather than None.
         assert _consume_zero_token_iters(mock.MagicMock()) == 0
+
+
+class TestStepLossScales:
+    """MoE/MTP logging scales under the packing scheduler's per-step microbatch count."""
+
+    def test_step_num_microbatches_prefers_the_scheduled_count(self, monkeypatch):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=5)) == 5
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=None)) == 16
+        assert train_utils._step_num_microbatches(SimpleNamespace()) == 16
+
+    @pytest.mark.parametrize(("per_token_tracker", "expected"), [(True, 1.0), (False, 0.25)])
+    def test_mtp_loss_scale_follows_the_tracker_mode(self, monkeypatch, per_token_tracker, expected):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        tracker = {"calculate_per_token_loss": True} if per_token_tracker else {}
+        monkeypatch.setattr(train_utils.MTPLossLoggingHelper, "tracker", tracker)
+        state = SimpleNamespace(global_batch_packing_num_microbatches=4)
+        # A per-token tracker already holds sum(loss) / sum(tokens) for the step.
+        assert train_utils._mtp_loss_scale(state) == expected

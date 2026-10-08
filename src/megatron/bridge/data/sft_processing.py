@@ -195,7 +195,11 @@ def normalize_sft_example(
     canonical_pair = _canonical_prompt_completion_values(row)
     conversation_keys = set(_CONVERSATION_KEYS)
     if isinstance(preprocessing, PromptCompletionSFTPreprocessingConfig):
-        conversation_keys -= {preprocessing.prompt_column, preprocessing.completion_column}
+        conversation_keys -= {
+            key
+            for key in (preprocessing.prompt_column, preprocessing.completion_column)
+            if isinstance(row.get(key), str)
+        }
     has_conversation = any(row.get(key) is not None for key in conversation_keys)
 
     if canonical_pair is not None and has_conversation:

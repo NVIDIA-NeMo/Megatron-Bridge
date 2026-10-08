@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from megatron.core.transformer import ModuleSpec
+from torch import nn
 
 from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelBuilder, HybridModelConfig
@@ -114,8 +115,8 @@ class TestMambaModelBuilderCompatibility:
         assert isinstance(restored, MambaModelConfig)
         assert restored.get_builder_cls() is MambaModelBuilder
 
-    def test_serialized_mamba_config_omits_deprecated_mamba_stack_spec(self):
-        module_spec = ModuleSpec(module=object)
+    def test_serialized_mamba_config_preserves_hybrid_spec_without_deprecated_alias(self) -> None:
+        module_spec = ModuleSpec(module=nn.Identity, params={"unused_argument": 7})
         config = MambaModelConfig(
             transformer=_make_transformer(),
             vocab_size=32000,
@@ -124,8 +125,15 @@ class TestMambaModelBuilderCompatibility:
 
         data = config.as_dict()
 
-        assert "hybrid_stack_spec" not in data
+        assert data["hybrid_stack_spec"]["_target_"] == "megatron.core.transformer.spec_utils.ModuleSpec"
         assert "mamba_stack_spec" not in data
+
+        restored = ModelConfig.from_dict(data)
+
+        assert isinstance(restored.hybrid_stack_spec, ModuleSpec)
+        assert restored.hybrid_stack_spec.module is nn.Identity
+        assert restored.hybrid_stack_spec.params == module_spec.params
+        assert restored.mamba_stack_spec is None
 
     def test_old_serialized_mamba_stack_spec_converts_to_hybrid_stack_spec(self):
         module_spec = ModuleSpec(module=object)
