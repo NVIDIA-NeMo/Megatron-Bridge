@@ -309,7 +309,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -424,7 +424,7 @@ def _apply_deepseek_v3_64gpu_gb300_fp8mx_perf_overrides(cfg: ConfigContainer) ->
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
 
 
