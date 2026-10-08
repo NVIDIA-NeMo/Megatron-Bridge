@@ -545,15 +545,20 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
-    # Run the attention activations neither recomputed nor offloaded, to establish whether the
-    # model fits without either. recompute_granularity/recompute_modules are set explicitly
-    # rather than left out: deepseek/common.py sets "selective" recompute, so omitting these
-    # would silently re-enable it. offload_modules is cleared for the same reason.
+    # Offload the attention activations rather than recomputing them. recompute_granularity and
+    # recompute_modules are set explicitly rather than left out, because deepseek/common.py sets
+    # "selective" recompute and omitting them would silently re-enable it; offload_modules is
+    # likewise stated here rather than inherited.
+    #
+    # fine_grained_activation_offloading is a different mechanism from cpu_offloading, which
+    # matters here: moe_paged_stash rejects cpu_offloading outright, and separately rejects
+    # offload_modules containing expert_fc1/moe_act/fused_group_mlp. core_attn avoids both.
+    # The offloading buys the headroom that moe_expert_rank_capacity_factor=5 above needs.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = []
-    cfg.model.offload_modules = []
-    # cfg.model.fine_grained_activation_offloading = True
-    # cfg.model.cpu_offloading_num_layers = 95
+    cfg.model.offload_modules = ["core_attn"]
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.cpu_offloading_num_layers = 95
     cfg.model.high_priority_a2a_comm_stream = True
     cfg.model.fused_residual_rmsnorm = True
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
