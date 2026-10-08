@@ -1,20 +1,20 @@
 # GLM-5 Family Examples
 
-Examples for the GLM-5 family — [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`), [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) (`zai-org/GLM-5.1`), and [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) (`zai-org/GLM-5.2`) — large sparse MoE models with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
+Examples for the GLM-5 family — [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`), [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) (`zai-org/GLM-5.1`), [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) (`zai-org/GLM-5.2`), and [GLM-5.3](https://huggingface.co/zai-org/GLM-5.3) (`zai-org/GLM-5.3`) — large sparse MoE models with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
 
-All three checkpoints use the `GlmMoeDsaForCausalLM` architecture and are handled by `GLM5Bridge`. GLM-5 and GLM-5.1 have identical MoE / MLA / DSA dimensions, while GLM-5.2 adds IndexShare-style DSA index reuse settings.
+All four checkpoints use the `GlmMoeDsaForCausalLM` architecture and are handled by `GLM5Bridge`. GLM-5 and GLM-5.1 have identical MoE / MLA / DSA dimensions, while GLM-5.2/5.3 share IndexShare-style DSA index reuse settings. GLM-5.3 uses an FP8 checkpoint and a different chat template; see the [compatibility guide](../../../../docs/models/glm/glm5-2.md#glm-52--glm-53-compatibility) for import/export requirements and validation limits. Full-model GLM-5.3 verification is pending; the GLM-5.2 card and recipes remain specific to GLM-5.2. GLM-5.3-Flash is a separate architecture.
 
 | Property | Value |
 |---|---|
-| HF model IDs | `zai-org/GLM-5`, `zai-org/GLM-5.1` |
+| HF model IDs | `zai-org/GLM-5`, `zai-org/GLM-5.1`, `zai-org/GLM-5.2`, `zai-org/GLM-5.3` |
 | Architecture | MoE + MLA + DSA (`GlmMoeDsaForCausalLM`) |
 | Layers | 78 transformer (first 3 dense, rest MoE) |
 | Routed experts | 256, top-8 per token |
 | Shared experts | 1 per MoE layer |
-| Total params | ~800B+ (BF16) |
-| Active params | ~60B per token |
+| GLM-5.2/5.3 checkpoint parameters | ~753B, including the appended MTP layer |
+| GLM-5.2/5.3 checkpoint precision | BF16 / block-scaled FP8, respectively; router biases remain FP32 |
 
-**Requirements:** `transformers >= 5.2.0`, `fast-hadamard-transform` (CUDA extension, required by DSA)
+**Requirements:** the repository's supported Transformers version, `fast-hadamard-transform` (CUDA extension, required by DSA)
 
 ## Hardware Requirements
 
@@ -76,9 +76,9 @@ Pass any cluster-specific `srun` flags after the wrapper, for example
 `--srun-arg=--mpi=pmix`. The wrapper forwards them to `convert.sh`; no
 NVIDIA-specific `srun` flags are enabled by default.
 
-## MCore Patches Required
+## Megatron-Core baseline
 
-The DSA attention variant requires two patches to `megatron/core/models/gpt/experimental_attention_variant_module_specs.py`:
-
-1. **DSA dispatch:** Add `elif config.experimental_attention_variant == "dsa"` to `get_experimental_attention_variant_module_spec` to call `get_dsa_module_spec_for_backend`.
-2. **MLA metainfo:** Add `metainfo={"fuse_input_layernorm": False}` to the `MLASelfAttention` `ModuleSpec` in `get_dsa_module_spec_for_backend`.
+Use the repository's pinned Megatron-Core revision. It includes DSA dispatch and
+the MLA `fuse_input_layernorm=False` specification; these no longer require
+manual patches. Remaining production qualification is tracked in
+[#5476](https://github.com/NVIDIA-NeMo/Megatron-Bridge/issues/5476).

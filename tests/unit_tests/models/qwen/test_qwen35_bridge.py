@@ -153,7 +153,7 @@ class TestQwen35DenseBridge:
         assert result.linear_value_head_dim == mock_qwen3_5_config.linear_value_head_dim
         assert result.linear_num_key_heads == mock_qwen3_5_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_5_config.linear_num_value_heads
-        assert result.experimental_attention_variant == "gated_delta_net"
+        assert result.experimental_attention_variant == "gdn"
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MLP configuration mapping."""
@@ -504,7 +504,7 @@ class TestQwen35MoEBridge:
         assert result.linear_value_head_dim == mock_qwen3_5_moe_config.linear_value_head_dim
         assert result.linear_num_key_heads == mock_qwen3_5_moe_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_5_moe_config.linear_num_value_heads
-        assert result.experimental_attention_variant == "gated_delta_net"
+        assert result.experimental_attention_variant == "gdn"
 
     def test_provider_bridge_moe_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test MoE-specific configuration mapping."""
@@ -682,6 +682,33 @@ class TestQwen35MoEBridge:
         # Should have final layernorm
         assert "mtp.norm.weight" in hf_params
         assert "mtp.layers.0.final_layernorm.weight" in megatron_params
+
+    def test_mapping_registry_mtp_layer_spellings(self):
+        """Every MTP sub-layer mapping is registered under both Megatron-Core spellings."""
+        bridge = Qwen35MoEBridge()
+
+        registry = bridge.mapping_registry()
+
+        megatron_params = [mapping.megatron_param for mapping in registry.mappings]
+        for layer_attr in ("mtp_model_layer", "transformer_layer"):
+            for suffix in (
+                "mlp.router.weight",
+                "pre_mlp_layernorm.weight",
+                "self_attention.linear_qkv.layer_norm_weight",
+                "self_attention.q_layernorm.weight",
+                "self_attention.k_layernorm.weight",
+                "self_attention.linear_proj.weight",
+                "mlp.shared_experts.gate_weight",
+            ):
+                assert f"mtp.layers.0.{layer_attr}.{suffix}" in megatron_params
+            for suffix in (
+                "self_attention.linear_qkv.weight",
+                "mlp.shared_experts.linear_fc1.weight",
+                "mlp.shared_experts.linear_fc2.weight",
+                "mlp.experts.linear_fc1.weight*",
+                "mlp.experts.linear_fc2.weight*",
+            ):
+                assert f"mtp.layers.*.{layer_attr}.{suffix}" in megatron_params
 
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""

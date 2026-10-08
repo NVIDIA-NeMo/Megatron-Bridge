@@ -25,6 +25,7 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/training/test_finetune_dora.py \
   tests/functional_tests/test_groups/training/test_finetune_lora.py \
+  tests/functional_tests/test_groups/training/test_global_batch_packing.py \
   tests/functional_tests/test_groups/training/test_seqpacking_cp_example.py \
   tests/functional_tests/test_groups/training/test_sft.py \
   tests/functional_tests/test_groups/training/test_vlm_direct_hf_masking.py

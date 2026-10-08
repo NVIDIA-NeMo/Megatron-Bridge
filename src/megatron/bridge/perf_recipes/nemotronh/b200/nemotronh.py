@@ -96,7 +96,7 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -143,7 +143,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -151,7 +151,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
     cfg.model.recompute_granularity = "selective"
 
     cfg.model.cuda_graph_impl = "none"
@@ -191,7 +191,7 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
@@ -199,7 +199,8 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
-    cfg.model.recompute_modules = None
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.recompute_granularity = "selective"
     cfg.model.quant_recipe = load_quantization_recipe(str(_TE_QUANT_CFG_PATH))
 
     cfg.model.cuda_graph_impl = "transformer_engine"

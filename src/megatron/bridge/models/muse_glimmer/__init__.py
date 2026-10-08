@@ -14,11 +14,9 @@
 
 """Muse Glimmer model, builder, configuration, and bridge exports."""
 
-from transformers import (
-    MuseGlimmerConfig,
-    MuseGlimmerTextConfig,
-    MuseGlimmerVisionConfig,
-)
+import logging
+
+import transformers
 
 from megatron.bridge.models.muse_glimmer.modeling_muse_glimmer import MuseGlimmerModel
 from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import MuseGlimmerBridge
@@ -30,14 +28,35 @@ from megatron.bridge.models.muse_glimmer.muse_glimmer_config import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 __all__ = [
     "MuseGlimmerBridge",
-    "MuseGlimmerConfig",
     "MuseGlimmerModel",
     "MuseGlimmerModelBuilder",
     "MuseGlimmerModelConfig",
-    "MuseGlimmerTextConfig",
     "MuseGlimmerTransformerConfig",
-    "MuseGlimmerVisionConfig",
     "MuseGlimmerVisionModelConfig",
 ]
+
+try:
+    from transformers import (
+        MuseGlimmerConfig,
+        MuseGlimmerTextConfig,
+        MuseGlimmerVisionConfig,
+    )
+except ImportError:
+    logger.warning(
+        "Muse Glimmer Hugging Face classes are unavailable with transformers %s. "
+        "Upgrade transformers to a version that supports Muse Glimmer.",
+        transformers.__version__,
+    )
+else:
+    __all__.extend(
+        [
+            "MuseGlimmerConfig",
+            "MuseGlimmerTextConfig",
+            "MuseGlimmerVisionConfig",
+        ]
+    )

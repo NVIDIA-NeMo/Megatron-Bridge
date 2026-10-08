@@ -66,6 +66,8 @@ override-dependencies = [
     "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
     "packaging>=25.0",
     "nvidia-pytriton>=0.7.0",
+    "flashinfer-python==0.6.18.post1",          # Match flashinfer-cubin installed by MBridge
+    "nvidia-cudnn-frontend==1.29.0",            # Match MBridge; override PyPI MCore's older dev pin
     "urllib3>=2.0.7",
     "sh==2.2.4",
     "jupyter-core==5.8.1",
@@ -79,7 +81,7 @@ override-dependencies = [
     "apache-tvm-ffi==0.1.11",
     "levenshtein; sys_platform == 'never'",
     "pytest==8.4.2",
-    "wandb>=0.25.0",
+    "wandb==0.29.0",
     "nvidia-lm-eval==25.11.1",
     "lilcom==1.8.1",
     "onnx==1.21.0",                             # TRT-LLM hard dependency
@@ -103,7 +105,6 @@ override-dependencies = [
     "nvidia-cusparse-cu12; sys_platform == 'never'",
     "nvidia-cusparselt-cu12; sys_platform == 'never'",
     "nvidia-nccl-cu12; sys_platform == 'never'",
-    "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'", # Rely on system site packages install
     "tensorrt-llm; sys_platform == 'never'",
     "tensorrt; sys_platform == 'never'",
@@ -114,6 +115,7 @@ override-dependencies = [
     "nvidia-modelopt; sys_platform == 'never'",          # Installed by MBridge
     "setuptools>=82.0.0",                                # Required by vllm
     "open-clip-torch>=3.2.0",                            # Required by megatron-bridge, override nemo-toolkit's 2.24.0 constraint
+    "hydra-core>=1.3.4,<1.4",                           # CVE-2026-68508
     "lilcom!=1.8.2",
     "cryptography>=48.0.1,<49",                          # Required by megatron-bridge, override nemo-run's constraint
     "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container

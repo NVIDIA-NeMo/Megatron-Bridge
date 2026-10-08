@@ -97,6 +97,33 @@ def test_import_preserves_model_id_and_forwards_revision():
     ]
 
 
+def test_text_only_export_resolves_only_config_snapshot(tmp_path, monkeypatch):
+    module, calls = _load_cpu_backend()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "run_config.yaml").touch()
+    resolved = []
+    monkeypatch.setattr(
+        module,
+        "resolve_hf_model_revision",
+        lambda *args, **kwargs: resolved.append((args, kwargs)) or "config-snapshot",
+    )
+    module.export_checkpoint(
+        hf_model="hf/model",
+        hf_revision="pinned",
+        megatron_path=str(checkpoint),
+        hf_path="/hf-export",
+        show_progress=False,
+        strict=True,
+        trust_remote_code=True,
+        overwrite=False,
+        text_only=True,
+    )
+    assert resolved == [(("hf/model", "pinned"), {"config_only": True})]
+    loading = next(call for call in calls if call[0] == "from_hf_pretrained")
+    assert loading[2]["text_only"] is True
+
+
 def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path):
     module, calls = _load_cpu_backend()
     checkpoint = tmp_path / "checkpoint"

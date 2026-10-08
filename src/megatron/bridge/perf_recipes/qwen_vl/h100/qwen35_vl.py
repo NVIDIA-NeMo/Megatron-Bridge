@@ -29,7 +29,7 @@ from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
     _apply_qwen35_vl_35b_a3b_16gpu_h100_execution_config,
 )
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config as _library_pretrain_config,
+    qwen35_vl_35b_a3b_pretrain_config as _library_pretrain_config,
 )
 
 

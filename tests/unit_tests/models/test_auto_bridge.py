@@ -1205,6 +1205,21 @@ class TestAutoBridge:
                 mock_hf_model, mock_megatron_model, allowed_mismatched_params=None
             )
 
+    def test_iter_local_hf_params_uses_public_auto_bridge_api(self):
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock(spec=PretrainedConfig)
+        mock_model_bridge = Mock()
+        tasks = [Mock()]
+        expected_params = [Mock()]
+        mock_model_bridge.iter_local_hf_params.return_value = iter(expected_params)
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            params = list(bridge.iter_local_hf_params(tasks))
+
+        assert params == expected_params
+        mock_model_bridge.iter_local_hf_params.assert_called_once_with(tasks)
+
     def test_load_hf_weights_with_allowed_mismatched_params(self):
         """Test loading weights with allowed_mismatched_params."""
         # Setup mocks
@@ -1374,6 +1389,35 @@ class TestAutoBridge:
 
         assert (tmp_path / "postprocessed").is_file()
         mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_postprocesses_complete_weights(self, _mock_dist_avail, _mock_dist_init, tmp_path):
+        """Model bridges can close derived buffers after weight export."""
+
+        class _WeightPostprocessor:
+            SUPPORTS_HF_PRETRAINED_EXPORT = True
+            ADDITIONAL_FILE_PATTERNS = None
+
+            def postprocess_hf_export_weights(self, path):
+                assert (path / "weights-saved").is_file()
+                (path / "weights-postprocessed").touch()
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.save_artifacts.side_effect = lambda path, **_: Path(path).mkdir(parents=True, exist_ok=True)
+        model_bridge = _WeightPostprocessor()
+        bridge = AutoBridge(mock_hf_model)
+
+        def _save_weights(_model, path, *_args, **_kwargs):
+            (Path(path) / "weights-saved").touch()
+
+        with (
+            patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=model_bridge)),
+            patch.object(AutoBridge, "save_hf_weights", side_effect=_save_weights),
+        ):
+            bridge.save_hf_pretrained([Mock()], tmp_path)
+
+        assert (tmp_path / "weights-postprocessed").is_file()
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
@@ -1671,6 +1715,56 @@ class TestAutoBridge:
                         weight_dtype=None,
                     )
 
+    def test_export_with_megatron_names_rejects_streamers_without_the_flag(self):
+        """A bridge whose streaming overrides lack ``with_megatron_names`` fails before streaming."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config.auto_map = None
+
+        class LegacyStreamer:
+            def stream_weights_megatron_to_hf(
+                self,
+                megatron_model,
+                hf_pretrained,
+                cpu=True,
+                show_progress=True,
+                conversion_tasks=None,
+                merge_adapter_weights=True,
+                weight_dtype=None,
+            ):
+                return iter([("weight1", torch.ones(1))])
+
+            def stream_adapter_weights_megatron_to_hf(
+                self,
+                megatron_model,
+                cpu=True,
+                show_progress=True,
+                exclude_adapter_base_prefixes=None,
+                expand_shared_outer=False,
+                stack_3d_moe=False,
+            ):
+                return iter([("lora_A.weight", torch.ones(1))])
+
+        with patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop:
+            mock_model_bridge_prop.return_value = LegacyStreamer()
+
+            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+                mock_transformers.LlamaForCausalLM = Mock()
+                bridge = AutoBridge(mock_hf_model)
+
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as mock_prop:
+                    mock_prop.return_value = mock_transformers.LlamaForCausalLM
+                    # The default export keeps working through the legacy overrides.
+                    assert [name for name, _ in bridge.export_hf_weights([object()], cpu=True)] == ["weight1"]
+                    assert [name for name, _ in bridge.export_adapter_weights([object()])] == ["lora_A.weight"]
+                    # The up-front check names the method and the flag instead of surfacing
+                    # Python's generic unexpected-keyword error from inside the generator.
+                    with pytest.raises(TypeError, match="stream_weights_megatron_to_hf does not accept"):
+                        bridge.export_hf_weights([object()], cpu=True, with_megatron_names=True)
+                    with pytest.raises(TypeError, match="stream_adapter_weights_megatron_to_hf does not accept"):
+                        bridge.export_adapter_weights([object()], with_megatron_names=True)
+
     def test_export_adapter_weights(self):
         """Test exporting adapter weights from Megatron to HF format."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
@@ -1705,6 +1799,7 @@ class TestAutoBridge:
                         show_progress=False,
                         exclude_adapter_base_prefixes=None,
                         expand_shared_outer=False,
+                        stack_3d_moe=False,
                     )
 
     def test_export_adapter_weights_forwards_expand_shared_outer(self):
@@ -2334,6 +2429,23 @@ class TestAutoBridge:
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
                 # Should use the latest iteration (iter_0000020)
+                assert mock_load_megatron_model.call_args.args[0].endswith("iter_0000020")
+
+    def test_load_megatron_model_root_uses_published_tracker(self, tmp_path):
+        """A checkpoint root must not select an unpublished newer iteration directory."""
+        durable_checkpoint = tmp_path / "iter_0000010"
+        durable_checkpoint.mkdir()
+        (durable_checkpoint / "run_config.yaml").touch()
+        (tmp_path / "iter_0000020").mkdir()
+        (tmp_path / "latest_checkpointed_iteration.txt").write_text("10")
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.trust_remote_code = False
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model", return_value=[]) as load_model:
+            bridge.load_megatron_model(tmp_path)
+
+        assert load_model.call_args.args[0] == str(durable_checkpoint)
 
     def test_load_megatron_model_with_mp_overrides(self):
         """Test load_megatron_model with model-parallel overrides argument."""
@@ -2386,6 +2498,29 @@ class TestAutoBridge:
                         # Check other expected arguments
                         assert call_args.args[0] == "checkpoint_path"  # path argument
                         assert "skip_temp_dist_context" in call_args.kwargs
+
+    def test_load_megatron_model_honors_cpu_initialization(self):
+        """Test explicit CPU initialization reaches the checkpoint loader."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = Mock(spec=PreTrainedCausalLM)
+        bridge.trust_remote_code = False
+
+        with (
+            patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model,
+            patch("torch.distributed.is_initialized", return_value=False),
+            patch.object(Path, "iterdir", return_value=[]),
+        ):
+            mock_model = Mock()
+            mock_load_megatron_model.return_value = mock_model
+
+            result = bridge.load_megatron_model(
+                "checkpoint_path",
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+            )
+
+        assert result == [mock_model]
+        assert mock_load_megatron_model.call_args.kwargs["use_cpu_init"] is True
 
     def test_load_megatron_model_registers_prefix_when_trust_remote_code(self):
         """Test that load_megatron_model registers transformers_modules prefix when trust_remote_code=True."""

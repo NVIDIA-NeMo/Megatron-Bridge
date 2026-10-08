@@ -87,7 +87,6 @@ def save_megatron_mimo_model(
             # Async NVRx + block below: the sync mcore path deadlocks on
             # disjoint per-component state dicts at multi-billion-param scale.
             async_save=True,
-            async_strategy="nvrx",
             use_persistent_ckpt_worker=False,
             save=str(path),
             save_optim=False,
@@ -129,7 +128,9 @@ def save_megatron_mimo_model(
         _restore_derived_spec_fields(provider, _saved_derived)
 
     if tokenizer_config is not None:
-        from megatron.bridge.training.checkpointing import get_checkpoint_name, save_tokenizer_assets
+        from megatron.training.checkpointing import save_tokenizer_assets
+
+        from megatron.bridge.training.checkpointing import get_checkpoint_name
         from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
         tokenizer = build_tokenizer(tokenizer_config)

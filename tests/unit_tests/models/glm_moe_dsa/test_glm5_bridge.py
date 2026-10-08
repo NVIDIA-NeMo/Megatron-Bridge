@@ -20,12 +20,57 @@ import pytest
 import torch
 from transformers import GlmMoeDsaConfig
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_glm53_config_loads_through_shared_bridge() -> None:
+    """GLM-5.3 architecture settings resolve through the existing GLM bridge."""
+    config = GlmMoeDsaConfig(
+        architectures=["GlmMoeDsaForCausalLM"],
+        num_hidden_layers=78,
+        hidden_size=6144,
+        num_attention_heads=64,
+        n_routed_experts=256,
+        num_experts_per_tok=8,
+        first_k_dense_replace=3,
+        q_lora_rank=2048,
+        kv_lora_rank=512,
+        qk_head_dim=256,
+        qk_nope_head_dim=192,
+        qk_rope_head_dim=64,
+        v_head_dim=256,
+        rope_parameters={"rope_theta": 8_000_000, "rope_type": "default"},
+        index_topk_freq=4,
+        index_skip_topk_offset=3,
+        indexer_rope_interleave=True,
+        num_nextn_predict_layers=1,
+    )
+    auto_bridge = AutoBridge.from_hf_config(config)
+    provider = auto_bridge.to_megatron_provider(load_weights=False)
+
+    assert isinstance(auto_bridge._model_bridge, GLM5Bridge)
+    assert provider.num_layers == 78
+    assert provider.hidden_size == 6144
+    assert provider.num_attention_heads == 64
+    assert provider.num_moe_experts == 256
+    assert provider.moe_router_topk == 8
+    assert provider.q_lora_rank == 2048
+    assert provider.kv_lora_rank == 512
+    assert provider.qk_head_dim == 192
+    assert provider.qk_pos_emb_head_dim == 64
+    assert provider.v_head_dim == 256
+    assert provider.rotary_base == 8_000_000
+    assert provider.dsa_indexer_topk_freq == 4
+    assert provider.dsa_indexer_skip_topk_offset == 3
+    assert provider.moe_layer_freq == [0] * 3 + [1] * 75
+    assert provider.mtp_num_layers is None
+
 
 _DSA_INDEXER_SUFFIXES = {
     "linear_wq_b.weight": "wq_b.weight",
@@ -111,6 +156,25 @@ def test_megatron_config_export_keeps_generic_moe_aliases() -> None:
     assert mapped_config["n_routed_experts"] == 8
 
 
+def test_megatron_config_export_does_not_emit_training_seq_length_as_max_position_embeddings() -> None:
+    """``seq_length`` is the fine-tuning context, not the model's context capability; leave it to the reference."""
+    mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=8, seq_length=8192))
+
+    assert "max_position_embeddings" not in mapped_config
+    assert mapped_config["num_experts"] == 8
+
+
+def test_megatron_config_export_reference_supplies_max_position_embeddings() -> None:
+    """With a reference config, the exported value must be the reference one (1048576 for GLM-5.2), not seq_length."""
+    from megatron.bridge.models.conversion.utils import conform_config_to_reference
+
+    mapped_config = GLM5Bridge.megatron_to_hf_config(SimpleNamespace(num_moe_experts=256, seq_length=8192))
+    reference = {"max_position_embeddings": 1048576, "n_routed_experts": 256}
+    conformed = conform_config_to_reference(mapped_config, reference)
+
+    assert conformed["max_position_embeddings"] == 1048576
+
+
 @pytest.mark.parametrize(
     ("config_overrides", "expected_topk_freq", "expected_skip_topk_offset"),
     [
@@ -142,6 +206,14 @@ def test_provider_bridge_maps_dsa_architecture_from_hf_config(
     assert provider.dsa_indexer_use_sparse_loss is True
 
 
+def test_provider_bridge_keeps_pretrained_router_bias_fixed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Retain pretrained expert bias without updating it during fine-tuning."""
+    provider = _provider_from_hf_config(monkeypatch)
+
+    assert provider.moe_router_enable_expert_bias is True
+    assert provider.moe_router_bias_update_rate == 0
+
+
 def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatch) -> None:
     """GLM-5 avoids the affected grouped all-to-all transport path."""
     provider = _provider_from_hf_config(monkeypatch)
@@ -150,6 +222,83 @@ def test_provider_bridge_uses_hybridep_dispatcher(monkeypatch: pytest.MonkeyPatc
     assert provider.moe_flex_dispatcher_backend == "hybridep"
     assert provider.moe_flex_dispatcher_num_sms == 16
     assert provider.moe_permute_fusion_into_hybridep is False
+
+
+def _glm52_layout_bridge() -> GLM5Bridge:
+    """Create a GLM-5 bridge with GLM-5.2's DSA top-k sharing settings."""
+    bridge = GLM5Bridge()
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=78, index_topk_freq=4, index_skip_topk_offset=3)
+    return bridge
+
+
+def _validate_glm52_layout(layout: list[list[str]], *, pp: int, mtp_layers: int) -> None:
+    """Run Megatron-Core's layout and DSA index-share checks for every GLM-5.2 pipeline stage."""
+    from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+        _validate_dsa_index_share_pipeline_split,
+    )
+    from megatron.core.transformer.enums import LayerType
+    from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+
+    parsed_layout = PipelineParallelLayerLayout(layout, pipeline_model_parallel_size=pp)
+    parsed_layout.validate_layer_layout(num_layers=78, mtp_num_layers=mtp_layers or None)
+    config = SimpleNamespace(
+        experimental_attention_variant="dsa", dsa_indexer_topk_freq=4, dsa_indexer_skip_topk_offset=3
+    )
+    for pp_rank in range(pp):
+        _validate_dsa_index_share_pipeline_split(
+            config, parsed_layout.get_layer_id_list(layer_type=LayerType.decoder, vp_stage=0, pp_rank=pp_rank)
+        )
+
+
+@pytest.mark.parametrize("mtp_layers", [0, 1])
+@pytest.mark.parametrize("pp", [2, 3, 4, 6, 8, 11, 13, 19, 21])
+def test_generate_pipeline_layout_keeps_dsa_sharing_groups_on_one_stage(pp: int, mtp_layers: int) -> None:
+    """Every generated GLM-5.2 stage starts on a layer that computes its own DSA top-k indices."""
+    layout = _glm52_layout_bridge().generate_pipeline_layout(78, pp, mtp_layers)
+
+    assert len(layout) == pp
+    assert layout[0][0] == "embedding"
+    assert layout[-1][-1] == "loss"
+    assert layout[-1].count("mtp") == mtp_layers
+    _validate_glm52_layout(layout, pp=pp, mtp_layers=mtp_layers)
+
+
+def test_uniform_pp13_split_breaks_glm52_dsa_sharing() -> None:
+    """The DSA check rejects the uniform PP13 split that the generated layout replaces."""
+    uniform_layout = [["decoder"] * 6 for _ in range(13)]
+    uniform_layout[0].insert(0, "embedding")
+    uniform_layout[-1].append("loss")
+
+    with pytest.raises(RuntimeError, match="local layer 13 reuses top-k indices from computing layer 11"):
+        _validate_glm52_layout(uniform_layout, pp=13, mtp_layers=0)
+
+
+def test_generate_pipeline_layout_minimizes_largest_pp13_stage() -> None:
+    """The GLM-5.2 card's PP13 conversion gets the smallest achievable largest stage."""
+    layout = _glm52_layout_bridge().generate_pipeline_layout(78, 13, 0)
+
+    assert [stage.count("decoder") for stage in layout] == [6, 8, 8, 8, 8, 8, 8, 4, 4, 4, 4, 4, 4]
+
+
+@pytest.mark.parametrize(
+    "hf_config",
+    [
+        SimpleNamespace(num_hidden_layers=78),
+        SimpleNamespace(num_hidden_layers=78, index_topk_freq=1, index_skip_topk_offset=0),
+    ],
+)
+def test_generate_pipeline_layout_keeps_default_split_without_dsa_sharing(hf_config: SimpleNamespace) -> None:
+    """GLM-5 checkpoints that compute DSA top-k indices in every layer keep the default split."""
+    bridge = GLM5Bridge()
+    bridge.hf_config = hf_config
+
+    assert bridge.generate_pipeline_layout(78, 2, 0) is None
+
+
+def test_generate_pipeline_layout_rejects_more_stages_than_sharing_groups() -> None:
+    """A stage cannot start inside a DSA top-k sharing group."""
+    with pytest.raises(ValueError, match="PP=22 exceeds the 21 DSA top-k sharing groups"):
+        _glm52_layout_bridge().generate_pipeline_layout(78, 22, 0)
 
 
 def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridge: GLM5Bridge) -> None:
@@ -314,3 +463,26 @@ def test_compound_fp8_checkpoint_weights_use_their_own_scales() -> None:
 
     torch.testing.assert_close(converted["gate"], torch.tensor([[1.0]], dtype=torch.bfloat16))
     torch.testing.assert_close(converted["up"], torch.tensor([[1.0]], dtype=torch.bfloat16))
+
+
+@pytest.mark.parametrize(
+    "weight_name",
+    [
+        "model.layers.0.self_attn.indexer.wq_b.weight",
+        "model.layers.0.self_attn.kv_a_proj_with_mqa.weight",
+        "model.layers.3.mlp.experts.0.down_proj.weight",
+    ],
+)
+def test_glm53_fp8_import_uses_separate_128_by_128_block_scales(weight_name: str) -> None:
+    """Exercise multiple published-format blocks, including a partial final block."""
+    weight = torch.ones((192, 256), dtype=torch.float32).to(torch.float8_e4m3fn)
+    scales = torch.tensor([[0.25, 0.5], [1.0, 2.0]], dtype=torch.float32)
+    converted = GLM5Bridge().maybe_modify_loaded_hf_weight(
+        weight_name, {weight_name: weight, weight_name + "_scale_inv": scales}
+    )
+    expected = torch.empty((192, 256), dtype=torch.bfloat16)
+    expected[:128, :128] = 0.25
+    expected[:128, 128:] = 0.5
+    expected[128:, :128] = 1.0
+    expected[128:, 128:] = 2.0
+    torch.testing.assert_close(converted, expected, rtol=0, atol=0)

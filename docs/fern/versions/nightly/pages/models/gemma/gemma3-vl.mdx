@@ -6,7 +6,7 @@ Gemma 3 VL models support multimodal tasks including image captioning, visual qu
 
 Gemma family models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -124,8 +124,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exact-revision BF16 CPU import loaded all 781 Bridge tensors and saved one reloadable DCP shard. An independent Gloo reload mapped all 883 source tensors with exact keys, shapes, dtypes, and torch.equal values, including all 437 legacy vision-tower keys.
-</p>
+        <p>Exact-revision BF16 CPU import loaded all 781 Bridge tensors and saved one reloadable DCP shard. An independent Gloo reload mapped all 883 source tensors with exact keys, shapes, dtypes, and torch.equal values, including all 437 legacy vision-tower keys.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-hf-to-megatron-gpu" tabindex="-1">
@@ -150,8 +149,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exact-revision distributed BF16 import completed with TP2/PP2/EP1/ETP1. All 781 Bridge tensors loaded and all four ranks saved a reloadable checkpoint with the vision tower and multimodal projector on the owning pipeline stage. Independent TP2/PP2 and Gloo reloads retained FusedAttention and matched all 883 mapped tensors exactly.
-</p>
+        <p>Exact-revision distributed BF16 import completed with TP2/PP2/EP1/ETP1. All 781 Bridge tensors loaded and all four ranks saved a reloadable checkpoint with the vision tower and multimodal projector on the owning pipeline stage. Independent TP2/PP2 and Gloo reloads retained FusedAttention and matched all 883 mapped tensors exactly.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-megatron-to-hf-cpu" tabindex="-1">
@@ -176,8 +174,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The exact-revision CPU export exits successfully and writes all 883 tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16 source with no dtype conversions, including all 437 legacy vision_tower.vision_model.* tensors. Transformers strictly reloads the output natively as Gemma3ForConditionalGeneration with all 884 state entries and no loading discrepancies.
-</p>
+        <p>The exact-revision CPU export exits successfully and writes all 883 tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes. Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16 source with no dtype conversions, including all 437 legacy vision_tower.vision_model.* tensors. Transformers strictly reloads the output natively as Gemma3ForConditionalGeneration with all 884 state entries and no loading discrepancies.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-megatron-to-hf-gpu" tabindex="-1">
@@ -202,8 +199,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Transformers exposes 884 logical state entries after reload because tied lm_head.weight aliases the single stored language_model.model.embed_tokens.weight tensor; no extra tensor is serialized. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.
-</p>
+        <p>TP2/PP2 distributed export completed without a missing PP owner. Source and export contained the same 883 keys with exact shapes, dtypes, and torch.equal values, including all 437 legacy vision_tower.vision_model.* tensors. Transformers exposes 884 logical state entries after reload because tied lm_head.weight aliases the single stored language_model.model.embed_tokens.weight tensor; no extra tensor is serialized. Native Gemma3ForConditionalGeneration strict reload reported no missing, unexpected, mismatched, or errored tensors.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-pretrain-all" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-pretrain-all" tabindex="-1">
@@ -247,8 +243,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Megatron Bridge does not provide a public Gemma 3 VL 4B pretraining recipe. The available exact-model recipes cover SFT and PEFT, so a supported pretraining command and checkpoint contract cannot be stated.
-</p>
+        <p>Megatron Bridge does not provide a public Gemma 3 VL 4B pretraining recipe. The available exact-model recipes cover SFT and PEFT, so a supported pretraining command and checkpoint contract cannot be stated.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-sft-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-sft-h100" tabindex="-1">
@@ -293,13 +288,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs=&#123;revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;&#125;&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Pending exact-revision CORD-v2 full-SFT verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final full-model checkpoint.
-</p>
+        <p>Pending exact-revision CORD-v2 full-SFT verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final full-model checkpoint.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-sft-long-context-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-sft-long-context-h100" tabindex="-1">
@@ -343,8 +337,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Gemma 3 VL image-bidirectional attention uses dense local/global additive biases with FusedAttention. The provider rejects context parallelism greater than one, and the public recipes disable in-batch THD packing, so there is no supported exact-model long-context SFT contract.
-</p>
+        <p>Gemma 3 VL image-bidirectional attention uses dense local/global additive biases with FusedAttention. The provider rejects context parallelism greater than one, and the public recipes disable in-batch THD packing, so there is no supported exact-model long-context SFT contract.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-peft-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-peft-h100" tabindex="-1">
@@ -389,16 +382,15 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_peft_config --mode lora --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs={revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;}&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/peft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_peft_config --mode lora --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs=&#123;revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;&#125;&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/peft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Pending exact-revision CORD-v2 LoRA verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable adapter checkpoint.
-</p>
+        <p>Pending exact-revision CORD-v2 LoRA verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable adapter checkpoint.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}
