@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from collections.abc import Iterable
@@ -34,6 +35,24 @@ DTYPE_MAP = {
     "float16": torch.float16,
     "float32": torch.float32,
 }
+
+
+def _configure_distributed_env() -> None:
+    """Derive the PyTorch distributed environment for direct Slurm launches."""
+    if os.environ.get("WORLD_SIZE") is not None or os.environ.get("SLURM_NTASKS") is None:
+        return
+
+    from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
+
+    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+    os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
+    master_addr = resolve_slurm_master_addr()
+    master_port = resolve_slurm_master_port()
+    if master_addr is not None:
+        os.environ["MASTER_ADDR"] = master_addr
+    if master_port is not None:
+        os.environ["MASTER_PORT"] = str(master_port)
 
 
 def _validate_hf_revision_target(hf_model: str, hf_revision: str | None) -> None:

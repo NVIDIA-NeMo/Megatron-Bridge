@@ -50,15 +50,11 @@ def _load_cpu_backend():
         "megatron.bridge.models.decorators": types.ModuleType("megatron.bridge.models.decorators"),
         "megatron.bridge.models.hf_pretrained": types.ModuleType("megatron.bridge.models.hf_pretrained"),
         "megatron.bridge.models.hf_pretrained.utils": types.ModuleType("megatron.bridge.models.hf_pretrained.utils"),
-        "megatron.bridge.utils": types.ModuleType("megatron.bridge.utils"),
-        "megatron.bridge.utils.slurm_utils": types.ModuleType("megatron.bridge.utils.slurm_utils"),
         "utils": conversion_utils,
     }
     modules["megatron.bridge"].AutoBridge = AutoBridge
     modules["megatron.bridge.models.decorators"].torchrun_main = lambda function: function
     modules["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = lambda **kwargs: kwargs["trust_remote_code"]
-    modules["megatron.bridge.utils.slurm_utils"].resolve_slurm_master_addr = lambda: "master-host"
-    modules["megatron.bridge.utils.slurm_utils"].resolve_slurm_master_port = lambda: 29501
     modules["utils"].parse_dtype = lambda value: f"dtype:{value}"
     modules["utils"].prepare_output_directory = lambda *args, **kwargs: calls.append(
         ("prepare_output_directory", args, kwargs)
@@ -112,6 +108,13 @@ def test_import_preserves_model_id_and_forwards_revision():
 
 def test_distributed_import_initializes_gloo_without_selecting_cuda(monkeypatch):
     module, _ = _load_cpu_backend()
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.bridge.utils.slurm_utils",
+        types.SimpleNamespace(
+            resolve_slurm_master_addr=lambda: "master-host", resolve_slurm_master_port=lambda: 29501
+        ),
+    )
     for name in ("WORLD_SIZE", "RANK", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("SLURM_NTASKS", "8")

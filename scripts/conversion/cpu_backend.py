@@ -21,6 +21,7 @@ from pathlib import Path
 
 import torch
 from utils import (
+    _configure_distributed_env,
     _configure_model_config,
     _configure_model_provider,
     _hf_tokenizer_kwargs,
@@ -35,7 +36,6 @@ from utils import (
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
 
 
 logger = logging.getLogger(__name__)
@@ -47,16 +47,7 @@ def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
         if torch.distributed.get_backend() != "gloo":
             raise RuntimeError("Distributed CPU import requires a Gloo process group.")
         return
-    if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is not None:
-        os.environ["RANK"] = os.environ["SLURM_PROCID"]
-        os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
-        os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
-        master_addr = resolve_slurm_master_addr()
-        master_port = resolve_slurm_master_port()
-        if master_addr is not None:
-            os.environ["MASTER_ADDR"] = master_addr
-        if master_port is not None:
-            os.environ["MASTER_PORT"] = str(master_port)
+    _configure_distributed_env()
     if os.environ.get("WORLD_SIZE") is None:
         raise RuntimeError("Distributed CPU import must be launched through torchrun or Slurm.")
     kwargs: dict[str, object] = {"backend": "gloo"}

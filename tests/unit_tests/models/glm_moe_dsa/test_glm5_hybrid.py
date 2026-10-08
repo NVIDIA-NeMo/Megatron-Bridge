@@ -16,14 +16,17 @@
 
 import datetime
 import os
-from types import SimpleNamespace
 
 import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.models.hybrid.hybrid_block import HybridStack
+from megatron.core.models.hybrid.hybrid_layer_allocation import validate_segment_layers
+from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer import TransformerConfig
 from megatron.core.utils import WrappedTensor
 
 from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import _FORWARD_STATE, _forward_glm_stack
@@ -32,27 +35,27 @@ from megatron.bridge.models.glm_moe_dsa.glm5_hybrid import _FORWARD_STATE, _forw
 pytestmark = pytest.mark.unit
 
 
-def _fake_hybrid_stack_forward(self, hidden_states, attention_mask, **kwargs):
-    """Mimic the parts of Core's HybridStack.forward the runner depends on."""
-    assert _FORWARD_STATE.get() is not None, "stage forward must run inside GLM forward state"
-    if not self.pre_process:
-        # See HybridStack.set_input_tensor(): non-first stages ignore the argument.
-        hidden_states = self.input_tensor
-    if isinstance(hidden_states, WrappedTensor):
-        hidden_states = hidden_states.unwrap()
-    self.calls.append(hidden_states)
-    return hidden_states * self.weight
-
-
-def _stack(*, pre_process, recompute, device):
-    return SimpleNamespace(
-        pre_process=pre_process,
-        input_tensor=None,
-        training=True,
-        config=SimpleNamespace(recompute_granularity=recompute, distribute_saved_activations=False),
-        weight=torch.nn.Parameter(torch.full((4,), 3.0, device=device)),
-        calls=[],
+def _stack(*, pre_process, recompute):
+    config = TransformerConfig(
+        num_layers=1,
+        hidden_size=16,
+        num_attention_heads=2,
+        ffn_hidden_size=32,
+        hidden_dropout=0.0,
+        attention_dropout=0.0,
+        use_cpu_initialization=True,
+        recompute_granularity=recompute,
+        recompute_method="uniform" if recompute == "full" else None,
+        recompute_num_layers=1 if recompute == "full" else None,
     )
+    return HybridStack(
+        config=config,
+        submodules=hybrid_stack_spec.submodules,
+        layer_config_list=validate_segment_layers("-", config),
+        pre_process=pre_process,
+        post_layer_norm=False,
+        pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+    ).cuda()
 
 
 class TestForwardGlmStackPipelineInput:
@@ -79,65 +82,65 @@ class TestForwardGlmStackPipelineInput:
         if dist.is_initialized():
             dist.destroy_process_group()
 
-    @pytest.fixture(autouse=True)
-    def _patch_core_forward(self, monkeypatch):
-        monkeypatch.setattr(HybridStack, "forward", _fake_hybrid_stack_forward)
+    @pytest.mark.parametrize(
+        "pre_process,recompute",
+        [(False, "full"), (True, "full"), (False, None)],
+        ids=["pipeline-recompute", "first-stage-wrapped-recompute", "pipeline-no-recompute"],
+    )
+    def test_forward_and_gradients_match_native_stack(self, pre_process, recompute):
+        stack = _stack(pre_process=pre_process, recompute=recompute)
+        reference = _stack(pre_process=pre_process, recompute=None)
+        reference.load_state_dict(stack.state_dict())
+        stage_input = torch.randn(4, 2, 16, device="cuda", requires_grad=True)
+        reference_input = stage_input.detach().clone().requires_grad_()
+        if not pre_process:
+            stack.set_input_tensor(stage_input)
+            reference.set_input_tensor(reference_input)
+        original_config = stack.config
+        calls = []
 
-    def test_non_first_stage_full_recompute_keeps_autograd_graph(self):
-        stack = _stack(pre_process=False, recompute="full", device="cuda")
-        stage_input = torch.arange(4.0, device="cuda", requires_grad=True)
-        stack.input_tensor = stage_input  # what the pipeline schedule injects
+        def record_layer_input(module, args, kwargs):
+            state = _FORWARD_STATE.get()
+            assert state is not None, "stage forward must run inside GLM forward state"
+            calls.append((kwargs["hidden_states"], state))
 
-        # The schedule passes ``None`` as the forward argument on this stage.
-        out = _forward_glm_stack(stack, None, None)
-
+        stack.layers[0].register_forward_pre_hook(record_layer_input, with_kwargs=True)
+        out = _forward_glm_stack(stack, WrappedTensor(stage_input) if pre_process else None, None)
+        expected = reference(reference_input if pre_process else None, attention_mask=None)
+        torch.testing.assert_close(out, expected)
         assert out.requires_grad, "checkpointed stage output lost its autograd graph"
+        assert _FORWARD_STATE.get() is None
         out.sum().backward()
+        expected.sum().backward()
         assert stage_input.grad is not None
-        torch.testing.assert_close(stage_input.grad, torch.full((4,), 3.0, device="cuda"))
-        torch.testing.assert_close(stack.weight.grad, stage_input.detach())
-        # Checkpoint forward + one replay in backward, both consuming a stage input.
-        assert len(stack.calls) == 2
-        # The replay must consume the checkpoint's detached copy, not the live input.
-        assert stack.calls[1] is not stage_input
-        assert stack.input_tensor is stage_input, "input_tensor must be restored after the stage"
+        torch.testing.assert_close(stage_input.grad, reference_input.grad)
+        for parameter, reference_parameter in zip(stack.parameters(), reference.parameters(), strict=True):
+            assert parameter.grad is not None
+            torch.testing.assert_close(parameter.grad, reference_parameter.grad)
+
+        assert len(calls) == (2 if recompute == "full" else 1)
+        assert calls[0][0] is stage_input
+        if recompute == "full":
+            # Native HybridStack must read the checkpoint's detached replay input.
+            assert calls[1][0] is not stage_input
+            assert calls[1][1] is not calls[0][1]
+        assert stack.input_tensor is (None if pre_process else stage_input)
+        assert stack.config is original_config
+        assert stack.config.recompute_granularity == recompute
         assert _FORWARD_STATE.get() is None
 
-    def test_first_stage_full_recompute_unwraps_and_backprops(self):
-        stack = _stack(pre_process=True, recompute="full", device="cuda")
-        stage_input = torch.arange(4.0, device="cuda", requires_grad=True)
+    def test_run_restores_input_tensor_when_stage_forward_raises(self):
+        stack = _stack(pre_process=False, recompute=None)
+        stage_input = torch.ones(4, 2, 16, device="cuda")
+        stack.set_input_tensor(stage_input)
 
-        out = _forward_glm_stack(stack, WrappedTensor(stage_input), None)
+        def boom(module, args, kwargs):
+            assert _FORWARD_STATE.get() is not None
+            raise RuntimeError("boom")
 
-        assert out.requires_grad
-        out.sum().backward()
-        torch.testing.assert_close(stage_input.grad, torch.full((4,), 3.0, device="cuda"))
-        assert stack.input_tensor is None
+        stack.layers[0].register_forward_pre_hook(boom, with_kwargs=True)
+        with pytest.raises(RuntimeError, match="boom"):
+            _forward_glm_stack(stack, None, None)
 
-    def test_non_first_stage_without_recompute_uses_input_tensor(self):
-        stack = _stack(pre_process=False, recompute=None, device="cuda")
-        stage_input = torch.arange(4.0, device="cuda", requires_grad=True)
-        stack.input_tensor = stage_input
-
-        out = _forward_glm_stack(stack, None, None)
-
-        torch.testing.assert_close(out, stage_input * 3.0)
-        assert stack.calls == [stage_input]
         assert stack.input_tensor is stage_input
-
-
-def test_run_restores_input_tensor_when_stage_forward_raises(monkeypatch):
-    def boom(self, hidden_states, attention_mask, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(HybridStack, "forward", boom)
-    stack = _stack(pre_process=False, recompute=None, device="cpu")
-    stack.training = False
-    stage_input = torch.ones(4)
-    stack.input_tensor = stage_input
-
-    with pytest.raises(RuntimeError, match="boom"):
-        _forward_glm_stack(stack, None, None)
-
-    assert stack.input_tensor is stage_input
-    assert _FORWARD_STATE.get() is None
+        assert _FORWARD_STATE.get() is None
