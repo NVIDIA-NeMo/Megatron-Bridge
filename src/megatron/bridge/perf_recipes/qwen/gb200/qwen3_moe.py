@@ -310,8 +310,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
 
-    # Full-iteration graphs remain benchmark-only because they alter natural-routing auxiliary loss.
+    # Preserve the tuned HybridEP, paged-stash, and overlap settings from the benchmark helper.
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    # Full-iteration capture OOMs at the optimizer step on newer stacks (issue #6307).
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.model.recompute_modules = []
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
