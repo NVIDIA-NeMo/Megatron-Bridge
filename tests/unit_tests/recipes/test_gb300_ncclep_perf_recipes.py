@@ -57,6 +57,12 @@ _GB300_NCCLEP_RECIPES = (
     ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
 )
 
+# Ultra NVL8 recipes use the NCCL EP stack.
+_ULTRA_NVL8_RECIPES = (
+    ("nemotronh.b200.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config"),
+    ("nemotronh.b300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config"),
+)
+
 # VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
 _VRNVL72_NCCLEP_RECIPES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
@@ -92,7 +98,7 @@ _VRNVL72_ALIASES = (
 # every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
     module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
-    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_VRNVL72_ALIASES)})
+    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_ULTRA_NVL8_RECIPES, *_VRNVL72_ALIASES)})
 }
 
 
@@ -106,9 +112,9 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("module_name", "factory_name"), (*_GB300_NCCLEP_RECIPES, *_VRNVL72_NCCLEP_RECIPES), ids=lambda value: value
+    ("module_name", "factory_name"), (*_GB300_NCCLEP_RECIPES, *_ULTRA_NVL8_RECIPES, *_VRNVL72_NCCLEP_RECIPES), ids=lambda value: value
 )
-def test_gb300_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
+def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
@@ -163,3 +169,32 @@ def test_deepseek_v3_gb300_fp8mx_deterministic_is_base_plus_determinism_override
     expected_env = {name: value for name, value in base.env_vars.items() if name not in _NCCL_EP_ENV}
     expected_env.update({name: cfg.env_vars[name] for name in HYBRID_EP_ENV_NAMES})
     assert cfg.env_vars == {**expected_env, **DETERMINISM_ENV_VAR_DEFAULTS, **_SSM_DETERMINISM_ENV}
+
+
+@pytest.mark.parametrize(("module_name", "factory_name"), _ULTRA_NVL8_RECIPES, ids=lambda value: value)
+def test_ultra_nvl8_perf_recipes_use_full_fsdp(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    tp = 2 if ".b200." in module_name else 1
+    assert cfg.model.tensor_model_parallel_size == tp
+    assert cfg.model.sequence_parallel is (tp > 1)
+    assert cfg.model.expert_model_parallel_size == 64
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.seq_length == 8192
+    assert cfg.train.global_batch_size == 256
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
+    assert cfg.model.fine_grained_activation_offloading is True
+    assert cfg.model.offload_modules == ["fused_group_mlp"]
+    assert cfg.model.min_offloaded_tensor_size == (350_000_000 if tp == 2 else 500_000_000)
+    assert cfg.model.recompute_modules == ["moe_act"]
+    assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+
+    exports = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+    assert getattr(exports, factory_name) is getattr(_RECIPE_MODULES[module_name], factory_name)
