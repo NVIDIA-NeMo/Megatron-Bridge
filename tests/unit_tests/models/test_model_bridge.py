@@ -18,7 +18,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import PretrainedConfig
+from transformers import PretrainedConfig, Qwen2Config
 
 from megatron.bridge.models.conversion import model_bridge as model_bridge_module
 from megatron.bridge.models.conversion import modelopt_utils
@@ -1466,3 +1466,56 @@ def test_build_conversion_tasks_allows_explicit_hf_name_mismatch(monkeypatch):
     assert len(tasks) == 1
     assert tasks[0].global_param_name == "decoder.weight"
     assert tasks[0].megatron_module is None
+
+
+def _yarn_qwen2_config(rope_scaling):
+    return Qwen2Config(
+        hidden_size=64,
+        intermediate_size=128,
+        num_hidden_layers=2,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        max_position_embeddings=16384,
+        vocab_size=128,
+        rope_scaling=rope_scaling,
+    )
+
+
+def test_yarn_mapping_fills_hugging_face_defaults_for_omitted_keys():
+    """Omitted YaRN keys must not reach Megatron Core as None."""
+    config = _yarn_qwen2_config({"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 4096})
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["position_embedding_type"] == "yarn"
+    assert kwargs["yarn_rotary_scaling_factor"] == 4.0
+    assert kwargs["yarn_original_max_position_embeddings"] == 4096
+    assert kwargs["yarn_beta_fast"] == 32.0
+    assert kwargs["yarn_beta_slow"] == 1.0
+    assert kwargs["yarn_correction_range_round_to_int"] is True
+
+
+def test_yarn_mapping_preserves_explicit_keys():
+    config = _yarn_qwen2_config(
+        {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 4096,
+            "beta_fast": 16.0,
+            "beta_slow": 2.0,
+            "truncate": False,
+        }
+    )
+
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(config)
+
+    assert kwargs["yarn_beta_fast"] == 16.0
+    assert kwargs["yarn_beta_slow"] == 2.0
+    assert kwargs["yarn_correction_range_round_to_int"] is False
+
+
+def test_non_yarn_mapping_adds_no_yarn_defaults():
+    kwargs = DummyBridge().hf_config_to_provider_kwargs(_yarn_qwen2_config(None))
+
+    assert "position_embedding_type" not in kwargs
+    assert not any(key.startswith("yarn_") for key in kwargs)

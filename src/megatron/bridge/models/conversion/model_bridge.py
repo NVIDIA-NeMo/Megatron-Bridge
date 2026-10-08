@@ -626,6 +626,14 @@ class MegatronModelBridge(
         ("mscale_all_dim", "yarn_mscale_all_dim"),
     ]
 
+    # Hugging Face YaRN defaults (transformers' _compute_yarn_parameters) for keys a
+    # checkpoint omits: (megatron_param, default)
+    YARN_HF_DEFAULTS = [
+        ("yarn_beta_fast", 32.0),
+        ("yarn_beta_slow", 1.0),
+        ("yarn_correction_range_round_to_int", True),
+    ]
+
     # MLA rope scaling field mapping: (hf_rope_scaling_key, megatron_mla_param)
     # These are applied for MLA models (DeepSeek, Kimi, etc.) which use MLATransformerConfig
     # Uses direct field names without yarn_ prefix (e.g., mscale, rotary_scaling_factor)
@@ -735,6 +743,10 @@ class MegatronModelBridge(
                         provider_kwargs[megatron_key] = value
                 if "truncate" in rope_scaling:
                     provider_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                # Apply Hugging Face YaRN defaults for omitted keys. Megatron Core passes these
+                # fields to YarnRotaryEmbedding explicitly, so None would override its defaults.
+                for megatron_key, default in self.YARN_HF_DEFAULTS:
+                    provider_kwargs.setdefault(megatron_key, default)
         elif is_mla_provider:
             if rope_type not in (None, "default"):
                 logger.warning(
