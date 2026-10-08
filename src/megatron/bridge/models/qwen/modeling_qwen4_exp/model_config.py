@@ -21,7 +21,6 @@ from megatron.bridge.models.common.base import ModelConfig, ModelConfigOverrideM
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
-from megatron.bridge.utils.instantiate_utils import _resolve_target
 
 
 @dataclass
@@ -152,13 +151,6 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
             width = int(self.kv_channels * self.rotary_percent)
             if len(self.mrope_section) != 3 or sum(self.mrope_section) * 2 != width:
                 raise ValueError("mrope_section must partition the rotary head dimension into three axes.")
-
-    def get_builder_cls(self) -> type:
-        """Resolve the configured builder through Bridge's target allowlist."""
-        builder_cls = _resolve_target(self.builder, full_key="_builder_")
-        if not isinstance(builder_cls, type):
-            raise TypeError(f"Builder target '{self.builder}' did not resolve to a class.")
-        return builder_cls
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the config with a symbolic activation function."""

@@ -24,16 +24,12 @@ from megatron.bridge.models.hybrid.hybrid_builder import HybridModelBuilder
 from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.qwen.modeling_qwen4_exp.layer_specs import get_qwen4_exp_hybrid_stack_spec
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpHybridModel
-from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 from megatron.bridge.utils import fusions
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 class Qwen4ExpModelBuilder(HybridModelBuilder):
     """Build the Bridge-local blocks through the Core HybridModel API."""
-
-    def __init__(self, model_config: Qwen4ExpModelConfig) -> None:
-        super().__init__(model_config)
 
     def build_model(
         self,

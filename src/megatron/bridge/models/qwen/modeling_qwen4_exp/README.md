@@ -48,11 +48,20 @@ For a language-only view of a VLM checkpoint, pass `text_only=True` to
 `AutoBridge.from_hf_pretrained`. This filters vision weights and projects
 `model.language_model.*` to the standalone `model.*` namespace, retaining the
 root LM head; export produces a standalone text checkpoint. Native text
-checkpoints continue to use their existing namespace. The old provider import
-is an alias; construction uses Builder + Config. When selecting a different
+checkpoints continue to use their existing namespace. Construction uses only
+Builder + Config; there is no separate legacy provider. When selecting a different
 VLM checkpoint for text-only loading, construct a new `AutoBridge` with
 `text_only=True`; the builder's replacement `hf_path` argument does not project
 a VLM checkpoint.
+
+The same public entrypoint selects either composition:
+`AutoBridge.from_hf_pretrained(path, text_only=True)` builds the standalone
+`Qwen4ExpHybridModel`; `text_only=False` builds `Qwen4ExpVLModel`, whose
+`language_model` is that same `Qwen4ExpHybridModel`. The VLM builder extends the
+language builder and delegates decoder construction to it. QSA, GDN, MoE, gated
+residuals, PLE and the output mixer have one implementation shared by both modes.
+The VLM reuses the existing Qwen3-VL vision encoder, attention, multimodal RoPE,
+input-reorganization helpers and Qwen3.5-VL vision mappings.
 
 Loading a Qwen4-Exp HF model requires a Transformers release that includes that
 model. Model parity tests use Transformers 5.16.1 in an isolated environment;
@@ -78,7 +87,12 @@ an end-to-end performance improvement.
 The functional suite also includes a one-rank toy VLM/text-only import,
 forward/backward, and export smoke. It checks finite language, PLE, GDN, gated
 residual and vision gradients. The smoke uses the dense masked QSA reference
-backend, so it does not validate sparse-kernel performance.
+backend, so it does not validate sparse-kernel performance. It checks a
+cross-entropy backward pass for finite gradients in each listed group and at
+least one nonzero gradient in each group; it does not compare HF logits, loss or
+gradients. Exact export checks parameter conversion, not execution equivalence.
+The separate text-only parity test above does compare HF logits/loss and word
+embedding gradients; these two test results must be reported separately.
 
 The H100 and GB200 L2 launch scripts run these GPU cases with at most two ranks. They install Transformers 5.16.1 in a temporary reference
 environment and reuse the container's CUDA packages, leaving the project

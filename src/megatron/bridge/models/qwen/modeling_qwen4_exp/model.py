@@ -205,7 +205,3 @@ class Qwen4ExpHybridModel(HybridModel):
             if multimodal_rope:
                 self.rotary_pos_emb.position_ids = None
                 self.rotary_pos_emb.packed_seq_params = None
-
-
-# Import compatibility only; model construction and execution use HybridModel.
-Qwen4ExpGPTModel = Qwen4ExpHybridModel

@@ -14,6 +14,7 @@
 
 """VLM/text-only conversion and per-document QSA multimodal rotary contracts."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -23,12 +24,18 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from safetensors.torch import save_file
 from transformers import PretrainedConfig
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig
 from megatron.bridge.models.qwen.modeling_qwen4_exp.qsa import QSAIndexer
-from megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model import Qwen4ExpVLModel, Qwen4ExpVLModelConfig
+from megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model import (
+    Qwen4ExpVLModel,
+    Qwen4ExpVLModelBuilder,
+    Qwen4ExpVLModelConfig,
+)
 from megatron.bridge.models.qwen.qwen4_exp_bridge import PLENGramEmbeddingMapping, Qwen4ExpBridge, Qwen4ExpTextBridge
 from megatron.bridge.training.vlm_step import _filter_visual_kwargs_for_model
 from tests.unit_tests.models.qwen.test_qwen4_exp_bridge import _text_config_dict
@@ -274,3 +281,47 @@ def test_finalization_mirrors_authoritative_tie_setting_to_transformer(full_hf_c
     config.finalize()
     assert not config.transformer.share_embeddings_and_output_weights
     assert not bridge._share_embeddings_and_output_weights(config.transformer)
+
+
+@pytest.mark.parametrize("text_only", [False, True])
+def test_public_auto_bridge_flag_selects_shared_language_or_vlm_builder(full_hf_config, tmp_path, text_only):
+    config_dict = full_hf_config.to_dict()
+    config_dict["model_type"] = "qwen4_exp"
+    config_dict["text_config"]["model_type"] = "qwen4_exp_text"
+    (tmp_path / "config.json").write_text(json.dumps(config_dict))
+    save_file(
+        {
+            "model.language_model.embed_tokens.weight": torch.ones(2, 2),
+            "lm_head.weight": torch.ones(2, 2),
+            "model.visual.pos_embed.weight": torch.ones(2, 2),
+        },
+        str(tmp_path / "model.safetensors"),
+    )
+
+    bridge = AutoBridge.from_hf_pretrained(str(tmp_path), text_only=text_only)
+    config = bridge.get_model_config()
+    expected_config = Qwen4ExpModelConfig if text_only else Qwen4ExpVLModelConfig
+    expected_builder = Qwen4ExpModelBuilder if text_only else Qwen4ExpVLModelBuilder
+    assert type(config) is expected_config
+    assert config.get_builder_cls() is expected_builder
+    assert config.hf_model_text_only is text_only
+    keys = set(bridge.hf_pretrained.state.source.get_all_keys())
+    assert "lm_head.weight" in keys
+    assert ("model.visual.pos_embed.weight" in keys) is not text_only
+    assert ("model.embed_tokens.weight" if text_only else "model.language_model.embed_tokens.weight") in keys
+
+
+def test_vlm_builder_delegates_to_the_shared_language_builder(full_hf_config, monkeypatch):
+    config = Qwen4ExpBridge().hf_config_to_model_config(full_hf_config)
+    language_model = Mock()
+    build_language = Mock(return_value=language_model)
+    wrap_vision = Mock()
+    monkeypatch.setattr(Qwen4ExpModelBuilder, "build_model", build_language)
+    monkeypatch.setattr("megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model.Qwen4ExpVLModel", wrap_vision)
+    groups = Mock()
+
+    model = Qwen4ExpVLModelBuilder(config).build_model(groups)
+
+    build_language.assert_called_once_with(groups, None, None, None)
+    wrap_vision.assert_called_once_with(config, language_model, groups)
+    assert model is wrap_vision.return_value

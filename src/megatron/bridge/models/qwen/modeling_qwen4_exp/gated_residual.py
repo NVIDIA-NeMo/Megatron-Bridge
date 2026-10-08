@@ -196,7 +196,7 @@ class GatedResidualOutputMixer(GatedResidualHyperConnection):
     built with the Bridge-local Qwen4-Exp layer spec: it consumes the
     ``[s, b, n*C]`` streams and returns the ``[s, b, C]`` gated mean of their normalized values
     (``hyper_connection_mixer`` in the HF checkpoint). Core's generic mHC path remains
-    disabled; the local GPT model expands streams before the decoder so the learned
+    disabled; the local HybridModel expands streams before the decoder so the learned
     mixer receives every stream without Core's unweighted mean contraction.
 
     The ``(config, hidden_size, eps)`` signature matches the layer-norm builders used in block
