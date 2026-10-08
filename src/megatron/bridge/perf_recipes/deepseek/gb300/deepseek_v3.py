@@ -537,7 +537,10 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    # Back to 5. Lowering this to 1.5 tightened the dropless-MoE per-expert capacity enough to
+    # cost measurable throughput on this recipe, and 1.5 also sits below the >=2.0 that the
+    # paged stash expects.
+    cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
