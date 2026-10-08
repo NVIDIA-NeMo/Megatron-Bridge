@@ -68,6 +68,8 @@ navigation:
       path: ./nightly/pages/models/gemma/gemma3-vl.mdx
     - page: Gemma 4 VL (26B-A4B MoE)
       path: ./nightly/pages/models/gemma/gemma4-vl.mdx
+    - page: DiffusionGemma SFT
+      path: ./nightly/pages/models/gemma/diffusion-gemma.mdx
     section: Gemma
   - contents:
     - page: GLM 4.5
