@@ -27,6 +27,7 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.pipeline_parallel.schedules import forward_backward_pipelining_without_interleaving
 
+from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.checkpointing import CheckpointManager, DefaultCheckpointManager
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
@@ -307,10 +308,12 @@ def train_megatron_mimo(
     while train_state.step < train_config.train_iters:
         # Finalize any pending async saves (non-blocking). Placed at the top
         # of the loop so async saves get a full iteration to complete.
+        fault_tolerance.on_checkpointing_start(global_state)
         checkpoint_manager.finalize_async_saves(
             state=global_state,
             blocking=False,
         )
+        fault_tolerance.on_checkpointing_end(global_state=global_state, is_async_finalization=True)
 
         # Handle profiling
         nsys_ctx = handle_profiling_step(
@@ -326,6 +329,7 @@ def train_megatron_mimo(
         timers("iteration-time", log_level=0).start(barrier=False)
 
         # Run single training step
+        fault_tolerance.on_training_step_start(global_state)
         loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = train_step_megatron_mimo(
             forward_step_func=wrapped_forward_step_func,
             data_iterator=train_data_iterator,
@@ -341,6 +345,7 @@ def train_megatron_mimo(
             seq_length=seq_length,
             micro_batch_size=micro_batch_size,
         )
+        fault_tolerance.on_training_step_end(global_state)
 
         # Stop iteration timer
         timers("iteration-time").stop(barrier=False)
