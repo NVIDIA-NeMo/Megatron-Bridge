@@ -127,7 +127,8 @@ items:
     GB200:
       status: verified
       precision: bf16
-      command: ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_pretrain_192gpu_gb200_bf16_config
+      command: >-  # pragma: allowlist secret
+        ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_pretrain_192gpu_gb200_bf16_config
         --mode pretrain --max_steps 100 --save_dir work/model-verification/glm5/hybrid/pretrain-gb200-glm-remaining-20261007-175000/checkpoints
         --save_interval 50 checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true logger.log_interval=1
         logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/pretrain-gb200-glm-remaining-20261007-175000/launch-config.yaml
@@ -252,7 +253,8 @@ items:
       status: verified
       precision: bf16
       depends_on: pretrain
-      command: ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_pretrain_192gpu_gb200_bf16_config
+      command: >-  # pragma: allowlist secret
+        ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_pretrain_192gpu_gb200_bf16_config
         --mode pretrain --max_steps 100 --save_dir work/model-verification/glm5/hybrid/resume-gb200-glm-remaining-20261007-175000/checkpoints
         --save_interval 50 checkpoint.save_optim=true checkpoint.save_rng=true logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/resume-gb200-glm-remaining-20261007-175000/launch-config.yaml

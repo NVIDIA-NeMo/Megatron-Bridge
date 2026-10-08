@@ -89,8 +89,8 @@ class _FakeAutoBridge:
     @classmethod
     def from_hf_pretrained(cls, model_id: str, revision: str) -> "_FakeAutoBridge":
         revisions = {
-            "zai-org/GLM-5": "4e6698ba8e85059d749020e3c4d2123719f23926",
-            "zai-org/GLM-5.2": "4d67f66cc64d3219133b767c253b2ad1425c6c88",
+            "zai-org/GLM-5": "4e6698ba8e85059d749020e3c4d2123719f23926",  # pragma: allowlist secret
+            "zai-org/GLM-5.2": "4d67f66cc64d3219133b767c253b2ad1425c6c88",  # pragma: allowlist secret
         }
         assert revision == revisions[model_id]
         return cls(model_id)
