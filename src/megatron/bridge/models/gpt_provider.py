@@ -148,15 +148,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
 
-    # YARN (Yet Another RoPE extensioN) position embedding parameters
-    # Used when position_embedding_type == "yarn"
-    yarn_rotary_scaling_factor: Optional[float] = None
-    yarn_original_max_position_embeddings: Optional[int] = None
-    yarn_beta_fast: Optional[float] = None
-    yarn_beta_slow: Optional[float] = None
-    yarn_mscale: Optional[float] = None
-    yarn_mscale_all_dim: Optional[float] = None
-    yarn_correction_range_round_to_int: Optional[bool] = None
+    # YaRN parameters (yarn_*) are declared on the base TransformerConfig.
 
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
@@ -405,37 +397,3 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
-
-
-def _patch_yarn_concentration_factor():
-    """Patch MCore _yarn_get_concentration_factor_from_config for None handling.
-
-    GPTModelProvider defines yarn_rotary_scaling_factor as Optional[float] = None,
-    but MCore uses hasattr() which returns True for dataclass fields set to None.
-    This causes a crash for non-YARN models. Use getattr + is not None instead.
-
-    TODO: Remove once upstream MCore merges the fix.
-    """
-    try:
-        import megatron.core.models.common.embeddings.yarn_rotary_pos_embedding as _yarn_mod
-        import megatron.core.transformer.attention as _attn_mod
-
-        _get_factor = _yarn_mod._yarn_get_concentration_factor
-
-        def _fixed_from_config(config):
-            yarn_scaling = getattr(config, "yarn_rotary_scaling_factor", None)
-            if yarn_scaling is not None:
-                return _get_factor(
-                    yarn_scaling,
-                    getattr(config, "yarn_mscale", None),
-                    getattr(config, "yarn_mscale_all_dim", None),
-                )
-            return 1.0
-
-        _yarn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
-        _attn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
-    except ImportError:
-        pass
-
-
-_patch_yarn_concentration_factor()
