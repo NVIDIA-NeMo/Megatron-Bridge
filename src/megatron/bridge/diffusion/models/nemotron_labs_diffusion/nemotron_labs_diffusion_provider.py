@@ -42,6 +42,8 @@ class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
     dlm_loss_weight: float = 0.3
     ar_loss_weight: float = 1.0
     position_embedding_type: str = "none"
+    # This text-only path uses GPT embeddings, without the VLM wrapper scatter.
+    scatter_embedding_sequence_parallel: bool = True
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         transformer_layer_spec = self.transformer_layer_spec

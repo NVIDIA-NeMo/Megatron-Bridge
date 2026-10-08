@@ -579,3 +579,10 @@ class TestRotaryEmbeddingNonDefault:
         cos, sin = rope(x, pos)
         assert cos.shape == (1, 16, 8)
         assert sin.shape == (1, 16, 8)
+
+
+def test_text_only_provider_scatters_sequence_parallel_embeddings() -> None:
+    config = _make_config()
+    config.tensor_model_parallel_size = 2
+    config.sequence_parallel = True
+    assert config.scatter_embedding_sequence_parallel is True
