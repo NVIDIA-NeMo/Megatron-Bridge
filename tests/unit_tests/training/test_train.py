@@ -23,6 +23,7 @@ import pytest
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallelV1
 from megatron.core.optimizer.distrib_optimizer import DistributedOptimizer
 
+from megatron.bridge.training.config import GPTDatasetConfig
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import (
     _delete_cuda_graphs,
@@ -73,6 +74,7 @@ class TestCheckpointManagerLifecycle:
                 check_weight_hash_across_dp_replicas_interval=None,
             ),
             validation=SimpleNamespace(),
+            dataset=GPTDatasetConfig(seq_length=8, random_seed=1234),
             checkpoint=SimpleNamespace(save=None),
             logger=SimpleNamespace(log_throughput_to_tensorboard=False),
             model=SimpleNamespace(
@@ -1649,3 +1651,90 @@ def test_train_step_token_weighted_loss(
         assert mock_reduce.call_args.kwargs["group"] is dp_cp
     else:
         mock_reduce.assert_not_called()
+
+
+@pytest.mark.parametrize("dp_rank", [0, 1])
+@patch("megatron.bridge.training.train.wrap_data_iterator_for_global_batch_packing")
+@patch("megatron.bridge.training.train.get_data_distribution_group")
+@patch("megatron.bridge.training.train.torch.distributed.all_reduce")
+@patch("megatron.bridge.training.train.get_num_microbatches", return_value=4)
+@patch("megatron.bridge.training.train.get_model_config")
+@patch("megatron.bridge.training.train.get_rerun_state_machine")
+def test_train_step_seeds_global_batch_packing_flops_once_per_dp_group(
+    mock_get_rerun_state_machine,
+    mock_get_model_config,
+    _mock_get_num_microbatches,
+    _mock_reduce,
+    _mock_get_group,
+    mock_wrap,
+    dp_rank,
+):
+    """The scheduler's DP-global FLOPs totals are seeded on DP rank 0 and summed over DP.
+
+    The per-step reset may leave the dataset-driven reduction flag off; global-batch
+    packing must turn it on, or the totals would be extrapolated DP times.
+    """
+    import torch
+
+    mock_get_model_config.return_value = SimpleNamespace(seq_length=8, sequence_packing_scheduler="dp_balanced")
+    packed_iterator = object()
+    mock_wrap.return_value = (packed_iterator, 3, 100.0, 1000.0)
+
+    rerun_state_machine = Mock()
+    rerun_state_machine.should_run_forward_backward.side_effect = [True, False]
+    rerun_state_machine.should_checkpoint_and_exit.return_value = (False, False, 0)
+    mock_get_rerun_state_machine.return_value = rerun_state_machine
+
+    global_state = SimpleNamespace(
+        cfg=SimpleNamespace(
+            data_parallel_size=2,
+            model=SimpleNamespace(
+                seq_length=8,
+                qk_clip=False,
+                log_max_attention_logit=False,
+            ),
+            dataset=SimpleNamespace(dataloader_type="single"),
+            dist=SimpleNamespace(use_decentralized_pg=True),
+            ddp=SimpleNamespace(overlap_param_gather=False),
+            optimizer=SimpleNamespace(
+                barrier_with_L1_time=False,
+                log_num_zeros_in_grad=False,
+                reuse_grad_buf_for_mxfp8_param_ag=False,
+            ),
+            train=SimpleNamespace(
+                check_optimizer_step_success=False,
+                empty_unused_memory_level=0,
+                micro_batch_size=1,
+                skip_sync_grad_norm_across_mp=True,
+            ),
+        ),
+        timers=Mock(),
+        _flops_seqlen_sum=0,
+        _flops_seqlen_sq_sum=0,
+        _flops_requires_global_reduce=False,
+        global_batch_packing_num_microbatches=None,
+    )
+    optimizer = Mock(chained_optimizers=[])
+    optimizer.step.return_value = (True, 1.0, 0)
+    forward_backward_func = Mock(return_value=[{"lm loss": torch.tensor([2.0])} for _ in range(3)])
+    pg_collection = SimpleNamespace(mp=Mock(), dp=SimpleNamespace(rank=lambda: dp_rank))
+
+    train_step(
+        forward_step_func=Mock(),
+        data_iterator=None,
+        model=[Mock()],
+        optimizer=optimizer,
+        scheduler=Mock(),
+        global_state=global_state,
+        pg_collection=pg_collection,
+        forward_backward_func=forward_backward_func,
+        p2p_communicator=SimpleNamespace(is_pp_last_stage=True),
+    )
+
+    mock_wrap.assert_called_once()
+    assert forward_backward_func.call_args.kwargs["data_iterator"] is packed_iterator
+    assert forward_backward_func.call_args.kwargs["num_microbatches"] == 3
+    assert global_state.global_batch_packing_num_microbatches == 3
+    expected_totals = (100, 1000) if dp_rank == 0 else (0, 0)
+    assert (global_state._flops_seqlen_sum, global_state._flops_seqlen_sq_sum) == expected_totals
+    assert global_state._flops_requires_global_reduce is True
