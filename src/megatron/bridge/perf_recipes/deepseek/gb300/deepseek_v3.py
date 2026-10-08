@@ -459,6 +459,9 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
 
     # cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_impl = "full_iteration"
+    # Delay graph capture well past the MCore default of 3. Capture freezes whatever state the
+    # run is in, so the later it happens the more of the MFSDP v2 setup has settled first.
+    cfg.model.cuda_graph_warmup_steps = 20
 
     # Use TransformerEngine's RNG tracker rather than Megatron's. Both must be set: rng.* drives
     # initialize_rng_tracker(), model.* is what the model config carries. TE's tracker is what
