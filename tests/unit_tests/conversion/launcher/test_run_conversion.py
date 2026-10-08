@@ -87,6 +87,12 @@ def test_cpu_import_dispatches_to_cpu_backend():
             "torch_dtype": "bfloat16",
             "trust_remote_code": False,
             "overwrite": False,
+            "use_distributed": False,
+            "tp": 1,
+            "pp": 1,
+            "ep": 1,
+            "etp": 1,
+            "distributed_timeout_minutes": None,
         }
     ]
 
@@ -110,6 +116,7 @@ def test_gpu_import_forwards_low_memory_save():
     )
 
     assert calls[0]["low_memory_save"] is True
+    assert "use_cpu" not in calls[0]
 
 
 def test_cpu_import_rejects_low_memory_save():
@@ -272,11 +279,11 @@ def test_distributed_cpu_export_uses_gloo_backend(monkeypatch):
     assert calls[0]["use_cpu"] is True
 
 
-def test_distributed_cpu_import_uses_gloo_backend(monkeypatch):
+def test_distributed_cpu_import_dispatches_to_cpu_backend(monkeypatch):
     module, cpu_backend, gpu_backend = _load_run_conversion_module()
     calls = []
-    cpu_backend.import_checkpoint = lambda **kwargs: pytest.fail("must not use the single-process backend")
-    gpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+    cpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+    gpu_backend.import_checkpoint = lambda **kwargs: pytest.fail("CPU import must not call the GPU backend")
     monkeypatch.setenv("WORLD_SIZE", "4")
 
     module.main(
@@ -295,10 +302,10 @@ def test_distributed_cpu_import_uses_gloo_backend(monkeypatch):
         ]
     )
 
-    assert calls[0]["use_cpu"] is True
+    assert calls[0]["use_distributed"] is True
     assert calls[0]["pp"] == 2
     assert calls[0]["ep"] == 2
-    assert calls[0]["low_memory_save"] is False
+    assert "low_memory_save" not in calls[0]
 
 
 def test_distributed_cpu_import_rejects_low_memory_save(monkeypatch):

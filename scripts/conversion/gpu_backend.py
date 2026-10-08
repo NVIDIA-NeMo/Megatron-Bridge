@@ -21,7 +21,17 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from utils import parse_dtype, prepare_output_directory, resolve_hf_model_revision, validate_output_path
+from utils import (
+    _configure_model_config,
+    _configure_model_provider,
+    _hf_tokenizer_kwargs,
+    _maybe_generate_pipeline_layout,
+    _uses_model_builder,
+    parse_dtype,
+    prepare_output_directory,
+    resolve_hf_model_revision,
+    validate_output_path,
+)
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -95,25 +105,6 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
         torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
-def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
-    """Generate a bridge-specific pipeline layout when the model requires one.
-
-    A bridge returns ``None`` when the default pipeline split already applies.
-    """
-    if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
-        return False
-    num_layers = bridge.hf_pretrained.config.num_hidden_layers
-    # The layout must match the model being built, which may omit the checkpoint's MTP layers.
-    model_config = getattr(model_provider, "transformer", model_provider)
-    mtp_layers = getattr(model_config, "mtp_num_layers", None) or 0
-    layout = bridge._model_bridge.generate_pipeline_layout(num_layers, pp, mtp_layers)
-    if layout is None:
-        return False
-    model_provider.pipeline_model_parallel_layout = layout
-    print_rank_0(f"Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp_layers} MTP)")
-    return True
-
-
 def _rebalance_pipeline_layout(saved_layout: list[list[str]], pp: int) -> list[list[str]]:
     """Redistribute a saved flexible pipeline layout across a new PP size."""
     layers = [layer for stage in saved_layout for layer in stage]
@@ -171,66 +162,6 @@ def _maybe_restore_pipeline_layout(
                 model_provider.pipeline_model_parallel_layout = _rebalance_pipeline_layout(saved_layout, pp)
             return
     _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-
-
-def _configure_model_provider(
-    model_provider: GPTModelProvider,
-    *,
-    tp: int,
-    pp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-    use_cpu: bool = False,
-) -> None:
-    """Apply distributed parallelism and dtype settings to a model provider."""
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = dtype
-    model_provider.params_dtype = dtype
-    if use_cpu:
-        model_provider.use_cpu_initialization = True
-
-
-def _uses_model_builder(bridge: AutoBridge) -> bool:
-    """Return whether the selected bridge supports native builder construction."""
-    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
-
-
-def _configure_model_config(
-    model_config,
-    *,
-    tp: int,
-    pp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-    use_cpu: bool = False,
-) -> None:
-    """Apply distributed parallelism and dtype settings to a builder config."""
-    transformer = model_config.transformer
-    transformer.tensor_model_parallel_size = tp
-    transformer.pipeline_model_parallel_size = pp
-    transformer.expert_model_parallel_size = ep
-    transformer.expert_tensor_parallel_size = etp
-    transformer.pipeline_dtype = dtype
-    transformer.params_dtype = dtype
-    if use_cpu:
-        transformer.use_cpu_initialization = True
-
-
-def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
-    """Build tokenizer metadata for a saved Megatron checkpoint."""
-    tokenizer_kwargs: dict[str, object] = {}
-    if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
-        tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs() or {}
-    if trust_remote_code:
-        tokenizer_kwargs["trust_remote_code"] = True
-    if bridge.hf_model_revision is not None:
-        tokenizer_kwargs["revision"] = bridge.hf_model_revision
-    return tokenizer_kwargs
 
 
 def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.Tensor) -> tuple[bool, bool]:
@@ -329,7 +260,6 @@ def import_checkpoint(
     distributed_timeout_minutes: int | None,
     overwrite: bool,
     text_only: bool = False,
-    use_cpu: bool = False,
 ) -> None:
     """Import a Hugging Face model into a distributed Megatron checkpoint.
 
@@ -347,17 +277,12 @@ def import_checkpoint(
         distributed_timeout_minutes: Process-group timeout in minutes.
         overwrite: Delete a non-empty destination before conversion.
         text_only: Convert only the supported model's language component.
-        use_cpu: Use Gloo and CPU model initialization instead of NCCL/CUDA so the
-            model shards live in host memory across processes.
     """
-    if use_cpu and low_memory_save:
-        raise ValueError("--low-memory-save is only supported by the GPU backend.")
-    _ensure_distributed_initialized(distributed_timeout_minutes, use_cpu=use_cpu)
+    _ensure_distributed_initialized(distributed_timeout_minutes)
     _prepare_distributed_output(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     dtype = parse_dtype(torch_dtype)
 
-    device_label = "CPU" if use_cpu else "GPU"
-    print_rank_0(f"Distributed {device_label} import: {hf_model} -> {megatron_path}")
+    print_rank_0(f"Distributed GPU import: {hf_model} -> {megatron_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
     if text_only:
@@ -370,7 +295,7 @@ def import_checkpoint(
     )
     if _uses_model_builder(bridge):
         model_config = bridge.get_model_config()
-        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+        _configure_model_config(model_config, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
         _maybe_generate_pipeline_layout(bridge, model_config, pp)
         megatron_model = bridge.get_model(
             model_config,
@@ -379,7 +304,7 @@ def import_checkpoint(
         )
     else:
         model_provider = bridge.to_megatron_provider(load_weights=True)
-        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
         _maybe_generate_pipeline_layout(bridge, model_provider, pp)
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0, create_gloo_process_groups=False)
@@ -392,7 +317,7 @@ def import_checkpoint(
         hf_tokenizer_kwargs=_hf_tokenizer_kwargs(bridge, trust_remote_code=trust_remote_code),
         low_memory_save=low_memory_save,
     )
-    print_rank_0(f"Distributed {device_label} import complete: {megatron_path}")
+    print_rank_0(f"Distributed GPU import complete: {megatron_path}")
 
 
 @torchrun_main

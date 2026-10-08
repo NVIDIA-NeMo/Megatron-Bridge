@@ -10841,7 +10841,7 @@
     },
     {
       "architecture": "GlmMoeDsaForCausalLM",
-      "base_container": "nvcr.io/nvidia/pytorch:26.07-py3",
+      "base_container": "nvcr.io/nvidia/nemo:26.08.rc3",
       "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
       "entries": [
         {
@@ -11229,7 +11229,7 @@
     },
     {
       "architecture": "GlmMoeDsaForCausalLM",
-      "base_container": "nvcr.io/nvidia/pytorch:26.07-py3",
+      "base_container": "nvcr.io/nvidia/nemo:26.08.rc3",
       "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
       "entries": [
         {

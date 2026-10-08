@@ -88,9 +88,16 @@ def _run_import(args: argparse.Namespace) -> None:
     }
     if args.text_only:
         common_args["text_only"] = True
-    distributed_cpu = args.device == "cpu" and _distributed_world_size() > 1
-    if args.device == "cpu" and not distributed_cpu:
-        cpu_backend.import_checkpoint(**common_args)
+    if args.device == "cpu":
+        cpu_backend.import_checkpoint(
+            **common_args,
+            use_distributed=_distributed_world_size() > 1,
+            tp=args.tp,
+            pp=args.pp,
+            ep=args.ep,
+            etp=args.etp,
+            distributed_timeout_minutes=args.distributed_timeout_minutes,
+        )
         return
     gpu_backend.import_checkpoint(
         **common_args,
@@ -100,7 +107,6 @@ def _run_import(args: argparse.Namespace) -> None:
         etp=args.etp,
         low_memory_save=args.low_memory_save,
         distributed_timeout_minutes=args.distributed_timeout_minutes,
-        use_cpu=distributed_cpu,
     )
 
 
