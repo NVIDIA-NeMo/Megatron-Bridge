@@ -456,7 +456,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
-    cfg.model.cuda_graph_impl = "none"
+    # cfg.model.cuda_graph_impl = "none"
 
     # Use TransformerEngine's RNG tracker rather than Megatron's. Both must be set: rng.* drives
     # initialize_rng_tracker(), model.* is what the model config carries. TE's tracker is what
