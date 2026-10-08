@@ -293,5 +293,8 @@ RUN python /opt/preserve_base_runtime.py check /opt/base-runtime-packages.json
 RUN install -d -o 1000 -g 1000 -m 0755 /nemo_run /home/ubuntu/.cache && \
     chown -R 1000:1000 /opt/Megatron-Bridge
 
+# Remove the Nsight Systems EFA metrics plugin to address CVE-2026-27143.
+RUN rm -rf /usr/local/cuda-*/NsightSystems-cli-*/target-linux-x64/plugins/efa_metrics/
+
 ENV HOME=/home/ubuntu
 USER 1000:1000
