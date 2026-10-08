@@ -1,12 +1,17 @@
-"""Numerical coverage for grouped-query attention."""
+"""Numerical coverage for grouped-query attention and compiled block masks."""
 
 from unittest.mock import patch
 
 import pytest
 import torch
 import torch.nn.functional as F
-from torch.nn.attention.flex_attention import flex_attention
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
 
+from megatron.bridge.diffusion.common.dllm import (
+    asymmetric_semi_ar_mask_mod,
+    build_block_mask,
+    compute_block_mask,
+)
 from megatron.bridge.diffusion.models.common import nemotron_labs_diffusion_attention as attention
 
 
@@ -44,3 +49,42 @@ def test_gqa_output_and_gradients_match_repeated_kv(native: bool, kv_heads: int)
     expected.backward(upstream)
     for actual_input, expected_input in zip(inputs, reference):
         torch.testing.assert_close(actual_input.grad, expected_input.grad, rtol=1e-5, atol=1e-6)
+
+
+def assert_same_blocks(actual: BlockMask, expected: BlockMask) -> None:
+    for field in (
+        "kv_num_blocks",
+        "kv_indices",
+        "full_kv_num_blocks",
+        "full_kv_indices",
+        "q_num_blocks",
+        "q_indices",
+        "full_q_num_blocks",
+        "full_q_indices",
+    ):
+        torch.testing.assert_close(getattr(actual, field), getattr(expected, field), rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("half_length", [64, 96])
+def test_compiled_symmetric_mask_matches_eager(half_length: int) -> None:
+    actual = compute_block_mask(16, half_length, device="cpu")
+    expected = create_block_mask(
+        actual.mask_mod, B=None, H=None, Q_LEN=2 * half_length, KV_LEN=2 * half_length, device="cpu"
+    )
+    assert_same_blocks(actual, expected)
+
+
+@pytest.mark.parametrize("noisy_length,clean_length", [(64, 96), (96, 160)])
+def test_compiled_asymmetric_mask_matches_eager(noisy_length: int, clean_length: int) -> None:
+    predicate = asymmetric_semi_ar_mask_mod(
+        block_size=16,
+        noisy_length=noisy_length,
+        noisy_response_offset=0,
+        prompt_lengths=torch.tensor([7, 19]),
+        noisy_valid_lengths=torch.tensor([32, noisy_length]),
+        clean_lengths=torch.tensor([39, clean_length]),
+    )
+    length = noisy_length + clean_length
+    actual = build_block_mask(predicate, batch_size=2, query_length=length, key_value_length=length, device="cpu")
+    expected = create_block_mask(predicate, B=2, H=None, Q_LEN=length, KV_LEN=length, device="cpu")
+    assert_same_blocks(actual, expected)

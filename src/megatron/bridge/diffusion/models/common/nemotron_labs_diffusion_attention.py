@@ -30,10 +30,10 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import divide
 from torch import Tensor
-from torch.nn.attention.flex_attention import BlockMask, create_block_mask, flex_attention
+from torch.nn.attention.flex_attention import BlockMask, flex_attention
 from transformers import ROPE_INIT_FUNCTIONS, PretrainedConfig
 
-from megatron.bridge.diffusion.common.dllm import asymmetric_semi_ar_mask_mod, compute_block_mask
+from megatron.bridge.diffusion.common.dllm import asymmetric_semi_ar_mask_mod, build_block_mask, compute_block_mask
 
 
 # ---------------------------------------------------------------------------
@@ -399,14 +399,12 @@ class NemotronLabsDiffusionAttention(MegatronModule):
                 noisy_valid_lengths=metadata.noisy_valid_lengths,
                 clean_lengths=metadata.clean_lengths,
             )
-            metadata.block_mask = create_block_mask(
+            metadata.block_mask = build_block_mask(
                 mask_mod,
-                B=query.shape[0],
-                H=None,
-                Q_LEN=n + c,
-                KV_LEN=n + c,
+                batch_size=query.shape[0],
+                query_length=n + c,
+                key_value_length=n + c,
                 device=query.device,
-                _compile=True,
             )
         context = fused_flex_attention(query, key, value, block_mask=metadata.block_mask)
         if not self.config.sequence_parallel:

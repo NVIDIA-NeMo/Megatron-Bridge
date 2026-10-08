@@ -24,12 +24,34 @@ unmask at each step.
 """
 
 from collections.abc import Callable
-from typing import Optional
+from typing import Optional, cast
 
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn.attention.flex_attention import create_block_mask
+from torch.nn.attention.flex_attention import BlockMask, create_block_mask
+
+
+# Compile the predicate and tile reduction together, avoiding the eager dense
+# token-pair mask. Dynamic shapes avoid one compilation per microbatch length.
+_COMPILED_CREATE_BLOCK_MASK = torch.compile(create_block_mask, dynamic=True)
+
+
+def build_block_mask(
+    mask_mod: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor], torch.Tensor],
+    *,
+    batch_size: int | None,
+    query_length: int,
+    key_value_length: int,
+    device: torch.device | str,
+) -> BlockMask:
+    """Build a compiled attention block mask, shared across attention heads."""
+    return cast(
+        BlockMask,
+        _COMPILED_CREATE_BLOCK_MASK(
+            mask_mod, B=batch_size, H=None, Q_LEN=query_length, KV_LEN=key_value_length, device=device
+        ),
+    )
 
 
 def forward_process_simple_masking(input_ids, mask_token_id, eps=1e-3, loss_mask=None, generator=None):
@@ -179,7 +201,7 @@ def get_transfer_index(
     return x0, transfer_index
 
 
-def compute_block_mask(block_size, max_seq_length):
+def compute_block_mask(block_size: int, max_seq_length: int, *, device: torch.device | str = "cuda") -> BlockMask:
     """Compute the sbd_block_diff attention mask.
 
     The semi-block-diffusion mask is composed of three sub-masks over a
@@ -197,7 +219,9 @@ def compute_block_mask(block_size, max_seq_length):
     """
     n = max_seq_length
 
-    def sbd_block_diff_mask(b, h, q_idx, kv_idx):
+    def sbd_block_diff_mask(
+        b: torch.Tensor, h: torch.Tensor, q_idx: torch.Tensor, kv_idx: torch.Tensor
+    ) -> torch.Tensor:
         x0_flag_q = q_idx >= n
         x0_flag_kv = kv_idx >= n
 
@@ -211,7 +235,9 @@ def compute_block_mask(block_size, max_seq_length):
         return block_diagonal | offset_block_causal | fully_causal
 
     q_len = max_seq_length * 2
-    return create_block_mask(sbd_block_diff_mask, B=None, H=None, Q_LEN=q_len, KV_LEN=q_len)
+    return build_block_mask(
+        sbd_block_diff_mask, batch_size=None, query_length=q_len, key_value_length=q_len, device=device
+    )
 
 
 def asymmetric_semi_ar_mask_mod(
