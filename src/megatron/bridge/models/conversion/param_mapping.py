@@ -2532,11 +2532,13 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
 
             # Define component indices in the concatenated tensor
-            z_shard_idx = torch.arange(d_inner)
-            x_shard_idx = torch.arange(d_inner, 2 * d_inner)
-            B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm)
-            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm)
-            dt_shard_idx = torch.arange(2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads)
+            z_shard_idx = torch.arange(d_inner, device=hf_weights.device)
+            x_shard_idx = torch.arange(d_inner, 2 * d_inner, device=hf_weights.device)
+            B_shard_idx = torch.arange(2 * d_inner, 2 * d_inner + d_tot_ssm, device=hf_weights.device)
+            C_shard_idx = torch.arange(2 * d_inner + d_tot_ssm, 2 * d_inner + 2 * d_tot_ssm, device=hf_weights.device)
+            dt_shard_idx = torch.arange(
+                2 * (d_inner + d_tot_ssm), 2 * (d_inner + d_tot_ssm) + config.mamba_num_heads, device=hf_weights.device
+            )
 
             # Reshape for tensor parallel distribution
             target_shape = (self.tp_size, -1, config.hidden_size)
@@ -2582,11 +2584,15 @@ class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         n_heads_local = config.mamba_num_heads // self.tp_size
 
         # Extract local components
-        z_shard_idx = torch.arange(d_inner_local)
-        x_shard_idx = torch.arange(d_inner_local) + d_inner_local
-        B_shard_idx = torch.arange(d_tot_ssm_local) + 2 * d_inner_local
-        C_shard_idx = torch.arange(d_tot_ssm_local) + 2 * d_inner_local + d_tot_ssm_local
-        dt_shard_idx = torch.arange(n_heads_local) + 2 * (d_inner_local + d_tot_ssm_local)
+        z_shard_idx = torch.arange(d_inner_local, device=megatron_weights.device)
+        x_shard_idx = torch.arange(d_inner_local, device=megatron_weights.device) + d_inner_local
+        B_shard_idx = torch.arange(d_tot_ssm_local, device=megatron_weights.device) + 2 * d_inner_local
+        C_shard_idx = (
+            torch.arange(d_tot_ssm_local, device=megatron_weights.device) + 2 * d_inner_local + d_tot_ssm_local
+        )
+        dt_shard_idx = torch.arange(n_heads_local, device=megatron_weights.device) + 2 * (
+            d_inner_local + d_tot_ssm_local
+        )
 
         local_components = [
             megatron_weights[z_shard_idx],
@@ -2625,7 +2631,9 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self._tp_mapping = ColumnParallelMapping(megatron_param, megatron_param)
 
     @abstractmethod
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         ...
 
@@ -2645,7 +2653,7 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                 assert "bias" in self.megatron_param, "Only bias and weight are supported for conv1d"
                 target_shape = (self.tp_size, -1)
 
-            shard_idx = self.get_shard_idx(config, local_tp=False)
+            shard_idx = self.get_shard_idx(config, local_tp=False, device=hf_weights.device)
 
             # Extract and reshape components
             sharded_weights = [hf_weights[idx].reshape(target_shape) for idx in shard_idx]
@@ -2680,7 +2688,7 @@ class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             config = remove_non_pickleables(config, max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config, cache_key="config")
 
-        shard_idx = self.get_shard_idx(config, local_tp=True)
+        shard_idx = self.get_shard_idx(config, local_tp=True, device=megatron_weights.device)
 
         local_components = [megatron_weights[idx] for idx in shard_idx]
 
@@ -2704,7 +2712,9 @@ class GDNConv1dMapping(ChunkedMapping):
     tensor-parallel distributed format for GDN SSM layers.
     """
 
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         qk_dim = config.linear_key_head_dim * config.linear_num_key_heads
         v_dim = config.linear_value_head_dim * config.linear_num_value_heads
@@ -2712,9 +2722,9 @@ class GDNConv1dMapping(ChunkedMapping):
             qk_dim = qk_dim // self.tp_size
             v_dim = v_dim // self.tp_size
 
-        q_shard_idx = torch.arange(qk_dim)
-        k_shard_idx = torch.arange(qk_dim) + qk_dim
-        v_shard_idx = torch.arange(v_dim) + qk_dim * 2
+        q_shard_idx = torch.arange(qk_dim, device=device)
+        k_shard_idx = torch.arange(qk_dim, device=device) + qk_dim
+        v_shard_idx = torch.arange(v_dim, device=device) + qk_dim * 2
 
         return [q_shard_idx, k_shard_idx, v_shard_idx]
 
@@ -2726,7 +2736,9 @@ class MambaConv1dMapping(ChunkedMapping):
     tensor-parallel distributed format for Mamba SSM layers.
     """
 
-    def get_shard_idx(self, config: TransformerConfig, local_tp: bool) -> List[int]:
+    def get_shard_idx(
+        self, config: TransformerConfig, local_tp: bool, device: torch.device | None = None
+    ) -> List[int]:
         """Get shard indices for the given config."""
         d_inner = config.mamba_num_heads * config.mamba_head_dim
         d_tot_ssm = config.mamba_state_dim * config.mamba_num_groups
@@ -2735,9 +2747,9 @@ class MambaConv1dMapping(ChunkedMapping):
             d_tot_ssm = d_tot_ssm // self.tp_size
 
         # Extract local components
-        x_shard_idx = torch.arange(d_inner)
-        B_shard_idx = torch.arange(d_tot_ssm) + d_inner
-        C_shard_idx = torch.arange(d_tot_ssm) + d_inner + d_tot_ssm
+        x_shard_idx = torch.arange(d_inner, device=device)
+        B_shard_idx = torch.arange(d_tot_ssm, device=device) + d_inner
+        C_shard_idx = torch.arange(d_tot_ssm, device=device) + d_inner + d_tot_ssm
 
         return [x_shard_idx, B_shard_idx, C_shard_idx]
 
