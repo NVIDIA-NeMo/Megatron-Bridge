@@ -25,6 +25,8 @@ from megatron.training.utils.checkpoint_utils import (
     CONFIG_FILE,
     _sanitize_run_config_object,
     apply_run_config_backward_compat,
+    get_checkpoint_run_config_filename,
+    join_paths,
     read_run_config,
 )
 
@@ -46,51 +48,6 @@ __all__ = [
 
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
-
-
-def join_paths(*paths: str) -> str:
-    """Join paths, using MultiStorageClient when needed.
-
-    MSC's ``os.path`` shim has no ``join``, so ``msc.Path`` is used to keep ``msc://`` prefixes intact.
-
-    Args:
-        *paths: Path components to join. Must contain at least one component.
-
-    Returns:
-        The joined path as a string.
-
-    Raises:
-        ValueError: If no path components are given.
-    """
-    if not paths:
-        raise ValueError("Empty paths")
-
-    if MultiStorageClientFeature.is_enabled():
-        msc = MultiStorageClientFeature.import_package()
-        path_cls = msc.Path
-    else:
-        path_cls = Path
-
-    path = path_cls(paths[0])
-    for part in paths[1:]:
-        path = path / part
-
-    return str(path)
-
-
-def get_checkpoint_run_config_filename(checkpoints_path: str) -> str:
-    """Get the filename for the run configuration file within a checkpoint directory.
-
-    Defined here rather than re-exported from Megatron-LM so that ``join_paths`` above
-    (which supports ``msc://`` paths) is used.
-
-    Args:
-        checkpoints_path: Base directory where checkpoints are stored.
-
-    Returns:
-        The full path to the run configuration file (e.g., run_config.yaml).
-    """
-    return join_paths(checkpoints_path, CONFIG_FILE)
 
 
 def file_exists(path: str) -> bool:
