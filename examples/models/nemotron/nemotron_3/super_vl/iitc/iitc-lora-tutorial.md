@@ -20,7 +20,7 @@ The published IITC-4K/8K splits contain 374,575 training examples
 (192,442 + 182,133) and 1,330 test examples (672 + 658).
 For illustration, we select 10,000 for training and reserve 210 for validation
 from the training splits. Final evaluation uses all 658 IITC-8K test examples.
-[selection.csv](iitc/selection.csv) fixes the selected rows and their order for
+[selection.csv](selection.csv) fixes the selected rows and their order for
 reproducibility. Preparation preserves text/image order and writes Energon
 shards. The image archive is about 46 GB; use new output directories.
 
@@ -149,7 +149,7 @@ uv run --no-project python "$EXAMPLE/evaluate.py" \
 Picture-reference accuracy requires exactly one correct `[Picture N]` citation;
 ROUGE-L is mean reference-answer overlap. The scoring follows
 [VEGA's evaluator](https://github.com/zhourax/VEGA/blob/96d4be247fb4385b23265ac4f0b6079a9225698d/eval/IITC.py),
-with the custom prompt defined in [evaluate.py](iitc/evaluate.py); report that
+with the custom prompt defined in [evaluate.py](evaluate.py); report that
 prompt difference when sharing scores.
 
 ## Results
