@@ -120,7 +120,10 @@ class _MockDiffusionGemmaDataset(Dataset):
         prompt += text[cfg.prompt_length // 2 :].tolist()
         prompt_tensor = torch.tensor(prompt, dtype=torch.long)
         example["input_ids"] = prompt_tensor
-        example["mm_token_type_ids"] = (prompt_tensor == cfg.image_token_id).long()
+        if cfg.image_token_id is None:
+            example["mm_token_type_ids"] = torch.zeros_like(prompt_tensor)
+        else:
+            example["mm_token_type_ids"] = (prompt_tensor == cfg.image_token_id).long()
         # A tiny fixed vocabulary of answer "programs" makes overfitting measurable.
         answer_id = int(index) % cfg.num_distinct_answers
         answer_generator = torch.Generator().manual_seed(cfg.seed + 7_919 * answer_id)

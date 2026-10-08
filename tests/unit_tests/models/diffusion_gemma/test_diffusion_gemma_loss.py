@@ -16,7 +16,16 @@ import pytest
 import torch
 
 from megatron.bridge.models.diffusion_gemma.diffusion_gemma_step import corrupt_canvas
-from megatron.bridge.models.diffusion_gemma.loss import diffusion_sft_loss, loo_to_denoiser_logits
+from megatron.bridge.models.diffusion_gemma.loss import (
+    VARIANTS,
+    diffusion_sft_logps,
+    diffusion_sft_loss,
+    loo_to_denoiser_logits,
+    normalize_variant,
+    reweight,
+    rf_alpha,
+    rf_alpha_dot,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -159,3 +168,52 @@ def test_noise_seed_separates_phase_step_microbatch_and_rank():
     }
     assert len(seeds) == 5
     assert noise_seed(**base) == noise_seed(**base)
+
+
+def test_loss_variant_aliases_and_unknown_names_are_explicit():
+    assert normalize_variant("loo-reweighted-ce") == "reweighted-loo-ce"
+    assert all(normalize_variant(variant) == variant for variant in VARIANTS)
+    with pytest.raises(ValueError, match="Unknown variant"):
+        normalize_variant("not-a-loss")
+
+
+def test_reweight_schedules_and_clips_near_terminal_noise():
+    t = torch.tensor([0.0, 0.5, 0.99])
+    alpha = rf_alpha(t)
+    alpha_dot = rf_alpha_dot(t)
+    assert torch.equal(reweight("base-sft", t, alpha, alpha_dot), torch.ones(3))
+    assert torch.allclose(reweight("reweighted-ce", t, alpha, alpha_dot), torch.tensor([1.0, 2.0, 100.0]))
+    clipped = diffusion_sft_loss(
+        torch.zeros(3, 1, 5),
+        torch.zeros(3, 1, dtype=torch.long),
+        torch.zeros(3, 1, dtype=torch.long),
+        t,
+        torch.ones(3, 1),
+        variant="reweighted-ce",
+        vocab_size=5,
+        diffusion_weight_clip=4.0,
+    )
+    assert torch.allclose(clipped, torch.log(torch.tensor(5.0)) * torch.tensor([1.0, 2.0, 4.0]))
+
+
+def test_loss_masks_empty_rows_and_logps_are_negative_summed_loss():
+    logits = torch.zeros(2, 3, 4)
+    x0 = torch.tensor([[0, 1, 2], [1, 2, 3]])
+    xt = x0.clone()
+    t = torch.tensor([0.25, 0.75])
+    mask = torch.tensor([[1, 0, 0], [0, 0, 0]], dtype=torch.float32)
+    loss = diffusion_sft_loss(logits, x0, xt, t, mask, variant="base-sft", vocab_size=4)
+    logps = diffusion_sft_logps(logits, x0, xt, t, mask, variant="base-sft", vocab_size=4)
+    assert torch.allclose(loss, torch.tensor([torch.log(torch.tensor(4.0)), 0.0]))
+    assert torch.allclose(logps, torch.tensor([-torch.log(torch.tensor(4.0)), 0.0]))
+    assert torch.allclose(logps / mask.sum(-1).clamp(min=1.0), -loss)
+
+
+def test_loo_shift_broadcasts_alpha_and_rejects_out_of_range_tokens():
+    logits = torch.zeros(1, 2, 3)
+    xt = torch.tensor([[1, 2]])
+    shifted = loo_to_denoiser_logits(logits, xt, torch.tensor([[0.5]]), vocab_size=3)
+    assert shifted.shape == logits.shape
+    assert shifted[0, 0, 1] > 0 and shifted[0, 1, 2] > 0
+    with pytest.raises(RuntimeError):
+        loo_to_denoiser_logits(logits, torch.tensor([[3, 0]]), torch.tensor([[0.5]]), vocab_size=3)
