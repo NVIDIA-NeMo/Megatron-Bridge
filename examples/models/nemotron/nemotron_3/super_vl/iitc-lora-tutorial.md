@@ -1,63 +1,52 @@
 # Nemotron 3.5 Super VL: IITC LoRA fine-tuning
 
-Fine-tune with Bridge's standard LoRA recipe using a reproducible selection
-of 10,000 interleaved image/text training examples from VEGA IITC.
-Use a Bridge checkout containing the export serialization fix in
-[PR #6340](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6340).
+[VEGA IITC](https://huggingface.co/datasets/zhourax977/VEGA) contains
+questions about documents with interleaved text and images. Answers include
+supporting picture references such as `[Picture 2]`. This example fine-tunes
+Nemotron 3.5 Super VL with Bridge's standard LoRA recipe on 10,000 examples,
+then evaluates answer overlap and picture-reference accuracy.
 
 ## Prepare the data
 
-From a configured Bridge checkout, set `HF_MODEL` to a local HF-format
-Nemotron 3.5 Super VL checkpoint compatible with the recipe, including its
-processor and model code. Use the checkpoint as supplied; no alias-creation
-or checkpoint-layout preparation step is required by this tutorial.
-Record the checkpoint revision for reproducibility.
-On the recorded Bridge revision, the recipe factory also loads its configured
-default HF model before CLI overrides; that configuration must be accessible
-or cached. The local checkpoint override alone does not remove this dependency.
+From a configured Bridge checkout, download an available Nemotron 3.5 Super VL
+checkpoint from Hugging Face and set `HF_MODEL` to its downloaded directory.
 
 ```bash
 export EXAMPLE="$PWD/examples/models/nemotron/nemotron_3/super_vl/iitc"
 export IITC_ROOT="$PWD/work/super-vl-iitc"
 export HF_MODEL=/path/to/hf-checkpoint
-export OUTPUT_DIR="$IITC_ROOT/step-625"
+export OUTPUT_DIR="$IITC_ROOT/lora-run"
 
 uv run --no-project python "$EXAMPLE/prepare_data.py" --download \
   --source "$IITC_ROOT/source" --images "$IITC_ROOT/images" \
-  --output "$IITC_ROOT/energon-16k"
+  --output "$IITC_ROOT/energon"
 ```
 
-[selection.csv](iitc/selection.csv) is simply the fixed list of source-row IDs
-and hashes identifying the exact 10,000 training and 210 reserved validation
-examples and their order. The preparation script checks the hashes before
-packaging; Bridge itself does not require this file. Preparation downloads
-[VEGA](https://huggingface.co/datasets/zhourax977/VEGA) at revision
-`417bd55ab869a872cef9ae4f12a9b2073f619ac4`, preserves text/image order, and writes
-indexed Energon shards. Use new output directories; the image archive is about
-46 GB. Training retains VEGA's original instruction, including its Chinese
-fallback clause; evaluation uses the same English instruction for both models.
+We select **10,000 training and 210 validation examples** from the published
+IITC-4K/8K **training** splits; the test splits remain separate.
+[selection.csv](iitc/selection.csv) fixes the selected rows and their order for
+reproducibility. Preparation preserves text/image order and writes Energon
+shards. The image archive is about 46 GB; use new output directories.
 
 ## Train through the Bridge CLI
 
-Use two nodes with eight H100 80GB GPUs each. Run this command once per node,
-with `NODE_RANK=0` or `1` and the same `MASTER_ADDR` pointing to node 0. Paths
-and the configured Bridge environment must be available on both nodes.
-Authenticate W&B before launching.
+Use a Slurm allocation with two nodes, each with eight H100 80GB GPUs, shared
+paths, and the configured Bridge environment. Authenticate W&B, then launch
+once from the allocation with `srun`; Bridge derives ranks from Slurm.
 
 ```bash
 export CUDA_DEVICE_MAX_CONNECTIONS=1 NCCL_NVLS_ENABLE=0 OMP_NUM_THREADS=8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-uv run --no-project python -m torch.distributed.run \
-  --nnodes=2 --nproc_per_node=8 --node_rank="$NODE_RANK" \
-  --master_addr="$MASTER_ADDR" --master_port=29501 \
+srun --nodes=2 --ntasks=16 --ntasks-per-node=8 \
+  uv run --no-project python \
   scripts/training/run_recipe.py \
   --recipe nemotron_35_super_vl_peft_16gpu_h100_bf16_config \
   --mode lora --step-func nemotron_omni_step \
   --max_steps 625 --seq_length 16384 \
   --pretrained_checkpoint "$HF_MODEL" \
   --save_dir "$OUTPUT_DIR/checkpoints" --save_interval 50 \
-  dataset.path="$IITC_ROOT/energon-16k" dataset.num_workers=0 \
+  dataset.path="$IITC_ROOT/energon" dataset.num_workers=0 \
   dataset.task_encoder.hf_processor_path="$HF_MODEL" \
   dataset.task_encoder.hf_processor_revision=null \
   dataset.task_encoder.use_temporal_video_embedder=false \
@@ -69,27 +58,83 @@ uv run --no-project python -m torch.distributed.run \
   train.exit_duration_in_mins=210 \
   checkpoint.hf_source_path="$HF_MODEL" checkpoint.hf_trust_remote_code=true \
   checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false \
-  logger.wandb_project=super-vl-iitc logger.wandb_exp_name=iitc-step-625 \
+  logger.wandb_project=super-vl-iitc logger.wandb_exp_name=iitc-lora \
   logger.wandb_save_dir="$OUTPUT_DIR/wandb" \
   logger.save_config_filepath="$OUTPUT_DIR/resolved-config.yaml"
 ```
 
 Recipe defaults supply rank/alpha **32/32**, dropout **0**, language-only adapter
 targets, global/micro batch **16/1**, TP/PP/EP **4/2/8**, BF16, seed **1234**, and
-LR **1e-4 → 0**. Vision tower and projector are frozen. For interrupted training,
-repeat with `--load_dir "$OUTPUT_DIR/checkpoints"`. Add `--dry-run` to inspect
-the resolved configuration without training. No custom `train.py` is needed.
+LR **1e-4 → 0**. Vision tower and projector are frozen.
+**625 optimizer updates × 16 samples = 10,000 sample presentations**, about
+one epoch's worth. `16384` is the training sequence limit in tokens.
+
+## Merge and export after training
+
+Merge the **step-625** adapters into the original base weights and export a
+standalone HF checkpoint **before inference**. The training CLI saves native
+adapters; it does not automatically produce a merged model. The following
+small export script uses Bridge's loading and merge/export APIs on eight GPUs.
+
+```bash
+export ADAPTER_CKPT="$OUTPUT_DIR/checkpoints/iter_0000625"
+export MERGED_HF="$OUTPUT_DIR/merged-hf"
+cat > "$OUTPUT_DIR/merge_export.py" <<'PYTHON'
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+import os
+
+import torch
+import torch.distributed as dist
+from megatron.bridge import AutoBridge
+from megatron.bridge.peft.utils import create_peft, create_peft_hook, load_peft_adapter_checkpoint
+from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+from megatron.bridge.utils.common_utils import maybe_initialize_distributed
+
+maybe_initialize_distributed()
+source = os.environ["HF_MODEL"]
+checkpoint = os.environ["ADAPTER_CKPT"]
+bridge = AutoBridge.from_hf_pretrained(source, trust_remote_code=True)
+provider = bridge.to_megatron_provider(load_weights=True)
+provider.tensor_model_parallel_size = 2
+provider.pipeline_model_parallel_size = 2
+provider.expert_model_parallel_size = 4
+provider.expert_tensor_parallel_size = 1
+provider.sequence_parallel = True
+provider.params_dtype = provider.pipeline_dtype = torch.bfloat16
+provider.bf16 = True
+provider.temporal_patch_dim = 1
+provider.separate_video_embedder = False
+provider.temporal_ckpt_compat = False
+provider.moe_token_dispatcher_type = "alltoall"
+provider.moe_permute_fusion = False
+provider.finalize()
+peft_config = read_run_config(f"{checkpoint}/run_config.yaml")["peft"]
+peft = create_peft(peft_config)
+provider.register_pre_wrap_hook(create_peft_hook(peft, training=False))
+provider.initialize_model_parallel(seed=1234)
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+load_peft_adapter_checkpoint(model, checkpoint, peft)
+bridge.save_hf_pretrained(
+    model, os.environ["MERGED_HF"], source_path=source,
+    merge_adapter_weights=True, strict=True, weight_dtype=torch.bfloat16,
+)
+dist.barrier()
+dist.destroy_process_group()
+PYTHON
+srun --nodes=1 --ntasks=8 --ntasks-per-node=8 \
+  uv run --no-project python "$OUTPUT_DIR/merge_export.py"
+```
 
 ## Evaluate the original and merged checkpoints
 
-Run one process on an eight-GPU node, using Transformers 5.12.1 and
-`rouge==1.0.1`. Keep the original processor, all 658 test rows, image order,
+Run one process on an eight-GPU node with `rouge==1.0.1`.
+Use the **full IITC-8K test split (658 examples)**; 8K labels its context-length
+category, not the number of examples. Keep the original processor, image order,
 chat template (`enable_thinking=False`), and greedy 512-token decoding matched.
 The evaluator records full answers and rejects mismatched paired inputs.
 
 ```bash
-export MERGED_HF=/path/to/already-merged-hf-checkpoint
-
 uv run --no-project python "$EXAMPLE/evaluate.py" \
   --model "$HF_MODEL" --processor "$HF_MODEL" \
   --source "$IITC_ROOT/source/IITC_8k_test.json" --images "$IITC_ROOT/images" \
@@ -97,10 +142,15 @@ uv run --no-project python "$EXAMPLE/evaluate.py" \
 uv run --no-project python "$EXAMPLE/evaluate.py" \
   --model "$MERGED_HF" --processor "$HF_MODEL" \
   --source "$IITC_ROOT/source/IITC_8k_test.json" --images "$IITC_ROOT/images" \
-  --output "$IITC_ROOT/eval-625"
+  --output "$IITC_ROOT/eval-finetuned"
+```
+
+Compare the saved answers (CPU only; this is **not a third inference run**):
+
+```bash
 uv run --no-project python "$EXAMPLE/evaluate.py" \
-  --compare "$IITC_ROOT/eval-original" "$IITC_ROOT/eval-625" \
-  --output "$IITC_ROOT/comparison-625.json"
+  --compare "$IITC_ROOT/eval-original" "$IITC_ROOT/eval-finetuned" \
+  --output "$IITC_ROOT/comparison.json"
 ```
 
 Picture-reference accuracy requires exactly one correct `[Picture N]` citation;
