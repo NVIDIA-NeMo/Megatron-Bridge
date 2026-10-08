@@ -239,24 +239,59 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
     process_weight(name, weight)
 ```
 
-### 4. Use `from_hf_pretrained` for Export Workflows
+### 4. Preserve Artifacts in Export Workflows
 
-When exporting Megatron checkpoints back to 🤗 Hugging Face format, always use `from_hf_pretrained()` instead of `from_hf_config()`. The `from_hf_config()` method does not load the tokenizer and other artifacts required for saving a complete 🤗 Hugging Face checkpoint:
+Use `from_hf_pretrained()` when an existing Hugging Face repository or local
+directory provides the configuration, tokenizer, and other export artifacts.
+The pretrained wrapper loads these artifacts lazily; exporting Megatron weights
+does not require materializing the reference Hugging Face model weights.
 
 ```python
 from megatron.bridge import AutoBridge
 
-# ✅ Correct: Use from_hf_pretrained for export workflows
 bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
 bridge.export_ckpt("./megatron_checkpoints/llama32_1b", "./hf_exports/llama32_1b")
-
-# ❌ Avoid: from_hf_config lacks artifacts needed for saving
-# config = AutoConfig.from_pretrained("meta-llama/Llama-3.2-1B")
-# bridge = AutoBridge.from_hf_config(config)  # Missing tokenizer, etc.
-# bridge.export_ckpt(...)  # Will fail!
 ```
 
-The `from_hf_config()` method is only suitable for architecture exploration and introspection (e.g., inspecting `transformer_config`), not for checkpoint conversion workflows.
+#### Config-only export without reference weights
+
+For a supported model architecture, `from_hf_config()` can also export a matching
+Megatron checkpoint. You do not need to create an initial Hugging Face weight
+checkpoint to train from scratch: use `load_weights=False` when constructing the
+Megatron model, as described above.
+
+A config-only bridge does not retain a tokenizer. To include one in the export,
+provide an artifact-only directory via `source_path`. For a standard Llama model,
+this directory contains a matching `config.json` and the tokenizer files saved
+with `tokenizer.save_pretrained()`, but needs no Hugging Face weight files:
+
+```python
+from transformers import AutoConfig
+
+from megatron.bridge import AutoBridge
+
+# ./hf_artifacts contains the model config and tokenizer, not reference weights.
+config = AutoConfig.from_pretrained("./hf_artifacts", local_files_only=True)
+bridge = AutoBridge.from_hf_config(config)
+bridge.export_ckpt(
+    "./megatron_checkpoints/my_model",
+    "./hf_exports/my_model",
+    source_path="./hf_artifacts",
+)
+```
+
+The configuration must identify a supported architecture (for example,
+`architectures=["LlamaForCausalLM"]`) and match the checkpoint. Model families may
+also require processor artifacts, additional files, or trusted custom modeling
+code; those must be supplied separately. Not every bridge supports standalone
+Hugging Face checkpoint export.
+
+Without an artifact source, config-only export writes `config.json` and the
+converted weights, but does not produce tokenizer files. Save your tokenizer to
+the output directory separately if consumers need it. This describes current
+Bridge behavior; older containers that fail with
+`AttributeError: 'LlamaConfig' object has no attribute 'save_artifacts'` need a
+Bridge version with config-only export support.
 
 For more examples and advanced usage patterns, see the `examples/conversion/` directory in the repository.
 
