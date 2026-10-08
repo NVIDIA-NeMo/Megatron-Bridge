@@ -100,8 +100,8 @@ def _run_checkpoint_resume(tmp_path: Path) -> None:
         )
         assert result.returncode == 0, result.stdout + result.stderr
     for rank in range(2):
-        baseline = torch.load(tmp_path / "baseline" / f"state_rank{rank}.pt", map_location="cpu", weights_only=False)
-        resumed = torch.load(tmp_path / "resumed" / f"state_rank{rank}.pt", map_location="cpu", weights_only=False)
+        baseline = torch.load(tmp_path / "baseline" / f"state_rank{rank}.pt", map_location="cpu", weights_only=True)
+        resumed = torch.load(tmp_path / "resumed" / f"state_rank{rank}.pt", map_location="cpu", weights_only=True)
         _assert_equal(resumed, baseline)
         assert resumed["step"] == 4
         assert resumed["consumed_train_samples"] == 16
