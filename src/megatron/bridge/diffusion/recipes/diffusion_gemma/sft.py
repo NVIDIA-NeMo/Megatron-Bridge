@@ -11,6 +11,7 @@ from pathlib import Path
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 from megatron.bridge.diffusion.models.diffusion_gemma.provider import DiffusionGemmaModelProvider
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.recipes.common import _sft_common
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 
@@ -27,6 +28,7 @@ def diffusion_gemma_sft_config(
     train_iters: int = 1000,
     model: DiffusionGemmaModelProvider | None = None,
     allow_random_init: bool = False,
+    hf_model: str | None = None,
 ) -> ConfigContainer:
     """Build BF16, unpacked SFT with frozen routers and no MoE auxiliary loss.
 
@@ -34,6 +36,7 @@ def diffusion_gemma_sft_config(
         dataset_root: Existing local GPTSFT train/validation JSONL directory.
         tokenizer_model: Existing tokenizer directory; no automatic download.
         pretrained_checkpoint: Native Megatron checkpoint matching this provider.
+        hf_model: HF DiffusionGemma model ID or local checkpoint for direct weight initialization.
         experiment_dir: Explicit directory for checkpoints and TensorBoard logs.
         seq_length: Dataset sequence length before final canvas EOS fill.
         micro_batch_size: Number of rows per microbatch.
@@ -48,16 +51,31 @@ def diffusion_gemma_sft_config(
     The objective averages independently DP-normalized diffusion and encoder
     token means per microbatch, then averages those microbatches through the
     standard accumulation schedule. Packing, PEFT, and model parallelism are
-    outside this bounded implementation. HF weight conversion is not provided.
+    outside this bounded implementation. HF initialization uses AutoBridge before
+    distributed wrapping;
+    subsequent training checkpoints and resumes use native Megatron state.
     """
     if not all(str(value).strip() for value in (dataset_root, tokenizer_model, experiment_dir)):
         raise ValueError("dataset_root, tokenizer_model and experiment_dir must be explicit nonempty paths")
-    if not pretrained_checkpoint and not allow_random_init:
-        raise ValueError("a native pretrained checkpoint is required; random initialization is fixture-only")
+    if hf_model is not None and (
+        not hf_model.strip() or pretrained_checkpoint or model is not None or allow_random_init
+    ):
+        raise ValueError(
+            "hf_model must be nonempty and cannot be combined with native checkpoint, model override, or random init"
+        )
+    if not pretrained_checkpoint and not allow_random_init and hf_model is None:
+        raise ValueError(
+            "an HF model or native pretrained checkpoint is required; random initialization is fixture-only"
+        )
     if min(seq_length, micro_batch_size, global_batch_size, train_iters) < 1:
         raise ValueError("sequence length, batch sizes and train_iters must be positive")
     cfg = _sft_common()
-    cfg.model = model if model is not None else DiffusionGemmaModelProvider()
+    if hf_model is not None:
+        cfg.model = AutoBridge.from_hf_pretrained(hf_model).to_megatron_provider(load_weights=True)
+    else:
+        cfg.model = model if model is not None else DiffusionGemmaModelProvider()
+    if not isinstance(cfg.model, DiffusionGemmaModelProvider):
+        raise ValueError("hf_model must describe DiffusionGemma")
     if cfg.model.overlap_moe_expert_parallel_comm or cfg.model.recompute_granularity is not None:
         raise ValueError("DiffusionGemma does not support overlap schedule plans or activation recompute")
     if cfg.model.calculate_per_token_loss:

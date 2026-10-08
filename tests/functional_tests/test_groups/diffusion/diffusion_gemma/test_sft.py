@@ -51,6 +51,10 @@ def _assert_equal(actual, expected) -> None:
 def test_sft_checkpoint_resume(tmp_path):
     """Match model, optimizer, scheduler, and sampler progress after a step-2 restart."""
     _write_fixture(tmp_path)
+    _run_checkpoint_resume(tmp_path)
+
+
+def _run_checkpoint_resume(tmp_path: Path) -> None:
     env = {
         **os.environ,
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
@@ -84,6 +88,7 @@ def test_sft_checkpoint_resume(tmp_path):
 
 
 def _train_fixture(root: Path, run: str, steps: int) -> None:
+    from megatron.core.activations import fast_gelu
     from megatron.core.utils import unwrap_model
 
     from megatron.bridge.diffusion.models.diffusion_gemma.provider import DiffusionGemmaModelProvider
@@ -94,6 +99,37 @@ def _train_fixture(root: Path, run: str, steps: int) -> None:
     from tests.functional_tests.utils import verify_checkpoint_files
 
     output = root / run
+    hf_source = root / "hf_model"
+    initialization = (
+        {"hf_model": str(hf_source)}
+        if hf_source.is_dir()
+        else {
+            "allow_random_init": True,
+            "model": DiffusionGemmaModelProvider(
+                num_layers=2,
+                hidden_size=32,
+                ffn_hidden_size=32,
+                num_attention_heads=4,
+                num_query_groups=2,
+                kv_channels=8,
+                global_head_dim=8,
+                num_global_key_value_heads=1,
+                global_rotary_percent=0.5,
+                vocab_size=32,
+                make_vocab_size_divisible_by=1,
+                num_moe_experts=2,
+                moe_router_topk=1,
+                moe_ffn_hidden_size=16,
+                moe_shared_expert_intermediate_size=32,
+                moe_grouped_gemm=False,
+                moe_permute_fusion=False,
+                window_size=8,
+                interleaved_attn_pattern=["sliding_attention", "full_attention"],
+                gradient_accumulation_fusion=True,
+                deterministic_mode=True,
+            ),
+        }
+    )
     cfg = diffusion_gemma_sft_config(
         dataset_root=str(root / "data"),
         tokenizer_model=str(root / "tokenizer"),
@@ -103,31 +139,14 @@ def _train_fixture(root: Path, run: str, steps: int) -> None:
         global_batch_size=4,
         micro_batch_size=1,
         train_iters=steps,
-        allow_random_init=True,
-        model=DiffusionGemmaModelProvider(
-            num_layers=2,
-            hidden_size=32,
-            ffn_hidden_size=32,
-            num_attention_heads=4,
-            num_query_groups=2,
-            kv_channels=8,
-            global_head_dim=8,
-            num_global_key_value_heads=1,
-            global_rotary_percent=0.5,
-            vocab_size=32,
-            make_vocab_size_divisible_by=1,
-            num_moe_experts=2,
-            moe_router_topk=1,
-            moe_ffn_hidden_size=16,
-            moe_shared_expert_intermediate_size=32,
-            moe_grouped_gemm=False,
-            moe_permute_fusion=False,
-            window_size=8,
-            interleaved_attn_pattern=["sliding_attention", "full_attention"],
-            gradient_accumulation_fusion=True,
-            deterministic_mode=True,
-        ),
+        **initialization,
     )
+    cfg.model.moe_grouped_gemm = False
+    cfg.model.moe_permute_fusion = False
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.model.deterministic_mode = True
+    # Pin the eager expression: compiled GELU specializes on expert token-count history.
+    cfg.model.activation_func = fast_gelu.__wrapped__
     cfg.dataset.max_train_samples = 64
     cfg.dataset.num_workers = 0
     cfg.dataset.do_validation = False

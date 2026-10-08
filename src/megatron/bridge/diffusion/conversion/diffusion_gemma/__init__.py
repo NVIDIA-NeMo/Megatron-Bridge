@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.diffusion.conversion.diffusion_gemma import DiffusionGemmaBridge
-from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion import (
-    NemotronLabsDiffusionBridge,
-)
+"""DiffusionGemma text-only Hugging Face checkpoint conversion."""
+
+from megatron.bridge.diffusion.conversion.diffusion_gemma.diffusion_gemma_bridge import DiffusionGemmaBridge
 
 
-__all__ = ["DiffusionGemmaBridge", "NemotronLabsDiffusionBridge"]
+__all__ = ["DiffusionGemmaBridge"]

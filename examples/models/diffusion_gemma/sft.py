@@ -8,8 +8,8 @@
 """Run offline native DiffusionGemma SFT (TP=EP=PP=CP=1).
 
 Launch with ``uv run python -m torch.distributed.run --nproc_per_node=1``.
-Provide local dataset/tokenizer paths and a native DiffusionGemma checkpoint.
-This entrypoint neither downloads nor converts Hugging Face model weights.
+Provide local dataset/tokenizer paths and HF or native DiffusionGemma weights.
+HF initialization maps text weights through AutoBridge; training checkpoints remain native.
 """
 
 import argparse
@@ -26,6 +26,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset-root", required=True, help="Local train/validation JSONL directory")
     parser.add_argument("--tokenizer-model", required=True, help="Existing local tokenizer directory")
+    parser.add_argument("--hf-model", help="HF DiffusionGemma model ID or local checkpoint for initial weights")
     parser.add_argument("--pretrained-checkpoint", help="Native Megatron DiffusionGemma checkpoint")
     parser.add_argument("--experiment-dir", required=True)
     parser.add_argument("--seq-length", type=int, default=2048)
@@ -48,8 +49,8 @@ def main() -> None:
         parser.error("--pretrained-checkpoint must name an existing native checkpoint directory")
     if not 0 < args.canvas_length <= args.seq_length:
         parser.error("canvas-length must be positive and no larger than seq-length")
-    if not args.pretrained_checkpoint and not args.allow_random_init:
-        parser.error("--pretrained-checkpoint is required unless --allow-random-init is explicitly selected")
+    if sum(bool(value) for value in (args.hf_model, args.pretrained_checkpoint, args.allow_random_init)) != 1:
+        parser.error("select exactly one of --hf-model, --pretrained-checkpoint, or --allow-random-init")
     cfg = diffusion_gemma_sft_config(
         dataset_root=args.dataset_root,
         tokenizer_model=args.tokenizer_model,
@@ -60,6 +61,7 @@ def main() -> None:
         global_batch_size=args.global_batch_size,
         train_iters=args.train_iters,
         allow_random_init=args.allow_random_init,
+        hf_model=args.hf_model,
     )
     step = DiffusionGemmaStep(canvas_length=args.canvas_length, encoder_loss_weight=args.encoder_loss_weight)
     train = finetune if args.pretrained_checkpoint else pretrain

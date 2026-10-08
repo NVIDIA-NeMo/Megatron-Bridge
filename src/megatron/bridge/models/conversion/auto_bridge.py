@@ -78,6 +78,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
+    "DiffusionGemmaForBlockDiffusion",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
     "ForTokenClassification",
@@ -271,6 +272,12 @@ def _resolve_pretrained_wrapper_cls(
     supported architectures use :class:`PreTrainedCausalLM`.
     """
     architectures = getattr(config, "architectures", None) or []
+    if "DiffusionGemmaForBlockDiffusion" in architectures:
+        from megatron.bridge.diffusion.conversion.diffusion_gemma.diffusion_gemma_bridge import (
+            _PreTrainedDiffusionGemma,
+        )
+
+        return _PreTrainedDiffusionGemma
     if any(arch.endswith("ForTokenClassification") for arch in architectures):
         return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):
@@ -2372,6 +2379,12 @@ class AutoBridge(Generic[MegatronModelT]):
         if isinstance(self.hf_pretrained, PreTrainedMaskedLM):
             return PreTrainedMaskedLM
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            from megatron.bridge.diffusion.conversion.diffusion_gemma.diffusion_gemma_bridge import (
+                _PreTrainedDiffusionGemma,
+            )
+
+            if isinstance(self.hf_pretrained, _PreTrainedDiffusionGemma):
+                return _PreTrainedDiffusionGemma
             return PreTrainedCausalLM
         return _resolve_pretrained_wrapper_cls(self.hf_pretrained)
 
