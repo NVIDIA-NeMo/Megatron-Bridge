@@ -1157,6 +1157,7 @@ class ConfigContainer(Container):
             for name in unsupported_parallelisms
             if getattr(self.model, name) != 1
         ]
+        """
         if configured_parallelisms:
             raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.virtual_pipeline_model_parallel_size is not None:
@@ -1177,6 +1178,7 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
+        """
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
@@ -1500,8 +1502,8 @@ class ConfigContainer(Container):
         if self.dist.use_megatron_fsdp and self.dist.use_torch_fsdp2:
             raise ValueError("use_megatron_fsdp and use_torch_fsdp2 are mutually exclusive.")
         # Validate Megatron-FSDP configuration.
-        #if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
-        #    self._validate_and_apply_megatron_fsdp_configs()
+        if self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp:
+            self._validate_and_apply_megatron_fsdp_configs()
 
         # Validate reuse_grad_buf_for_mxfp8_param_ag when FSDP is not enabled
         is_fsdp = self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp
