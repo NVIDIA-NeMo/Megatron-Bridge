@@ -21,13 +21,13 @@ cd "${REPO_ROOT}"
 # Qwen4-Exp requires a newer HF reference than the project's Transformers cap.
 # Install it separately, then expose the existing CUDA runtime to that environment.
 BASE_PYTHON=$(uv run --no-sync python -c 'import sys; sys.stdout.write(sys.executable)')
-BASE_SITE=$(uv run --no-sync python -c 'import sysconfig; sys.stdout.write(sysconfig.get_path("purelib"))')
+BASE_SITE=$(uv run --no-sync python -c 'import sys, sysconfig; sys.stdout.write(sysconfig.get_path("purelib"))')
 REFERENCE_ENV=$(mktemp -d "${TMPDIR:-/tmp}/qwen4-exp-parity.XXXXXX")
 trap 'rm -rf "${REFERENCE_ENV}"' EXIT
 uv venv --python "${BASE_PYTHON}" --system-site-packages "${REFERENCE_ENV}"
 uv pip install --python "${REFERENCE_ENV}/bin/python" "transformers==5.16.1"
 REFERENCE_SITE=$(uv run --no-project --python "${REFERENCE_ENV}/bin/python" python -c \
-  'import sysconfig; sys.stdout.write(sysconfig.get_path("purelib"))')
+  'import sys, sysconfig; sys.stdout.write(sysconfig.get_path("purelib"))')
 printf '%s\n' "${BASE_SITE}" > "${REFERENCE_SITE}/bridge-ci-runtime.pth"
 
 export PYTHONPATH="${REPO_ROOT}/src:${REPO_ROOT}/3rdparty/Megatron-LM:${REPO_ROOT}:${PYTHONPATH:-}"
