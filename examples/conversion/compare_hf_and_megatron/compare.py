@@ -115,7 +115,12 @@ from megatron.bridge.models.nemotron_omni.inference_inputs import (
     nemotron_omni_reference_metadata,
     prepare_nemotron_omni_inputs,
 )
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    disable_mtp_for_inference,
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+)
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
@@ -1279,6 +1284,7 @@ def build_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     args = build_parser().parse_args()
 
+    maybe_initialize_distributed()
     compare_models_one_step(args)
 
     if torch.distributed.is_initialized():

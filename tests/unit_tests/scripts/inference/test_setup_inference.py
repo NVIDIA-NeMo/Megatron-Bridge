@@ -263,6 +263,8 @@ def test_resource_validation_rejects_invalid_values(options, message):
     [
         ("legacy-full-prefix-generation", [], "requires --legacy-full-prefix"),
         ("text-generation", ["--legacy-full-prefix"], "requires --task legacy-full-prefix-generation"),
+        ("vlm-generation", ["--legacy-full-prefix"], "requires --task legacy-full-prefix-generation"),
+        ("hf-inference", ["--legacy-full-prefix"], "requires --task legacy-full-prefix-generation"),
     ],
 )
 def test_task_validation_rejects_inconsistent_legacy_full_prefix_usage(task_name, inference_args, message):
@@ -420,18 +422,24 @@ def test_build_task_quotes_prompts_and_uses_existing_entrypoint():
     assert scripts[0].args == ["--prompt", "'benign; echo should-not-run'"]
 
 
-def test_build_task_preserves_legacy_full_prefix_argument():
+@pytest.mark.parametrize(
+    ("task_name", "script_path"),
+    [
+        ("legacy-full-prefix-generation", "examples/conversion/hf_to_megatron_generate_text.py"),
+        ("model-comparison", "examples/conversion/compare_hf_and_megatron/compare.py"),
+    ],
+)
+def test_build_task_preserves_legacy_full_prefix_argument(task_name, script_path):
     module = _load_setup_inference_module()
     scripts = []
     module.run.Script = lambda **kwargs: scripts.append(types.SimpleNamespace(**kwargs)) or scripts[-1]
 
-    module._build_task(
-        "legacy-full-prefix-generation",
-        ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"],
-    )
+    inference_args = ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"]
+    module._validate_task_args(task_name, inference_args)
+    module._build_task(task_name, inference_args)
 
-    assert scripts[0].path == "/opt/Megatron-Bridge/examples/conversion/hf_to_megatron_generate_text.py"
-    assert scripts[0].args == ["--hf_model_path", "zai-org/GLM-5.2", "--legacy-full-prefix"]
+    assert scripts[0].path == f"/opt/Megatron-Bridge/{script_path}"
+    assert scripts[0].args == inference_args
 
 
 @pytest.mark.parametrize(
