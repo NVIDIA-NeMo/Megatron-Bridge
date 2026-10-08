@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import posixpath
 import sys
@@ -24,8 +23,8 @@ import torch
 import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.training.utils.checkpoint_utils import (
-    _RUNTIME_ONLY_TARGETS,
     CONFIG_FILE,
+    _sanitize_run_config_object,
     get_checkpoint_run_config_filename,
     join_paths,
 )
@@ -47,8 +46,6 @@ __all__ = [
     "read_run_config",
 ]
 
-logger = logging.getLogger(__name__)
-_RECIPE_CONFIG_TARGET = "megatron.core.quantization.quant_config.RecipeConfig"
 
 TRAIN_STATE_FILE = "train_state.pt"
 TRACKER_PREFIX = "latest"
@@ -373,37 +370,6 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
     return str(hf_model_id)
 
 
-def _sanitize_run_config_object(obj: Any) -> Any:
-    """Remove runtime-only objects from run config dictionaries.
-
-    Timers and other runtime constructs are serialized with `_target_` entries
-    that cannot be recreated without additional context (e.g., constructor
-    arguments provided at runtime). These objects are not required when loading
-    a checkpoint configuration, so we replace them with ``None`` to avoid
-    instantiation errors when the config is processed later. Legacy quantization
-    recipes saved without their state are dropped for the same reason.
-    """
-    if isinstance(obj, dict):
-        target = obj.get("_target_")
-        if isinstance(target, str) and target in _RUNTIME_ONLY_TARGETS:
-            return None
-        if (
-            target == _RECIPE_CONFIG_TARGET
-            and obj.get("_call_", True) is True
-            and set(obj).issubset({"_target_", "_call_"})
-        ):
-            logger.warning(
-                "Ignoring a legacy quantization recipe whose state was not preserved in run_config.yaml. "
-                "The checkpoint can still be loaded, but the original per-module quantization settings "
-                "must be supplied separately if they are needed."
-            )
-            return None
-        return {key: _sanitize_run_config_object(value) for key, value in obj.items()}
-    if isinstance(obj, list):
-        return [_sanitize_run_config_object(item) for item in obj]
-    return obj
-
-
 def _validate_run_config_targets(value: Any, path: str = "") -> None:
     """Reject known unsafe checkpoint targets before compatibility code imports them."""
     if isinstance(value, dict):
@@ -444,7 +410,7 @@ def read_run_config(run_config_filename: str) -> dict[str, Any]:
 
     Reads the file on rank 0 and broadcasts the result to other ranks. Unlike the
     Megatron-LM reader, this validates targets and applies Bridge-specific
-    compatibility fixes (e.g. GTP weight shards, legacy quantization recipes).
+    compatibility fixes (e.g. GTP weight shards).
 
     Args:
         run_config_filename: Path to the run config YAML file.
