@@ -456,6 +456,8 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
+    cfg.model.cuda_graph_impl = "none"
+
     cfg.ddp.megatron_fsdp_version = 2
     return cfg
 
