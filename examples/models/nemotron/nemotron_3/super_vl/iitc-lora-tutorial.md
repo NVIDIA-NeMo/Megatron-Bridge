@@ -70,8 +70,7 @@ one epoch's worth. `16384` is the training sequence limit in tokens.
 ## Merge and export to HF format after training
 
 After step 625, merge the adapters with the base weights and export to HF
-before evaluation. This checkout provides Bridge APIs for this operation,
-but no single CLI command for merging a native LoRA checkpoint.
+before evaluation.
 
 <details>
 <summary>Bridge merge/export commands (one eight-GPU node)</summary>
@@ -161,7 +160,3 @@ Evaluation on all 658 IITC-8K held-out test examples:
 | --- | ---: | ---: |
 | Original | 85.71% | 35.83 |
 | Bridge LoRA, step 625 | 87.99% | 54.01 |
-
-Step 625 logged 10,000 consumed training samples (625 updates × global
-batch size 16). This counter measures consumed samples, not distinct dataset
-rows visited.
