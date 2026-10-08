@@ -71,13 +71,12 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.12.1,<=5.15.0",
+    "transformers>=5.15,<5.18",
     "mistral-common>=1.10.0",
-    "peft>=0.18.1",
+    "peft>=0.20.0,<=0.21.0",
     "datasets>=2.20.0",
     "accelerate",
     "diffusers>=0.36.0",
-    "peft>=0.18.0",
     "einops",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
@@ -123,6 +122,8 @@ no-build-isolation-package = [
     "fast-hadamard-transform",
 ]
 prerelease = "allow"
+# Transformers 5.15 still passes cls= to RobertaProcessing; this prerelease renamed it.
+constraint-dependencies = ["tokenizers!=0.23.0rc0"]
 override-dependencies = [
     "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
@@ -141,8 +142,6 @@ override-dependencies = [
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
-    # TODO: Remove this cap once huggingface/transformers#46381 is merged and included in a Transformers release.
-    "tokenizers>=0.22.0,<0.23",                             # tokenizers 0.23 renames RobertaProcessing's 'cls' kwarg to 'cls_token'; transformers still passes cls= (breaks CLIPTokenizer)
     "nvidia-cudnn-frontend==1.29.0",
     # Match MCore main: cuDNN Frontend 1.29 needs the newer TileLang/TVM FFI family.
     "tilelang==0.1.12",
@@ -172,7 +171,7 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.20.0+131157b5"
+version = "2.20.2+6ea2a74a"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
