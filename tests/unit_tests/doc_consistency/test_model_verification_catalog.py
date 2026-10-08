@@ -272,6 +272,7 @@ def test_models_map_to_canonical_guides(generator: ModuleType, catalog: dict[str
 
     assert all(path != "models/README.md" for path in paths.values())
     assert len(set(paths.values())) == len(models)
+    assert paths["ling-3.0-tiny-base"] == "models/bailing/ling-3.md"
     assert paths["gpt-oss-20b"] == "models/gpt_oss/gpt-oss-20b.md"
     assert paths["gpt-oss-120b"] == "models/gpt_oss/gpt-oss-120b.md"
     assert paths["muse-glimmer-30b"] == "models/muse_glimmer/muse-glimmer.md"

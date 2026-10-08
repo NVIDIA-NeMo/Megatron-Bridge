@@ -1,6 +1,5 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
-# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
-
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -12,14 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Bailing/Ling recipe exports."""
 
-from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
-from megatron.bridge.models.bailing.bailing_moe3_bridge import BailingMoeV3Bridge
-from megatron.bridge.models.bailing.bailing_moe3_provider import BailingMoe3HybridProvider
+from megatron.bridge.recipes.bailing.h100.ling_v3_tiny_base import (
+    ling_v3_tiny_base_sft_8gpu_h100_bf16_config,
+    ling_v3_tiny_base_sft_config,
+)
 
 
 __all__ = [
-    "BailingMoeV2Bridge",
-    "BailingMoeV3Bridge",
-    "BailingMoe3HybridProvider",
+    "ling_v3_tiny_base_sft_8gpu_h100_bf16_config",
+    "ling_v3_tiny_base_sft_config",
 ]
