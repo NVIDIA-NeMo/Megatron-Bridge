@@ -33,9 +33,11 @@ _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE = 163842
 
 def _moonlight_16b_model_provider() -> MLAModelProvider:
     """Build the Moonlight architecture from its Hugging Face configuration."""
-    return AutoBridge.from_hf_pretrained(
+    model = AutoBridge.from_hf_pretrained(
         _MOONLIGHT_16B_MODEL_ID, revision=_MOONLIGHT_16B_MODEL_REVISION
     ).to_megatron_provider(load_weights=False)
+    model._pipeline_model_parallel_layout_builder = _get_moonlight_pipeline_layout
+    return model
 
 
 def _moonlight_16b_finetuning_model_provider(
@@ -130,7 +132,7 @@ def _apply_moonlight_16b_finetuning_convergence_contract(cfg: ConfigContainer) -
     cfg.ddp.use_distributed_optimizer = True
 
 
-def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int):
+def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int | None):
     """Get pipeline layout for Moonlight-16B based on PP and VP size."""
     map_pp_vp_to_layout = {
         (1, 1): None,
@@ -140,6 +142,7 @@ def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int):
         (2, 2): [["embedding"] + ["decoder"] * 7] + [["decoder"] * 7] * 2 + [["decoder"] * 6 + ["loss"]],
         (4, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 6 + [["decoder"] * 3 + ["loss"]],
     }
+    vp_size = 1 if vp_size is None else vp_size
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
         raise ValueError(
             f"Invalid PP and VP size: {pp_size} and {vp_size} to infer PP layout "

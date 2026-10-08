@@ -99,7 +99,7 @@ def test_flux_provider_initialization_settings():
     """Test FluxProvider initialization and performance settings."""
     provider = FluxProvider()
 
-    assert provider.use_cpu_initialization is True
+    assert provider.use_cpu_initialization is False
     assert provider.gradient_accumulation_fusion is False
     assert provider.enable_cuda_graph is False
     assert provider.cuda_graph_scope is None

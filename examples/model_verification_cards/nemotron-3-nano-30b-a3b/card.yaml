@@ -1,0 +1,271 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: nemotron_3_nano_30b_a3b
+summary: >
+  The pinned checkpoint has verified one-node GPU import, independent CPU and
+  distributed GPU BF16 export, and checkpoint-backed deterministic inference.
+  Both exports strictly reload with Transformers and exhaustively match the
+  source after the explicitly requested BF16 casts. Performance scope:
+  pretrain_performance.GB300 uses the tuned canonical 8-GPU MXFP8 recipe.
+  CPU import, manual forward, and functional training workflows remain
+  unverified in this card.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - hf_to_megatron_cpu
+      - manual_forward_pass
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    GB300: verified
+model:
+  hf_id: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+  hf_revision: 2d59de1cbd51c0adf384eb906b766d1aee0e0517  # pragma: allowlist secret
+  architecture: NemotronHForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08
+  bridge_commit: d352aceda8ed4136f1db787bcf449c1b210a2438  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --distributed-timeout-minutes 120 --trust-remote-code
+      --low-memory-save
+    last_verified: 2026-08-25
+    expected_result: >
+      The pinned one-node 8-H100 import exits successfully at
+      TP1/PP1/EP8/ETP1, persists iter_0000000, and reloads it for inference.
+      A separate public GPU round-trip at the same topology exhaustively
+      compares all 6,243 exported BF16 weights against the immutable source:
+      6,243 of 6,243 match with no skipped FP8 tensors or mismatches.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000
+      --hf-path work/model-verification/nemotron-3-nano-30b-a3b/cpu-hf-export
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-08-25
+    expected_result: >
+      The synchronous CPU export writes a complete indexed checkpoint. All
+      6,243 source keys and shapes match across 31,577,940,288 values. The 46
+      source FP32 tensors cast to BF16 are the 23 per-layer mixer A_log tensors
+      and 23 per-layer mixer D tensors; each equals the export exactly after
+      that declared cast, and every remaining tensor matches exactly at zero
+      tolerance. Native loading succeeds as NemotronHForCausalLM with no
+      missing, unexpected, mismatched, or errored weights, and the tokenizer
+      reloads from the export.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron-path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000
+      --hf-path work/model-verification/nemotron-3-nano-30b-a3b/gpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --distributed-save --save-every-n-ranks 1 --trust-remote-code
+    last_verified: 2026-08-25
+    expected_result: >
+      The synchronous TP1/PP1/EP8/ETP1 export writes a complete indexed
+      checkpoint. All 6,243 source keys and shapes match across 31,577,940,288
+      values. The 69 source FP32 tensors cast to BF16 are the same 46 mixer
+      A_log and D tensors plus 23 per-layer mixer gate
+      e_score_correction_bias tensors. The legacy distributed GPU export model
+      wrapper downcast those gate biases to BF16, while the CPU export preserved
+      them in FP32; all 69 equal the export exactly after this declared cast,
+      and every remaining tensor matches exactly at zero tolerance. Native
+      loading succeeds as NemotronHForCausalLM with no missing, unexpected,
+      mismatched, or errored weights, and the tokenizer reloads from the export.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      This workflow remains unverified and requires a public run against the
+      pinned Hugging Face revision with all applicable verification gates.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task legacy-full-prefix-generation
+      --hf_model_path nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16
+      --hf-revision 2d59de1cbd51c0adf384eb906b766d1aee0e0517
+      --megatron_model_path work/model-verification/nemotron-3-nano-30b-a3b/import-gpu/iter_0000000
+      --tp 1 --pp 1 --ep 8 --etp 1
+      --prompt "Explain why the sky appears blue in one sentence."
+      --max_new_tokens 32 --apply-chat-template --thinking-mode disabled
+      --trust-remote-code --legacy-full-prefix
+    last_verified: 2026-08-25
+    expected_result: >
+      The public launcher reloaded the pinned BF16 checkpoint and produced
+      exactly 32 generated tokens across generation steps 0 through 31, using
+      the 32-token maximum without an earlier EOS. The literal completion is
+      'User asks: "Explain why the sky appears blue in one sentence." So we
+      need to give a single sentence explanation. Provide concise answer.
+      Probably: "'.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      commands: null
+      last_verified: null
+      depends_on: sft
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      depends_on: pretrain
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        This workflow remains unverified and requires a bounded public run with
+        the model's pinned revision and all applicable verification gates.
+
+  pretrain_performance:
+    GB300:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 0480586879f2513958fd8634fc529693ae13e536  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
+        --recipe nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config
+        --mode pretrain --max_steps 50 --seq_length 8192
+        logger.save_config_filepath=work/model-verification/nemotron-3-nano-30b-a3b/gb300-performance/ConfigContainer.yaml
+      last_verified: 2026-08-18
+      metrics:
+        initial_loss: 12.18025
+        final_loss: 0.004964447
+        last_10_steps_step_time_ms_avg: 12455.140
+        last_10_steps_model_tflops_per_gpu_avg: 937.770
+        last_10_steps_tokens_per_second_per_gpu_avg: 42094.107
+      expected_result: >
+        On exactly 8 GB300s, the canonical MXFP8 mock-data recipe completes
+        exactly 50 optimizer steps at TP1/PP1/CP1/EP8/ETP1, GBS/MBS 512/4,
+        and sequence length 8192. All 50 keyed rows have finite loss with zero
+        skipped or NaN iterations. Loss moves from 12.18025 to 0.004964447;
+        the final ten steps average 12455.140 ms, 937.770 TFLOP/s/GPU, and
+        42094.107 tokens/s/GPU. The resolved configuration persists.

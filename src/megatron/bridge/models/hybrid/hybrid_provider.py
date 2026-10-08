@@ -17,7 +17,7 @@ import inspect
 import logging
 import warnings
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Callable, Literal, Self
 
 import torch
 from megatron.core.models.hybrid.hybrid_layer_specs import (
@@ -27,13 +27,19 @@ from megatron.core.models.hybrid.hybrid_layer_specs import (
     hybrid_stack_spec as default_hybrid_stack_spec,
 )
 from megatron.core.models.hybrid.hybrid_model import HybridModel as MCoreHybridModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_total_layer_count, parse_hybrid_pattern
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
@@ -114,6 +120,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
     # Model configuration
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = False
     params_dtype: torch.dtype = torch.bfloat16
@@ -156,6 +163,9 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
     hf_model_revision: str | None = None
     """Optional immutable HuggingFace revision used to construct this provider."""
+
+    hf_model_text_only: bool = False
+    """Whether the source HF checkpoint was projected to its language model."""
 
     _pg_collection: ProcessGroupCollection | None = None
 
@@ -273,6 +283,12 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
         return _configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
 
+    def _copy_config_without_runtime_process_groups(self, *, deep: bool) -> Self:
+        """Copy this config without the runtime-only process-group collection."""
+        model_config = copy.copy(self)
+        model_config._pg_collection = None
+        return copy.deepcopy(model_config) if deep else model_config
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreHybridModel:
         """Configure and instantiate a Megatron Core Hybrid model based on this configuration.
 
@@ -286,11 +302,6 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         """
         hybrid_stack_spec = self._resolve_hybrid_stack_spec()
 
-        assert getattr(self, "virtual_pipeline_model_parallel_size", None) is None and vp_stage is None, (
-            "Virtual pipeline model parallelism is temporarily unsupported in Hybrid "
-            "models due to upstream MCore HybridModel API dependency"
-        )
-
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
         if self.should_pad_vocab:
             padded_vocab_size = calculate_padded_vocab_size(
@@ -299,23 +310,43 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         else:
             padded_vocab_size = self.vocab_size
 
-        pre_process = pre_process if pre_process is not None else is_pp_first_stage(self._pg_collection.pp)
-        post_process = post_process if post_process is not None else is_pp_last_stage(self._pg_collection.pp)
+        vp_size = self.virtual_pipeline_model_parallel_size
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self._pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self._pg_collection.pp
+            )
+        self._vp_stage = vp_stage
 
-        return MCoreHybridModel(
-            config=self,
-            hybrid_stack_spec=hybrid_stack_spec,
-            vocab_size=padded_vocab_size,
-            max_sequence_length=self.seq_length,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
-            fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
-            parallel_output=self.parallel_output,
-            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
-            position_embedding_type=self.position_embedding_type,
-            rotary_percent=self.rotary_percent,
-            rotary_base=self.rotary_base,
-            seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-            pre_process=pre_process,
-            post_process=post_process,
-            pg_collection=self._pg_collection,
-        )
+        # MCore creates independent per-layer configs by deep-copying this config. Detach
+        # runtime-only process groups during construction and pass them through the dedicated
+        # argument instead; torch.distributed.ProcessGroup cannot be deep-copied. The model must
+        # retain this provider as its root config because Bridge installs DDP schedule callbacks
+        # on the provider after wrapping the model.
+        pg_collection = self._pg_collection
+        self._pg_collection = None
+        try:
+            return MCoreHybridModel(
+                config=self,
+                hybrid_stack_spec=hybrid_stack_spec,
+                vocab_size=padded_vocab_size,
+                max_sequence_length=self.seq_length,
+                hybrid_layer_pattern=self.hybrid_layer_pattern,
+                fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
+                **logit_dtype_kwarg(MCoreHybridModel, self.logit_dtype),
+                parallel_output=self.parallel_output,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                position_embedding_type=self.position_embedding_type,
+                rotary_percent=self.rotary_percent,
+                rotary_base=self.rotary_base,
+                seq_len_interpolation_factor=self.seq_len_interpolation_factor,
+                pre_process=pre_process,
+                post_process=post_process,
+                pg_collection=pg_collection,
+                vp_stage=vp_stage,
+            )
+        finally:
+            self._pg_collection = pg_collection

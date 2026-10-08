@@ -138,6 +138,9 @@ class TestWrapMegatronMIMOModelDistributed:
             megatron_mimo_model, ddp_config, megatron_mimo_parallelism_config, grids, pg_collections
         )
 
+        wrapped_modality = megatron_mimo_model.modality_submodules["images"]
+        assert wrapped_modality.module.pg_collection is pg_collections["images"]
+
         # Should wrap both language model and images submodule
         assert mock_ddp.call_count == 2
 

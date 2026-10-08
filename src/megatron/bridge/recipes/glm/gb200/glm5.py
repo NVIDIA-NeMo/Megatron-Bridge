@@ -46,13 +46,17 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = None
+    # [14, 16, 12, 12, 12, 12] decoder layers: the last stage also hosts the MTP
+    # layer and both loss heads, and 16 decoder layers there leave no room for
+    # NCCL buffers when training resumes with loaded optimizer state. Every stage
+    # after the first starts on a DSA top-k computing layer.
+    cfg.model.pipeline_model_parallel_layout = _GLM52_PP6_128K_LAYOUT
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = 6
@@ -419,7 +423,12 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     return cfg
 
 
+# The flat name is also a benchmark recipe, which bare launcher lookup selects; this alias reaches the library workload.
+glm52_gb200_sft_config = glm52_sft_192gpu_gb200_bf16_config
+
+
 __all__ = [
+    "glm52_gb200_sft_config",
     "glm52_peft_192gpu_gb200_bf16_config",
     "glm52_pretrain_192gpu_gb200_bf16_config",
     "glm52_sft_192gpu_gb200_bf16_128k_config",

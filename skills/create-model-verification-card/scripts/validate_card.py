@@ -52,7 +52,7 @@ REQUIRED_ITEM_NAMES = (
     "peft",
     "checkpoint_resume",
 )
-OPTIONAL_ITEM_NAMES = ("pretrain_performance", "pretrain_fsdp")
+OPTIONAL_ITEM_NAMES = ("pretrain_performance", "pretrain_fsdp", "pretrain_weak_scaling")
 ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 MODEL_LEVEL_INDEX_SCOPE = (
     "hf_to_megatron_cpu",
@@ -79,6 +79,7 @@ TRAINING_ITEMS = frozenset(
         "checkpoint_resume",
         "pretrain_performance",
         "pretrain_fsdp",
+        "pretrain_weak_scaling",
     }
 )
 HARDWARE_SCOPED_ITEMS = TRAINING_ITEMS | {"sft_export_inference"}
@@ -106,6 +107,7 @@ REQUIRED_METRIC_NAMES = frozenset(
         "final_loss",
         "last_10_steps_step_time_ms_avg",
         "last_10_steps_model_tflops_per_gpu_avg",
+        "last_10_steps_tokens_per_second_per_gpu_avg",
     }
 )
 OPTIONAL_METRIC_NAMES = frozenset({"peak_allocated_memory_gib", "peak_reserved_memory_gib"})
@@ -120,13 +122,22 @@ MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
 MEGATRON_FSDP_STRATEGIES = frozenset({"optim_grads_params"})
 MANUAL_FORWARD_COSINE_THRESHOLD = 0.99
 MANUAL_FORWARD_REVISION_PINNING_DATE = dt.date(2026, 7, 20)
-UNTUNED_PERFORMANCE_DISCLAIMER = (
+NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER = (
+    "Performance disclaimer: this card does not record a canonical pretrain performance result; "
+    "reported timing and throughput metrics are functional verification observations, "
+    "not standalone optimized performance results."
+)
+LEGACY_UNTUNED_PERFORMANCE_DISCLAIMER = (
     "Performance disclaimer: this model has not been performance-tuned; "
     "reported timing and throughput metrics are sanity checks, not optimized performance results."
 )
+PERFORMANCE_DISCLAIMERS = (
+    NO_CANONICAL_PERFORMANCE_RESULT_DISCLAIMER,
+    LEGACY_UNTUNED_PERFORMANCE_DISCLAIMER,
+)
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "verification_index", "items"})
-VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance", "fsdp"})
+VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance", "fsdp", "weak_scaling"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
 ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
@@ -145,6 +156,8 @@ ITEM_KEYS = frozenset(
         "variants",
     }
 )
+WEAK_SCALING_KEYS = frozenset({"status", "precision", "bridge_commit", "last_verified", "expected_result", "points"})
+WEAK_SCALING_POINT_KEYS = frozenset({"num_gpus", "global_batch_size", "command", "metrics"})
 RESUME_KEYS = frozenset(
     {
         "reference_item",
@@ -168,6 +181,7 @@ FORBIDDEN_KEY_FRAGMENTS = (
 )
 
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD|PLACEHOLDER)\b|<[^>]+>", re.IGNORECASE)
+CHAT_TOKEN_RE = re.compile(r"<\|im_start\|>|<\|im_end\|>|<think>|</think>")
 HF_ID_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
@@ -509,7 +523,11 @@ def _validate_verification_index(
                 errors=errors,
             )
 
-    for index_name, item_name in (("performance", "pretrain_performance"), ("fsdp", "pretrain_fsdp")):
+    for index_name, item_name in (
+        ("performance", "pretrain_performance"),
+        ("fsdp", "pretrain_fsdp"),
+        ("weak_scaling", "pretrain_weak_scaling"),
+    ):
         index_path = (*path, index_name)
         variants = {
             hardware: item for hardware, item in hardware_groups.get(item_name, {}).items() if hardware != "all"
@@ -568,13 +586,30 @@ def _is_finite_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
-def _contains_ipv6(value: str) -> bool:
+def _mask_chat_tokens(value: str) -> str:
+    # Mask only exact delimiters, not their contents, and preserve diagnostic offsets.
+    return CHAT_TOKEN_RE.sub(lambda match: " " * len(match.group(0)), value)
+
+
+def _contains_placeholder(value: str) -> bool:
+    return PLACEHOLDER_RE.search(_mask_chat_tokens(value)) is not None
+
+
+def _contains_non_loopback_ip(value: str) -> bool:
+    for match in IPV4_RE.finditer(value):
+        try:
+            address = ipaddress.ip_address(match.group(0))
+        except ValueError:
+            # Preserve the existing conservative rejection of IPv4-like text.
+            return True
+        if not address.is_loopback:
+            return True
     for match in IPV6_CANDIDATE_RE.finditer(value):
         try:
             address = ipaddress.ip_address(match.group(0))
         except ValueError:
             continue
-        if address.version == 6:
+        if address.version == 6 and address != ipaddress.IPv6Address("::1"):
             return True
     return False
 
@@ -681,6 +716,7 @@ def _validate_metrics(
                 in {
                     "last_10_steps_step_time_ms_avg",
                     "last_10_steps_model_tflops_per_gpu_avg",
+                    "last_10_steps_tokens_per_second_per_gpu_avg",
                     "peak_allocated_memory_gib",
                     "peak_reserved_memory_gib",
                 }
@@ -783,7 +819,7 @@ def _resume_setting_names(settings: list[tuple[str, str, str | None]]) -> str:
     return ", ".join(names)
 
 
-def _has_batch_size_override(command: str) -> bool:
+def _has_batch_size_override(command: str, *, allow_global_batch_size: bool = False) -> bool:
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -802,10 +838,19 @@ def _has_batch_size_override(command: str) -> bool:
         "train.global_batch_size",
         "train.micro_batch_size",
     }
+    global_batch_names = {
+        "-gb",
+        "--global-batch-size",
+        "--global_batch_size",
+        "global_batch_size",
+        "train.global_batch_size",
+    }
     for token in tokens:
         normalized = token.lstrip("+")
         name = normalized.split("=", 1)[0]
         if name in option_names or name in config_names:
+            if allow_global_batch_size and name in global_batch_names:
+                continue
             return True
     return False
 
@@ -894,7 +939,13 @@ def _validate_synchronous_inference_launcher(
         errors.append(f"{_pointer(*path)}: verified inference must wait for completion")
 
 
-def _validate_command_text(command: str, *, path: tuple[str, ...], errors: list[str]) -> None:
+def _validate_command_text(
+    command: str,
+    *,
+    path: tuple[str, ...],
+    errors: list[str],
+    allow_global_batch_size: bool = False,
+) -> None:
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
         lexer.whitespace_split = True
@@ -905,8 +956,13 @@ def _validate_command_text(command: str, *, path: tuple[str, ...], errors: list[
         return
     if any(token in {"&", "&&", "|", "||", ";"} for token in tokens):
         errors.append(f"{_pointer(*path)}: each entry must contain exactly one command")
-    if _has_batch_size_override(command):
-        errors.append(f"{_pointer(*path)}: card commands must use recipe batch sizes")
+    if _has_batch_size_override(command, allow_global_batch_size=allow_global_batch_size):
+        message = (
+            "weak-scaling commands may override only global batch size"
+            if allow_global_batch_size
+            else "card commands must use recipe batch sizes"
+        )
+        errors.append(f"{_pointer(*path)}: {message}")
 
 
 def _validate_resume(
@@ -1546,11 +1602,11 @@ def _validate_item(
         if len(complete_commands) != expected_count:
             errors.append(f"{_pointer(*path, command_field)}: verified item requires {expected_count} command(s)")
         for entry_path, entry in command_entries:
-            if PLACEHOLDER_RE.search(entry):
+            if _contains_placeholder(entry):
                 errors.append(f"{_pointer(*entry_path)}: verified command contains a placeholder")
         if not isinstance(expected, str) or not expected.strip():
             errors.append(f"{_pointer(*path, 'expected_result')}: verified items require a concrete result")
-        elif PLACEHOLDER_RE.search(expected):
+        elif _contains_placeholder(expected):
             errors.append(f"{_pointer(*path, 'expected_result')}: verified result contains a placeholder")
         if not _is_iso_date(item.get("last_verified")):
             errors.append(f"{_pointer(*path, 'last_verified')}: verified items require an ISO date")
@@ -1559,7 +1615,7 @@ def _validate_item(
             errors.append(f"{_pointer(*path, command_field)}: must be null for status {status}")
         if item.get("last_verified") is not None:
             errors.append(f"{_pointer(*path, 'last_verified')}: must be null for status {status}")
-        if not isinstance(expected, str) or not expected.strip() or PLACEHOLDER_RE.search(expected):
+        if not isinstance(expected, str) or not expected.strip() or _contains_placeholder(expected):
             errors.append(f"{_pointer(*path, 'expected_result')}: explain the public limitation")
 
     if status == "verified" and item_name in CONVERSION_ITEMS:
@@ -1690,6 +1746,181 @@ def _validate_fsdp_variant_group(
         errors.append(f"{_pointer(*path, 'status')}: must be {expected_status} to summarize the precision variants")
 
 
+def _validate_weak_scaling_group(
+    value: Any,
+    *,
+    path: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    """Validate one hardware-scoped pretraining weak-scaling result."""
+    group = _as_mapping(value, path=path, errors=errors)
+    if group is None:
+        return
+    _check_keys(
+        group,
+        allowed=WEAK_SCALING_KEYS,
+        required=WEAK_SCALING_KEYS - {"bridge_commit"},
+        path=path,
+        errors=errors,
+    )
+
+    if group.get("status") != "verified":
+        errors.append(f"{_pointer(*path, 'status')}: weak scaling must be verified; otherwise omit the item")
+
+    precision = group.get("precision")
+    if not isinstance(precision, str) or precision not in PRECISIONS:
+        errors.append(f"{_pointer(*path, 'precision')}: expected one of {sorted(PRECISIONS)}")
+
+    if "bridge_commit" in group:
+        bridge_commit = group.get("bridge_commit")
+        if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
+            errors.append(f"{_pointer(*path, 'bridge_commit')}: expected an immutable 40-hex commit")
+
+    if not _is_iso_date(group.get("last_verified")):
+        errors.append(f"{_pointer(*path, 'last_verified')}: verified items require an ISO date")
+    expected_result = group.get("expected_result")
+    if not isinstance(expected_result, str) or not expected_result.strip():
+        errors.append(f"{_pointer(*path, 'expected_result')}: verified items require a concrete result")
+    elif _contains_placeholder(expected_result):
+        errors.append(f"{_pointer(*path, 'expected_result')}: verified result contains a placeholder")
+
+    points = group.get("points")
+    if not isinstance(points, list) or len(points) < 2:
+        errors.append(f"{_pointer(*path, 'points')}: weak scaling requires at least two measured points")
+        return
+
+    previous_gpus = 0
+    baseline_gpus: int | None = None
+    baseline_global_batch_size: int | None = None
+    reference_signature: tuple[str, str, str, str, str] | None = None
+    for index, point_value in enumerate(points):
+        point_path = (*path, "points", str(index))
+        point = _as_mapping(point_value, path=point_path, errors=errors)
+        if point is None:
+            continue
+        _check_keys(
+            point,
+            allowed=WEAK_SCALING_POINT_KEYS,
+            required=WEAK_SCALING_POINT_KEYS,
+            path=point_path,
+            errors=errors,
+        )
+
+        num_gpus = point.get("num_gpus")
+        if not isinstance(num_gpus, int) or isinstance(num_gpus, bool) or num_gpus < 1:
+            errors.append(f"{_pointer(*point_path, 'num_gpus')}: expected a positive integer")
+            num_gpus = None
+        elif num_gpus <= previous_gpus:
+            errors.append(f"{_pointer(*point_path, 'num_gpus')}: points must use strictly increasing GPU counts")
+        else:
+            previous_gpus = num_gpus
+
+        global_batch_size = point.get("global_batch_size")
+        if not isinstance(global_batch_size, int) or isinstance(global_batch_size, bool) or global_batch_size < 1:
+            errors.append(f"{_pointer(*point_path, 'global_batch_size')}: expected a positive integer")
+            global_batch_size = None
+
+        command = point.get("command")
+        if not isinstance(command, str) or not command.strip():
+            errors.append(f"{_pointer(*point_path, 'command')}: expected a non-empty command string")
+            command = None
+        elif _contains_placeholder(command):
+            errors.append(f"{_pointer(*point_path, 'command')}: verified command contains a placeholder")
+
+        sequence_length: int | None = None
+        if command is not None:
+            _validate_command_text(
+                command,
+                path=(*point_path, "command"),
+                errors=errors,
+                allow_global_batch_size=True,
+            )
+            _validate_training_launcher(command, item_path=point_path, errors=errors)
+            _validate_training_window(
+                {"command": command},
+                item_name="pretrain_weak_scaling",
+                item_path=point_path,
+                status="verified",
+                errors=errors,
+            )
+
+            nodes = _argument_values(command, "--nodes")
+            gpus_per_node = _argument_values(command, "--gpus-per-node")
+            if (
+                num_gpus is not None
+                and len(nodes) == 1
+                and nodes[0].isdigit()
+                and len(gpus_per_node) == 1
+                and gpus_per_node[0].isdigit()
+                and int(nodes[0]) * int(gpus_per_node[0]) != num_gpus
+            ):
+                errors.append(f"{_pointer(*point_path, 'num_gpus')}: must match --nodes times --gpus-per-node")
+
+            command_global_batch_sizes = _argument_values(command, "--global_batch_size") + _argument_values(
+                command, "--global-batch-size"
+            )
+            if global_batch_size is not None and command_global_batch_sizes != [str(global_batch_size)]:
+                errors.append(
+                    f"{_pointer(*point_path, 'command')}: must specify --global_batch_size {global_batch_size} exactly once"
+                )
+
+            sequence_lengths = _argument_values(command, "--seq_length") + _argument_values(command, "--seq-length")
+            if len(sequence_lengths) != 1 or not sequence_lengths[0].isdigit() or int(sequence_lengths[0]) < 1:
+                errors.append(f"{_pointer(*point_path, 'command')}: must specify one positive --seq_length")
+            else:
+                sequence_length = int(sequence_lengths[0])
+
+            recipes = _argument_values(command, "--recipe")
+            modes = _argument_values(command, "--mode")
+            max_steps = _argument_values(command, "--max_steps")
+            if len(recipes) != 1 or modes != ["pretrain"] or len(max_steps) != 1 or len(gpus_per_node) != 1:
+                errors.append(
+                    f"{_pointer(*point_path, 'command')}: weak-scaling points require one recipe, pretrain mode, "
+                    "max_steps, and gpus-per-node"
+                )
+            elif sequence_length is not None:
+                signature = (recipes[0], modes[0], max_steps[0], str(sequence_length), gpus_per_node[0])
+                if reference_signature is None:
+                    reference_signature = signature
+                elif signature != reference_signature:
+                    errors.append(
+                        f"{_pointer(*point_path, 'command')}: recipe, mode, max steps, sequence length, and "
+                        "gpus per node must match the first point"
+                    )
+
+        _validate_metrics(
+            {"metrics": point.get("metrics")},
+            item_name="pretrain_weak_scaling",
+            item_path=point_path,
+            status="verified",
+            errors=errors,
+        )
+
+        if num_gpus is not None and global_batch_size is not None:
+            if baseline_gpus is None:
+                baseline_gpus = num_gpus
+                baseline_global_batch_size = global_batch_size
+            elif global_batch_size * baseline_gpus != baseline_global_batch_size * num_gpus:
+                errors.append(f"{_pointer(*point_path, 'global_batch_size')}: must scale proportionally with num_gpus")
+
+        metrics = point.get("metrics")
+        if (
+            isinstance(metrics, Mapping)
+            and num_gpus is not None
+            and global_batch_size is not None
+            and sequence_length is not None
+        ):
+            step_time_ms = metrics.get("last_10_steps_step_time_ms_avg")
+            measured_tps = metrics.get("last_10_steps_tokens_per_second_per_gpu_avg")
+            if _is_finite_number(step_time_ms) and float(step_time_ms) > 0 and _is_finite_number(measured_tps):
+                expected_tps = sequence_length * global_batch_size / (float(step_time_ms) / 1000) / num_gpus
+                if not math.isclose(float(measured_tps), expected_tps, abs_tol=0.0005):
+                    errors.append(
+                        f"{_pointer(*point_path, 'metrics', 'last_10_steps_tokens_per_second_per_gpu_avg')}: "
+                        "does not match sequence length, global batch size, GPU count, and step time"
+                    )
+
+
 def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[str, ...], str]]:
     if isinstance(value, Mapping):
         for key, child in value.items():
@@ -1720,7 +1951,7 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
         errors.append("/: execution-environment names do not belong in the card")
     if URL_RE.search(privacy_raw):
         errors.append("/: URLs are forbidden; use a public model name or repository-relative path")
-    if EMAIL_RE.search(privacy_raw) or IPV4_RE.search(privacy_raw) or _contains_ipv6(privacy_raw):
+    if EMAIL_RE.search(privacy_raw) or _contains_non_loopback_ip(privacy_raw):
         errors.append("/: email or IP address detected")
     if REMOTE_COMMAND_RE.search(privacy_raw) or REMOTE_COPY_RE.search(privacy_raw):
         errors.append("/: remote host commands are forbidden")
@@ -1759,7 +1990,7 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
     if "../" in privacy_raw:
         errors.append("/: parent-directory traversal is forbidden in cards")
 
-    raw_without_urls = URL_RE.sub("", privacy_raw)
+    raw_without_urls = _mask_chat_tokens(URL_RE.sub("", privacy_raw))
     for match in ABSOLUTE_PATH_RE.finditer(raw_without_urls):
         errors.append(f"/: absolute path detected at character {match.start()}")
 
@@ -1847,6 +2078,8 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                             model_revision=model_revision,
                             errors=errors,
                         )
+                    elif name == "pretrain_weak_scaling":
+                        _validate_weak_scaling_group(item, path=item_path, errors=errors)
                     else:
                         _validate_item(
                             name,
@@ -1939,15 +2172,15 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
     summary = card.get("summary")
     if isinstance(summary, str) and items is not None:
         normalized_summary = " ".join(summary.split())
-        has_untuned_disclaimer = normalized_summary.startswith(UNTUNED_PERFORMANCE_DISCLAIMER)
-        if not has_canonical_performance_recipe and not has_untuned_disclaimer:
+        has_performance_disclaimer = normalized_summary.startswith(PERFORMANCE_DISCLAIMERS)
+        if not has_canonical_performance_recipe and not has_performance_disclaimer:
             errors.append(
                 f"{_pointer('summary')}: cards without a canonical pretrain_performance recipe "
-                "must start with the untuned performance disclaimer"
+                "must start with the no-canonical-performance-result disclaimer"
             )
-        elif has_canonical_performance_recipe and has_untuned_disclaimer:
+        elif has_canonical_performance_recipe and has_performance_disclaimer:
             errors.append(
-                f"{_pointer('summary')}: remove the untuned performance disclaimer when a canonical "
+                f"{_pointer('summary')}: remove the performance disclaimer when a canonical "
                 "pretrain_performance recipe exists"
             )
         if has_canonical_performance_recipe:

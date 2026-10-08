@@ -109,6 +109,12 @@ from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTo
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.models.nemotron_omni.inference_inputs import (
+    is_nemotron_omni,
+    load_nemotron_omni_video,
+    nemotron_omni_reference_metadata,
+    prepare_nemotron_omni_inputs,
+)
 from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
@@ -225,6 +231,8 @@ def is_vision_language_model(
             ),
             **_hf_revision_kwargs(revision),
         )
+        if is_nemotron_omni(config):
+            return True
 
         # Check for VL model indicators in config
         model_type = getattr(config, "model_type", "").lower()
@@ -279,6 +287,9 @@ class SingleBatchIterator:
         pixel_values=None,
         image_grid_thw=None,
         inference_context=None,
+        mm_token_type_ids=None,
+        imgs_sizes=None,
+        num_frames=None,
     ):
         self.batch = dict(
             tokens=input_ids,
@@ -292,6 +303,12 @@ class SingleBatchIterator:
             self.batch["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             self.batch["image_grid_thw"] = image_grid_thw
+        if mm_token_type_ids is not None:
+            self.batch["mm_token_type_ids"] = mm_token_type_ids
+        if imgs_sizes is not None:
+            self.batch["imgs_sizes"] = imgs_sizes
+        if num_frames is not None:
+            self.batch["num_frames"] = num_frames
 
         self._yielded = False
 
@@ -332,6 +349,11 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["pixel_values"] = batch["pixel_values"]
     if "image_grid_thw" in batch:
         forward_args["image_grid_thw"] = batch["image_grid_thw"]
+    if "mm_token_type_ids" in batch:
+        forward_args["mm_token_type_ids"] = batch["mm_token_type_ids"]
+    for key in ("imgs_sizes", "num_frames"):
+        if key in batch:
+            forward_args[key] = batch[key]
 
     def loss_func(x, **kwargs):
         return x
@@ -441,7 +463,8 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, token_type_ids)
+        Tuple of (input_ids, pixel_values, image_grid_thw, token_type_ids,
+        mm_token_type_ids)
     """
     if is_vl_model and image_path:
         messages = [
@@ -465,11 +488,15 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         token_type_ids = inputs.get("token_type_ids")
         if token_type_ids is not None:
             token_type_ids = pad_input_ids_to_tp_multiple(token_type_ids, tp_size, 0)
+        mm_token_type_ids = inputs.get("mm_token_type_ids")
+        if mm_token_type_ids is not None:
+            mm_token_type_ids = pad_input_ids_to_tp_multiple(mm_token_type_ids, tp_size, 0)
         return (
             input_ids,
             inputs.get("pixel_values"),
             inputs.get("image_grid_thw"),
             token_type_ids,
+            mm_token_type_ids,
         )
     else:
         # Text-only processing for both VL models without images and regular LLMs
@@ -480,7 +507,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None, None
+        return input_ids, None, None, None, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -506,6 +533,14 @@ def _load_hf_model(args, is_vl_model: bool):
         ),
         **_hf_revision_kwargs(args.hf_revision),
     }
+    if getattr(args, "disable_hf_video_pruning", False):
+        config = AutoConfig.from_pretrained(
+            args.hf_model_path,
+            trust_remote_code=load_kwargs["trust_remote_code"],
+            **_hf_revision_kwargs(args.hf_revision),
+        )
+        config.video_pruning_rate = 0.0
+        load_kwargs["config"] = config
     hf_model = model_class.from_pretrained(args.hf_model_path, **load_kwargs).to(args.hf_device).eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
 
@@ -551,8 +586,13 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     if _is_rank_0():
         print_rank_0("Loading exported HF model for comparison...")
         model_class = get_model_class(args.model_class, is_vl_model)
+        config_kwargs = {}
+        if getattr(args, "disable_hf_video_pruning", False):
+            config = AutoConfig.from_pretrained(save_path, trust_remote_code=True)
+            config.video_pruning_rate = 0.0
+            config_kwargs["config"] = config
         hf_model = (
-            model_class.from_pretrained(save_path, torch_dtype=torch.bfloat16, trust_remote_code=True)
+            model_class.from_pretrained(save_path, torch_dtype=torch.bfloat16, trust_remote_code=True, **config_kwargs)
             .to(args.hf_device)
             .eval()
         )
@@ -564,16 +604,26 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _get_hf_forward_model(hf_model, pixel_values):
+def _get_hf_forward_model(hf_model, pixel_values, pixel_values_videos=None):
     """Select a composite model's language backbone for text-only comparison."""
     language_model = getattr(hf_model, "language_model", None)
-    if pixel_values is None and isinstance(language_model, torch.nn.Module):
+    if pixel_values is None and pixel_values_videos is None and isinstance(language_model, torch.nn.Module):
         print_rank_0("Using the HuggingFace language backbone for a text-only comparison.")
         return language_model
     return hf_model
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, *, token_type_ids=None):
+def _run_hf_inference(
+    hf_model,
+    input_ids,
+    pixel_values,
+    image_grid_thw,
+    tokenizer,
+    *,
+    token_type_ids=None,
+    mm_token_type_ids=None,
+    pixel_values_videos=None,
+):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -582,7 +632,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
-        token_type_ids: Multimodal token type IDs (optional).
+        token_type_ids: Legacy multimodal token type IDs (optional).
+        mm_token_type_ids: Multimodal token type IDs used for M-RoPE (optional).
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -592,7 +643,7 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
     if not _is_rank_0() or hf_model is None:
         return None, None, None, None, None
 
-    hf_forward_model = _get_hf_forward_model(hf_model, pixel_values)
+    hf_forward_model = _get_hf_forward_model(hf_model, pixel_values, pixel_values_videos)
 
     input_device = input_ids.device
     try:
@@ -608,11 +659,19 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             "attention_mask": torch.ones_like(input_ids, dtype=torch.bool).to(hf_device),
         }
         if pixel_values is not None:
-            hf_inputs["pixel_values"] = pixel_values.to(hf_device)
+            hf_inputs["pixel_values"] = (
+                [value.to(hf_device) for value in pixel_values]
+                if isinstance(pixel_values, (list, tuple))
+                else pixel_values.to(hf_device)
+            )
+        if pixel_values_videos is not None:
+            hf_inputs["pixel_values_videos"] = pixel_values_videos.to(hf_device)
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw.to(hf_device)
         if token_type_ids is not None:
             hf_inputs["token_type_ids"] = token_type_ids.to(hf_device)
+        if mm_token_type_ids is not None:
+            hf_inputs["mm_token_type_ids"] = mm_token_type_ids.to(hf_device)
 
         hf_output = hf_forward_model(**hf_inputs)
 
@@ -649,12 +708,14 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         )
 
 
-def _load_hf_reference_logits(path, input_ids, tokenizer):
+def _load_hf_reference_logits(path, input_ids, tokenizer, *, expected_metadata=None):
     """Load rank-0 HF logits produced by a memory-bounded reference forward."""
     if not _is_rank_0():
         return None, None, None, None, None
 
     reference = torch.load(path, map_location="cpu", weights_only=True)
+    if expected_metadata is not None and reference.get("metadata") != expected_metadata:
+        raise ValueError("HF reference does not match the Omni source and native media inputs")
     reference_input_ids = reference.get("input_ids")
     if reference_input_ids is None or not torch.equal(reference_input_ids.cpu(), input_ids.cpu()):
         raise ValueError("HF reference logits were produced from different input token IDs")
@@ -694,14 +755,26 @@ def _load_megatron_model(args):
             ),
             **_hf_revision_kwargs(args.hf_revision),
         )
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
+        if getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False):
+            model_config = bridge.get_model_config()
+            transformer = model_config.transformer
+            transformer.tensor_model_parallel_size = tp
+            transformer.pipeline_model_parallel_size = pp
+            transformer.expert_model_parallel_size = ep
+            transformer.expert_tensor_parallel_size = etp
+            transformer.pipeline_dtype = torch.bfloat16
+            transformer.params_dtype = torch.bfloat16
+            model_config.finalize()
+            bridge._get_or_initialize_pg_collection(transformer)
+        else:
+            model_provider = bridge.to_megatron_provider(load_weights=False)
+            model_provider.tensor_model_parallel_size = tp
+            model_provider.pipeline_model_parallel_size = pp
+            model_provider.expert_model_parallel_size = ep
+            model_provider.expert_tensor_parallel_size = etp
+            model_provider.pipeline_dtype = torch.bfloat16
+            model_provider.finalize()
+            model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(
             args.megatron_model_path,
             mp_overrides={
@@ -709,6 +782,18 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                # Preserve the saved dispatcher/backend, but never drop tokens or
+                # use synthetic routing when comparing against HF inference.
+                "moe_expert_capacity_factor": None,
+                "moe_expert_rank_capacity_factor": None,
+                "moe_paged_stash": False,
+                # Zero-copy NCCL-EP requires the fixed capacity disabled above.
+                "moe_ncclep_zero_copy": False,
+                "moe_pad_expert_input_to_capacity": False,
+                "moe_router_force_load_balancing": False,
+                "moe_router_force_biased": None,
+                # Eager prompts can have unequal or unaligned token counts.
+                "moe_hybridep_pad_uneven_dispatch_inputs": True,
             },
             wrap_with_ddp=False,
         )
@@ -722,14 +807,29 @@ def _load_megatron_model(args):
             ),
             **_hf_revision_kwargs(args.hf_revision),
         )
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.finalize()
-        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+        if getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False):
+            model_config = bridge.get_model_config()
+            transformer = model_config.transformer
+            transformer.tensor_model_parallel_size = tp
+            transformer.pipeline_model_parallel_size = pp
+            transformer.expert_model_parallel_size = ep
+            transformer.expert_tensor_parallel_size = etp
+            transformer.pipeline_dtype = torch.bfloat16
+            transformer.params_dtype = torch.bfloat16
+            megatron_model = bridge.get_model(
+                model_config,
+                wrap_with_ddp=False,
+                mixed_precision_wrapper=None,
+            )
+        else:
+            model_provider = bridge.to_megatron_provider(load_weights=True)
+            model_provider.tensor_model_parallel_size = tp
+            model_provider.pipeline_model_parallel_size = pp
+            model_provider.expert_model_parallel_size = ep
+            model_provider.expert_tensor_parallel_size = etp
+            model_provider.pipeline_dtype = torch.bfloat16
+            model_provider.finalize()
+            megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
     # Workaround: disable MTP for inference (causes hangs on NCCL collectives)
     for m in megatron_model:
@@ -825,6 +925,26 @@ def compare_models_one_step(args) -> None:
     # Detect model type
     is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code, args.hf_revision)
     print_rank_0(f"Detected model type: {'Vision-Language' if is_vl_model else 'Text-only LLM'}")
+    config = AutoConfig.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=is_safe_repo(trust_remote_code=args.trust_remote_code, hf_path=args.hf_model_path),
+        **_hf_revision_kwargs(args.hf_revision),
+    )
+    is_omni = is_nemotron_omni(config)
+    video_path = getattr(args, "video_path", None)
+    disable_video_pruning = getattr(args, "disable_hf_video_pruning", False)
+    if video_path and (not is_omni or args.image_path):
+        raise ValueError("Video comparison currently requires Nemotron Omni and no simultaneous image input.")
+    if disable_video_pruning and not (is_omni and video_path):
+        raise ValueError("--disable-hf-video-pruning applies only to Omni video comparison.")
+    video_pruning_rate = None
+    if video_path:
+        video_pruning_rate = 0.0 if disable_video_pruning else float(getattr(config, "video_pruning_rate", 0.0))
+        if video_pruning_rate != 0.0:
+            raise ValueError(
+                "Bridge video is unpruned; explicitly use --disable-hf-video-pruning for a matched oracle."
+            )
+        print_rank_0("Comparing unpruned Omni video (HF video_pruning_rate=0); not original pruned-HF behavior.")
 
     # Validate vision requirements
     if args.image_path and not is_vl_model:
@@ -846,11 +966,37 @@ def compare_models_one_step(args) -> None:
     # Setup tokenizer and processor
     tokenizer, processor = _setup_tokenizer_and_processor(args, is_vl_model)
 
+    # Omni uses the native processor once, then adapts only the media layout for Bridge.
+    omni_inputs = None
+    reference_metadata = None
+    imgs_sizes = num_frames = hf_pixel_values_videos = None
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, token_type_ids = process_inputs(
-        tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
-    )
+    if is_omni and (args.image_path or video_path):
+        images = frames = metadata = None
+        if video_path:
+            frames, metadata = load_nemotron_omni_video(video_path, fps=args.video_fps)
+        else:
+            images = [load_image(args.image_path).convert("RGB")]
+        omni_inputs = prepare_nemotron_omni_inputs(
+            processor, prompt=args.prompt, images=images, video_frames=frames, video_metadata=metadata
+        )
+        reference_metadata = nemotron_omni_reference_metadata(
+            omni_inputs,
+            model=args.hf_model_path,
+            revision=args.hf_revision,
+            video_pruning_rate=video_pruning_rate,
+        )
+        input_ids = pad_input_ids_to_tp_multiple(omni_inputs.hf["input_ids"], args.tp, tokenizer.pad_token_id or 0)
+        pixel_values = omni_inputs.bridge["pixel_values"]
+        imgs_sizes = omni_inputs.bridge["imgs_sizes"]
+        num_frames = omni_inputs.bridge["num_frames"]
+        hf_pixel_values_videos = omni_inputs.hf.get("pixel_values_videos")
+        image_grid_thw = token_type_ids = mm_token_type_ids = None
+    else:
+        input_ids, pixel_values, image_grid_thw, token_type_ids, mm_token_type_ids = process_inputs(
+            tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
+        )
 
     # Move to GPU
     input_ids = input_ids.cuda()
@@ -860,6 +1006,11 @@ def compare_models_one_step(args) -> None:
         image_grid_thw = image_grid_thw.cuda()
     if token_type_ids is not None:
         token_type_ids = token_type_ids.cuda()
+    if mm_token_type_ids is not None:
+        mm_token_type_ids = mm_token_type_ids.cuda()
+    if imgs_sizes is not None:
+        imgs_sizes = imgs_sizes.cuda()
+        num_frames = num_frames.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
@@ -867,16 +1018,18 @@ def compare_models_one_step(args) -> None:
     # Run HF model forward pass
     if args.hf_logits_path:
         hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _load_hf_reference_logits(
-            args.hf_logits_path, input_ids, tokenizer
+            args.hf_logits_path, input_ids, tokenizer, expected_metadata=reference_metadata
         )
     else:
         hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
             hf_model,
             input_ids,
-            pixel_values,
+            omni_inputs.hf.get("pixel_values") if omni_inputs is not None else pixel_values,
             image_grid_thw,
             tokenizer,
             token_type_ids=token_type_ids,
+            mm_token_type_ids=mm_token_type_ids,
+            pixel_values_videos=hf_pixel_values_videos,
         )
 
     del hf_model
@@ -922,6 +1075,9 @@ def compare_models_one_step(args) -> None:
                 attention_mask,
                 pixel_values,
                 image_grid_thw,
+                mm_token_type_ids=mm_token_type_ids,
+                imgs_sizes=imgs_sizes,
+                num_frames=num_frames,
             )
             megatron_output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,
@@ -1042,6 +1198,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path or URL to the image for vision-language generation (optional).",
     )
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
+    parser.add_argument("--video_path", default=None, help="Video path for Nemotron Omni native-processor comparison.")
+    parser.add_argument("--video-fps", type=float, default=2.0, help="Video frame sampling rate.")
+    parser.add_argument(
+        "--disable-hf-video-pruning",
+        action="store_true",
+        help="Explicitly configure an unpruned Omni HF video oracle matching Bridge; changes the HF reference only.",
+    )
     parser.add_argument(
         "--hf-logits-path",
         default=None,

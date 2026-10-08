@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.training.test_run_recipe_qwen3_omni import _load_recipe_runner_module
 
 
 _glm_45v_module = importlib.import_module("megatron.bridge.recipes.glm_vl.glm_45v")
@@ -362,3 +363,36 @@ def test_glm_45v_sft_uses_pipeline_layout(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size >= 1
     # Check if pipeline_model_parallel_layout is set
     assert hasattr(cfg.model, "pipeline_model_parallel_layout")
+
+
+@pytest.mark.parametrize(
+    ("recipe_func", "first_stage_decoders"),
+    [
+        (_glm_45v_module.glm_45v_sft_config, {4: 11, 8: 1, 16: 1}),
+        (_glm_45v_module.glm_45v_peft_config, {4: 11, 8: 5, 16: 2}),
+    ],
+)
+@pytest.mark.parametrize("pp_size", [4, 8, 16])
+def test_glm_45v_pipeline_layout_tracks_supported_cli_topology(
+    recipe_func: Callable,
+    first_stage_decoders: dict[int, int],
+    pp_size: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Recipe-owned layouts must follow supported pipeline overrides."""
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    cfg = recipe_func()
+    recipe_runner, _ = _load_recipe_runner_module()
+
+    cfg.model.pipeline_model_parallel_size = pp_size
+    recipe_runner.sync_model_pipeline_layout(
+        cfg,
+        cli_overrides=[f"model.pipeline_model_parallel_size={pp_size}"],
+    )
+
+    layout = cfg.model.pipeline_model_parallel_layout
+    assert len(layout) == pp_size
+    assert sum(stage.count("decoder") for stage in layout) == 46
+    assert layout[0].count("decoder") == first_stage_decoders[pp_size]
+    assert layout[0][0] == "embedding"
+    assert layout[-1][-1] == "loss"

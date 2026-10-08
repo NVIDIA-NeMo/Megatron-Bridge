@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from megatron.bridge.diffusion.data.flux.flux_mock_datamodule import FluxMockDataModuleConfig
@@ -101,6 +102,23 @@ def test_flux_mock_datamodule_repeats_with_independent_splits():
     next(test_dl)
     assert train_dl is not val_dl
     assert val_dl is not test_dl
+
+
+def test_flux_mock_datamodule_rejects_empty_repeated_epochs():
+    with pytest.raises(ValueError, match="num_train_samples.*micro_batch_size"):
+        FluxMockDataModuleConfig(
+            micro_batch_size=2,
+            global_batch_size=2,
+            num_workers=0,
+            image_H=8,
+            image_W=8,
+            vae_channels=1,
+            vae_scale_factor=8,
+            prompt_seq_len=2,
+            context_dim=2,
+            pooled_prompt_dim=2,
+            num_train_samples=1,
+        )
 
 
 def test_flux_mock_datamodule_without_precaching():

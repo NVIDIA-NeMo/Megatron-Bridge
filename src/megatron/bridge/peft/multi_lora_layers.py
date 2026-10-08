@@ -19,8 +19,9 @@
 via per-layer ``tokens_per_adapter`` set by :func:`set_tokens_per_adapter_slot`.
 
 Forward stacks the raw weights of all adapters and uses ``torch._grouped_mm``
-for a single fused kernel; TP/SP collectives are issued once around the two
-GEMMs to match the layout of the wrapped base linear.
+as an eligible fast path, with per-slot linear operations as the fallback;
+TP/SP collectives are issued once around the two projections to match the
+layout of the wrapped base linear.
 
 :class:`MultiLoRAGroupedExpertLinear` is the MoE counterpart, wrapping a grouped
 expert linear (``mlp.experts.linear_fc{1,2}`` of a ``TEGroupedMLP``) with one
@@ -36,6 +37,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.mappings import (
     all_to_all,
@@ -55,12 +57,70 @@ from megatron.bridge.peft.utils import (
 )
 
 
+_GROUPED_MM_ALIGNMENT_BYTES = 16
+_GROUPED_MM_AUTOGRAD_DTYPES = (torch.bfloat16, torch.float16)
+_GROUPED_MM_MIN_CUDA_CAPABILITY = (8, 0)
+
+
+def _has_grouped_mm_layout(tensor: torch.Tensor) -> bool:
+    """Return whether a tensor satisfies PyTorch's CUDA grouped-MM layout contract."""
+    if tensor.ndim not in (2, 3) or tensor.numel() == 0:
+        return False
+
+    alignment = _GROUPED_MM_ALIGNMENT_BYTES // tensor.element_size()
+    if tensor.data_ptr() % _GROUPED_MM_ALIGNMENT_BYTES != 0:
+        return False
+    if tensor.ndim == 3 and tensor.stride(0) % alignment != 0:
+        return False
+
+    rows, columns = tensor.shape[-2:]
+    row_stride, column_stride = tensor.stride()[-2:]
+    row_major = column_stride == 1 and row_stride >= max(1, columns) and row_stride % alignment == 0
+    column_major = row_stride == 1 and column_stride >= max(1, rows) and column_stride % alignment == 0
+    return row_major or column_major
+
+
+def _can_use_grouped_mm(x: torch.Tensor, grouped_weights: torch.Tensor) -> bool:
+    """Return whether grouped MM is safe for forward and backward."""
+    if not hasattr(torch, "_grouped_mm") or not x.is_cuda or not grouped_weights.is_cuda:
+        return False
+    if x.dtype not in _GROUPED_MM_AUTOGRAD_DTYPES or grouped_weights.dtype != x.dtype:
+        return False
+    if torch.cuda.get_device_capability(x.device) < _GROUPED_MM_MIN_CUDA_CAPABILITY:
+        return False
+
+    # Backward applies the same 16-byte stride validation to its contiguous
+    # output gradient, whose row stride is the projection's output width.
+    output_width = grouped_weights.shape[-1]
+    if output_width * x.element_size() % _GROUPED_MM_ALIGNMENT_BYTES != 0:
+        return False
+    return _has_grouped_mm_layout(x) and _has_grouped_mm_layout(grouped_weights)
+
+
+def _dense_multi_lora_mm(
+    x: torch.Tensor,
+    stacked_weights: torch.Tensor,
+    *,
+    token_splits: Tuple[int, ...],
+    offsets: torch.Tensor,
+) -> torch.Tensor:
+    """Apply one dense Multi-LoRA projection with an eligible grouped-MM fast path."""
+    grouped_weights = stacked_weights.transpose(-2, -1)
+    if all(split > 0 for split in token_splits) and _can_use_grouped_mm(x, grouped_weights):
+        return torch._grouped_mm(x, grouped_weights, offsets)
+
+    inputs = x.split(token_splits, dim=0)
+    return torch.cat(
+        [F.linear(adapter_input, adapter_weight) for adapter_input, adapter_weight in zip(inputs, stacked_weights)]
+    )
+
+
 class MultiLoRALinear(AdapterWrapper):
     """Megatron parallel linear wrapped with *N* concurrent LoRA adapters.
 
     Each adapter slot is a :class:`ParallelLinearAdapter` stored in an
-    ``nn.ModuleList``. Forward uses grouped GEMM with a single set of
-    TP/SP comms for efficiency.
+    ``nn.ModuleList``. Forward uses grouped GEMM when eligible and otherwise
+    falls back to per-slot linear operations, with one set of TP/SP comms.
 
     For bridge export compatibility, use :func:`expose_adapter_slot` to
     temporarily expose one slot as ``.adapter``.
@@ -80,17 +140,20 @@ class MultiLoRALinear(AdapterWrapper):
         a2a_experimental: bool = False,
     ) -> None:
         nn.Module.__init__(self)
-        # The grouped-GEMM forward below never runs each adapter's own
+        # The fused Multi-LoRA forward below never runs each adapter's own
         # ParallelLinearAdapter.forward, so adapter dropout would be silently
         # dropped. Reject dropout>0 loudly instead of pretending to apply it.
         assert dropout == 0.0, (
-            f"MultiLoRALinear grouped-GEMM path does not apply adapter dropout "
+            f"MultiLoRALinear fused projection path does not apply adapter dropout "
             f"(got dropout={dropout}); set dropout/--lora-dropout to 0."
         )
         self.to_wrap = to_wrap
         self._adapter_enabled = True
         self.n_adapters = n_adapters
         self.max_rank = dim
+        # Read by forward's diagnostics (and by callers that route on the wrapped
+        # module's name), like MultiLoRAGroupedExpertLinear already does.
+        self.base_linear_name = full_name
         # Kept so a slot re-init (reset_adapter) mirrors the construction-time
         # init methods instead of hardcoding xavier/zero.
         self._column_init_method = column_init_method
@@ -100,21 +163,24 @@ class MultiLoRALinear(AdapterWrapper):
 
         # input_is_parallel distinguishes column-parallel base (False, e.g. linear_qkv,
         # linear_fc1) from row-parallel base (True, e.g. linear_proj, linear_fc2).
-        # It controls which TP collective runs between the two grouped GEMMs and
+        # It controls which TP collective runs between the two adapter projections and
         # whether the second GEMM's output needs to be all-gathered to match the
         # wrapped base linear's output layout.
         self.input_is_parallel = attrs.input_is_parallel
         self.disable_sequence_parallel_comm = attrs.disable_sequence_parallel_comm
         # False for replicated bases (TELinear parallel_mode="duplicated", e.g. MLA
         # q/kv down-projections): their adapters are unsharded and need no TP
-        # collectives between the two grouped GEMMs.
+        # collectives between the two adapter projections.
         self.base_linear_is_parallel = attrs.base_linear_is_parallel
+        self.replicate_adapter = attrs.replicate_adapter
         self.use_a2a = a2a_experimental
-        # Mirrors ParallelLinearAdapter's lin_out_gather_output: row-parallel
-        # bases and replicated bases produce a full [tokens, out] tensor, so the
-        # column-sharded adapter output must be gathered before the residual
-        # add; a column-parallel base keeps the [tokens, out/tp] shard.
-        self._gather_output = attrs.input_is_parallel or not attrs.base_linear_is_parallel
+        self._adapter_in_features = attrs.in_features
+        self._adapter_out_features = attrs.out_features
+        # Row-parallel adapters gather their output to full width; column-parallel
+        # adapters keep an output shard; replicated adapters already produce full width.
+        self._gather_output = not self.replicate_adapter and (
+            attrs.input_is_parallel or not attrs.base_linear_is_parallel
+        )
 
         # ModuleList of ParallelLinearAdapters gives per-adapter optimizer state
         # isolation, clean checkpoint serialization, and bridge export compatibility.
@@ -135,6 +201,7 @@ class MultiLoRALinear(AdapterWrapper):
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                     base_linear_is_parallel=attrs.base_linear_is_parallel,
+                    replicate_adapter=attrs.replicate_adapter,
                     a2a_experimental=a2a_experimental,
                     dropout=dropout,
                     dropout_position=dropout_position,
@@ -144,11 +211,21 @@ class MultiLoRALinear(AdapterWrapper):
         )
 
         self.tokens_per_adapter: Optional[torch.Tensor] = None
-        # Host-side sum of tokens_per_adapter (set alongside it); lets forward
-        # detect an SP-sharded input without a per-layer device sync.
+        # Immutable host metadata is cached alongside tokens_per_adapter so
+        # forward never synchronizes each layer to recover split sizes.
+        self.tokens_per_adapter_splits: Optional[Tuple[int, ...]] = None
         self.tokens_per_adapter_total: Optional[int] = None
-        device = next(to_wrap.parameters()).device
-        dtype = next(to_wrap.parameters()).dtype
+        # The buffers live where the adapters just built above live: that follows the
+        # active construction context (CPU initialization with a visible GPU, a
+        # ``torch.device("meta")`` build, or the accelerator), and it also covers a
+        # tied output layer (``skip_weight_param_allocation=True``) that owns no
+        # weight of its own. The dtype stays the compute dtype -- the wrapped weight's
+        # when there is one, else the model-parallel config's ``params_dtype`` -- because
+        # the adapters may still be fp32 here and the alpha/rank scaling must never
+        # promote the activation dtype.
+        device = next(self.adapters.parameters()).device
+        reference = next(to_wrap.parameters(), None)
+        dtype = reference.dtype if reference is not None else to_wrap.config.params_dtype
         # Non-persistent: slot lifecycle is externally managed, not checkpointed.
         self.register_buffer("alpha_values", torch.ones(n_adapters, dtype=dtype, device=device), persistent=False)
         self.register_buffer(
@@ -162,6 +239,8 @@ class MultiLoRALinear(AdapterWrapper):
             return linear_output, bias
 
         tokens_per_adapter = self.tokens_per_adapter
+        token_splits = self.tokens_per_adapter_splits
+        assert tokens_per_adapter is not None and token_splits is not None
         x = layernorm_output.contiguous()
 
         # SP gather (once) — for column-parallel base layers without an LN-fused
@@ -178,7 +257,7 @@ class MultiLoRALinear(AdapterWrapper):
         # The shard is contiguous in the same sequence-major flattening the spans
         # address (same invariant as the MoE slot routing's SP narrow).
         total = self.tokens_per_adapter_total
-        if total is not None and x_flat.shape[0] != total:
+        if self.replicate_adapter and total is not None and x_flat.shape[0] != total:
             tp_size = parallel_state.get_tensor_model_parallel_world_size()
             if x_flat.shape[0] * tp_size != total:
                 raise RuntimeError(
@@ -188,26 +267,25 @@ class MultiLoRALinear(AdapterWrapper):
                     f"set_tokens_per_adapter_slot() was given this micro-batch's counts."
                 )
             start = parallel_state.get_tensor_model_parallel_rank() * x_flat.shape[0]
-            tokens_per_adapter = _narrow_token_counts_to_window(tokens_per_adapter, start, x_flat.shape[0])
+            token_splits = _narrow_token_counts_to_window(token_splits, start, x_flat.shape[0])
+            tokens_per_adapter = tokens_per_adapter.new_tensor(token_splits)
 
         offsets = tokens_per_adapter.cumsum(dim=0, dtype=torch.int32)
 
         stacked_A = torch.stack([a.linear_in.weight for a in self.adapters])
         stacked_B = torch.stack([a.linear_out.weight for a in self.adapters])
 
-        mid = torch._grouped_mm(x_flat, stacked_A.transpose(-2, -1), offsets)
+        mid = _dense_multi_lora_mm(x_flat, stacked_A, token_splits=token_splits, offsets=offsets)
 
-        # TP collective between A and B: row-parallel base needs an all-reduce
-        # of the partial sums; every other base (column-parallel and replicated
-        # alike — ParallelLinearAdapter shards A on the rank axis whenever
-        # input_is_parallel is False) needs an all-gather of the rank-sharded
-        # mid to a full [tokens, dim] for the second GEMM.
-        if self.input_is_parallel:
-            mid = reduce_from_tensor_model_parallel_region(mid)
-        else:
-            mid = gather_from_tensor_model_parallel_region(mid)
+        # TP collective between A and B: row-parallel A needs an all-reduce;
+        # column-parallel A needs an all-gather; replicated A is already complete.
+        if not self.replicate_adapter:
+            if self.input_is_parallel:
+                mid = reduce_from_tensor_model_parallel_region(mid)
+            else:
+                mid = gather_from_tensor_model_parallel_region(mid)
 
-        out = torch._grouped_mm(mid, stacked_B.transpose(-2, -1), offsets)
+        out = _dense_multi_lora_mm(mid, stacked_B, token_splits=token_splits, offsets=offsets)
 
         # Per-token scaling is applied *before* the output-side TP/SP comms.
         # ``per_token_scaling`` is indexed by the full token count
@@ -243,14 +321,32 @@ class MultiLoRALinear(AdapterWrapper):
         # advanced since model build. A bare nn.init here diverges replicas on
         # slot reuse (breaking the DP-equal invariant the weight checker relies
         # on). Mirror the construction-time init methods rather than hardcoding.
-        from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
+        from megatron.core.tensor_parallel.random import (
+            get_cuda_rng_tracker,
+            get_data_parallel_rng_tracker_name,
+        )
 
         from megatron.bridge.peft.utils import ParallelLinearAdapter
 
         adapter = self.adapters[idx]
-        col_fn = ParallelLinearAdapter._get_init_fn(None, self._column_init_method)
-        row_fn = ParallelLinearAdapter._get_init_fn(None, self._row_init_method)
-        with get_cuda_rng_tracker().fork():
+        col_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._column_init_method,
+            fan_in=self._adapter_in_features,
+            fan_out=self.max_rank,
+        )
+        row_fn = ParallelLinearAdapter._get_init_fn(
+            None,
+            self._row_init_method,
+            fan_in=self.max_rank,
+            fan_out=self._adapter_out_features,
+        )
+        rng_context = (
+            get_cuda_rng_tracker().fork(get_data_parallel_rng_tracker_name())
+            if self.replicate_adapter
+            else get_cuda_rng_tracker().fork()
+        )
+        with rng_context:
             col_fn(adapter.linear_in.weight.data)
             row_fn(adapter.linear_out.weight.data)
 
@@ -595,7 +691,7 @@ class MultiLoRAGroupedExpertLinear(MultiLoRALinear):
 _MULTI_LORA_TYPES = (MultiLoRALinear,)
 
 
-def _narrow_token_counts_to_window(counts: torch.Tensor, start: int, num_rows: int) -> torch.Tensor:
+def _narrow_token_counts_to_window(counts: Sequence[int], start: int, num_rows: int) -> Tuple[int, ...]:
     """Intersect contiguous per-slot token spans with the window ``[start, start + num_rows)``.
 
     ``counts[i]`` tokens of slot ``i`` occupy the rows ``[cum[i-1], cum[i])`` of the
@@ -603,8 +699,14 @@ def _narrow_token_counts_to_window(counts: torch.Tensor, start: int, num_rows: i
     sequence-parallel shard sees only ``num_rows`` of those rows starting at
     ``start``, so its spans are the per-slot overlap with that window.
     """
-    cum = counts.cumsum(dim=0)
-    return (cum.clamp(max=start + num_rows) - (cum - counts).clamp(min=start)).clamp(min=0).to(counts.dtype)
+    end = start + num_rows
+    slot_start = 0
+    narrowed = []
+    for count in counts:
+        slot_end = slot_start + count
+        narrowed.append(max(0, min(slot_end, end) - max(slot_start, start)))
+        slot_start = slot_end
+    return tuple(narrowed)
 
 
 def _iter_multi_lora_modules(model):
@@ -622,12 +724,37 @@ def set_tokens_per_adapter_slot(model, tokens_per_adapter: torch.Tensor) -> None
     upcoming forward that belong to adapter slot ``i``. Must sum to the total
     token count of the micro-batch.
     """
-    # One host sync per micro-batch: layers whose base linear consumes the
-    # SP-sharded sequence (replicated bases) compare their row count against
-    # this total to narrow the spans to their shard without a per-layer sync.
-    total = int(tokens_per_adapter.sum().item())
-    for module in _iter_multi_lora_modules(model):
+    if tokens_per_adapter.dim() != 1:
+        raise ValueError(
+            f"tokens_per_adapter must be a 1-D tensor of per-slot counts; got shape {tuple(tokens_per_adapter.shape)}"
+        )
+    if tokens_per_adapter.is_floating_point() or tokens_per_adapter.is_complex():
+        raise ValueError(f"tokens_per_adapter must be an integer tensor; got dtype {tokens_per_adapter.dtype}")
+    # One host sync per micro-batch: cache immutable split sizes for every
+    # layer's fallback and any sequence-parallel narrowing.
+    token_splits = tuple(int(count) for count in tokens_per_adapter.tolist())
+    if any(count < 0 for count in token_splits):
+        raise ValueError(
+            f"tokens_per_adapter must be nonnegative (negative counts produce non-monotonic grouped-GEMM "
+            f"offsets); got {list(token_splits)}"
+        )
+    total = sum(token_splits)
+    modules = list(_iter_multi_lora_modules(model))
+    if modules:
+        n_adapters = modules[0].n_adapters
+        if len(token_splits) != n_adapters:
+            raise ValueError(
+                f"tokens_per_adapter has {len(token_splits)} entries but the model was built with "
+                f"n_adapters={n_adapters}"
+            )
+        # The dense grouped GEMM consumes the counts on the model's device; move them
+        # once here rather than per layer.
+        first_param = next(modules[0].parameters(), None)
+        if first_param is not None and tokens_per_adapter.device != first_param.device:
+            tokens_per_adapter = tokens_per_adapter.to(first_param.device)
+    for module in modules:
         module.tokens_per_adapter = tokens_per_adapter
+        module.tokens_per_adapter_splits = token_splits
         module.tokens_per_adapter_total = total
 
 
@@ -835,17 +962,67 @@ def install_moe_slot_routing(model) -> int:
     return installed
 
 
-def init_adapter_slot(model, idx: int, rank: int, alpha: float) -> None:
+def _reseed_rng_tracker(seed: int) -> None:
+    """Rebuild the CUDA RNG tracker's streams from ``seed`` with Megatron-Core's topology offsets.
+
+    Delegates to :func:`megatron.core.tensor_parallel.random.model_parallel_cuda_manual_seed`,
+    so every stream keeps the rank dependence the base weights were initialised with:
+    ``data-parallel-rng`` gets ``seed`` (equal on every rank), ``model-parallel-rng``
+    ``seed + 2718 + tp_rank`` and ``expert-parallel-rng`` ``seed + 1024 + 100 * ep_rank +
+    etp_rank``. TP and EP/ETP shards therefore draw distinct values while DP replicas
+    match. Like :func:`megatron.bridge.training.initialize._set_random_seed`, pipeline
+    stages are offset by ``100 * pp_rank`` so layer ``k`` of one stage does not reproduce
+    layer ``k`` of another. The caller snapshots and restores the tracker and the default
+    CUDA generator (which Megatron-Core reseeds as a side effect).
+    """
+    from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+
+    if not parallel_state.model_parallel_is_initialized():
+        raise RuntimeError(
+            "init_adapter_slot(seed=...) requires megatron.core.parallel_state to be initialized: "
+            "the slot re-initialisation follows the model-parallel topology."
+        )
+    model_parallel_cuda_manual_seed(seed + 100 * parallel_state.get_pipeline_model_parallel_rank())
+
+
+def init_adapter_slot(model, idx: int, rank: int, alpha: float, seed: int | None = None) -> None:
     """Claim slot ``idx`` across every multi-LoRA layer for an adapter.
 
     A model-wide adapter is the set of slot-``idx`` chunks across all layers;
     this initialises that set with the given ``rank``/``alpha``. Thin iterator
     over the model — per-slot setup (rank/alpha bookkeeping + rank-mask
     invariant) lives on the layer itself in
-    :meth:`MultiLoRALinear.init_adapter_slot` /
+    :meth:`MultiLoRALinear.init_adapter_slot`.
+
+    Without ``seed`` the slot keeps whatever weights construction or the last
+    :func:`clear_adapter_slot` re-init left behind (DP-consistent but not
+    reproducible). With ``seed`` every layer's slot weights are re-initialised
+    deterministically first: the RNG-tracker streams are rebuilt from ``seed``
+    with Megatron-Core's own TP/EP/ETP-dependent offsets (see
+    :func:`_reseed_rng_tracker`) for the duration and restored afterwards. A given
+    seed therefore reproduces the same adapter weights on every run, DP replicas
+    stay identical, and tensor- or expert-parallel shards keep distinct draws
+    exactly as the base weights do (layers draw sequentially from the streams).
     """
-    for module in _iter_multi_lora_modules(model):
-        module.init_adapter_slot(idx, rank, alpha)
+    if seed is None:
+        for module in _iter_multi_lora_modules(model):
+            module.init_adapter_slot(idx, rank, alpha)
+        return
+
+    from megatron.core.tensor_parallel.random import get_cuda_rng_tracker
+
+    tracker = get_cuda_rng_tracker()
+    saved_states = tracker.get_states()
+    saved_default_rng_state = torch.cuda.get_rng_state() if torch.cuda.is_available() else None
+    try:
+        _reseed_rng_tracker(seed)
+        for module in _iter_multi_lora_modules(model):
+            module.reset_adapter(idx)
+            module.init_adapter_slot(idx, rank, alpha)
+    finally:
+        tracker.set_states(saved_states)
+        if saved_default_rng_state is not None:
+            torch.cuda.set_rng_state(saved_default_rng_state)
 
 
 def clear_adapter_slot(model, idx: int) -> None:

@@ -13,12 +13,15 @@
 # limitations under the License.
 
 # Qwen3 GB200 models
-from .gb200.qwen3_moe import qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config
+from .gb200.qwen3_moe import (
+    qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+)
 
 # Qwen3.5 GB200 models
 from .gb200.qwen35 import (
     qwen35_text_9b_pretrain_8gpu_gb200_bf16_config,
     qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
+    qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config,
 )
 
 # Qwen2 models
@@ -158,7 +161,7 @@ __all__ = [
     "qwen3_32b_peft_config",
     # Qwen3 MoE models
     "qwen3_30b_a3b_pretrain_config",
-    "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config",
+    "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config",
     "qwen3_30b_a3b_sft_config",
     "qwen3_30b_a3b_peft_config",
     "qwen3_235b_a22b_pretrain_config",
@@ -173,4 +176,5 @@ __all__ = [
     "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
     "qwen35_text_35b_a3b_pretrain_config",
     "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
+    "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config",
 ]

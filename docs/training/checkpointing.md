@@ -191,6 +191,59 @@ checkpoint = CheckpointConfig(
 
 **Important**: When using Megatron FSDP (`use_megatron_fsdp=True`), you must set `ckpt_format="fsdp_dtensor"`. Other formats are not compatible with FSDP's sharded parameter layout. See {doc}`megatron-fsdp` for complete FSDP configuration details.
 
+### Generalized Tensor Parallelism (GTP)
+
+Use `torch_dist` checkpoints for BF16 GTP models with TransformerEngine 2.19 or newer.
+Checkpoint metadata and fully parallel save/load include the GTP rematerialization
+axis. RNG checkpoint entries preserve distinct streams on dense and expert GTP ranks.
+
+HF import splits each mapped TP-local tensor into its stored GTP row shard. HF export
+gathers those rows and removes alignment padding before applying the existing TP/EP/PP
+mappings. Use `AutoBridge.export_hf_weights()` or `save_hf_weights()` for this export;
+the local HF parameter-view API cannot describe the extra GTP shard axis. Quantized
+HF export and LoRA adapter export/merge also gather before applying their mappings.
+Raw FP8 export tasks and local native MXFP8 parameter export reject GTP before
+yielding weights, because their storage views cannot preserve this layout.
+
+When loading a native GTP checkpoint with `load_megatron_model()`, pass `mp_overrides`
+with the saved TP size and weight shard count for each axis that uses GTP:
+`tensor_model_parallel_size` / `tensor_parallel_num_weight_shards` for dense weights,
+and `expert_tensor_parallel_size` / `expert_tensor_parallel_num_weight_shards` for
+expert weights. Axes without GTP can still change TP independently. Changing a GTP
+weight-sharding topology is
+rejected because the current Megatron-Core SwiGLU checkpoint layout can reorder
+gate/up rows. Training resume and finetuning enforce the same restriction, including
+loading a non-GTP native checkpoint into a GTP model. To change layouts, export HF
+weights from the original topology first, then import the HF weights into the new
+topology.
+
+Energon shards samples across DP and dense GTP ranks while CP peers consume the
+same samples. Dataloader checkpoints use the same group for file ownership and
+restore; old duplicated GTP states with a different stream count are rejected.
+With GTP, do not enable both `dist_ckpt_optim_fully_reshardable` and
+`distrib_optim_fully_reshardable_mem_efficient`: Core does not create the Gloo
+groups needed by that combination.
+
+The focused two-GPU regression covers exact BF16 HF round-trips, model and named
+RNG-stream resume, and rejection of unsafe topology changes, with fully parallel
+checkpoint I/O enabled and disabled:
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=2 -m pytest \
+  tests/functional_tests/test_groups/converter/test_gtp_checkpoint_conversion.py \
+  tests/functional_tests/test_groups/converter/test_gtp_native_fp8_conversion.py \
+  tests/functional_tests/test_groups/data/energon/test_gtp_checkpoint_state.py -q
+```
+
+The H100 L1 launcher `L1_Launch_gtp_checkpoint_conversion.sh` runs this matrix in CI.
+GTP cases require TransformerEngine 2.19 or newer and skip on older versions; the
+ordinary TP baseline cases still run.
+
+The additional tests check native FP8 HF import against an independent TE cast and
+exact Energon sample continuation after restore. Native MXFP8 requires Blackwell
+and skips on H100; this does not validate native MXFP8 training or Muon optimizer
+state. Quantized and LoRA GTP mapping regressions use controlled unit fixtures.
+
 ## Performance Optimizations
 
 | Parameter | Type | Default | Description |
@@ -312,8 +365,8 @@ The load default follows the actual source because the checkpoint restored on re
 
 ### Restore Behavior and Failure Modes
 
-- If the dataloader state directory is **absent** (e.g. a checkpoint saved before this feature existed), the dataloader starts from the beginning and a message is logged.
-- If the directory **exists** but the current rank's per-DP-rank file is **missing**, restore **raises**. This almost always means the data-parallel size changed since the checkpoint was saved; resuming would silently change the data order, so it fails loudly instead.
+- If the dataloader state root or the selected `iter_N` directory is **absent** (e.g. the selected checkpoint was saved before this feature existed), the dataloader starts from the beginning and a message is logged. Other state generations under the same root do not change this behavior.
+- If the selected `iter_N` directory **exists** but the current rank's per-DP-rank file is **missing**, restore **raises**. This almost always means the data-parallel size changed since the checkpoint was saved; resuming would silently change the data order, so it fails loudly instead.
 
 ### Determinism Requirement
 
@@ -407,6 +460,7 @@ from megatron.bridge.training.checkpointing import (
     load_checkpoint,
     init_checkpointing_context,
 )
+from megatron.bridge.training.callbacks import CallbackManager
 from megatron.bridge.training.config import CheckpointConfig
 from megatron.bridge.training.state import GlobalState
 
@@ -419,7 +473,7 @@ class MyCheckpointManager:
         # Initialize internal context for caching strategies
         self._context = init_checkpointing_context(checkpoint_config)
 
-    def save(self, ctx: CheckpointSaveContext) -> None:
+    def save(self, ctx: CheckpointSaveContext, callback_manager: CallbackManager | None) -> None:
         """Save a checkpoint with custom logic."""
         # Option 1: Completely custom implementation
         # my_custom_save(ctx.state, ctx.model, ...)
@@ -434,6 +488,7 @@ class MyCheckpointManager:
             checkpointing_context=self._context,
             non_persistent_ckpt=ctx.non_persistent_ckpt,
             train_data_iterator=ctx.train_data_iterator,
+            callback_manager=callback_manager,
         )
         # Add custom post-processing (e.g., upload to cloud)
         upload_to_s3(ctx.state.cfg.checkpoint.save)

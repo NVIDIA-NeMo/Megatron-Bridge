@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -443,26 +443,50 @@ class SafeTensorsStateSource(StateSource):
     Args:
         path: The path to the directory containing the `.safetensors` files
               and/or the index file. Can also be a Hugging Face Hub model ID.
+        key_prefix: Select this subtree and remove its prefix from exposed keys
+            and exported weights. None preserves the original names.
+        revision: Optional Hub revision used for both index and shard downloads.
+        hub_kwargs: Optional Hugging Face download arguments. Explicit Hub
+            options or prefix selection enable index-first, lazy shard downloads.
     """
 
-    def __init__(self, path: Union[str, Path]):
+    def __init__(
+        self,
+        path: str | Path,
+        revision: str | None = None,
+        *,
+        key_prefix: str | None = None,
+        hub_kwargs: dict[str, object] | None = None,
+    ) -> None:
+        if key_prefix is not None and (not key_prefix or not key_prefix.endswith(".")):
+            raise ValueError("key_prefix must be nonempty and end with '.'.")
         self.model_name_or_path = path
+        self.key_prefix = key_prefix
+        self.revision = revision
+        self.hub_kwargs = dict(hub_kwargs or {})
+        self._lazy_hub = key_prefix is not None or hub_kwargs is not None
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
 
     @staticmethod
-    def _ignore_source_key_prefixes(
+    def _filter_source_keys(
         key_to_filename_map: Mapping[str, str] | None,
         ignored_source_key_prefixes: Iterable[str] | None,
+        ignored_source_key_suffixes: Iterable[str] | None,
     ) -> Dict[str, str]:
         if not key_to_filename_map:
             return {}
-        if not ignored_source_key_prefixes:
+        if not ignored_source_key_prefixes and not ignored_source_key_suffixes:
             return dict(key_to_filename_map)
 
-        prefixes = tuple(ignored_source_key_prefixes)
-        return {key: filename for key, filename in key_to_filename_map.items() if not key.startswith(prefixes)}
+        prefixes = tuple(ignored_source_key_prefixes or ())
+        suffixes = tuple(ignored_source_key_suffixes or ())
+        return {
+            key: filename
+            for key, filename in key_to_filename_map.items()
+            if not key.startswith(prefixes) and not key.endswith(suffixes)
+        }
 
     @property
     def path(self) -> Path:
@@ -473,8 +497,34 @@ class SafeTensorsStateSource(StateSource):
         cache path.
         """
         if self._resolved_path_cache is None:
-            self._resolved_path_cache = self._resolve_path(self.model_name_or_path)
+            if self._lazy_hub and not Path(self.model_name_or_path).is_dir():
+                from huggingface_hub.errors import EntryNotFoundError
+
+                try:
+                    index = self._download_file("model.safetensors.index.json")
+                except EntryNotFoundError:
+                    index = self._download_file("model.safetensors")
+                self._resolved_path_cache = index.parent
+            else:
+                self._resolved_path_cache = self._resolve_path(self.model_name_or_path, revision=self.revision)
         return self._resolved_path_cache
+
+    def _download_file(self, filename: str) -> Path:
+        from huggingface_hub import hf_hub_download
+
+        return Path(hf_hub_download(str(self.model_name_or_path), filename, revision=self.revision, **self.hub_kwargs))
+
+    def _select_keys(self, key_map: Dict[str, str]) -> Dict[str, str]:
+        if self.key_prefix is None:
+            return key_map
+        selected = {
+            key.removeprefix(self.key_prefix): filename
+            for key, filename in key_map.items()
+            if key.startswith(self.key_prefix)
+        }
+        if not selected:
+            raise ValueError(f"Checkpoint contains no weights under {self.key_prefix!r}.")
+        return selected
 
     @property
     def key_to_filename_map(self) -> Dict[str, str]:
@@ -492,8 +542,8 @@ class SafeTensorsStateSource(StateSource):
         # First, try to load from the index file.
         key_map = self._cached_get_key_to_filename_map(self.path)
         if key_map:
-            self._key_to_filename_map_cache = key_map
-            return key_map
+            self._key_to_filename_map_cache = self._select_keys(key_map)
+            return self._key_to_filename_map_cache
 
         # If no index, scan the directory.
         import os
@@ -519,15 +569,16 @@ class SafeTensorsStateSource(StateSource):
                 # Can be not a safetensor file, etc.
                 print(f"Warning: could not open {filename} as a safetensors file: {e}")
 
-        self._key_to_filename_map_cache = key_map
-        return key_map
+        self._key_to_filename_map_cache = self._select_keys(key_map)
+        return self._key_to_filename_map_cache
 
     @staticmethod
-    def _resolve_path(model_name_or_path: Union[str, Path]) -> Path:
+    def _resolve_path(model_name_or_path: Union[str, Path], revision: Optional[str] = None) -> Path:
         """
         Resolves a model name or path to a local directory.
         If the path is not a local directory, it is treated as a Hugging
-        Face Hub model ID, and the corresponding files are downloaded.
+        Face Hub model ID, and the corresponding files are downloaded at
+        `revision` (defaulting to the repository's main branch).
         """
         local_path = Path(model_name_or_path)
         if local_path.is_dir():
@@ -535,6 +586,7 @@ class SafeTensorsStateSource(StateSource):
 
         try:
             from huggingface_hub import snapshot_download
+            from huggingface_hub.constants import HF_HUB_OFFLINE
             from huggingface_hub.utils import HfHubHTTPError
 
             # Not a local directory, so we assume it's a model ID
@@ -542,6 +594,8 @@ class SafeTensorsStateSource(StateSource):
             return Path(
                 snapshot_download(
                     repo_id=str(model_name_or_path),
+                    revision=revision,
+                    local_files_only=HF_HUB_OFFLINE,
                     allow_patterns=[
                         "*.safetensors",
                         "model.safetensors.index.json",
@@ -596,6 +650,13 @@ class SafeTensorsStateSource(StateSource):
 
         max_retries = 3
 
+        # A selected subtree is authoritative: do not fall back to unrelated
+        # shards for absent keys, including when a selected shard is incomplete.
+        if self.key_prefix is not None:
+            for key in keys_to_load:
+                if key not in key_to_filename_map:
+                    raise KeyError(key)
+
         if key_to_filename_map:
             file_to_keys_map = defaultdict(list)
             for key in list(remaining_keys):
@@ -604,14 +665,19 @@ class SafeTensorsStateSource(StateSource):
                     file_to_keys_map[filename].append(key)
 
             for filename, keys_in_file in file_to_keys_map.items():
-                file_path = self.path / filename
+                file_path = (
+                    self._download_file(filename)
+                    if self._lazy_hub and not Path(self.model_name_or_path).is_dir()
+                    else self.path / filename
+                )
                 if file_path.exists():
                     for attempt in range(max_retries):
                         with safe_open(file_path, framework="pt", device="cpu") as f:
                             file_keys = set(f.keys())
                             for key in keys_in_file:
-                                if key in file_keys and key not in loaded_tensors:
-                                    loaded_tensors[key] = f.get_tensor(key)
+                                source_key = (self.key_prefix or "") + key
+                                if source_key in file_keys and key not in loaded_tensors:
+                                    loaded_tensors[key] = f.get_tensor(source_key)
                                     remaining_keys.discard(key)
                         still_missing = [k for k in keys_in_file if k in remaining_keys]
                         if not still_missing:
@@ -623,7 +689,7 @@ class SafeTensorsStateSource(StateSource):
                             )
                             time.sleep(1.0 * (attempt + 1))
 
-        if remaining_keys:
+        if remaining_keys and self.key_prefix is None:
             safetensor_files = file_glob(str(self.path / "*.safetensors"))
             if not safetensor_files and not key_to_filename_map and not loaded_tensors:
                 raise FileNotFoundError(
@@ -695,6 +761,7 @@ class SafeTensorsStateSource(StateSource):
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
+        ignored_source_key_suffixes: Iterable[str] | None = None,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -723,6 +790,8 @@ class SafeTensorsStateSource(StateSource):
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
             ignored_source_key_prefixes: Source tensor key prefixes to omit from the expected
                 source sharding map when saving.
+            ignored_source_key_suffixes: Source tensor key suffixes to omit from the expected
+                source sharding map when saving.
 
         """
         if distributed_save:
@@ -732,6 +801,7 @@ class SafeTensorsStateSource(StateSource):
                 strict,
                 save_every_n_ranks=save_every_n_ranks,
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
+                ignored_source_key_suffixes=ignored_source_key_suffixes,
             )
 
         # In a distributed environment, only rank 0 should write to disk.
@@ -751,7 +821,11 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
+        key_to_filename_map = self._filter_source_keys(
+            self.key_to_filename_map,
+            ignored_source_key_prefixes,
+            ignored_source_key_suffixes,
+        )
         all_expected_keys = set(key_to_filename_map.keys())
 
         if not key_to_filename_map:
@@ -931,6 +1005,7 @@ class SafeTensorsStateSource(StateSource):
         strict: bool = True,
         save_every_n_ranks: int = 1,
         ignored_source_key_prefixes: Iterable[str] | None = None,
+        ignored_source_key_suffixes: Iterable[str] | None = None,
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -957,7 +1032,11 @@ class SafeTensorsStateSource(StateSource):
         if is_distributed:
             torch.distributed.barrier()
 
-        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
+        key_to_filename_map = self._filter_source_keys(
+            self.key_to_filename_map,
+            ignored_source_key_prefixes,
+            ignored_source_key_suffixes,
+        )
 
         # Fallback: no sharding map, single-file save
         if not key_to_filename_map:

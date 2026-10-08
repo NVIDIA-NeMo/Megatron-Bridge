@@ -14,11 +14,19 @@
 
 import inspect
 import logging
+from dataclasses import dataclass
+from typing import ClassVar
 
+import torch
+from megatron.core.models.gpt import GPTModel
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
-from megatron.training.models.gpt import GPTModelBuilder, GPTModelConfig, mtp_block_spec
+from megatron.training.models.gpt import GPTModelBuilder as MCoreGPTModelBuilder
+from megatron.training.models.gpt import GPTModelConfig as MCoreGPTModelConfig
+from megatron.training.models.gpt import mtp_block_spec
 
+from megatron.bridge.models.logit_dtype import logit_dtype_kwarg
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -30,7 +38,28 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 
-from megatron.bridge.models.transformer_config import TransformerConfig
+
+@dataclass(kw_only=True)
+class GPTModelConfig(MCoreGPTModelConfig):
+    """Bridge GPT config with transitional output-logit dtype support."""
+
+    builder: ClassVar[str] = "megatron.bridge.models.gpt.gpt_builder.GPTModelBuilder"
+    logit_dtype: torch.dtype | None = None
+
+
+class GPTModelBuilder(MCoreGPTModelBuilder):
+    """Bridge GPT builder that prevents silent fallback on older MCore."""
+
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> GPTModel:
+        """Build a GPT stage after validating MCore logit-dtype support."""
+        logit_dtype_kwarg(GPTModel, self._model_config.logit_dtype)
+        return super().build_model(pg_collection, pre_process, post_process, vp_stage)
 
 
 def transformer_engine_layer_spec(config: "GPTModelConfig") -> ModuleSpec:

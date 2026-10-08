@@ -173,6 +173,7 @@ class Exaone45Model(MegatronModule):
             rope_scaling=language_transformer_config.rope_scaling,
             rope_scaling_factor=language_transformer_config.rope_scaling_factor,
             fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
+            logit_dtype=language_transformer_config.logit_dtype,
             share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
             scatter_embedding_sequence_parallel=False,
             pg_collection=pg_collection,

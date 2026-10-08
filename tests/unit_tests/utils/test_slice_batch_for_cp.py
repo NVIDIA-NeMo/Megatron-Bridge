@@ -204,6 +204,40 @@ class TestSliceBatchForContextParallelBSHD:
 class TestSliceBatchForContextParallelTHD:
     """Tests for slice_batch_for_context_parallel with THD (packed) format."""
 
+    def test_thd_format_slices_metadata_without_pipeline_input_embeddings(self):
+        """Test non-first pipeline stages use labels to construct THD CP indices."""
+        labels = torch.arange(16).unsqueeze(0)
+        loss_mask = torch.ones(1, 16)
+        position_ids = torch.arange(16).unsqueeze(0)
+        packed_seq_params = MockPackedSeqParams(
+            cu_seqlens_q=torch.tensor([0, 8, 16], dtype=torch.int32),
+            cu_seqlens_kv=torch.tensor([0, 8, 16], dtype=torch.int32),
+            qkv_format="thd",
+        )
+        pg_collection = MockPGCollection(cp_size=2, cp_rank=0)
+        mock_indices = torch.tensor([0, 1, 2, 3, 8, 9, 10, 11])
+
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ):
+            result = slice_batch_for_context_parallel(
+                inputs_embeds=None,
+                labels=labels,
+                loss_mask=loss_mask,
+                position_ids=position_ids,
+                attention_mask=None,
+                packed_seq_params=packed_seq_params,
+                pg_collection=pg_collection,
+            )
+
+        out_embeds, out_labels, out_loss_mask, out_position_ids, out_attention_mask = result
+        assert out_embeds is None
+        torch.testing.assert_close(out_labels, labels.index_select(1, mock_indices))
+        torch.testing.assert_close(out_loss_mask, loss_mask.index_select(1, mock_indices))
+        torch.testing.assert_close(out_position_ids, position_ids.index_select(1, mock_indices))
+        assert out_attention_mask is None
+
     def test_thd_format_uses_mcore_partitioned_indices(self):
         """Test that THD format uses the centralized MCore partition helper."""
         batch_size, seq_len, hidden = 1, 16, 64

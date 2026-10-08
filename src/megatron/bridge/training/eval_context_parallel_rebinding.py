@@ -77,6 +77,18 @@ def install_pg_collection(
     except (ImportError, AttributeError):
         _rotary_cls = ()
 
+    try:
+        from megatron.core.ssm.gated_delta_net import GatedDeltaNet as _GDN
+
+        try:
+            from megatron.core.ssm.gated_delta_net import GatedDeltaNet2 as _GDN2
+
+            _gdn_classes: tuple[type, ...] = (_GDN, _GDN2)
+        except (ImportError, AttributeError):
+            _gdn_classes = (_GDN,)
+    except (ImportError, AttributeError):
+        _gdn_classes = ()
+
     cp_group = target.cp
     cp_size = cp_group.size()
     cp_ranks = torch.distributed.get_process_group_ranks(cp_group)
@@ -110,6 +122,12 @@ def install_pg_collection(
         if _rotary_cls and isinstance(module, _rotary_cls):
             if hasattr(module, "forward") and hasattr(module.forward, "cache_clear"):
                 module.forward.cache_clear()
+
+        # GDN caches the construction-time CP size and derives its post-A2A
+        # split metadata from it. Refresh both when the live CP group changes.
+        if _gdn_classes and isinstance(module, _gdn_classes):
+            module.cp_size = cp_size
+            module._setup_variant_attrs()
 
         if _te_dpa_cls is not None and isinstance(module, _te_dpa_cls):
             # Lazily create the class-level CP stream if needed (created by TE the

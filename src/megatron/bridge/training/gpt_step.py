@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass
 from functools import partial, wraps
 from typing import Iterable
 
@@ -20,6 +21,7 @@ import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
@@ -27,7 +29,6 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.transformer.enums import LayerType
-from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
     get_batch_on_this_cp_rank,
@@ -38,6 +39,10 @@ from megatron.core.utils import (
 )
 
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.global_batch_packing import (
+    get_batch_for_global_batch_packing,
+    global_batch_packing_enabled,
+)
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
@@ -51,13 +56,12 @@ logger = logging.getLogger(__name__)
 
 
 _CURRENT_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
-_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv", "pad_between_seqs")
 _CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
-_PackedMetadataValue = torch.Tensor | int | None
-_MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED = "_mbridge_expert_bias_padding_mask_compatible"
+_PackedMetadataValue = torch.Tensor | int | PackedSeqParams | None
 _MCORE_SCHEDULE_PADDING_MASK_PATCHED = "_mbridge_schedule_padding_mask_compatible"
 
 
@@ -85,7 +89,7 @@ def _has_packed_sequence_metadata(batch: dict[str, torch.Tensor]) -> bool:
 
 
 def _packed_metadata_for_forward(batch: dict[str, torch.Tensor]) -> dict[str, _PackedMetadataValue] | None:
-    """Extract packed-sequence metadata needed by the forward step."""
+    """Extract sequence metadata, including padding masks for unpacked batches."""
     if batch.get("cu_seqlens_q") is not None:
         metadata: dict[str, _PackedMetadataValue] = {
             key: batch[key] for key in _CURRENT_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None
@@ -95,34 +99,9 @@ def _packed_metadata_for_forward(batch: dict[str, torch.Tensor]) -> dict[str, _P
         return metadata
     if batch.get("cu_seqlens") is not None:
         return {key: batch[key] for key in _LEGACY_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+    if batch.get("padding_mask") is not None:
+        return {"padding_mask": batch["padding_mask"]}
     return None
-
-
-def _patch_mcore_expert_bias_padding_mask() -> None:
-    """Adapt MCore expert-bias routing to accept a flat padding mask.
-
-    TODO(https://github.com/NVIDIA/Megatron-LM/issues/6111): Remove this
-    compatibility patch after the MCore dev fix reaches the pinned main commit.
-    """
-    current_apply_expert_bias = TopKRouter._apply_expert_bias
-    if getattr(current_apply_expert_bias, _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED, False):
-        return
-
-    def _apply_expert_bias(
-        self: TopKRouter,
-        routing_map: torch.Tensor,
-        padding_mask: torch.Tensor | None = None,
-    ) -> None:
-        if padding_mask is not None:
-            flat_mask = padding_mask.reshape(-1)
-            assert flat_mask.shape[0] == routing_map.shape[0], (
-                f"padding_mask flat {flat_mask.shape} vs routing_map {routing_map.shape}"
-            )
-            padding_mask = flat_mask.unsqueeze(-1)
-        current_apply_expert_bias(self, routing_map, padding_mask=padding_mask)
-
-    setattr(_apply_expert_bias, _MCORE_EXPERT_BIAS_PADDING_MASK_PATCHED, True)
-    TopKRouter._apply_expert_bias = _apply_expert_bias
 
 
 def _patch_mcore_schedule_plan_padding_mask() -> None:
@@ -182,7 +161,7 @@ def _patch_mcore_schedule_plan_padding_mask() -> None:
 
 
 def _validate_packed_moe_cuda_graph(config) -> None:
-    """Reject router-scoped TE graphs that cannot consume packed padding masks."""
+    """Reject router-scoped TE graphs that cannot consume token padding masks."""
     if (
         not getattr(config, "num_moe_experts", None)
         or getattr(config, "cuda_graph_impl", "none") != "transformer_engine"
@@ -193,7 +172,7 @@ def _validate_packed_moe_cuda_graph(config) -> None:
     captures_router = not graph_modules or bool(graph_modules & {"moe", "moe_router", "moe_preprocess"})
     if captures_router:
         raise ValueError(
-            "Packed MoE padding masks do not support router-scoped Transformer Engine CUDA graphs in the pinned "
+            "MoE padding masks do not support router-scoped Transformer Engine CUDA graphs in the pinned "
             "MCore. Use an attention-only CUDA graph scope or disable scoped CUDA graphs."
         )
 
@@ -208,9 +187,6 @@ def _prepare_packed_padding_mask(
     """Prepare an alignment-padding mask for the current model stage."""
     if padding_mask is None:
         return None
-    if getattr(config, "moe_router_enable_expert_bias", False):
-        _patch_mcore_expert_bias_padding_mask()
-
     # A pre-process GPT stage scatters this mask alongside its embeddings. HybridModel
     # scatters only its embeddings in the pinned MCore, while later PP stages already
     # receive SP-local activations, so both paths need the matching local mask here.
@@ -258,7 +234,9 @@ def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
     """Return whether middle PP stages need batch metadata for attention."""
     dataset_cfg = getattr(cfg, "dataset", None)
     uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
-    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg)
+    dataset_kwargs = getattr(dataset_cfg, "dataset_kwargs", None) or {}
+    returns_padding_mask = dataset_kwargs.get("return_padding_mask", False)
+    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg) or returns_padding_mask
 
 
 def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
@@ -330,6 +308,7 @@ def _partition_packed_batch_for_cp(
         "cu_seqlens_kv_padded",
         "max_seqlen_q",
         "max_seqlen_kv",
+        "pad_between_seqs",
         "token_count",
         # THD/packed attention is driven by cu_seqlens (PackedSeqParams), so the dense
         # attention_mask is unused here. It is also not sequence-partitionable: it is
@@ -387,11 +366,11 @@ def get_batch_from_iterator(
     if "cu_seqlens_q" in batch:
         required_device_keys.update(key for key in _CURRENT_PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _CURRENT_PACKED_SEQ_HOST_KEYS if key in batch)
-        if batch.get("padding_mask") is not None:
-            required_device_keys.add("padding_mask")
     elif "cu_seqlens" in batch:
         required_device_keys.update(key for key in _LEGACY_PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _LEGACY_PACKED_SEQ_HOST_KEYS if key in batch)
+    if batch.get("padding_mask") is not None:
+        required_device_keys.add("padding_mask")
 
     if not include_full_batch_fields:
         if is_first_pp_stage or include_mtp_inputs:
@@ -404,11 +383,20 @@ def get_batch_from_iterator(
         if key in required_device_keys:
             _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
         elif key in required_host_keys:
-            _batch_required_keys[key] = val.cpu() if val is not None else None
+            _batch_required_keys[key] = val.cpu() if isinstance(val, torch.Tensor) else val
         else:
             _batch_required_keys[key] = None
 
     return _batch_required_keys
+
+
+def _keep_full_position_ids_for_cp(model_cfg, cp_size: int) -> bool:
+    """Whether the model's rotary embedding CP-shards the position ids itself.
+
+    mrope builds its embedding from whatever ids it is given and then shards that, so sharding them
+    here as well leaves the embedding at seq/cp**2 against hidden states at seq/cp.
+    """
+    return cp_size > 1 and getattr(model_cfg, "position_embedding_type", None) == "mrope"
 
 
 def get_batch(
@@ -440,6 +428,22 @@ def get_batch(
     """
     # Determine pipeline stage role via process group collection
     model_cfg = getattr(cfg, "model", None)
+    if global_batch_packing_enabled(model_cfg):
+        # Megatron-Core's scheduler owns the THD metadata, the CP slicing and the TP
+        # broadcast; it returns a finished PackedSeqParams.
+        tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params, padding_mask = (
+            get_batch_for_global_batch_packing(
+                data_iterator, model_cfg, pg_collection=pg_collection, vp_stage=vp_stage
+            )
+        )
+        return (
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            {"packed_seq_params": packed_seq_params, "padding_mask": padding_mask},
+        )
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
     is_first = is_pp_first_stage(pg_collection.pp) and (
         vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
@@ -469,10 +473,21 @@ def get_batch(
     cp_size = pg_collection.cp.size()
     has_packed = _has_packed_sequence_metadata(batch)
     if has_packed and cp_size > 1:
+        if _keep_full_position_ids_for_cp(model_cfg, cp_size):
+            # The THD partition shards position_ids, and only Qwen3VLModel.forward sets
+            # ``is_thd_format`` to stop the rotary embedding sharding them again -- that forward is
+            # not in the loop for the GPT step, so the embedding would land at T/cp**2.
+            raise ValueError(
+                "Packed sequences with context parallelism are not supported for mrope models through "
+                "the GPT step. Use unpacked data, or cp_size=1."
+            )
         batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
     else:
+        full_position_ids = batch.get("position_ids") if _keep_full_position_ids_for_cp(model_cfg, cp_size) else None
         # slice batch along sequence dimension for context parallelism
         batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+        if full_position_ids is not None:
+            batch["position_ids"] = full_position_ids
 
     return (
         batch["tokens"],
@@ -484,6 +499,84 @@ def get_batch(
         batch["position_ids"],
         _packed_metadata_for_forward(batch),
     )
+
+
+@dataclass
+class _ResolvedPackedBatch:
+    """One THD representation for the forward step, whichever packing mode produced the batch."""
+
+    packed_seq_params: PackedSeqParams | None = None
+    padding_mask: torch.Tensor | None = None
+    flops_from_scheduler: bool = False
+    flops_cu_seqlens: torch.Tensor | None = None
+    flops_cu_seqlens_argmin: torch.Tensor | None = None
+    flops_cu_seqlens_unpadded: torch.Tensor | None = None
+    flops_cu_seqlens_unpadded_argmin: torch.Tensor | None = None
+
+
+def _resolve_packed_batch(
+    packed_seq_metadata: dict[str, _PackedMetadataValue] | None,
+    *,
+    config,
+    tokens: torch.Tensor | None,
+    labels: torch.Tensor | None,
+) -> _ResolvedPackedBatch:
+    """Normalize packed-sequence metadata from any packing mode into PackedSeqParams.
+
+    Dataset-level packing (offline, in-batch, Energon) yields ``cu_seqlens`` dicts
+    that :func:`get_packed_seq_params` converts; global-batch packing yields a
+    finished ``PackedSeqParams`` (with its per-microbatch CP group) under the
+    ``packed_seq_params`` key.
+    """
+    if packed_seq_metadata is None:
+        if global_batch_packing_enabled(config):
+            raise ValueError(
+                "model.sequence_packing_scheduler is set but the batch did not come from the packing scheduler; "
+                "global-batch packing is only supported with the GPT forward step (megatron.bridge.training.gpt_step)."
+            )
+        return _ResolvedPackedBatch()
+
+    scheduled = packed_seq_metadata.get("packed_seq_params")
+    if isinstance(scheduled, PackedSeqParams):
+        return _ResolvedPackedBatch(
+            packed_seq_params=scheduled,
+            padding_mask=packed_seq_metadata.get("padding_mask"),
+            flops_from_scheduler=True,
+        )
+    if global_batch_packing_enabled(config):
+        raise ValueError(
+            "model.sequence_packing_scheduler is set but the batch did not come from the packing scheduler; "
+            "global-batch packing is only supported with the GPT forward step (megatron.bridge.training.gpt_step)."
+        )
+
+    resolved = _ResolvedPackedBatch(padding_mask=packed_seq_metadata.get("padding_mask"))
+    metadata = {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
+    if not _has_packed_sequence_metadata(metadata):
+        # Unpacked batch that only carries a token padding mask.
+        return resolved
+    if metadata.get("cu_seqlens_q") is not None:
+        cu_seqlens_q = metadata.get("cu_seqlens_q")
+        cu_seqlens_q_padded = metadata.get("cu_seqlens_q_padded")
+        resolved.flops_cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
+        resolved.flops_cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
+    else:
+        resolved.flops_cu_seqlens = metadata.get("cu_seqlens")
+        resolved.flops_cu_seqlens_argmin = metadata.get("cu_seqlens_argmin")
+        resolved.flops_cu_seqlens_unpadded = metadata.get("cu_seqlens_unpadded")
+        resolved.flops_cu_seqlens_unpadded_argmin = metadata.get("cu_seqlens_unpadded_argmin")
+
+    # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
+    # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
+    # transformer models to avoid per-step CUDA overhead.
+    if getattr(config, "is_hybrid_model", False):
+        if tokens is not None:
+            metadata["total_tokens"] = tokens.size(1)
+        elif labels is not None:
+            metadata["total_tokens"] = labels.size(1)
+        else:
+            metadata["total_tokens"] = getattr(config, "seq_length", None)
+    resolved.packed_seq_params = get_packed_seq_params(metadata)
+    return resolved
 
 
 def _forward_step_common(
@@ -531,78 +624,57 @@ def _forward_step_common(
         )
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches. The THD attention term Σᵢ sᵢ² is
-    # derived inline from cu_seqlens (kept on-device, sync-free); see
-    # accumulate_flops_metadata. Falls back to BSHD when cu_seqlens is absent.
-    #
-    # The cu_seqlens-driven THD path is only wired/validated for CP == 1 in this PR.
-    # Under context parallelism the batch (and its cu_seqlens) is CP-partitioned per
-    # rank, so the per-rank Σᵢ sᵢ² accounting here is not yet correct — that is the
-    # follow-up tracked in #4161. Until then, forward cu_seqlens only for CP == 1 so
-    # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
-    # change), instead of running the not-yet-CP-safe cu_seqlens path.
-    cp_use_thd = pg_collection.cp.size() == 1
-    cu_seqlens = None
-    cu_seqlens_argmin = None
-    cu_seqlens_unpadded = None
-    cu_seqlens_unpadded_argmin = None
-    if packed_seq_metadata is not None:
-        if packed_seq_metadata.get("cu_seqlens_q") is not None:
-            cu_seqlens_q = packed_seq_metadata.get("cu_seqlens_q")
-            cu_seqlens_q_padded = packed_seq_metadata.get("cu_seqlens_q_padded")
-            cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
-            cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
-        else:
-            cu_seqlens = packed_seq_metadata.get("cu_seqlens")
-            cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
-            cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
-            cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
-    accumulate_flops_metadata(
-        state,
-        tokens,
-        vp_stage=vp_stage,
-        config_seq_len=getattr(config, "seq_length", None),
-        cu_seqlens=cu_seqlens if cp_use_thd else None,
-        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
-        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
-        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
-    )
+    packed = _resolve_packed_batch(packed_seq_metadata, config=config, tokens=tokens, labels=labels)
+
+    # Global-batch packing already fed the scheduler's exact per-step totals into the FLOPs
+    # accumulators in train_step. For every other batch: packed CP partitions tokens but
+    # preserves full-sequence cu_seqlens, so restore the physical token count for linear
+    # FLOPs while attention uses the unchanged sub-sequence boundaries. train.py reduces
+    # over pure DP, not CP. A post-process-only PP stage has labels but no input token ids.
+    if not packed.flops_from_scheduler:
+        flops_tokens = tokens if tokens is not None else labels
+        cp_size = pg_collection.cp.size()
+        # get_batch has already CP-sharded the sequence dimension. Recover the
+        # physical batch length, not the configured maximum: dense SFT batches can
+        # be shorter, and builder-backed model.config has no seq_length field.
+        full_seq_len = flops_tokens.shape[1] * cp_size if flops_tokens is not None else None
+        accumulate_flops_metadata(
+            state,
+            flops_tokens,
+            vp_stage=vp_stage,
+            config_seq_len=full_seq_len,
+            context_parallel_size=cp_size,
+            cu_seqlens=packed.flops_cu_seqlens,
+            cu_seqlens_argmin=packed.flops_cu_seqlens_argmin,
+            cu_seqlens_unpadded=packed.flops_cu_seqlens_unpadded,
+            cu_seqlens_unpadded_argmin=packed.flops_cu_seqlens_unpadded_argmin,
+        )
 
     forward_args = {
         "input_ids": tokens,
         "position_ids": position_ids,
         "attention_mask": attention_mask,
         "labels": labels,
+        "loss_mask": loss_mask,
     }
 
-    # Add packed sequence support
-    if packed_seq_metadata is not None:
-        padding_mask = packed_seq_metadata.get("padding_mask")
-        # Supported producers make mask presence configuration-driven and stable
-        # across DP ranks. Never branch on mask contents here: an all-false local
-        # batch must follow the same path as a padded batch on another rank.
-        if padding_mask is not None:
-            _validate_packed_moe_cuda_graph(config)
+    # Packed sequences and padding masks: one representation for every packing mode.
+    padding_mask = packed.padding_mask
+    # Supported producers make mask presence configuration-driven and stable
+    # across DP ranks. Never branch on mask contents here: an all-false local
+    # batch must follow the same path as a padded batch on another rank.
+    if padding_mask is not None:
+        _validate_packed_moe_cuda_graph(config)
         padding_mask = _prepare_packed_padding_mask(
             padding_mask,
             config=config,
             model=model,
             pg_collection=pg_collection,
         )
-        packed_seq_metadata = {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
-        # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
-        # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
-        # transformer models to avoid per-step CUDA overhead.
-        if getattr(config, "is_hybrid_model", False):
-            if tokens is not None:
-                packed_seq_metadata["total_tokens"] = tokens.size(1)
-            elif labels is not None:
-                packed_seq_metadata["total_tokens"] = labels.size(1)
-            else:
-                packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
-        if padding_mask is not None:
-            forward_args["padding_mask"] = padding_mask
+    if packed.packed_seq_params is not None:
+        forward_args["packed_seq_params"] = packed.packed_seq_params
+    if padding_mask is not None:
+        forward_args["padding_mask"] = padding_mask
 
     with straggler_timer:
         if return_schedule_plan:

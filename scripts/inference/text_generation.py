@@ -161,6 +161,16 @@ def _generate_with_dynamic_engine(
     ) as llm:
         if llm.is_primary_rank:
             outputs = llm.generate(prompts, sampling_params)
+            failed_outputs = [output for output in outputs if output.failed()]
+            if failed_outputs:
+                details = ", ".join(f"request {output.request_id}={output.status.name}" for output in failed_outputs)
+                raise RuntimeError(f"Inference failed: {details}")
+            if len(outputs) != len(prompts):
+                # Requests rejected at admission are never returned by the engine.
+                raise RuntimeError(
+                    f"Inference failed: engine returned {len(outputs)} result(s) for {len(prompts)} prompt(s); "
+                    f"{len(prompts) - len(outputs)} request(s) were rejected before generation"
+                )
             _print_results(prompts, outputs)
 
 

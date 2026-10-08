@@ -46,12 +46,137 @@ def _complete_index_inputs(module):
     return verification_index, items, hardware_groups
 
 
+@pytest.mark.parametrize("token", ["<|im_start|>", "<|im_end|>", "<think>", "</think>"])
+def test_literal_chat_tokens_are_not_placeholders_or_paths(token):
+    module = _load_validator()
+    errors = []
+
+    assert not module._contains_placeholder(token)
+    module._validate_privacy(token, {}, (), errors)
+
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "TODO",
+        "TBD",
+        "PLACEHOLDER",
+        "<model>",
+        "<|unknown|>",
+        "<Think>",
+        "</other>",
+        "<think>TODO</think>",
+        "<|im_start|><model><|im_end|>",
+    ],
+)
+def test_chat_token_exception_does_not_hide_placeholders(value):
+    assert _load_validator()._contains_placeholder(value)
+
+
+@pytest.mark.parametrize("address", ["127.0.0.1", "127.2.3.4", "::1", "0:0:0:0:0:0:0:1", "[::1]"])
+def test_privacy_accepts_loopback_coordinator(address):
+    module = _load_validator()
+    errors = []
+    command = f"./scripts/inference/infer.sh --coordinator-host {address}"
+
+    module._validate_privacy(command, {"items": {"inference": {"command": command}}}, (), errors)
+
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "10.2.3.4",
+        "172.16.0.1",
+        "192.168.1.2",
+        "8.8.8.8",
+        "0.0.0.0",
+        "128.0.0.1",
+        "127.0.0.999",
+        "127.00.0.1",
+        "::",
+        "fe80::1",
+        "fd00::1",
+        "2001:db8::1",
+        "::ffff:10.2.3.4",
+        "[::ffff:7f00:1]",
+        "[::ffff:127.0.0.1]",
+    ],
+)
+def test_loopback_exception_does_not_hide_other_addresses(address):
+    module = _load_validator()
+    errors = []
+
+    module._validate_privacy(f"127.0.0.1 ::1 <think>{address}</think>", {}, (), errors)
+
+    assert "/: email or IP address detected" in errors
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [
+        ("<think>/private/checkpoint</think>", "absolute path detected"),
+        ("</think>/private/checkpoint", "absolute path detected"),
+        ("<think>~/checkpoint</think>", "home-directory paths are forbidden"),
+        ("<think>${PRIVATE_ROOT}</think>", "environment reference(s) detected"),
+        ("<think>user@example.com</think>", "email or IP address detected"),
+        ("http://127.0.0.1", "URLs are forbidden"),
+        ("<think>HF_TOKEN=example</think>", "secret assignment detected"),
+    ],
+)
+def test_chat_and_loopback_exceptions_preserve_privacy_checks(value, error):
+    module = _load_validator()
+    errors = []
+
+    module._validate_privacy(value, {}, (), errors)
+
+    assert any(error in message for message in errors)
+
+
+def test_chat_token_exception_preserves_explicit_deny_terms():
+    module = _load_validator()
+    errors = []
+
+    module._validate_privacy("<think>127.0.0.1</think>", {}, ("think", "127.0.0.1"), errors)
+
+    assert errors == ["/: matched caller-supplied deny term #1", "/: matched caller-supplied deny term #2"]
+
+
+def test_verified_inference_accepts_literal_chat_prompt_and_loopback():
+    module = _load_validator()
+    prompt = "<|im_start|>user\\nWhat is two plus two?<|im_end|>\\n<|im_start|>assistant\\n<think></think>"
+    item = {
+        "status": "verified",
+        "precision": "bf16",
+        "command": (
+            "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 4 --task text-generation "
+            f"--prompt $'{prompt}' --coordinator-host 127.0.0.1 --max_new_tokens 32 "
+            "--temperature 0 --top-k 1"
+        ),
+        "last_verified": "2026-09-27",
+        "expected_result": (
+            "One greedy run with a 32-token maximum generated 7 tokens and stopped at EOS. "
+            'The literal completion was "Two plus two equals four."'
+        ),
+    }
+    errors = []
+
+    module._validate_item("inference", item, errors, path=("items", "inference"), model_revision=None)
+    module._validate_privacy(item["command"], {"items": {"inference": item}}, (), errors)
+
+    assert errors == []
+
+
 def _fsdp_metrics():
     return {
         "initial_loss": 12.19034,
         "final_loss": 3.913218,
         "last_10_steps_step_time_ms_avg": 13917.0,
         "last_10_steps_model_tflops_per_gpu_avg": 795.39,
+        "last_10_steps_tokens_per_second_per_gpu_avg": 28254.365,
         "peak_allocated_memory_gib": 169.54,
         "peak_reserved_memory_gib": 173.86,
     }
@@ -227,6 +352,45 @@ def test_verified_fsdp_metrics_are_valid():
     )
 
     assert errors == []
+
+
+def test_verified_training_metrics_require_tps_per_gpu():
+    module = _load_validator()
+    item = {"metrics": _fsdp_metrics()}
+    del item["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"]
+    errors = []
+
+    module._validate_metrics(
+        item,
+        item_name="pretrain",
+        item_path=("items", "pretrain", "GB200"),
+        status="verified",
+        errors=errors,
+    )
+
+    assert (
+        "/items/pretrain/GB200/metrics/last_10_steps_tokens_per_second_per_gpu_avg: required key is missing" in errors
+    )
+
+
+def test_verified_fsdp_variant_requires_positive_tps_per_gpu():
+    module = _load_validator()
+    metrics = _fsdp_metrics()
+    metrics["last_10_steps_tokens_per_second_per_gpu_avg"] = 0
+    errors = []
+
+    module._validate_metrics(
+        {"metrics": metrics},
+        item_name="pretrain_fsdp",
+        item_path=("items", "pretrain_fsdp", "GB200", "variants", "fp8_mx"),
+        status="verified",
+        errors=errors,
+    )
+
+    assert (
+        "/items/pretrain_fsdp/GB200/variants/fp8_mx/metrics/"
+        "last_10_steps_tokens_per_second_per_gpu_avg: verified performance metrics must be positive"
+    ) in errors
 
 
 def test_fsdp_hardware_leaf_accepts_multiple_precision_variants():

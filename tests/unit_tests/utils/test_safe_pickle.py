@@ -22,14 +22,23 @@ import pickle
 import subprocess
 from collections import OrderedDict
 from enum import Enum
+from pathlib import PurePosixPath
+from unittest.mock import patch
 
 import numpy as np
 import pytest
 import torch
+from megatron.energon.epathlib import EPath
 from megatron.energon.savable_loader import SavableDataLoaderState
 from megatron.energon.state import FlexState
 
-from megatron.bridge.utils.safe_pickle import energon_torch_load, safe_load_npy, safe_pickle_load, safe_pickle_loads
+from megatron.bridge.utils.safe_pickle import (
+    energon_torch_load,
+    safe_load_npy,
+    safe_pickle_load,
+    safe_pickle_loads,
+    safe_torch_tensor_pickle_loads,
+)
 
 
 class _BucketKey(Enum):
@@ -264,6 +273,34 @@ class TestSafePickleRejectsUnsafe:
         assert not hook_called
 
 
+class TestSafeTorchTensorPickle:
+    """Raw WebDataset tensor pickles allow data but reject executable globals."""
+
+    def test_plain_tensor_container_round_trip(self):
+        value = {
+            "embedding": torch.arange(6, dtype=torch.float32).reshape(2, 3),
+            "mask": torch.tensor([True, False]),
+        }
+
+        restored = safe_torch_tensor_pickle_loads(pickle.dumps(value))
+
+        assert restored.keys() == value.keys()
+        assert torch.equal(restored["embedding"], value["embedding"])
+        assert torch.equal(restored["mask"], value["mask"])
+
+    def test_rejects_reduce_payload_without_executing_it(self, tmp_path):
+        marker = tmp_path / "pickle-executed"
+
+        class Payload:
+            def __reduce__(self):
+                return os.system, (f"touch {marker}",)
+
+        with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
+            safe_torch_tensor_pickle_loads(pickle.dumps(Payload()))
+
+        assert not marker.exists()
+
+
 class TestAllowlistImmutability:
     """Verify the allowlist cannot be mutated at runtime."""
 
@@ -439,6 +476,23 @@ def test_energon_group_bucket_enum_with_custom_repr_is_rejected_before_reduce(tm
 
     with pytest.raises(pickle.UnpicklingError, match="Restricted unpickler refused"):
         energon_torch_load(str(path))
+
+
+def test_energon_epath_is_rejected_without_resolving_storage_client(tmp_path):
+    """Application path restore hooks remain outside the dataloader-state allowlist."""
+    epath = EPath.__new__(EPath)
+    epath.internal_path = PurePosixPath("/dataset")
+    epath.profile = "default"
+    path = tmp_path / "dataloader-state.pt"
+    torch.save({"dataloader_state_dict": epath}, path)
+
+    with (
+        patch("multistorageclient.resolve_storage_client") as resolve_storage_client,
+        pytest.raises(pickle.UnpicklingError, match="EPath"),
+    ):
+        energon_torch_load(str(path))
+
+    resolve_storage_client.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

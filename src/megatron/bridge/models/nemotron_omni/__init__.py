@@ -14,9 +14,13 @@
 
 """Nemotron Omni model family (Vision-Language + Audio) for Megatron Bridge."""
 
-from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
+    NemotronOmniMimoRadioEncoder,
+    NemotronOmniModel,
+)
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
+    Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniLlavaBridge,
 )
@@ -30,8 +34,10 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 __all__ = [
     "NemotronOmniModel",
     "NemotronOmniBridge",
+    "Nemotron35SuperVLBridge",
     "NemotronOmniModelProvider",
     "NemotronOmniLlavaModel",
+    "NemotronOmniMimoRadioEncoder",
     "NemotronOmniLlavaBridge",
     "NemotronOmniLlavaModelProvider",
     "NemotronVLModelProvider",

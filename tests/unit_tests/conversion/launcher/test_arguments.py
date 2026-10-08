@@ -44,6 +44,18 @@ def test_cpu_local_import_defaults():
     assert args.srun_args == []
     assert (args.tp, args.pp, args.ep, args.etp) == (1, 1, 1, 1)
     assert args.low_memory_save is False
+    assert args.text_only is False
+
+
+@pytest.mark.parametrize("command", ["import", "export"])
+def test_text_only_forwarded_to_conversion_worker(command):
+    module = _load_arguments_module()
+    argv = [command, "--hf-model", "hf/model", "--megatron-path", "/checkpoint", "--text-only"]
+    if command == "export":
+        argv += ["--hf-path", "/export"]
+    args = module.build_parser(include_execution=True).parse_args(argv)
+    worker_args = module.conversion_worker_args(args)
+    assert "--text-only" in worker_args
 
 
 def test_srun_args_are_repeatable():
@@ -136,6 +148,30 @@ def test_worker_args_disable_distributed_save_for_cpu_export():
     worker_args = module.conversion_worker_args(args)
 
     assert "--no-distributed-save" in worker_args
+
+
+def test_worker_args_enable_distributed_save_for_distributed_cpu_export():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "export",
+            "--device",
+            "cpu",
+            "--cpu-processes-per-node",
+            "4",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/megatron",
+            "--hf-path",
+            "/hf",
+        ]
+    )
+
+    worker_args = module.conversion_worker_args(args)
+
+    assert "--distributed-save" in worker_args
+    assert "--cpu-processes-per-node" not in worker_args
 
 
 def test_roundtrip_alias_and_worker_args():

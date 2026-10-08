@@ -171,13 +171,14 @@ items:
         final_loss: 5.158420
         last_10_steps_step_time_ms_avg: 11636.350
         last_10_steps_model_tflops_per_gpu_avg: 386.590
+        last_10_steps_tokens_per_second_per_gpu_avg: 22528.026
       expected_result: >
         The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at
         TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient
         accumulation with natural MoE routing and the HybridEP flex dispatcher.
         It reaches peak learning rate at step 40 and completes cosine decay at
         step 100. LM loss is finite from 12.43248 to 5.158420 with no skipped or
-        NaN iterations, all four metrics are recorded, the post-setup
+        NaN iterations, all five metrics are recorded, the post-setup
         configuration persists, and complete 16-shard iter_0000050 and
         iter_0000100 checkpoints are saved.
 
@@ -215,6 +216,7 @@ items:
         final_loss: 1.180197
         last_10_steps_step_time_ms_avg: 562.140
         last_10_steps_model_tflops_per_gpu_avg: 229.500
+        last_10_steps_tokens_per_second_per_gpu_avg: 14572.882
       expected_result: >
         The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at
         TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 8/1, and no gradient
@@ -223,7 +225,7 @@ items:
         pad-1 offline packing is 99.73% efficient and averages 21.550 source
         sequences per pack while retaining 6,553,600 token slots across the
         100 updates. LM loss is finite from 1.770799 to 1.180197 with no skipped
-        or NaN iterations, all four metrics are recorded, and the complete
+        or NaN iterations, all five metrics are recorded, and the complete
         eight-shard iter_0000100 full-model checkpoint saves successfully.
 
   sft_export_inference:
@@ -293,6 +295,7 @@ items:
         final_loss: 1.228019
         last_10_steps_step_time_ms_avg: 60599.310
         last_10_steps_model_tflops_per_gpu_avg: 40.840
+        last_10_steps_tokens_per_second_per_gpu_avg: 2162.929
       expected_result: >
         The immutable-revision 8-GPU run completes exactly 20 Tulu3 SFT steps at
         the model's 8192-token context limit with recipe-owned
@@ -332,6 +335,7 @@ items:
         final_loss: 1.100755
         last_10_steps_step_time_ms_avg: 3822.840
         last_10_steps_model_tflops_per_gpu_avg: 67.380
+        last_10_steps_tokens_per_second_per_gpu_avg: 4285.819
       expected_result: >
         The immutable-revision 4-GPU run completes exactly 100 PEFT steps at
         TP1/PP1/CP1/EP4/ETP1, DP4, SP off, GBS/MBS 32/1, and eight-way gradient
@@ -340,7 +344,7 @@ items:
         masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_q_proj,
         linear_kv_down_proj, linear_kv_up_proj, and linear_proj is trainable. LM
         loss is finite from 1.264324 to 1.100755 with no skipped or NaN
-        iterations, all four metrics are recorded, and the complete four-shard
+        iterations, all five metrics are recorded, and the complete four-shard
         iter_0000100 adapter checkpoint covers all 216 expected adapter entries.
 
   checkpoint_resume:
@@ -375,6 +379,7 @@ items:
         final_loss: 5.150805
         last_10_steps_step_time_ms_avg: 11717.960
         last_10_steps_model_tflops_per_gpu_avg: 383.920
+        last_10_steps_tokens_per_second_per_gpu_avg: 22371.129
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
@@ -387,7 +392,7 @@ items:
         finishes exactly at step 100 in a distinct output root at
         TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient
         accumulation. All 50 losses are finite with no skipped or NaN
-        iterations, all four metrics are recorded, the post-setup configuration
+        iterations, all five metrics are recorded, the post-setup configuration
         persists, and a complete 16-shard iter_0000100 checkpoint is saved.
         Step-51 resumed/reference loss is 5.775853/5.775853. Step-100
         resumed/reference loss is 5.150805/5.158420, an absolute difference of

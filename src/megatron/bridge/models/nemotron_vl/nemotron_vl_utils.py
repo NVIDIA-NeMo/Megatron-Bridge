@@ -60,9 +60,10 @@ def sample_video_frames_to_data_urls(video_path_local, fps=1, nframe=0, nframe_m
         tuple: (frame_data_urls, metadata)
         - frame_data_urls: List of base64-encoded frame images
         - metadata: VideoMetadata dataclass containing info about the sampled frames:
-            - total_num_frames: Number of sampled frames
-            - fps: Effective frame rate of the sampled frames
-            - duration: Duration covered by the sampled frames (in seconds)
+            - total_num_frames: Number of frames in the source video
+            - fps: Source-video frame rate
+            - duration: Source-video duration (in seconds)
+            - frames_indices: Source-frame index for each sampled frame
             - video_backend: Backend used for video processing ('decord')
     """
     import decord
@@ -103,26 +104,12 @@ def sample_video_frames_to_data_urls(video_path_local, fps=1, nframe=0, nframe_m
     images = [Image.fromarray(vid[i].asnumpy()) for i in indices]
     frame_urls = [encode_pil_to_jpeg_data_url(im) for im in images]
 
-    # Calculate timestamps for each sampled frame
-    timestamps = [float(idx) / video_fps for idx in indices]
-
-    # Calculate metadata for the sampled frames
-    sampled_num_frames = len(indices)
-
-    # Duration is the time span from first to last frame
-    if len(timestamps) > 1:
-        sampled_duration = timestamps[-1] - timestamps[0]
-        sampled_fps = (sampled_num_frames - 1) / sampled_duration if sampled_duration > 0 else 1.0
-    else:
-        # Single frame case
-        sampled_duration = None
-        sampled_fps = None
-
     metadata = VideoMetadata(
-        total_num_frames=sampled_num_frames,
-        fps=sampled_fps,
-        duration=sampled_duration,
-        video_backend=None,
+        total_num_frames=total_frames,
+        fps=float(video_fps),
+        duration=total_duration,
+        video_backend="decord",
+        frames_indices=indices,
     )
 
     return frame_urls, metadata

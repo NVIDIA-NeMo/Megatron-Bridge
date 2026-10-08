@@ -441,19 +441,62 @@ class TestSafeTensorsStateSourceSave:
             output_index = json.load(f)
         assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
 
-    def test_ignore_source_key_prefixes_filters_expected_map(self):
+    def test_filter_source_keys_filters_expected_map(self):
         source_map = {
             "model.weight": "model.safetensors",
+            "model.weight_scale_inv": "model.safetensors",
             "mtp.0.weight": "model.safetensors",
             "mtp_extra.weight": "model.safetensors",
         }
 
-        assert SafeTensorsStateSource._ignore_source_key_prefixes(None, ("mtp.",)) == {}
-        assert SafeTensorsStateSource._ignore_source_key_prefixes(source_map, None) == source_map
-        assert SafeTensorsStateSource._ignore_source_key_prefixes(source_map, ("mtp.",)) == {
+        assert SafeTensorsStateSource._filter_source_keys(None, ("mtp.",), ("_scale_inv",)) == {}
+        assert SafeTensorsStateSource._filter_source_keys(source_map, None, None) == source_map
+        assert SafeTensorsStateSource._filter_source_keys(source_map, ("mtp.",), ("_scale_inv",)) == {
             "model.weight": "model.safetensors",
             "mtp_extra.weight": "model.safetensors",
         }
+
+    @pytest.mark.parametrize("distributed_save", [False, True])
+    def test_save_generator_ignores_source_key_suffixes(self, tmp_path, distributed_save):
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        shard = "model-00001-of-00001.safetensors"
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "model.weight_scale_inv": torch.ones(1),
+            },
+            source_dir / shard,
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": shard,
+                        "model.weight_scale_inv": shard,
+                    },
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            distributed_save=distributed_save,
+            ignored_source_key_suffixes=("_scale_inv",),
+        )
+
+        with safe_open(output_dir / shard, framework="pt") as output:
+            assert output.keys() == ["model.weight"]
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": shard}
 
     def test_distributed_save_generator_ignores_source_key_prefixes_without_initialized_dist(self, tmp_path):
         from safetensors.torch import save_file
@@ -491,3 +534,50 @@ class TestSafeTensorsStateSourceSave:
         with open(output_dir / "model.safetensors.index.json") as f:
             output_index = json.load(f)
         assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
+
+
+class TestSafeTensorsStateSourceResolve:
+    """Test SafeTensorsStateSource._resolve_path with revision and offline mode."""
+
+    def test_resolve_path_with_revision(self, tmp_path):
+        revision = "b5968e9190ef"  # pragma: allowlist secret
+        source = SafeTensorsStateSource("some/model-repo", revision=revision)
+        with patch("huggingface_hub.snapshot_download") as mock_download:
+            mock_download.return_value = str(tmp_path)
+            resolved = source.path
+            mock_download.assert_called_once()
+            _, kwargs = mock_download.call_args
+            assert kwargs.get("repo_id") == "some/model-repo"
+            assert kwargs.get("revision") == revision
+            assert resolved == tmp_path
+
+    def test_resolve_path_offline_mode(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("huggingface_hub.constants.HF_HUB_OFFLINE", True)
+        source = SafeTensorsStateSource("some/model-repo", revision="my-tag")
+        with patch("huggingface_hub.snapshot_download") as mock_download:
+            mock_download.return_value = str(tmp_path)
+            resolved = source.path
+            mock_download.assert_called_once()
+            _, kwargs = mock_download.call_args
+            assert kwargs.get("revision") == "my-tag"
+            assert kwargs.get("local_files_only") is True
+            assert resolved == tmp_path
+
+    def test_pretrained_base_passes_revision(self):
+        class DummyPreTrained(PreTrainedBase):
+            def __init__(self, model_name_or_path, revision=None):
+                super().__init__(revision=revision)
+                self.model_name_or_path = model_name_or_path
+
+            def _load_config(self):
+                pass
+
+            def _load_model(self):
+                pass
+
+        obj = DummyPreTrained("deepseek-ai/DeepSeek-V4-Pro", revision="abc1234")
+        with patch.object(SafeTensorsStateSource, "_resolve_path", return_value=Path("/tmp")):
+            accessor = obj.state
+            source = accessor.source
+            assert isinstance(source, SafeTensorsStateSource)
+            assert source.revision == "abc1234"

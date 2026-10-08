@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -34,6 +35,7 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_globa
 _qwen35_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen35_vl")
 _qwen35_vl_h100_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.h100.qwen35_vl")
 _qwen35_vl_gb200_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.gb200.qwen35_vl")
+_qwen35_vl_gb300_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.gb300.qwen35_vl")
 
 # Pretrain mock configs (parameterless fixed configs)
 _QWEN35_VL_PRETRAIN_MOCK_FUNCS = [
@@ -48,7 +50,7 @@ _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS = [
     _qwen35_vl_h100_module.qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config,
-    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_config,
     _qwen35_vl_h100_module.qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config,
 ]
@@ -104,8 +106,14 @@ _QWEN35_VL_H100_PEFT_FUNCS = [
 ]
 
 _QWEN35_VL_GB200_FUNCS = [
+    _qwen35_vl_gb200_module.qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config,
     _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config,
     _qwen35_vl_gb200_module.qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config,
+]
+
+_QWEN35_VL_GB300_FUNCS = [
+    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config,
+    _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config,
 ]
 
 
@@ -117,6 +125,8 @@ class _FakeModelCfg:
         self.pipeline_model_parallel_size = 1
         self.pipeline_dtype = None
         self.virtual_pipeline_model_parallel_size = None
+        self.num_layers_in_first_pipeline_stage = None
+        self.num_layers_in_last_pipeline_stage = None
         self.context_parallel_size = 1
         self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = 1
@@ -125,6 +135,10 @@ class _FakeModelCfg:
         self.freeze_language_model = False
         self.freeze_vision_model = False
         self.freeze_vision_projection = False
+        # Present on a Megatron-Core that carries the GDN conv/L2-norm fusion.
+        # The recipe guards on this field existing, so a fake without it models
+        # an older core -- see _FakeModelCfgNoGdnFusion below.
+        self.gdn_pre_gated_delta_rule_fusion = False
 
     def finalize(self):
         return None
@@ -217,6 +231,15 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
     assert hasattr(cfg.peft, "alpha")
 
 
+def test_qwen35_vl_model_selector_supports_dora(monkeypatch: pytest.MonkeyPatch):
+    """Qwen3.5-VL model selectors should honor the requested DoRA scheme."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config(peft_scheme="dora")
+
+    assert isinstance(cfg.peft, DoRA)
+
+
 # ---------------------------------------------------------------------------
 # Recipe API shape
 # ---------------------------------------------------------------------------
@@ -228,13 +251,21 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
     + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
     + _QWEN35_VL_SFT_FUNCS
     + _QWEN35_VL_H100_SFT_FUNCS
-    + _QWEN35_VL_PEFT_FUNCS
-    + _QWEN35_VL_H100_PEFT_FUNCS
-    + _QWEN35_VL_GB200_FUNCS,
+    + [_qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_16gpu_h100_bf16_config]
+    + _QWEN35_VL_GB200_FUNCS
+    + _QWEN35_VL_GB300_FUNCS,
 )
 def test_qwen35_vl_recipe_entry_points_are_parameterless(recipe_func: Callable):
     """Qwen3.5-VL public recipe entry points should be fixed configs."""
     assert not inspect.signature(recipe_func).parameters
+
+
+@pytest.mark.parametrize("recipe_func", _QWEN35_VL_PEFT_FUNCS)
+def test_qwen35_vl_selectable_peft_recipes_accept_a_peft_scheme(recipe_func: Callable):
+    """Model-selectable PEFT recipes should accept an optional PEFT scheme."""
+    parameter = inspect.signature(recipe_func).parameters["peft_scheme"]
+
+    assert parameter.default == "lora"
 
 
 def test_qwen35_vl_h100_module_has_no_parameterized_recipe_helpers():
@@ -408,11 +439,83 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 # ---------------------------------------------------------------------------
 
 
+def test_qwen35_vl_397b_a17b_pretrain_64gpu_gb300_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 64-GB300 library pretrain recipe should own the measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    # EP32 measured 370.2 TF against 211.0 TF at EP64 on 64x GB300; the HybridEP
+    # NVLink rank count must track it or the domain is split wrongly.
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.recompute_granularity == "selective"
+    # No "moe_act": the CuTe DSL fused grouped MLP rejects it.
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    # Vision graphs at the cap measured for micro_batch_size=1 (max 980 + 5%).
+    assert cfg.model.vision_cuda_graph_impl == "transformer_engine"
+    assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert cfg.model.max_vision_cuda_graph_seq_length == 1029
+    assert cfg.train.global_batch_size == 1024
+    # micro_batch_size is load-bearing for the vision graph cap above.
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.checkpoint.pretrained_checkpoint is None
+
+
+def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 16-GB300 library pretrain recipe should own the measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_gb300_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    # EP4 on 16 GPUs; the HybridEP NVLink rank count must track it or the
+    # domain is split wrongly.
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    # LayerNorm SM margin is 0 at 35B, not the 397B recipe's 20.
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 0
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 0
+    assert cfg.model.recompute_granularity == "selective"
+    # No "moe_act": the CuTe DSL fused grouped MLP rejects it.
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    # Vision graphs at the cap measured for micro_batch_size=4 (max 3532 + 5%).
+    assert cfg.model.vision_cuda_graph_impl == "transformer_engine"
+    assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
+    assert cfg.model.max_vision_cuda_graph_seq_length == 3712
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is False
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.cross_entropy_loss_fusion is True
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.train.global_batch_size == 2048
+    # micro_batch_size is load-bearing for the vision graph cap above.
+    assert cfg.train.micro_batch_size == 4
+    assert cfg.tokenizer.use_tokenizer_vocab_size is False
+    assert cfg.checkpoint.pretrained_checkpoint is None
+
+
 def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPatch):
     """The 16-H100 library pretrain recipe should own the measured execution policy."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_functional_config()
+    cfg = _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_config()
 
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1
@@ -420,6 +523,7 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.model.num_layers_in_first_pipeline_stage == 16
     assert cfg.model.num_layers_in_last_pipeline_stage == 24
     assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.checkpoint.pretrained_checkpoint is None
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
     assert cfg.model.freeze_vision_projection is False
@@ -443,6 +547,15 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.Monk
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+
+
+def test_qwen35_vl_35b_a3b_pretrain_name_is_exported():
+    """The canonical full-pretrain recipe should be available from the public recipes package."""
+    recipe_name = "qwen35_vl_35b_a3b_pretrain_config"
+    recipes_package = importlib.import_module("megatron.bridge.recipes")
+
+    assert recipe_name in _qwen35_vl_h100_module.__all__
+    assert getattr(recipes_package, recipe_name) is getattr(_qwen35_vl_h100_module, recipe_name)
 
 
 def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -628,6 +741,59 @@ def test_qwen35_vl_35b_a3b_peft_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPa
     assert cfg.model.vision_cuda_graph_scope == ["attn", "mlp"]
 
 
+def test_qwen35_vl_27b_gb200_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The dense GB200 pretrain recipe should retain its measured execution policy."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb200_module.qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.calculate_per_token_loss is True
+
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 2
+
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.comm_overlap.overlap_grad_reduce is False
+    assert cfg.comm_overlap.overlap_param_gather is False
+
+    assert cfg.dataset.do_validation is False
+    assert cfg.dataset.pad_to_max_length is True
+    assert cfg.train.eval_interval == 0
+    assert cfg.train.eval_iters == 0
+    assert cfg.validation.eval_interval == 0
+    assert cfg.validation.eval_iters == 0
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.save is None
+    assert cfg.logger.log_interval == 1
+    assert cfg.logger.log_throughput is True
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+
+
 @pytest.mark.parametrize(
     ("recipe_func", "expected_lr", "is_peft"),
     [
@@ -656,6 +822,8 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_dtype is None
     assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.num_layers_in_first_pipeline_stage is None
+    assert cfg.model.num_layers_in_last_pipeline_stage is None
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
@@ -723,7 +891,7 @@ def test_qwen35_vl_35b_a3b_gb200_functional_defaults(
 
 
 def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """122B-A10B SFT should have correct default parallelism and learning rate."""
+    """122B-A10B SFT should have correct parallelism, batch size, and learning rate."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_sft_config()
@@ -739,6 +907,13 @@ def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
         * cfg.model.expert_tensor_parallel_size
         == 48
     )
+    data_parallel_size = cfg.get_data_parallel_size(48)
+    samples_per_micro_step = cfg.train.micro_batch_size * data_parallel_size
+    assert data_parallel_size == 4
+    assert cfg.train.global_batch_size == 36
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size % samples_per_micro_step == 0
+    assert cfg.train.global_batch_size // samples_per_micro_step == 9
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.peft is None
     assert cfg.optimizer.lr == 2e-5
@@ -746,7 +921,7 @@ def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """122B-A10B PEFT should have correct default parallelism and learning rate."""
+    """122B-A10B PEFT should have correct parallelism, batch size, and learning rate."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_peft_config()
@@ -755,6 +930,13 @@ def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
+    data_parallel_size = cfg.get_data_parallel_size(8)
+    samples_per_micro_step = cfg.train.micro_batch_size * data_parallel_size
+    assert data_parallel_size == 4
+    assert cfg.train.global_batch_size == 36
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size % samples_per_micro_step == 0
+    assert cfg.train.global_batch_size // samples_per_micro_step == 9
     assert cfg.model.pipeline_dtype is None
     assert cfg.peft is not None
     assert cfg.optimizer.lr == 2e-4
@@ -766,7 +948,7 @@ def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_397b_a17b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """397B-A17B SFT should have correct default parallelism and learning rate."""
+    """397B-A17B SFT should have correct parallelism, batch size, and learning rate."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_sft_config()
@@ -775,6 +957,13 @@ def test_qwen35_vl_397b_a17b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 32
+    data_parallel_size = cfg.get_data_parallel_size(128)
+    samples_per_micro_step = cfg.train.micro_batch_size * data_parallel_size
+    assert data_parallel_size == 16
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size % samples_per_micro_step == 0
+    assert cfg.train.global_batch_size // samples_per_micro_step == 2
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.peft is None
     assert cfg.optimizer.lr == 2e-5
@@ -782,7 +971,7 @@ def test_qwen35_vl_397b_a17b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_397b_a17b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """397B-A17B PEFT should have correct default parallelism and learning rate."""
+    """397B-A17B PEFT should have correct parallelism, batch size, and learning rate."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_peft_config()
@@ -791,6 +980,13 @@ def test_qwen35_vl_397b_a17b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 32
+    data_parallel_size = cfg.get_data_parallel_size(32)
+    samples_per_micro_step = cfg.train.micro_batch_size * data_parallel_size
+    assert data_parallel_size == 16
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size % samples_per_micro_step == 0
+    assert cfg.train.global_batch_size // samples_per_micro_step == 2
     assert cfg.peft is not None
     assert cfg.optimizer.lr == 2e-4
     assert cfg.model.pipeline_dtype is None
@@ -985,7 +1181,8 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
-    assert cfg.model.freeze_language_model is True
+    expected_language_freeze = recipe_func is not _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config
+    assert cfg.model.freeze_language_model is expected_language_freeze
     assert cfg.model.freeze_vision_model is True
     assert cfg.model.freeze_vision_projection is False
 
@@ -1036,6 +1233,9 @@ def test_qwen35_vl_27b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.pipeline_dtype is not None
     assert cfg.model.expert_model_parallel_size == 1
+    assert cfg.model.freeze_language_model is False
+    assert cfg.model.freeze_vision_model is True
+    assert cfg.model.freeze_vision_projection is False
 
 
 def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -1053,6 +1253,62 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
     assert cfg.model.sequence_parallel is True
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 2
+
+
+class _FakeModelCfgWithoutExpertTensorParallel(_FakeModelCfg):
+    """Fake model configuration that leaves expert tensor parallelism unset."""
+
+    def __init__(self):
+        super().__init__()
+        # Megatron-Core resolves an unset value to the dense tensor parallel size.
+        self.expert_tensor_parallel_size = None
+
+
+class _FakeAutoBridgeWithoutExpertTensorParallel:
+    """Fake AutoBridge whose provider leaves expert tensor parallelism unset."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        return _FakeAutoBridgeWithoutExpertTensorParallel()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfgWithoutExpertTensorParallel()
+
+
+@pytest.mark.parametrize(
+    ("recipe_func", "world_size"),
+    [
+        (_qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config, 8),
+        (_qwen35_vl_h100_module.qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config, 128),
+        (_qwen35_vl_h100_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config, 512),
+    ],
+)
+def test_qwen35_vl_moe_pretrain_mock_grids_divide_their_named_world_size(
+    recipe_func: Callable,
+    world_size: int,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """MoE pretrain mock recipes own dense and expert grids that divide the world size they name."""
+    patch_recipe_module_global(
+        monkeypatch,
+        _qwen35_vl_h100_module,
+        "AutoBridge",
+        _FakeAutoBridgeWithoutExpertTensorParallel,
+    )
+
+    cfg = recipe_func()
+
+    assert cfg.model.expert_tensor_parallel_size == 1
+    dense_grid = (
+        cfg.model.tensor_model_parallel_size * cfg.model.context_parallel_size * cfg.model.pipeline_model_parallel_size
+    )
+    expert_grid = (
+        cfg.model.expert_tensor_parallel_size
+        * cfg.model.expert_model_parallel_size
+        * cfg.model.pipeline_model_parallel_size
+    )
+    assert world_size % dense_grid == 0, f"dense grid {dense_grid} does not divide {world_size}"
+    assert world_size % expert_grid == 0, f"expert grid {expert_grid} does not divide {world_size}"
 
 
 def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -1140,3 +1396,60 @@ def test_qwen35_vl_pretrain_mock_rng_seed(monkeypatch: pytest.MonkeyPatch):
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
     assert cfg.rng.seed == 1234
+
+
+class _FakeModelCfgNoGdnFusion(_FakeModelCfg):
+    """Model config from a Megatron-Core predating gdn_pre_gated_delta_rule_fusion."""
+
+    def __init__(self):
+        super().__init__()
+        del self.gdn_pre_gated_delta_rule_fusion
+
+
+class _FakeAutoBridgeNoGdnFusion(_FakeAutoBridge):
+    """AutoBridge yielding a provider without the GDN fusion field."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str):
+        return _FakeAutoBridgeNoGdnFusion()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfgNoGdnFusion()
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen35_vl_9b_pretrain_mock_config",
+        "qwen35_vl_35b_a3b_pretrain_config",
+        "qwen35_vl_397b_a17b_pretrain_mock_config",
+        # SFT too: the default lives at the shared construction point, so it is
+        # not confined to pretraining recipes.
+        "qwen35_vl_397b_a17b_sft_config",
+    ],
+)
+def test_qwen35_vl_library_recipes_enable_gdn_conv_fusion(monkeypatch: pytest.MonkeyPatch, recipe_name: str):
+    """Qwen3.5-VL library recipes fuse the GatedDeltaNet pre-gated-delta-rule path.
+
+    ``_enable_gdn_conv_fusion`` is applied from ``_qwen35_vl_provider``, the single
+    construction point for every Qwen3.5-VL recipe in the module, so it applies to
+    pretrain, SFT and PEFT alike rather than only to the perf recipes.
+    """
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = getattr(_qwen35_vl_module, recipe_name)()
+
+    assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
+
+
+def test_qwen35_vl_gdn_conv_fusion_skipped_on_older_core(monkeypatch: pytest.MonkeyPatch):
+    """On a core without the field the recipe must not invent the attribute.
+
+    Assigning an unknown field would not raise -- it would silently create an
+    unused attribute, leaving the recipe looking enabled while running unfused.
+    """
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridgeNoGdnFusion)
+
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+
+    assert not hasattr(cfg.model, "gdn_pre_gated_delta_rule_fusion")

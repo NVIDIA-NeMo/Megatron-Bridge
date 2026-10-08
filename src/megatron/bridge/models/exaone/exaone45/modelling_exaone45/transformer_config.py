@@ -37,6 +37,7 @@ class Exaone45TransformerConfig(TransformerConfig):
     fullatt_block_indexes: List[int] = field(default_factory=lambda: [6, 13, 20, 27])
 
     fp16_lm_cross_entropy: bool = False
+    logit_dtype: torch.dtype | None = None
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
 

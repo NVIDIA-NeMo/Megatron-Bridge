@@ -14,14 +14,20 @@
 """GB200 recipes for DeepSeek V4 Flash."""
 
 from megatron.bridge.recipes.deepseek.gb200.deepseek_v4 import (
+    deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config,
     deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config,
+    deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config,
+    deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config,
 )
 
 
 __all__ = [
+    "deepseek_v4_flash_peft_openmath_thinking_packed_gb200_config",
+    "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_library_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_bf16_muon_config",
     "deepseek_v4_flash_pretrain_64gpu_gb200_fp8mx_config",
+    "deepseek_v4_flash_sft_openmath_thinking_packed_gb200_config",
 ]

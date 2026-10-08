@@ -35,7 +35,7 @@ This module provides three model providers:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, List, Optional, cast
+from typing import Any, Callable, ClassVar, List, Literal, Optional, cast
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -141,7 +141,7 @@ class Qwen35VLModelProvider(GPTModelProvider):
     )
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
-    experimental_attention_variant: str = "gated_delta_net"
+    experimental_attention_variant: str = "gdn"
     linear_attention_freq: int | list[int] = 4
 
     # --- Gated DeltaNet (GDN) parameters ---
@@ -202,6 +202,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
+    vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
+    vision_recompute_modules: list[str] | None = None
     hetereogenous_dist_checkpoint: bool = True
 
     mtp_num_layers: Optional[int] = None
@@ -307,10 +312,16 @@ class Qwen35TokenClassificationModelProvider(Qwen35VLModelProvider):
             The Megatron Qwen3.5 VL token-classification model for this stage.
 
         Raises:
-            ValueError: If ``num_labels`` is not a positive integer.
+            ValueError: If ``num_labels`` is not positive or ``logit_dtype`` is configured.
         """
         if self.num_labels is None or self.num_labels <= 0:
             raise ValueError(f"num_labels must be a positive integer, got {self.num_labels!r}.")
+        if self.logit_dtype is not None:
+            raise ValueError(
+                "Qwen3.5 token classification replaces the language-model output layer with a replicated "
+                "classification head, which does not support true mixed-precision output GEMMs. "
+                "Set logit_dtype=None."
+            )
 
         model = cast(
             Qwen3VLForTokenClassification,
@@ -365,7 +376,7 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     )
     layernorm_zero_centered_gamma: bool = True
     attention_output_gate: bool = True
-    experimental_attention_variant: str = "gated_delta_net"
+    experimental_attention_variant: str = "gdn"
     linear_attention_freq: int | list[int] = 4  # 1 standard attention per 4 layers
 
     # --- Gated DeltaNet (GDN) parameters ---
@@ -449,6 +460,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
+    vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
+    vision_recompute_modules: list[str] | None = None
 
     # Vision encoder CUDA graph settings
     vision_cuda_graph_impl: str = "none"
@@ -566,6 +582,7 @@ def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optio
             "vocab_size": provider.vocab_size,
             "max_sequence_length": provider.language_max_sequence_length,
             "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
+            "logit_dtype": provider.logit_dtype,
             "parallel_output": True,
             "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
             "position_embedding_type": "mrope",

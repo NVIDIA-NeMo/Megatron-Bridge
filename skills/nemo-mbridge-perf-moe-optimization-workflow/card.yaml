@@ -1,5 +1,6 @@
 title: moe_optimization_workflow
 validated_on: "2026-07-31"
+guidance_updated_on: "2026-08-25"
 summary: >
   Evidence-gated workflow for optimizing MoE training performance. It freezes
   a measurement contract, follows fit -> scale -> profile -> retune -> validate,
@@ -76,7 +77,7 @@ optimization_phases:
       shape, parallelism, graph scopes, and timing window fixed.
   phase_1_memory:
     goal: "Fit training in GPU memory"
-    key_action: "Choose parallelism that keeps memory within GPU capacity"
+    key_action: "Keep dense TP low, use a large legal EP, and prefer selective recompute before full recompute"
     quick_test: "--fake-init-process-group for single-GPU emulation"
   phase_2_parallelism:
     goal: "Minimize communication overhead"
@@ -86,6 +87,8 @@ optimization_phases:
       - "Use PP for multi-node scaling"
       - "Prefer EP over TP for experts (Parallel Folding)"
       - "Enable CP for sequences ≥ 8K"
+      - "Treat EP8 on 8 GPUs and EP32 on 32 GPUs as candidates only when the expert count and both meshes are legal"
+      - "After fit, use per-rank memory headroom to A/B lower TP or higher MBS while holding GBS fixed"
   phase_3_bottleneck:
     goal: "Profile and apply targeted optimizations"
     approach: "Identify which wall dominates, apply targeted fix, re-profile"

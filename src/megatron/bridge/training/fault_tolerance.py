@@ -50,6 +50,7 @@ import os
 import random
 import signal
 import sys
+import tempfile
 import threading
 import time
 from typing import List
@@ -250,10 +251,31 @@ def shutdown(global_state: GlobalState) -> None:
     rmon_cli = global_state.rank_monitor_client
     if rmon_cli is not None:
         print_rank_0("FT: closing...")
+        ft_state = global_state.fault_tolerance_state
+        if ft_state.is_setup_section_open:
+            rmon_cli.end_section("setup")
+            ft_state.is_setup_section_open = False
         _maybe_update_timeouts(global_state, is_closing_ft=True)
         rmon_cli.shutdown_workload_monitoring()
         print_rank_0("FT: closed.")
     global_state.rank_monitor_client = None
+
+
+def abort(global_state: GlobalState) -> None:
+    """Disconnect fault-tolerance monitoring after a failed workload.
+
+    Unlike :func:`shutdown`, this does not update timeouts because timeout
+    calculation synchronizes ranks and is unsafe while peers may be blocked.
+
+    Args:
+        global_state: Global training state.
+    """
+    rmon_cli = global_state.rank_monitor_client
+    try:
+        if rmon_cli is not None:
+            rmon_cli.shutdown_workload_monitoring()
+    finally:
+        global_state.rank_monitor_client = None
 
 
 def maybe_setup_simulated_fault(config: FaultToleranceConfig) -> None:
@@ -345,8 +367,26 @@ def _update_timeouts(selected_sections: List[str], calc_out_of_section: bool, gl
     )
     if get_rank_safe() == 0:
         rmon_state = rmon_cli.state_dict()
-        with open(ft_state.ft_state_path, "w") as f:
-            json.dump(rmon_state, f)
+        temp_state_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=os.path.dirname(ft_state.ft_state_path),
+                prefix=".ft_state.",
+                delete=False,
+            ) as f:
+                temp_state_path = f.name
+                json.dump(rmon_state, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_state_path, ft_state.ft_state_path)
+            temp_state_path = None
+        finally:
+            if temp_state_path is not None:
+                try:
+                    os.unlink(temp_state_path)
+                except FileNotFoundError:
+                    pass
         print_rank_0(f"FT: updated timeouts saved to {ft_state.ft_state_path}. {rmon_cli.section_timeouts}")
 
 

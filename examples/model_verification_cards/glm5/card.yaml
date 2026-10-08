@@ -5,18 +5,18 @@ title: glm5
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Model-level verification covers deterministic HybridEP inference
-  and exact distributed GPU import/export of the pinned GLM-5 Hugging Face
-  checkpoint's 78-layer inference graph. The checkpoint's appended MTP
-  auxiliary layer is intentionally disabled and excluded from those claims.
-  CPU conversion, Hugging Face/Megatron forward parity, training, checkpoint
-  resume, and post-SFT export/reload verification are deferred.
+  results. Model-level verification covers deterministic HybridEP inference,
+  exact distributed GPU import/export, and exact distributed CPU export of the
+  pinned GLM-5 Hugging Face checkpoint's 78-layer inference graph. The
+  checkpoint's appended MTP auxiliary layer is intentionally disabled and
+  excluded from those claims. CPU import, Hugging Face/Megatron forward parity,
+  training, checkpoint resume, and post-SFT export/reload verification are
+  deferred.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
+    verified: [hf_to_megatron_gpu, megatron_to_hf_cpu, megatron_to_hf_gpu, inference]
     unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
       - manual_forward_pass
   training:
     H100:
@@ -62,14 +62,30 @@ items:
       disabled appended MTP auxiliary layer and are outside this item.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: c94d0bdb1c863f99c6227bb36fbc7f3ebc565243  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0
+      --exclusive --hf-model zai-org/GLM-5
+      --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
+      --megatron-path work/model-verification/glm5/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/glm5/cpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2
+      --distributed-timeout-minutes 240 --distributed-save
+      --save-every-n-ranks 1 --no-progress
+    last_verified: 2026-08-26
     expected_result: >
-      A CPU export from a verified Megatron checkpoint must preserve every
-      mapped tensor and strictly reload in Transformers. This workflow is
-      deferred by this card.
+      The 32-process distributed CPU export exits successfully and writes 280
+      safetensors shards. The exhaustive projection audit covers all 59,079
+      tensors and 1,487,822,475,264 tensor-payload bytes in the 78-layer
+      inference graph with zero missing, unexpected, shape, dtype, or value
+      mismatches. The 791 tensors under model.layers.78 belong only to the
+      intentionally disabled appended MTP auxiliary layer and remain outside
+      this item. Transformers 5.12.1 strictly reloads the output as
+      GlmMoeDsaForCausalLM with 1,629 state tensors, 743,911,199,232 parameters,
+      and no loading discrepancies.
 
   megatron_to_hf_gpu:
     status: verified
@@ -139,9 +155,10 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A public GLM-5 H100 recipe must complete a bounded 100-step run with
-        finite loss, no skipped or NaN iterations, all four metrics, and a
+        finite loss, no skipped or NaN iterations, all five metrics, and a
         reloadable final checkpoint. Training is deferred by this card.
 
   sft:
@@ -156,9 +173,10 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A pinned-data 100-step full-SFT run must finish with finite loss, no
-        skipped or NaN iterations, all four metrics, and a reloadable final
+        skipped or NaN iterations, all five metrics, and a reloadable final
         checkpoint. Training is deferred by this card.
 
   sft_export_inference:
@@ -185,9 +203,10 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A dedicated packed long-context SFT run must complete a bounded run
-        with finite loss, no skipped or NaN iterations, all four metrics, and
+        with finite loss, no skipped or NaN iterations, all five metrics, and
         a reloadable checkpoint. Training is deferred by this card.
 
   peft:
@@ -202,9 +221,10 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
         A GLM-5 PEFT recipe with an audited adapter target set must complete a
-        bounded run with finite loss, all four metrics, and a reloadable
+        bounded run with finite loss, all five metrics, and a reloadable
         adapter checkpoint. Training is deferred by this card.
 
   checkpoint_resume:
@@ -219,6 +239,7 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]

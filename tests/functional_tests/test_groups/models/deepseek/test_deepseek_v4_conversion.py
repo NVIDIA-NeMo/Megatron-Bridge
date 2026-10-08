@@ -14,7 +14,6 @@
 
 """Functional toy-model conversion tests for DeepSeek V4."""
 
-import importlib.util
 import json
 import subprocess
 from pathlib import Path
@@ -31,28 +30,10 @@ def _has_dsv4_in_transformers() -> bool:
         return False
 
 
-def _has_dsv4_in_mcore() -> bool:
-    try:
-        return all(
-            importlib.util.find_spec(mod) is not None
-            for mod in (
-                "megatron.core.transformer.hyper_connection",
-                "megatron.core.transformer.experimental_attention_variant.csa",
-                "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
-            )
-        )
-    except ModuleNotFoundError:
-        return False
-
-
 pytestmark = [
     pytest.mark.skipif(
         not _has_dsv4_in_transformers(),
         reason="transformers does not yet ship DeepseekV4ForCausalLM (HF hub only via trust_remote_code).",
-    ),
-    pytest.mark.skipif(
-        not _has_dsv4_in_mcore(),
-        reason="megatron-core does not yet ship DSv4 prerequisites (PRs #3430 / #4458 / #4481 / #4518).",
     ),
 ]
 
@@ -225,6 +206,7 @@ class TestDeepSeekV4Conversion:
     def test_deepseek_v4_roundtrip_ep(self, deepseek_v4_toy_model_path, tmp_path):
         test_output_dir = tmp_path / "deepseek_v4_ep"
         test_output_dir.mkdir(exist_ok=True)
+        megatron_checkpoint_dir = test_output_dir / "megatron"
 
         cmd = [
             "python",
@@ -249,6 +231,8 @@ class TestDeepSeekV4Conversion:
             "1",
             "--ep",
             "2",
+            "--megatron-save-path",
+            str(megatron_checkpoint_dir),
         ]
 
         result = subprocess.run(
@@ -259,6 +243,21 @@ class TestDeepSeekV4Conversion:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
         assert result.returncode == 0, f"DeepSeek V4 conversion failed with {result.returncode}"
+
+        reload_cmd = [
+            *cmd,
+            "--megatron-load-path",
+            str(megatron_checkpoint_dir),
+            "--skip-save",
+        ]
+        reload_result = subprocess.run(
+            reload_cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+        )
+
+        assert reload_result.returncode == 0, (
+            f"DeepSeek V4 checkpoint reload conversion failed with {reload_result.returncode}\n"
+            f"STDOUT:\n{reload_result.stdout}\nSTDERR:\n{reload_result.stderr}"
+        )
 
         converted_dir = test_output_dir / Path(deepseek_v4_toy_model_path).name
         assert (converted_dir / "config.json").exists()

@@ -226,10 +226,19 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 for i in range(len(item["seq_boundaries"]) - 1):
                     current_seq = item["input_ids"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
 
-                    # Stop logical lengths at the last non-EOS token so alignment padding is excluded.
+                    # Alignment padding uses zero-loss EOS tokens. A supervised terminal EOS is part of
+                    # the logical sequence and must not be mistaken for a physical alignment gap.
                     current_seq_arr = np.array(current_seq)
-                    non_eos_positions = np.where(current_seq_arr != self.tokenizer.eos_id)[0]
-                    logical_seqlen = non_eos_positions[-1] + 1 if non_eos_positions.size > 0 else 0
+                    current_loss_mask = np.array(
+                        item["loss_mask"][item["seq_boundaries"][i] : item["seq_boundaries"][i + 1] - 1]
+                    )
+                    logical_seqlen = len(current_seq_arr)
+                    while (
+                        logical_seqlen > 0
+                        and current_seq_arr[logical_seqlen - 1] == self.tokenizer.eos_id
+                        and not current_loss_mask[logical_seqlen - 1]
+                    ):
+                        logical_seqlen -= 1
                     cu_seqlens[-1].append(cu_seqlens[-1][-1] + logical_seqlen)
 
                 # if extra paddings are added in the packed sequence, they can't be counted as
@@ -289,6 +298,8 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             "loss_mask": loss_mask,
             "position_ids": torch.LongTensor(position_ids),
             "token_count": token_count,
+            "pad_between_seqs": cu_seqlens_padded is not None
+            and any(logical != padded for logical, padded in zip(cu_seqlens, cu_seqlens_padded)),
         }
         # Keep the key present for every offline-packed batch so mask handling
         # never depends on local padding contents. For fixed-width packing, this
