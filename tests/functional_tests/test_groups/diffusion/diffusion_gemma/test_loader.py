@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 import torch
-from safetensors.torch import load_file
 
 from tests.functional_tests.test_groups.diffusion.diffusion_gemma.test_sft import (
+    _assert_hf_text_weights,
     _run_checkpoint_resume,
     _write_fixture,
 )
@@ -32,7 +32,7 @@ def _write_hf_fixture(root: Path) -> Path:
         num_attention_heads=4,
         num_key_value_heads=2,
         head_dim=8,
-        global_head_dim=8,
+        global_head_dim=16,
         num_global_key_value_heads=1,
         num_experts=2,
         top_k_experts=1,
@@ -83,7 +83,6 @@ def test_saved_hf_text_weights_and_forward(tmp_path, grouped_experts):
 
     _write_fixture(tmp_path)
     checkpoint = _write_hf_fixture(tmp_path)
-    source = load_file(checkpoint / "model.safetensors")
     torch.distributed.init_process_group("nccl", init_method=f"file://{tmp_path / 'rendezvous'}", rank=0, world_size=1)
     parallel_state.initialize_model_parallel()
     model_parallel_cuda_manual_seed(7)
@@ -96,18 +95,7 @@ def test_saved_hf_text_weights_and_forward(tmp_path, grouped_experts):
         provider.gradient_accumulation_fusion = False
         model = provider.provide().cuda().eval()
         provider.pre_wrap_hook([model])
-        exported = dict(bridge.export_hf_weights([model], cpu=True, show_progress=False))
-        text_keys = {
-            key
-            for key in source
-            if key.startswith("model.decoder.") or key.startswith("model.encoder.language_model.")
-        }
-        assert text_keys <= exported.keys()
-        for key in text_keys:
-            torch.testing.assert_close(exported[key], source[key], rtol=0, atol=0, msg=key)
-        assert "model.decoder.layers.1.self_attn.v_proj.weight" not in exported
-        assert model.decoder.layers[0].encoder_layer_scalar.item() == 0.75
-        assert model.decoder.layers[0].layer_scalar.item() == 1.25
+        _assert_hf_text_weights(model, checkpoint, bridge=bridge)
 
         reference = DiffusionGemmaForBlockDiffusion.from_pretrained(checkpoint, dtype=torch.bfloat16).cuda().eval()
         prefix = torch.tensor([[4, 5]], device="cuda")

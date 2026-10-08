@@ -31,6 +31,26 @@ def _write_fixture(root: Path) -> None:
         (data / f"{split}.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
 
 
+def _assert_hf_text_weights(model, checkpoint: Path, *, bridge=None) -> None:
+    from safetensors.torch import load_file
+
+    from megatron.bridge import AutoBridge
+
+    if bridge is None:
+        bridge = AutoBridge.from_hf_pretrained(checkpoint)
+    source = load_file(checkpoint / "model.safetensors")
+    exported = dict(bridge.export_hf_weights([model], cpu=True, show_progress=False))
+    text_keys = {
+        key for key in source if key.startswith("model.decoder.") or key.startswith("model.encoder.language_model.")
+    }
+    assert text_keys <= exported.keys()
+    for key in text_keys:
+        torch.testing.assert_close(exported[key], source[key], rtol=0, atol=0, msg=key)
+    assert "model.decoder.layers.1.self_attn.v_proj.weight" not in exported
+    assert model.decoder.layers[0].encoder_layer_scalar.item() == 0.75
+    assert model.decoder.layers[0].layer_scalar.item() == 1.25
+
+
 def _assert_equal(actual, expected) -> None:
     if isinstance(expected, torch.Tensor):
         torch.testing.assert_close(actual, expected, rtol=0, atol=0)
@@ -169,6 +189,14 @@ def _train_fixture(root: Path, run: str, steps: int) -> None:
     class VerifyTraining(Callback):
         def on_train_start(self, context: CallbackContext) -> None:
             model = unwrap_model(context.model[0])
+            if hf_source.is_dir() and context.state.train_state.step == 0:
+                _assert_hf_text_weights(model, hf_source)
+            self.initial_backbone = {
+                name: value.detach().clone()
+                for name, value in model.named_parameters()
+                if name in ("embedding.word_embeddings.weight", "decoder.layers.0.self_attention.linear_qkv.weight")
+            }
+            assert len(self.initial_backbone) == 2
             self.initial_conditioning = model.self_conditioning.down_proj.weight.detach().clone()
             self.routers = {
                 name: value.detach().clone() for name, value in model.named_parameters() if ".router." in name
@@ -176,7 +204,11 @@ def _train_fixture(root: Path, run: str, steps: int) -> None:
 
         def on_train_step_end(self, context: CallbackContext) -> None:
             assert not context.skipped_iter
-            assert context.grad_norm is not None and torch.isfinite(torch.tensor(context.grad_norm))
+            assert (
+                context.grad_norm is not None
+                and context.grad_norm > 0
+                and torch.isfinite(torch.tensor(context.grad_norm))
+            )
             assert {"diffusion loss", "encoder loss"} <= context.loss_dict.keys()
             assert all(torch.isfinite(value).all() for value in context.loss_dict.values())
 
@@ -185,6 +217,8 @@ def _train_fixture(root: Path, run: str, steps: int) -> None:
             model = unwrap_model(context.model[0])
             assert not torch.equal(model.self_conditioning.down_proj.weight, self.initial_conditioning)
             parameters = dict(model.named_parameters())
+            for name, before in self.initial_backbone.items():
+                assert not torch.equal(parameters[name], before), name
             for name, before in self.routers.items():
                 torch.testing.assert_close(parameters[name], before, rtol=0, atol=0)
             torch.save(
