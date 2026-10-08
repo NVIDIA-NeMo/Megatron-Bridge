@@ -23,6 +23,8 @@ from megatron.core.models.backends import get_backend_from_config
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_layer_with_experimental_attention_variant_spec,
 )
+from megatron.core.models.hybrid.hybrid_block import HybridStackSubmodules
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.spec_utils import ModuleSpec
@@ -35,6 +37,7 @@ from megatron.bridge.models.qwen.modeling_qwen4_exp.gated_residual import (
 )
 from megatron.bridge.models.qwen.modeling_qwen4_exp.model import (
     Qwen4ExpGatedDeltaNet,
+    Qwen4ExpHybridStack,
     Qwen4ExpLayerSubmodules,
     Qwen4ExpTransformerLayer,
 )
@@ -46,14 +49,15 @@ from megatron.bridge.models.qwen.modeling_qwen4_exp.qsa import (
     QwenSparseSelfAttention,
     QwenSparseSelfAttentionSubmodules,
 )
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.qwen.modeling_qwen4_exp.provider import Qwen4ExpModelProvider
+    from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpTransformerConfig
 
 
 def get_qwen4_exp_block_spec(
-    config: "Qwen4ExpModelProvider", vp_stage: int | None = None
+    config: "Qwen4ExpTransformerConfig", vp_stage: int | None = None
 ) -> TransformerBlockSubmodules:
     """Replace family-specific slots in Core's GDN/MoE decoder spec.
 
@@ -106,6 +110,8 @@ def get_qwen4_exp_block_spec(
                 metainfo={"fuse_input_layernorm": False},
             )
         else:
+            if config.qwen4_mrope:
+                attention.module = Qwen3VLSelfAttention
             attention.submodules.linear_qkv = backend.column_parallel_linear()
 
         # A dense MLP must not apply a second input norm after GR has normalized
@@ -117,3 +123,41 @@ def get_qwen4_exp_block_spec(
             mlp_submodules.linear_fc1 = backend.column_parallel_linear()
 
     return TransformerBlockSubmodules(layer_specs=layer_specs, layer_norm=GatedResidualOutputMixer)
+
+
+class Qwen4ExpHybridLayer(Qwen4ExpTransformerLayer):
+    """Select the original complete decoder block at its checkpoint layer index."""
+
+    def __init__(
+        self,
+        config: "Qwen4ExpTransformerConfig",
+        *,
+        layer_specs: list[ModuleSpec],
+        layer_number: int,
+        pg_collection: ProcessGroupCollection,
+        name: str | None = None,
+        **kwargs: object,
+    ) -> None:
+        # Core's per-position config conversion preserves the complete config
+        # state, including the family-specific QSA, PLE and gated residual fields.
+        # PP=1 guarantees the hybrid and original decoder indices are identical.
+        super().__init__(
+            config=config,
+            submodules=layer_specs[layer_number - 1].submodules,
+            layer_number=layer_number,
+            pg_collection=pg_collection,
+            name=name,
+        )
+
+
+def get_qwen4_exp_hybrid_stack_spec(config: "Qwen4ExpTransformerConfig") -> ModuleSpec:
+    """Compose Qwen4-Exp complete decoder blocks inside Core's HybridStack."""
+    block_spec = get_qwen4_exp_block_spec(config)
+    layer_spec = ModuleSpec(
+        module=Qwen4ExpHybridLayer,
+        params={"layer_specs": block_spec.layer_specs},
+    )
+    return ModuleSpec(
+        module=Qwen4ExpHybridStack,
+        submodules=HybridStackSubmodules(attention_layer=layer_spec, gdn_layer=layer_spec),
+    )

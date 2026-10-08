@@ -27,7 +27,7 @@ hyper-connection residual stream:
 The hashed n-gram table is the bulk of the parameters (51B for Qwen3.8-Flash-Next) and is stored
 vocab-parallel across the tensor-parallel group with :class:`VocabParallelEmbedding`.
 
-The n-gram ids depend on the raw token ids, which decoder layers do not receive. ``GPTModel``
+The n-gram ids depend on the raw token ids, which decoder layers do not receive. ``Qwen4ExpHybridModel``
 therefore calls :meth:`PerLayerEmbedding.prepare` with the token ids (and packed-sequence
 boundaries) before running the decoder; the module keeps them until the next ``prepare``.
 """

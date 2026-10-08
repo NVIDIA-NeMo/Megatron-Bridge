@@ -13,3 +13,13 @@
 # limitations under the License.
 
 """Bridge-local Qwen4-Exp language-model components."""
+
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpHybridModel
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import (
+    Qwen4ExpModelConfig,
+    Qwen4ExpTransformerConfig,
+)
+
+
+__all__ = ["Qwen4ExpHybridModel", "Qwen4ExpModelBuilder", "Qwen4ExpModelConfig", "Qwen4ExpTransformerConfig"]

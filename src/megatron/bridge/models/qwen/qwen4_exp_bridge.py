@@ -26,17 +26,17 @@ MoE with a gated shared expert) extended with
   table is stored as ``split_ngram_parts`` checkpoint shards;
 * a 1-layer MTP head (not bridged: MTP is disabled for the Megatron model).
 
-The checkpoint is a VL model (``Qwen4ExpForConditionalGeneration``); only the language model is
-bridged, to :class:`~megatron.core.models.gpt.gpt_model.GPTModel`. The vision tower is not built.
+The conditional-generation checkpoint includes the vision tower. ``text_only=True`` selects
+a standalone language checkpoint view and builds only the hybrid decoder.
 """
 
+import copy
 import re
 from typing import Callable, Dict, Iterator, Mapping, Optional
 
 import torch
 import torch.nn as nn
 from megatron.core import parallel_state
-from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -53,9 +53,15 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.modeling_qwen4_exp.layer_specs import get_qwen4_exp_block_spec
-from megatron.bridge.models.qwen.modeling_qwen4_exp.provider import Qwen4ExpModelProvider
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpHybridModel
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import (
+    Qwen4ExpModelConfig,
+    Qwen4ExpTransformerConfig,
+)
+from megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model import Qwen4ExpVLModel, Qwen4ExpVLModelConfig
 from megatron.bridge.models.qwen.qwen35_bridge import _moe_routed_expert_mappings
+from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import _get_vision_mappings
 
 
 _LAYER_TYPE_TO_LINEAR = {"linear_attention": 1, "full_attention": 0, "qwen_sparse_attention": 0}
@@ -231,51 +237,138 @@ class _PLEShardExport(Mapping[str, torch.Tensor]):
         return len(self._names)
 
 
+class _Qwen4TextStateSource(SafeTensorsStateSource):
+    """Lazy standalone text namespace over a VL checkpoint, including its LM head."""
+
+    def __init__(self, source: SafeTensorsStateSource):
+        super().__init__(source.model_name_or_path, revision=source.revision, hub_kwargs=source.hub_kwargs)
+        self._vl_source = source
+
+    @property
+    def key_to_filename_map(self) -> dict[str, str]:
+        """Preserve source shard filenames while excluding vision and MTP weights."""
+        return {
+            self._text_key(key): filename
+            for key, filename in self._vl_source.key_to_filename_map.items()
+            if key.startswith("model.language_model.") or key == "lm_head.weight"
+        }
+
+    @staticmethod
+    def _text_key(key: str) -> str:
+        return "model." + key.removeprefix("model.language_model.") if key.startswith("model.language_model.") else key
+
+    def get_all_keys(self) -> list[str]:
+        """List the standalone language checkpoint keys without loading tensors."""
+        return list(self.key_to_filename_map)
+
+    def load_tensors(self, keys_to_load: list[str]) -> dict[str, torch.Tensor]:
+        """Read only requested language tensors from the original VL shards."""
+        source_keys = [
+            "model.language_model." + key.removeprefix("model.") if key.startswith("model.") else key
+            for key in keys_to_load
+        ]
+        return {self._text_key(key): value for key, value in self._vl_source.load_tensors(source_keys).items()}
+
+
 @MegatronModelBridge.register_bridge(
-    source="Qwen4ExpForConditionalGeneration", target=GPTModel, model_type="qwen4_exp"
+    source="Qwen4ExpForConditionalGeneration", target=Qwen4ExpVLModel, model_type="qwen4_exp"
 )
 class Qwen4ExpBridge(MegatronModelBridge):
-    """Megatron Bridge for the Qwen4-Exp language model (Qwen3.8-Flash-Next).
-
-    Bridges ``Qwen4ExpForConditionalGeneration`` (vision + language) and
-    ``Qwen4ExpForCausalLM`` (text-only) checkpoints to ``GPTModel``. Only the language model is
-    converted; callers that load the VL checkpoint must not need the vision tower
-    (``language_model_only``).
+    """Bridge for the Qwen4-Exp vision-language model (Qwen3.8-Flash-Next).
 
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.8-Flash-Next")
-        >>> provider = bridge.to_megatron_provider()
+        >>> config = bridge.get_model_config()
     """
 
-    # Legacy provider construction path only (see MegatronModelBridge.MODEL_CONFIG_CLASS).
-    MODEL_CONFIG_CLASS = None
+    MODEL_CONFIG_CLASS = Qwen4ExpVLModelConfig
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen4ExpModelProvider:
-        """Convert the HuggingFace Qwen4-Exp config into a GPTModelProvider."""
-        hf_config = hf_pretrained.config
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """Project a VLM checkpoint to the registered standalone text architecture."""
+        config = copy.deepcopy(hf_pretrained.config.text_config)
+        config.architectures = ["Qwen4ExpForCausalLM"]
+        config.tie_word_embeddings = getattr(hf_pretrained.config, "tie_word_embeddings", False)
+        if hasattr(config, "auto_map"):
+            del config.auto_map
+        kwargs = dict(hf_pretrained.init_kwargs)
+        if kwargs.get("subfolder"):
+            raise ValueError("text_only=True requires a local model directory or a checkpoint without subfolder.")
+        revision = getattr(hf_pretrained.config, "_commit_hash", None) or kwargs.get("revision")
+        if revision is not None:
+            kwargs["revision"] = revision
+        text = PreTrainedCausalLM(
+            hf_pretrained.model_name_or_path,
+            device=hf_pretrained.device,
+            torch_dtype=hf_pretrained.torch_dtype,
+            trust_remote_code=hf_pretrained.trust_remote_code,
+            **kwargs,
+        )
+        text.config = config
+        text._text_only = True
+        text._state_dict_accessor = StateDict(
+            _Qwen4TextStateSource(
+                SafeTensorsStateSource(
+                    hf_pretrained.model_name_or_path,
+                    revision=revision,
+                    hub_kwargs={
+                        key: kwargs[key]
+                        for key in ("token", "cache_dir", "local_files_only", "force_download")
+                        if key in kwargs
+                    },
+                )
+            )
+        )
+        text._processor = None
+        text._image_processor = None
+        text.custom_file_patterns = []
+        return text
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen4ExpModelConfig:
+        """Require the builder-backed entrypoint for this model family."""
+        raise NotImplementedError("Qwen4-Exp uses AutoBridge.get_model_config() and get_model(), not providers.")
+
+    def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> Qwen4ExpModelConfig:
+        """Convert text and optional vision settings into declarative model configs."""
         text_config = get_qwen4_exp_text_config(hf_config)
         rope_parameters = getattr(text_config, "rope_parameters", None) or {}
-        tie_word_embeddings = getattr(hf_config, "tie_word_embeddings", False) or getattr(
-            text_config, "tie_word_embeddings", False
-        )
+        tie_word_embeddings = getattr(hf_config, "tie_word_embeddings", False)
 
-        provider = Qwen4ExpModelProvider(
+        transformer = Qwen4ExpTransformerConfig(
             num_layers=text_config.num_hidden_layers,
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.moe_intermediate_size,
             num_attention_heads=text_config.num_attention_heads,
             num_query_groups=text_config.num_key_value_heads,
             kv_channels=text_config.head_dim,
-            vocab_size=text_config.vocab_size,
-            seq_length=text_config.max_position_embeddings,
             layernorm_epsilon=text_config.rms_norm_eps,
             init_method_std=text_config.initializer_range,
             attention_dropout=text_config.attention_dropout,
             hidden_dropout=0.0,
+        )
+        model_kwargs = dict(
+            transformer=transformer,
+            vocab_size=text_config.vocab_size,
+            seq_length=text_config.max_position_embeddings,
             rotary_base=rope_parameters.get("rope_theta", 10_000_000),
             share_embeddings_and_output_weights=tie_word_embeddings,
         )
+        if getattr(hf_config, "vision_config", None) is not None:
+            vision_config = hf_config.vision_config.to_dict()
+            provider = Qwen4ExpVLModelConfig(
+                **model_kwargs,
+                vision_config=vision_config,
+                image_token_id=hf_config.image_token_id,
+                video_token_id=hf_config.video_token_id,
+                vision_start_token_id=hf_config.vision_start_token_id,
+                vision_end_token_id=hf_config.vision_end_token_id,
+                mrope_section=rope_parameters.get("mrope_section"),
+            )
+            if rope_parameters.get("mrope_interleaved", True) is not True:
+                raise ValueError("Qwen4-Exp VLM requires interleaved multimodal RoPE.")
+        else:
+            provider = Qwen4ExpModelConfig(**model_kwargs, hf_model_text_only=True)
 
         # --- Qwen3.5-MoE base: zero-centered RMSNorm, gated attention with QK norm, GDN hybrid ---
         provider.activation_func = self.hf_to_megatron_activation(text_config.hidden_act)
@@ -314,7 +407,7 @@ class Qwen4ExpBridge(MegatronModelBridge):
         provider.moe_router_dtype = "fp32"
 
         # --- Gated Residual hyper connections ---
-        # The local GPT model expands streams; the local output mixer contracts them.
+        # The local HybridModel expands streams; the local output mixer contracts them.
         # Core's generic mHC contraction would discard the learned output gates.
         provider.enable_mhc_connections = False
         provider.mhc_variant = "gated_residual"
@@ -354,7 +447,6 @@ class Qwen4ExpBridge(MegatronModelBridge):
         provider.bos_token_id = getattr(text_config, "bos_token_id", None)
         eos = getattr(text_config, "eos_token_id", None)
         provider.eos_token_id = eos[0] if isinstance(eos, (list, tuple)) else eos
-        provider.transformer_layer_spec = get_qwen4_exp_block_spec
         provider.hetereogenous_dist_checkpoint = True
         return provider
 
@@ -368,10 +460,14 @@ class Qwen4ExpBridge(MegatronModelBridge):
 
     @staticmethod
     def get_lm_mappings(
-        hf_prefix: str, experts_packed: bool, text_config: PretrainedConfig, num_ple_shards: int
+        hf_prefix: str,
+        experts_packed: bool,
+        text_config: PretrainedConfig,
+        num_ple_shards: int,
+        megatron_prefix: str = "",
     ) -> list[MegatronParamMapping[torch.Tensor] | MegatronParamMapping[dict[str, torch.Tensor]]]:
-        """Parameter mappings of the language model (``megatron_prefix`` is empty for GPTModel)."""
-        mp = ""
+        """Parameter mappings for standalone or VLM-nested hybrid language decoders."""
+        mp = megatron_prefix
         simple = {
             f"{mp}embedding.word_embeddings.weight": f"{hf_prefix}embed_tokens.weight",
             f"{mp}output_layer.weight": "lm_head.weight",
@@ -459,7 +555,7 @@ class Qwen4ExpBridge(MegatronModelBridge):
         )
         mappings.extend(
             Qwen4ExpBridge._hyper_connection_mappings(
-                f"{mp}decoder.final_layernorm.", f"{hf_prefix}hyper_connection_mixer.", with_inject=False
+                f"{mp}decoder.final_norm.", f"{hf_prefix}hyper_connection_mixer.", with_inject=False
             )
         )
 
@@ -481,26 +577,37 @@ class Qwen4ExpBridge(MegatronModelBridge):
                 "ple_embedding.ngram_heads_offsets",
             ):
                 mappings.append(ReplicatedMapping(f"{ple_m}{name}", f"{ple_h}{name}"))
-            mappings.append(
-                PLENGramEmbeddingMapping(
-                    megatron_param=f"{ple_m}ple_embedding.ngram_embedding.weight",
-                    hf_param=f"{ple_h}ple_embedding.ngram_embedding.shard_{{}}.weight",
-                    num_shards=num_ple_shards,
+            if num_ple_shards:
+                mappings.append(
+                    PLENGramEmbeddingMapping(
+                        megatron_param=f"{ple_m}ple_embedding.ngram_embedding.weight",
+                        hf_param=f"{ple_h}ple_embedding.ngram_embedding.shard_{{}}.weight",
+                        num_shards=num_ple_shards,
+                    )
                 )
-            )
+            else:
+                mappings.append(
+                    AutoMapping(
+                        megatron_param=f"{ple_m}ple_embedding.ngram_embedding.weight",
+                        hf_param=f"{ple_h}ple_embedding.ngram_embedding.weight",
+                    )
+                )
         return mappings
 
     def _num_ple_shards(self, text_config: PretrainedConfig) -> int:
         """Number of ``shard_<i>`` tensors per PLE table, from the checkpoint keys when available."""
         source = getattr(getattr(getattr(self, "hf_pretrained", None), "state", None), "source", None)
         if source is not None and hasattr(source, "get_all_keys"):
-            found = {int(m.group(1)) for k in source.get_all_keys() if (m := _PLE_SHARD_RE.search(k))}
+            keys = source.get_all_keys()
+            found = {int(m.group(1)) for k in keys if (m := _PLE_SHARD_RE.search(k))}
             if found:
                 return max(found) + 1
+            if any(key.endswith(".ple.ple_embedding.ngram_embedding.weight") for key in keys):
+                return 0
         return int(getattr(text_config, "split_ngram_parts", 512))
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        """Parameter mappings of the Qwen4-Exp language model."""
+        """Map the hybrid language model and, for VLM checkpoints, the vision tower."""
         # `hf_pretrained` is a PreTrainedCausalLM in the AutoBridge flow, but adapter-export
         # callers may hand the bridge the bare HF config instead.
         hf_pretrained = self.hf_pretrained
@@ -508,9 +615,17 @@ class Qwen4ExpBridge(MegatronModelBridge):
         text_config = get_qwen4_exp_text_config(hf_config)
         hf_prefix = get_qwen4_exp_hf_lm_prefix(hf_config)
         experts_packed = moe_experts_stored_packed(self.hf_pretrained, f"{hf_prefix}layers.", default=True)
-        return MegatronMappingRegistry(
-            *self.get_lm_mappings(hf_prefix, experts_packed, text_config, self._num_ple_shards(text_config))
+        is_vlm = getattr(hf_config, "vision_config", None) is not None
+        mappings = self.get_lm_mappings(
+            hf_prefix,
+            experts_packed,
+            text_config,
+            self._num_ple_shards(text_config),
+            megatron_prefix="language_model." if is_vlm else "",
         )
+        if is_vlm:
+            mappings.extend(_get_vision_mappings())
+        return MegatronMappingRegistry(*mappings)
 
     # ------------------------------------------------------------------ rank-local PLE import
     def maybe_modify_loaded_hf_weight(
@@ -541,9 +656,17 @@ class Qwen4ExpBridge(MegatronModelBridge):
         return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
 
 
-@MegatronModelBridge.register_bridge(source="Qwen4ExpForCausalLM", target=GPTModel, model_type="qwen4_exp_text")
+@MegatronModelBridge.register_bridge(
+    source="Qwen4ExpForCausalLM", target=Qwen4ExpHybridModel, model_type="qwen4_exp_text"
+)
 class Qwen4ExpTextBridge(Qwen4ExpBridge):
     """Bridge for text-only Qwen4-Exp checkpoints (``Qwen4ExpForCausalLM``, ``model.`` prefix)."""
+
+    MODEL_CONFIG_CLASS = Qwen4ExpModelConfig
+
+    def text_only_pretrained(self, hf_pretrained: PreTrainedCausalLM) -> PreTrainedCausalLM:
+        """A standalone text checkpoint already contains only language weights."""
+        return hf_pretrained
 
 
 __all__ = [

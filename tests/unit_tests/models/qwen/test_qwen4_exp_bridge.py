@@ -19,12 +19,16 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpGatedDeltaNet
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpGatedDeltaNet, Qwen4ExpHybridModel
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_builder import Qwen4ExpModelBuilder
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpModelConfig, Qwen4ExpTransformerConfig
+from megatron.bridge.models.qwen.modeling_qwen4_exp.vl_model import Qwen4ExpVLModelConfig
 from megatron.bridge.models.qwen.qwen4_exp_bridge import (
     PLENGramEmbeddingMapping,
     Qwen4ExpBridge,
@@ -33,6 +37,9 @@ from megatron.bridge.models.qwen.qwen4_exp_bridge import (
     linear_attention_pattern_from_hf,
     ple_local_rows_from_shards,
 )
+
+
+pytestmark = pytest.mark.unit
 
 
 def _text_config_dict(num_layers=8):
@@ -105,7 +112,24 @@ def vl_config():
             "model_type": "qwen4_exp",
             "tie_word_embeddings": False,
             "text_config": _namespace(_text_config_dict()),
-            "vision_config": _namespace({"depth": 27}),
+            "vision_config": PretrainedConfig(
+                depth=27,
+                hidden_size=1536,
+                intermediate_size=4304,
+                num_heads=16,
+                out_hidden_size=2560,
+                patch_size=16,
+                spatial_merge_size=2,
+                temporal_patch_size=2,
+                in_channels=3,
+                num_position_embeddings=2304,
+                hidden_act="gelu_pytorch_tanh",
+                deepstack_visual_indexes=[],
+            ),
+            "image_token_id": 248056,
+            "video_token_id": 248057,
+            "vision_start_token_id": 248053,
+            "vision_end_token_id": 248054,
         }
     )
 
@@ -127,7 +151,7 @@ def mock_pretrained(vl_config):
     return pretrained
 
 
-class TestQwen4ExpProvider:
+class TestQwen4ExpModelConfig:
     def test_registration(self):
         assert issubclass(Qwen4ExpBridge, MegatronModelBridge)
         assert issubclass(Qwen4ExpTextBridge, Qwen4ExpBridge)
@@ -142,11 +166,11 @@ class TestQwen4ExpProvider:
         assert get_qwen4_exp_hf_lm_prefix(vl_config) == "model.language_model."
         assert get_qwen4_exp_hf_lm_prefix(_namespace({"text_config": None})) == "model."
 
-    def test_provider_bridge(self, mock_pretrained, vl_config):
-        provider = Qwen4ExpBridge().provider_bridge(mock_pretrained)
+    def test_model_config_bridge(self, mock_pretrained, vl_config):
+        provider = Qwen4ExpBridge().hf_config_to_model_config(mock_pretrained.config)
         text = vl_config.text_config
 
-        assert isinstance(provider, GPTModelProvider)
+        assert isinstance(provider, Qwen4ExpVLModelConfig)
         assert provider.num_layers == text.num_hidden_layers
         assert provider.hidden_size == 2560
         assert provider.num_attention_heads == 24 and provider.num_query_groups == 2
@@ -173,13 +197,52 @@ class TestQwen4ExpProvider:
         assert provider.ple_unigram_vocab_size == 248320 and provider.ple_ngram_vocab_size_base == 20000000
         assert provider.mtp_num_layers is None
 
-    def test_provider_finalizes(self, mock_pretrained):
-        """The provider must pass megatron-core's config validation once parallelism is set."""
-        provider = Qwen4ExpBridge().provider_bridge(mock_pretrained)
+    def test_model_config_finalizes(self, mock_pretrained):
+        """The declarative model config must pass megatron-core's config validation once parallelism is set."""
+        provider = Qwen4ExpBridge().hf_config_to_model_config(mock_pretrained.config)
         provider.tensor_model_parallel_size = 1
         provider.pipeline_model_parallel_size = 1
         provider.finalize()
         assert provider.ple_layer_ids == [2]
+
+    def test_language_model_uses_native_hybrid_contract(self):
+        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
+        assert type(config) is Qwen4ExpModelConfig
+        assert isinstance(config.transformer, Qwen4ExpTransformerConfig)
+        assert config.get_builder_cls() is Qwen4ExpModelBuilder
+        assert issubclass(Qwen4ExpHybridModel, HybridModel)
+        assert Qwen4ExpTextBridge.MODEL_CONFIG_CLASS is Qwen4ExpModelConfig
+        assert Qwen4ExpTextBridge.USE_MODEL_CONFIG_FOR_CONVERSION
+        config.finalize()
+        assert config.hybrid_layer_pattern == "GGG*GGG*"
+
+    @pytest.mark.parametrize("frequency", [[1, 0, 1, 0, 1, 0, 1, 0], 2])
+    def test_hybrid_pattern_preserves_gdn_and_qsa_positions(self, frequency):
+        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
+        config.linear_attention_freq = frequency
+        config.finalize()
+        assert config.hybrid_layer_pattern == "G*G*G*G*"
+
+    def test_model_config_round_trip_and_strict_override(self):
+        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
+        config.qsa_indexer_budget = 1024
+        config.rotary_base = 500_000
+        serialized = config.as_dict()
+        restored = Qwen4ExpModelConfig.from_dict(serialized)
+        assert serialized["transformer"]["activation_func"] == "silu"
+        assert restored.transformer.activation_func is torch.nn.functional.silu
+        assert restored.transformer.qsa_indexer_budget == 1024
+        assert "qsa_indexer_budget" not in restored.__dict__
+        assert restored.rotary_base == 500_000
+        assert restored.get_builder_cls() is Qwen4ExpModelBuilder
+        with pytest.raises(AttributeError, match="declares a field"):
+            restored.unknown_qwen4_field = True
+
+    def test_hybrid_pattern_rejects_a_conflicting_schedule(self):
+        config = Qwen4ExpTextBridge().hf_config_to_model_config(_namespace(_text_config_dict()))
+        config.hybrid_layer_pattern = "*" * config.num_layers
+        with pytest.raises(ValueError, match="must match"):
+            config.finalize()
 
 
 class TestQwen4ExpMappings:
@@ -196,7 +259,7 @@ class TestQwen4ExpMappings:
         bridge = Qwen4ExpBridge()
         bridge.hf_pretrained = mock_pretrained
         registry = bridge.mapping_registry()
-        mapping = registry.megatron_to_hf_lookup(f"decoder.layers.0.self_attention.{parameter}")
+        mapping = registry.megatron_to_hf_lookup(f"language_model.decoder.layers.0.self_attention.{parameter}")
         assert isinstance(mapping, AutoMapping)
 
         # Exercise the actual module type without allocating a model or initializing CUDA.
@@ -211,41 +274,41 @@ class TestQwen4ExpMappings:
         hf = "model.language_model."
 
         expectations = {
-            "embedding.word_embeddings.weight": f"{hf}embed_tokens.weight",
-            "output_layer.weight": "lm_head.weight",
-            "decoder.final_layernorm.hc_norm.weight": f"{hf}hyper_connection_mixer.hc_norm.weight",
-            "decoder.final_layernorm.input_mix_weight_down.weight": f"{hf}hyper_connection_mixer.input_mix_weight_down.weight",
-            "decoder.layers.3.self_attention_hyper_connection.block_inject_weight.weight": f"{hf}layers.3.attn_hyper_connection.block_inject_weight.weight",
-            "decoder.layers.3.mlp_hyper_connection.input_mix_weight_up.weight": f"{hf}layers.3.mlp_hyper_connection.input_mix_weight_up.weight",
-            "decoder.layers.3.self_attention.indexer.index_qk_proj.weight": f"{hf}layers.3.self_attn.indexer.index_qk_proj.weight",
-            "decoder.layers.3.self_attention.indexer.k_layernorm.weight": f"{hf}layers.3.self_attn.indexer.k_layernorm.weight",
-            "decoder.layers.3.self_attention.q_layernorm.weight": f"{hf}layers.3.self_attn.q_norm.weight",
-            "decoder.layers.3.self_attention.linear_proj.weight": f"{hf}layers.3.self_attn.o_proj.weight",
-            "decoder.layers.0.self_attention.out_norm.weight": f"{hf}layers.0.linear_attn.norm.weight",
-            "decoder.layers.0.self_attention.A_log": f"{hf}layers.0.linear_attn.A_log",
-            "decoder.layers.0.mlp.router.weight": f"{hf}layers.0.mlp.gate.weight",
-            "decoder.layers.0.mlp.shared_experts.gate_weight": f"{hf}layers.0.mlp.shared_expert_gate.weight",
-            "decoder.layers.1.per_layer_embedding.key_proj.weight": f"{hf}layers.1.ple.key_proj.weight",
-            "decoder.layers.1.per_layer_embedding.conv1d.weight": f"{hf}layers.1.ple.conv1d.weight",
+            "language_model.embedding.word_embeddings.weight": f"{hf}embed_tokens.weight",
+            "language_model.output_layer.weight": "lm_head.weight",
+            "language_model.decoder.final_norm.hc_norm.weight": f"{hf}hyper_connection_mixer.hc_norm.weight",
+            "language_model.decoder.final_norm.input_mix_weight_down.weight": f"{hf}hyper_connection_mixer.input_mix_weight_down.weight",
+            "language_model.decoder.layers.3.self_attention_hyper_connection.block_inject_weight.weight": f"{hf}layers.3.attn_hyper_connection.block_inject_weight.weight",
+            "language_model.decoder.layers.3.mlp_hyper_connection.input_mix_weight_up.weight": f"{hf}layers.3.mlp_hyper_connection.input_mix_weight_up.weight",
+            "language_model.decoder.layers.3.self_attention.indexer.index_qk_proj.weight": f"{hf}layers.3.self_attn.indexer.index_qk_proj.weight",
+            "language_model.decoder.layers.3.self_attention.indexer.k_layernorm.weight": f"{hf}layers.3.self_attn.indexer.k_layernorm.weight",
+            "language_model.decoder.layers.3.self_attention.q_layernorm.weight": f"{hf}layers.3.self_attn.q_norm.weight",
+            "language_model.decoder.layers.3.self_attention.linear_proj.weight": f"{hf}layers.3.self_attn.o_proj.weight",
+            "language_model.decoder.layers.0.self_attention.out_norm.weight": f"{hf}layers.0.linear_attn.norm.weight",
+            "language_model.decoder.layers.0.self_attention.A_log": f"{hf}layers.0.linear_attn.A_log",
+            "language_model.decoder.layers.0.mlp.router.weight": f"{hf}layers.0.mlp.gate.weight",
+            "language_model.decoder.layers.0.mlp.shared_experts.gate_weight": f"{hf}layers.0.mlp.shared_expert_gate.weight",
+            "language_model.decoder.layers.1.per_layer_embedding.key_proj.weight": f"{hf}layers.1.ple.key_proj.weight",
+            "language_model.decoder.layers.1.per_layer_embedding.conv1d.weight": f"{hf}layers.1.ple.conv1d.weight",
         }
         for megatron_name, hf_name in expectations.items():
             mapping = registry.megatron_to_hf_lookup(megatron_name)
             assert mapping is not None, megatron_name
             assert mapping.hf_param == hf_name, (megatron_name, mapping.hf_param)
 
-        qkv = registry.megatron_to_hf_lookup("decoder.layers.3.self_attention.linear_qkv.weight")
+        qkv = registry.megatron_to_hf_lookup("language_model.decoder.layers.3.self_attention.linear_qkv.weight")
         assert qkv.hf_param == {
             "q": f"{hf}layers.3.self_attn.q_proj.weight",
             "k": f"{hf}layers.3.self_attn.k_proj.weight",
             "v": f"{hf}layers.3.self_attn.v_proj.weight",
         }
-        in_proj = registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.in_proj.weight")
+        in_proj = registry.megatron_to_hf_lookup("language_model.decoder.layers.0.self_attention.in_proj.weight")
         assert set(in_proj.hf_param) == {"qkv", "z", "b", "a"}
-        experts = registry.megatron_to_hf_lookup("decoder.layers.0.mlp.experts.linear_fc1.weight5")
+        experts = registry.megatron_to_hf_lookup("language_model.decoder.layers.0.mlp.experts.linear_fc1.weight5")
         assert experts.hf_param == f"{hf}layers.0.mlp.experts.gate_up_proj"
 
         ple = registry.megatron_to_hf_lookup(
-            "decoder.layers.1.per_layer_embedding.ple_embedding.ngram_embedding.weight"
+            "language_model.decoder.layers.1.per_layer_embedding.ple_embedding.ngram_embedding.weight"
         )
         assert isinstance(ple, PLENGramEmbeddingMapping)
         assert ple.num_shards == 128

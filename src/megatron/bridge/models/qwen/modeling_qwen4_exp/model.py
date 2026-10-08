@@ -12,24 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen4-Exp integration with the unmodified Megatron-Core GPT decoder."""
+"""Qwen4-Exp integration with the unmodified Megatron-Core Hybrid decoder."""
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import torch
+from megatron.core import tensor_parallel
 from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_block import HybridStack, HybridStackSubmodules
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.ssm.gated_delta_net import GatedDeltaNet
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_layer import HyperConnectionTransformerLayer, TransformerLayerSubmodules
-from megatron.core.utils import WrappedTensor
+
+from megatron.bridge.models.qwen.modeling_qwen4_exp.gated_residual import GatedResidualOutputMixer
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.qwen.modeling_qwen4_exp.provider import Qwen4ExpModelProvider
+    from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpTransformerConfig
 
 
 @dataclass
@@ -44,7 +48,7 @@ class Qwen4ExpTransformerLayer(HyperConnectionTransformerLayer):
 
     def __init__(
         self,
-        config: "Qwen4ExpModelProvider",
+        config: "Qwen4ExpTransformerConfig",
         submodules: Qwen4ExpLayerSubmodules,
         *args: object,
         **kwargs: object,
@@ -81,27 +85,87 @@ class Qwen4ExpGatedDeltaNet(GatedDeltaNet):
         return (normalized * gate).to(x_dtype)
 
 
-class Qwen4ExpGPTModel(GPTModel):
-    """Prepare lexical inputs and expand streams outside Core's mHC block path.
+class Qwen4ExpHybridStack(HybridStack):
+    """Core hybrid execution with Qwen4-Exp's learned output stream mixer."""
 
-    The Core block's generic mHC path contracts streams with an unweighted mean.
-    Qwen4-Exp instead uses a learned output mixer in the final-layernorm slot.
-    Keeping Core's mHC flag disabled lets the existing block execute the local
-    hyper-connection layers without first discarding their stream dimension.
+    def __init__(
+        self,
+        config: "Qwen4ExpTransformerConfig",
+        submodules: HybridStackSubmodules,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(config, submodules, post_layer_norm=False, **kwargs)
+        self.post_layer_norm = True
+        if self.post_process:
+            self.final_norm = GatedResidualOutputMixer(config)
+
+
+class _Qwen4ExpMultimodalRotaryEmbedding(Qwen3VLMultimodalRotaryEmbedding):
+    """Adapt explicit VLM positions to HybridModel's rotary invocation."""
+
+    position_ids: torch.Tensor | None = None
+    packed_seq_params: PackedSeqParams | None = None
+
+    def forward(self, max_seq_len: int, *, packed_seq: bool = False) -> torch.Tensor:
+        if self.position_ids is None:
+            raise ValueError("Qwen4-Exp multimodal rotary embedding requires position_ids.")
+        return super().forward(self.position_ids, self.mrope_section, self.packed_seq_params)
+
+
+class Qwen4ExpHybridModel(HybridModel):
+    """Prepare lexical inputs and residual streams for the Core Hybrid decoder.
+
+    Every hybrid position keeps the original attention-plus-MLP decoder block,
+    including both gated residual connections. PLE layer numbers and checkpoint
+    parameter indices therefore remain unchanged.
     """
 
-    def _preprocess(
+    def __init__(
+        self,
+        config: "Qwen4ExpTransformerConfig",
+        *,
+        rotary_percent: float,
+        rotary_base: int,
+        mrope_section: list[int] | None = None,
+        seq_len_interpolation_factor: float | None = None,
+        **kwargs: object,
+    ) -> None:
+        super().__init__(
+            config=config,
+            rotary_percent=rotary_percent,
+            rotary_base=rotary_base,
+            seq_len_interpolation_factor=seq_len_interpolation_factor,
+            **kwargs,
+        )
+        if mrope_section is not None:
+            self.rotary_pos_emb = _Qwen4ExpMultimodalRotaryEmbedding(
+                kv_channels=self.config.kv_channels,
+                rotary_percent=rotary_percent,
+                rotary_interleaved=self.config.rotary_interleaved,
+                rotary_base=rotary_base,
+                seq_len_interpolation_factor=seq_len_interpolation_factor,
+                cp_group=self.pg_collection.cp,
+            )
+            self.rotary_pos_emb.mrope_section = mrope_section
+
+    def forward(
         self,
         input_ids: torch.Tensor,
         position_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None,
         decoder_input: torch.Tensor | None = None,
+        labels: torch.Tensor | None = None,
         inference_context: BaseInferenceContext | None = None,
+        runtime_gather_output: bool | None = None,
+        *,
         packed_seq_params: PackedSeqParams | None = None,
         padding_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor | WrappedTensor | None, ...]:
+        **kwargs: object,
+    ) -> torch.Tensor:
+        """Execute the language decoder, retaining raw IDs for PLE with VLM embeddings."""
         if padding_mask is not None:
             raise NotImplementedError("Qwen4-Exp padding masks are not supported yet; use packed inputs.")
-        if inference_context is not None:
+        if inference_context is not None or kwargs.get("inference_params") is not None:
             raise NotImplementedError("Qwen4-Exp does not support cached inference yet.")
         if self.config.ple_layer_ids:
             if input_ids is None:
@@ -115,19 +179,33 @@ class Qwen4ExpGPTModel(GPTModel):
                 if layer.per_layer_embedding is not None:
                     layer.per_layer_embedding.prepare(input_ids, cu_seqlens)
 
-        result = super()._preprocess(
-            input_ids,
-            position_ids,
-            decoder_input=decoder_input,
-            inference_context=inference_context,
-            packed_seq_params=packed_seq_params,
-            padding_mask=padding_mask,
-        )
-        hidden = result[0]
-        wrapped = isinstance(hidden, WrappedTensor)
-        if wrapped:
-            hidden = hidden.unwrap()
-        hidden = hidden.repeat(1, 1, self.config.mhc_num_residual_streams)
-        if wrapped:
-            hidden = WrappedTensor(hidden)
-        return (hidden, *result[1:])
+        if decoder_input is None:
+            decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids)
+            if self.config.sequence_parallel and not self.embedding.scatter_to_sequence_parallel:
+                decoder_input = tensor_parallel.scatter_to_sequence_parallel_region(
+                    decoder_input, group=self.pg_collection.tp
+                )
+        decoder_input = decoder_input.repeat(1, 1, self.config.mhc_num_residual_streams)
+        multimodal_rope = isinstance(self.rotary_pos_emb, _Qwen4ExpMultimodalRotaryEmbedding)
+        if multimodal_rope:
+            self.rotary_pos_emb.position_ids = position_ids
+            self.rotary_pos_emb.packed_seq_params = packed_seq_params
+        try:
+            return super().forward(
+                input_ids=input_ids,
+                position_ids=position_ids,
+                attention_mask=attention_mask,
+                decoder_input=decoder_input,
+                labels=labels,
+                runtime_gather_output=runtime_gather_output,
+                packed_seq_params=packed_seq_params,
+                **kwargs,
+            )
+        finally:
+            if multimodal_rope:
+                self.rotary_pos_emb.position_ids = None
+                self.rotary_pos_emb.packed_seq_params = None
+
+
+# Import compatibility only; model construction and execution use HybridModel.
+Qwen4ExpGPTModel = Qwen4ExpHybridModel

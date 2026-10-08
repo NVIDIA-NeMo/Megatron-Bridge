@@ -14,14 +14,18 @@
 
 """Input preparation for the Bridge-local Qwen4-Exp PLE module."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.models.qwen.modeling_qwen4_exp import per_layer_embedding
-from megatron.bridge.models.qwen.modeling_qwen4_exp.provider import Qwen4ExpModelProvider
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model import Qwen4ExpHybridModel
+from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import Qwen4ExpTransformerConfig
 
 
 @pytest.fixture
@@ -35,7 +39,7 @@ def ple_module(monkeypatch: pytest.MonkeyPatch) -> per_layer_embedding.PerLayerE
     groups.cp = Mock(spec=torch.distributed.ProcessGroup)
     groups.tp.size.return_value = 1
     groups.cp.size.return_value = 1
-    config = Qwen4ExpModelProvider(
+    config = Qwen4ExpTransformerConfig(
         num_layers=2,
         hidden_size=8,
         num_attention_heads=2,
@@ -81,3 +85,39 @@ def test_prepare_rejects_context_parallelism(
         ple_module.prepare(torch.arange(6).reshape(1, 6))
 
     ple_module.ple_embedding.compute_ngram_ids.assert_not_called()
+
+
+@pytest.mark.unit
+def test_hybrid_forward_prepares_ple_with_raw_ids_and_external_embeddings(monkeypatch):
+    model = Qwen4ExpHybridModel.__new__(Qwen4ExpHybridModel)
+    torch.nn.Module.__init__(model)
+    model.config = SimpleNamespace(ple_layer_ids=[1], mhc_num_residual_streams=2)
+    prepare = Mock()
+    model.decoder = SimpleNamespace(layers=[SimpleNamespace(per_layer_embedding=SimpleNamespace(prepare=prepare))])
+    model.rotary_pos_emb = torch.nn.Identity()
+    parent_forward = Mock(side_effect=lambda **kwargs: kwargs["decoder_input"])
+    monkeypatch.setattr(HybridModel, "forward", parent_forward)
+    tokens = torch.tensor([[1, 2, 3, 4]])
+    embeddings = torch.randn(4, 1, 8, requires_grad=True)
+    boundaries = torch.tensor([0, 2, 4], dtype=torch.int32)
+    packed = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=boundaries,
+        cu_seqlens_kv=boundaries,
+        max_seqlen_q=2,
+        max_seqlen_kv=2,
+    )
+
+    output = model.forward(
+        tokens,
+        torch.arange(4).unsqueeze(0),
+        None,
+        decoder_input=embeddings,
+        packed_seq_params=packed,
+    )
+
+    prepare.assert_called_once_with(tokens, boundaries)
+    assert parent_forward.call_args.kwargs["input_ids"] is tokens
+    torch.testing.assert_close(output, embeddings.repeat(1, 1, 2))
+    output.sum().backward()
+    torch.testing.assert_close(embeddings.grad, torch.full_like(embeddings, 2.0))

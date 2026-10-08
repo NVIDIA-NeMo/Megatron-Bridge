@@ -1,11 +1,13 @@
-# Qwen4-Exp language model
+# Qwen4-Exp hybrid language and vision-language models
 
-The model components live in Bridge and use the existing Megatron-Core GPT,
+The model components live in Bridge and use the existing Megatron-Core HybridModel,
 GDN, attention, MoE, and hyper-connection interfaces. They do not require the
 model-specific changes to the pinned Core revision.
 
-`Qwen4ExpModelProvider` declares the checkpoint's QSA, gated residual, and PLE
-fields. Its GPT subclass prepares raw token IDs for PLE and expands residual
+`Qwen4ExpModelConfig` and its nested transformer config declare the checkpoint's
+QSA, gated residual, and PLE fields. `Qwen4ExpModelBuilder` builds an actual Core
+HybridModel/HybridStack with complete attention-and-MLP blocks. The model prepares
+raw token IDs for PLE and expands residual
 streams before the decoder. The final output mixer contracts those streams with
 learned gates; Core's generic mHC expansion and mean contraction stay disabled.
 
@@ -31,10 +33,26 @@ The local implementation preserves both contracts and bounds reduction memory.
 
 ## Supported scope
 
-The initial provider supports a text decoder with tensor and sequence
+The builder supports a text decoder with tensor and sequence
 parallelism, PP=CP=1, and no virtual pipeline stages. It rejects cached
 inference, padding masks, activation recomputation, CUDA graphs, FP8, and MTP.
-Use THD packing for document boundaries. Vision parameters are not converted.
+Use THD packing for document boundaries. Full VLM conversion includes the vision
+patch embedding, positional embedding, transformer blocks, and patch merger.
+The VLM combines visual embeddings before the hybrid decoder while PLE retains
+the raw token IDs. MRoPE uses each token's multimodal positions, including the
+QSA pooled-block indexer.
+
+Use `AutoBridge.from_hf_pretrained(path).get_model_config()` to configure the
+model and `bridge.get_model(config, wrap_with_ddp=False)` to construct/load it.
+For a language-only view of a VLM checkpoint, pass `text_only=True` to
+`AutoBridge.from_hf_pretrained`. This filters vision weights and projects
+`model.language_model.*` to the standalone `model.*` namespace, retaining the
+root LM head; export produces a standalone text checkpoint. Native text
+checkpoints continue to use their existing namespace. The old provider import
+is an alias; construction uses Builder + Config. When selecting a different
+VLM checkpoint for text-only loading, construct a new `AutoBridge` with
+`text_only=True`; the builder's replacement `hf_path` argument does not project
+a VLM checkpoint.
 
 Loading a Qwen4-Exp HF model requires a Transformers release that includes that
 model. Model parity tests use Transformers 5.16.1 in an isolated environment;
@@ -47,6 +65,7 @@ Run the focused numerical, mapping, and GPU conversion tests:
 ```bash
 uv run python -m pytest tests/unit_tests/models/qwen/test_qwen4_exp_numerics.py
 uv run python -m pytest tests/unit_tests/models/qwen/test_qwen4_exp_bridge.py
+uv run python -m pytest tests/unit_tests/models/qwen/test_qwen4_exp_vlm.py
 uv run python -m pytest tests/functional_tests/test_groups/models/qwen/test_qwen4_exp_conversion.py
 ```
 
@@ -56,8 +75,12 @@ also requires a sequence beyond the indexer budget, rather than only the dense
 shortcut. Component tests alone do not establish full-model training parity or
 an end-to-end performance improvement.
 
-The H100 and GB200 L2 launch scripts run these three GPU cases with at most
-two ranks. They install Transformers 5.16.1 in a temporary reference
+The functional suite also includes a one-rank toy VLM/text-only import,
+forward/backward, and export smoke. It checks finite language, PLE, GDN, gated
+residual and vision gradients. The smoke uses the dense masked QSA reference
+backend, so it does not validate sparse-kernel performance.
+
+The H100 and GB200 L2 launch scripts run these GPU cases with at most two ranks. They install Transformers 5.16.1 in a temporary reference
 environment and reuse the container's CUDA packages, leaving the project
 environment unchanged. Each distributed case has a ten-minute timeout. L2
 requires the `full-test-suite` label or an explicit L2 workflow dispatch.
@@ -66,7 +89,7 @@ requires the `full-test-suite` label or an explicit L2 workflow dispatch.
 
 The conversion mappings and base QSA/PLE/GR scaffolding are adapted from
 Casper Hansen's NVIDIA-NeMo/Megatron-Bridge#6123 and NVIDIA/Megatron-LM#7393.
-The local provider, model hooks, document-local scoring, bounded normalization,
+The local builder, model hooks, document-local scoring, bounded normalization,
 and gate-rounding changes are maintained in this branch. The gate-rounding
 change carries the earlier ModelScope contribution forward. Apache 2.0
 copyright and license notices are retained.

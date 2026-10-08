@@ -60,6 +60,8 @@ from megatron.core.utils import get_pg_size
 from torch import Tensor
 
 from megatron.bridge.models.qwen.modeling_qwen4_exp.qsa_selection import select_document_blocks
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
 
 
 try:
@@ -315,7 +317,14 @@ class QSAIndexer(MegatronModule):
         q, raw_keys = torch.split(qk, [self.n_heads * self.head_dim, self.kv_heads * self.head_dim], dim=-1)
         q = self.q_layernorm(q.reshape(s, b, self.n_heads, self.head_dim).reshape(-1, self.head_dim))
         q = q.view(s, b, self.n_heads, self.head_dim)
-        if is_thd:
+        if self.config.qwen4_mrope:
+            if is_thd:
+                q = apply_rotary_pos_emb_absolute(
+                    q.squeeze(1), rotary_pos_emb, self.config, cu_seqlens=packed_seq_params.cu_seqlens_q
+                ).unsqueeze(1)
+            else:
+                q = apply_rotary_pos_emb_absolute(q, rotary_pos_emb, self.config)
+        elif is_thd:
             assert packed_seq_params is not None
             q = apply_rotary_pos_emb(
                 q.squeeze(1),
@@ -338,7 +347,19 @@ class QSAIndexer(MegatronModule):
             n_docs, n_blocks_max, D = pooled.shape
             if n_blocks_max > 0:
                 pooled = self.k_layernorm(pooled.reshape(-1, D))
-                pooled = self._rope_at_positions(pooled, rotary_pos_emb, block_positions.reshape(-1))
+                if self.config.qwen4_mrope:
+                    # MRoPE frequencies are per token and batch, not a shared
+                    # position table. A pooled key uses its document's actual
+                    # block-start token, including THD document offsets.
+                    token_freqs = rotary_pos_emb.squeeze(2).transpose(0, 1).reshape(b * s, -1)
+                    doc_starts = torch.nonzero(pos_flat == 0, as_tuple=False).flatten()
+                    block_indices = (doc_starts[:, None] + block_positions).clamp_max(b * s - 1)
+                    block_freqs = token_freqs[block_indices.reshape(-1)].unsqueeze(1).unsqueeze(1)
+                    pooled = self._rope_at_positions(
+                        pooled, block_freqs, torch.arange(pooled.shape[0], device=pooled.device)
+                    )
+                else:
+                    pooled = self._rope_at_positions(pooled, rotary_pos_emb, block_positions.reshape(-1))
                 pooled = pooled.view(n_docs, n_blocks_max, D)
             selected_bits, all_selected = self._select_blocks(q_flat.detach(), pooled, block_valid, doc_flat, pos_flat)
         nbytes = selected_bits.shape[1]
@@ -551,7 +572,7 @@ def build_qsa_dense_mask(selection: QSASelection, seq_len: int) -> Tensor:
     return same_doc & causal & (is_tail | is_selected)
 
 
-class QwenSparseSelfAttention(SelfAttention):
+class QwenSparseSelfAttention(Qwen3VLSelfAttention):
     """Gated GQA self-attention whose keys/values are selected per query by a QSA indexer.
 
     The indexer runs on the layer input first; its selection is handed to the
@@ -611,7 +632,9 @@ class QwenSparseSelfAttention(SelfAttention):
             raise NotImplementedError("QwenSparseSelfAttention does not support inference contexts yet.")
         selection = self.indexer(hidden_states, rotary_pos_emb, packed_seq_params)
         self.core_attention.set_selection(selection)
-        return super().forward(
+        attention_forward = Qwen3VLSelfAttention.forward if self.config.qwen4_mrope else SelfAttention.forward
+        return attention_forward(
+            self,
             hidden_states,
             attention_mask,
             key_value_states=key_value_states,

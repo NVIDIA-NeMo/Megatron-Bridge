@@ -34,6 +34,28 @@ class TestQwen4ExpConversion:
         return str(model_dir)
 
     @pytest.mark.run_only_on("GPU")
+    def test_qwen4_exp_vlm_smoke(self, tmp_path):
+        script = Path(__file__).with_name("qwen4_exp_vlm_smoke.py")
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "torch.distributed.run",
+                "--nproc_per_node=1",
+                "--standalone",
+                str(script),
+                "--output-dir",
+                str(tmp_path),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "NCCL_NVLS_ENABLE": "0"},
+            timeout=600,
+        )
+        assert result.returncode == 0, result.stdout[-4000:] + result.stderr[-4000:]
+        assert result.stderr.count("SMOKE OK") == 2
+
+    @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("tp,force_sparse", [(1, False), (2, False), (2, True)])
     def test_qwen4_exp_parity(self, qwen4_exp_toy_model_path, tmp_path, tp, force_sparse):
         script = Path(__file__).with_name("qwen4_exp_parity.py")

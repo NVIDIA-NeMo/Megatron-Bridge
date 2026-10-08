@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""HF Qwen4-Exp (toy, random) -> Megatron-Bridge -> GPTModel logits parity + HF export round trip.
+"""HF Qwen4-Exp (toy, random) -> Megatron-Bridge -> HybridModel logits parity + HF export round trip.
 
 Launch under ``torch.distributed.run`` with ``--nproc_per_node=<tp>``::
 
@@ -135,7 +135,7 @@ def main() -> int:
     model_parallel_cuda_manual_seed(123)
 
     bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
-    provider = bridge.to_megatron_provider(load_weights=False)
+    provider = bridge.get_model_config()
     provider.tensor_model_parallel_size = args.tp
     provider.pipeline_model_parallel_size = 1
     provider.sequence_parallel = args.tp > 1
@@ -149,8 +149,7 @@ def main() -> int:
     provider.variable_seq_lengths = True
     provider.qsa_force_sparse = args.force_sparse
     provider.finalize()
-    model = provider.provide_distributed_model(wrap_with_ddp=False)
-    bridge.load_hf_weights(model)
+    model = bridge.get_model(provider, wrap_with_ddp=False)
     gpt = model[0].eval()
 
     ok = True
