@@ -373,24 +373,14 @@ class TestGLM5Conversion:
 
         assert exported_indexer_layer_ids == {0, 1, 2}
         assert len(exported_indexer_keys) == 15
+        with open(converted_model_dir / "config.json") as config_file:
+            assert (
+                json.load(config_file)["num_hidden_layers"]
+                == HF_GLM52_INDEXSHARE_TOY_MODEL_CONFIG["num_hidden_layers"]
+            )
 
     @pytest.mark.run_only_on("GPU")
     def test_glm5_autoconfig_roundtrip(self, glm5_toy_model_path, tmp_path):
         from tests.functional_tests.utils import autoconfig_roundtrip
 
         autoconfig_roundtrip(glm5_toy_model_path, tmp_path)
-
-
-def test_glm_hybrid_config_coordinates():
-    """A serialized HF config must not inherit physical Hybrid layer counts."""
-    from transformers import GlmMoeDsaConfig
-
-    from megatron.bridge import AutoBridge
-    from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
-    from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
-
-    config = GlmMoeDsaConfig(**HF_GLM52_INDEXSHARE_TOY_MODEL_CONFIG)
-    provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
-    assert isinstance(provider, GLM5ModelProvider)
-    assert provider.num_layers == 2 * config.num_hidden_layers
-    assert GLM5Bridge.megatron_to_hf_config(provider)["num_hidden_layers"] == config.num_hidden_layers

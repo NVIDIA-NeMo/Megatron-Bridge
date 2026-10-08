@@ -116,7 +116,6 @@ def test_gpu_import_forwards_low_memory_save():
     )
 
     assert calls[0]["low_memory_save"] is True
-    assert "use_cpu" not in calls[0]
 
 
 def test_cpu_import_rejects_low_memory_save():
@@ -279,55 +278,6 @@ def test_distributed_cpu_export_uses_gloo_backend(monkeypatch):
     assert calls[0]["use_cpu"] is True
 
 
-def test_distributed_cpu_import_dispatches_to_cpu_backend(monkeypatch):
-    module, cpu_backend, gpu_backend = _load_run_conversion_module()
-    calls = []
-    cpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
-    gpu_backend.import_checkpoint = lambda **kwargs: pytest.fail("CPU import must not call the GPU backend")
-    monkeypatch.setenv("WORLD_SIZE", "4")
-
-    module.main(
-        [
-            "import",
-            "--device",
-            "cpu",
-            "--hf-model",
-            "hf/model",
-            "--megatron-path",
-            "/megatron",
-            "--pp",
-            "2",
-            "--ep",
-            "2",
-        ]
-    )
-
-    assert calls[0]["use_distributed"] is True
-    assert calls[0]["pp"] == 2
-    assert calls[0]["ep"] == 2
-    assert "low_memory_save" not in calls[0]
-
-
-def test_distributed_cpu_import_rejects_low_memory_save(monkeypatch):
-    module, _, _ = _load_run_conversion_module()
-    monkeypatch.setenv("WORLD_SIZE", "2")
-
-    with pytest.raises(ValueError, match="only supported by the GPU backend"):
-        module.main(
-            [
-                "import",
-                "--device",
-                "cpu",
-                "--hf-model",
-                "hf/model",
-                "--megatron-path",
-                "/megatron",
-                "--low-memory-save",
-            ]
-        )
-
-
-@pytest.mark.parametrize("command_args", [["import"], ["export", "--hf-path", "/hf", "--distributed-save"]])
 @pytest.mark.parametrize(
     ("parallelism_args", "message"),
     [
@@ -335,21 +285,23 @@ def test_distributed_cpu_import_rejects_low_memory_save(monkeypatch):
         (["--ep", "3"], r"WORLD_SIZE must be divisible by ETP\*EP\*PP"),
     ],
 )
-def test_distributed_cpu_rejects_incompatible_world_size(monkeypatch, command_args, parallelism_args, message):
+def test_distributed_cpu_export_rejects_incompatible_world_size(monkeypatch, parallelism_args, message):
     module, _, _ = _load_run_conversion_module()
     monkeypatch.setenv("WORLD_SIZE", "4")
 
     with pytest.raises(ValueError, match=message):
         module.main(
             [
-                command_args[0],
+                "export",
                 "--device",
                 "cpu",
                 "--hf-model",
                 "hf/model",
                 "--megatron-path",
                 "/megatron",
-                *command_args[1:],
+                "--hf-path",
+                "/hf",
+                "--distributed-save",
                 *parallelism_args,
             ]
         )

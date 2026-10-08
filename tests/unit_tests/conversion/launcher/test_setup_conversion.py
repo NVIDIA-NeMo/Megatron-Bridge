@@ -257,47 +257,6 @@ def test_distributed_cpu_export_rejects_incompatible_topology(parallelism_args, 
         module._validate_args(args)
 
 
-def test_distributed_cpu_import_accepts_compatible_topology():
-    module = _load_setup_conversion_module()
-    args = _parse(
-        module,
-        "--executor",
-        "slurm",
-        "--nodes",
-        "2",
-        "--cpu-processes-per-node",
-        "4",
-        "--account",
-        "account",
-        "--partition",
-        "partition",
-        "--container-image",
-        "image.sqsh",
-        "--pp",
-        "2",
-        "--ep",
-        "4",
-    )
-
-    module._validate_args(args)
-
-
-def test_distributed_cpu_import_rejects_gpu_request():
-    module = _load_setup_conversion_module()
-    args = _parse(module, "--cpu-processes-per-node", "2", "--gpus-per-node", "1")
-
-    with pytest.raises(ValueError, match="does not request GPU resources"):
-        module._validate_args(args)
-
-
-def test_distributed_cpu_import_rejects_low_memory_save():
-    module = _load_setup_conversion_module()
-    args = _parse(module, "--cpu-processes-per-node", "2", "--low-memory-save")
-
-    with pytest.raises(ValueError, match="only supported by the GPU backend"):
-        module._validate_args(args)
-
-
 def test_distributed_cpu_export_requires_distributed_save():
     module = _load_setup_conversion_module()
     args = _parse_export(module, "--cpu-processes-per-node", "2", "--no-distributed-save")

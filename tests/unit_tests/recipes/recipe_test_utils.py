@@ -123,7 +123,7 @@ class _OfflineModelProvider:
     Add newly read provider fields here when extending the recipe surface.
     """
 
-    def __init__(self, model_id: str | None = None) -> None:
+    def __init__(self) -> None:
         self.apply_rope_fusion = False
         self.batch_p2p_comm = False
         self.bf16 = False
@@ -163,14 +163,6 @@ class _OfflineModelProvider:
         self.vocab_size = 256000
         self.yarn_original_max_position_embeddings = 32768
 
-        if model_id in {"zai-org/GLM-5", "zai-org/GLM-5.1", "zai-org/GLM-5.2", "zai-org/GLM-5.3"}:
-            # GLM recipes partition 78 attention/MLP pairs across pipeline stages.
-            self.hybrid_layer_pattern = "D-" * 3 + "DE" * 75
-            self.num_layers = len(self.hybrid_layer_pattern)
-            if model_id in {"zai-org/GLM-5.2", "zai-org/GLM-5.3"}:
-                self.dsa_indexer_topk_freq = 4
-                self.dsa_indexer_skip_topk_offset = 3
-
     def to_text_provider(self) -> "_OfflineModelProvider":
         """Match multimodal provider conversion without initializing a model."""
         return self
@@ -182,9 +174,6 @@ class _OfflineModelProvider:
 class _OfflineAutoBridge:
     """Build a local model configuration without reading a Hugging Face configuration."""
 
-    def __init__(self, model_id: str | None = None) -> None:
-        self.model_id = model_id
-
     @classmethod
     def from_hf_config(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
         del args, kwargs
@@ -192,13 +181,20 @@ class _OfflineAutoBridge:
 
     @classmethod
     def from_hf_pretrained(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
-        model_id = str(args[0]) if args else str(kwargs.get("pretrained_model_name_or_path", ""))
-        return cls(model_id)
+        bridge = cls()
+        bridge._model_id = str(args[0]) if args else str(kwargs.get("pretrained_model_name_or_path", ""))
+        return bridge
 
     def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
         del args, kwargs
-        provider = _OfflineModelProvider(self.model_id)
-        model_id = (self.model_id or "").lower()
+        provider = _OfflineModelProvider()
+        model_id = getattr(self, "_model_id", "").lower()
+        if model_id in {"zai-org/glm-5", "zai-org/glm-5.1", "zai-org/glm-5.2", "zai-org/glm-5.3"}:
+            provider.hybrid_layer_pattern = "D-" * 3 + "DE" * 75
+            provider.num_layers = len(provider.hybrid_layer_pattern)
+            if model_id in {"zai-org/glm-5.2", "zai-org/glm-5.3"}:
+                provider.dsa_indexer_topk_freq = 4
+                provider.dsa_indexer_skip_topk_offset = 3
         if "deepseek-v4-" in model_id:
             logical_layers = 61 if "deepseek-v4-pro" in model_id else 43
             provider.hybrid_layer_pattern = "WEWE" + "".join(
@@ -214,7 +210,7 @@ class _OfflineAutoBridge:
 
     def get_model_config(self) -> _OfflineModelProvider:
         """Return a mutable stand-in for builder-backed recipe construction."""
-        return _OfflineModelProvider(self.model_id)
+        return _OfflineModelProvider()
 
 
 class _OfflineTokenizer:

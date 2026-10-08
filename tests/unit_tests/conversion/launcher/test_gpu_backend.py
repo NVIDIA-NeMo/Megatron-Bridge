@@ -200,7 +200,7 @@ class TestImportHfToMegatron:
             calls.append(("from_hf_pretrained", args, kwargs))
             return FakeBridge()
 
-        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes, *, use_cpu=False: None)
+        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
         monkeypatch.setattr(
             cli,
             "_prepare_distributed_output",
@@ -273,7 +273,7 @@ class TestImportHfToMegatron:
             def save_megatron_model(self, *args, **kwargs):
                 calls.append(("save_megatron_model", args, kwargs))
 
-        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes, *, use_cpu=False: None)
+        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
         monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *args, **kwargs: None)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: FakeBridge())
 

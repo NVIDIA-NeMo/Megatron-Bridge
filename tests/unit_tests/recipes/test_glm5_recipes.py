@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Unit tests for GLM-5 and GLM-5.2 recipes."""
+"""Unit tests for GLM-5.2 recipes."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -83,25 +83,19 @@ class _FakeMegatronProvider(SimpleNamespace):
 
 
 class _FakeAutoBridge:
-    def __init__(self, model_id: str) -> None:
-        self.model_id = model_id
-
     @classmethod
     def from_hf_pretrained(cls, model_id: str, revision: str) -> "_FakeAutoBridge":
-        revisions = {
-            "zai-org/GLM-5": "4e6698ba8e85059d749020e3c4d2123719f23926",  # pragma: allowlist secret
-            "zai-org/GLM-5.2": "4d67f66cc64d3219133b767c253b2ad1425c6c88",  # pragma: allowlist secret
-        }
-        assert revision == revisions[model_id]
-        return cls(model_id)
+        assert model_id == "zai-org/GLM-5.2"
+        assert len(revision) == 40
+        return cls()
 
     def to_megatron_provider(self, load_weights: bool = False) -> _FakeMegatronProvider:
         assert load_weights is False
         return _FakeMegatronProvider(
             dsa_indexer_loss_coeff=0.001,
             dsa_indexer_use_sparse_loss=True,
-            dsa_indexer_topk_freq=4 if self.model_id == "zai-org/GLM-5.2" else 1,
-            dsa_indexer_skip_topk_offset=3 if self.model_id == "zai-org/GLM-5.2" else 0,
+            dsa_indexer_topk_freq=4,
+            dsa_indexer_skip_topk_offset=3,
             mtp_num_layers=None,
             hybrid_layer_pattern="D-" * 3 + "DE" * 75,
         )
@@ -111,56 +105,6 @@ class _FakeAutoBridge:
 def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gb200_glm5, "AutoBridge", _FakeAutoBridge)
     monkeypatch.setattr(glm5, "AutoBridge", _FakeAutoBridge)
-
-
-@pytest.mark.parametrize(
-    "variant,model_id,freq,offset", [("glm5", "zai-org/GLM-5", 1, 0), ("glm52", "zai-org/GLM-5.2", 4, 3)]
-)
-@pytest.mark.parametrize(
-    "suffix,cp,gbs,steps",
-    [
-        ("pretrain_192gpu_gb200_bf16_config", 1, 1024, 100),
-        ("sft_192gpu_gb200_bf16_config", 4, 8, 100),
-        ("sft_192gpu_gb200_bf16_128k_config", 32, 56, 20),
-        ("peft_192gpu_gb200_bf16_config", 1, 32, 100),
-    ],
-)
-def test_gb200_recipes_preserve_native_variant(variant, model_id, freq, offset, suffix, cp, gbs, steps) -> None:
-    cfg = getattr(gb200, f"{variant}_{suffix}")()
-
-    assert cfg.tokenizer.tokenizer_model == model_id
-    assert cfg.model.dsa_indexer_topk_freq == freq
-    assert cfg.model.dsa_indexer_skip_topk_offset == offset
-    assert cfg.model.mtp_num_layers == 1
-    assert cfg.model.context_parallel_size == cp
-    assert cfg.model.pipeline_model_parallel_size == 6
-    assert cfg.model.expert_model_parallel_size == 32
-    assert cfg.train.global_batch_size == gbs
-    assert cfg.train.train_iters == steps
-    assert cfg.train.micro_batch_size == 1
-    stages = cfg.model.hybrid_layer_pattern.split("|")
-    assert sum(stage.count("D") for stage in stages) == 78
-    start = 0
-    for stage in stages:
-        assert start == 0 or (start + 1 - offset) % freq == 0
-        start += stage.count("D")
-    if not suffix.startswith("pretrain"):
-        slug = "glm5" if variant == "glm5" else "glm5-2"
-        data_path = cfg.dataset.hf_output_root or cfg.dataset.dataset_root
-        assert data_path.startswith(f"work/data/{slug}/")
-    if suffix.startswith("peft"):
-        if variant == "glm5":
-            assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
-            assert cfg.dataset.seq_length == cfg.model.seq_length == 2048
-        assert cfg.peft.dim == 8
-        assert cfg.peft.alpha == 16
-        assert cfg.peft.target_modules == [
-            "linear_q_down_proj",
-            "linear_q_up_proj",
-            "linear_kv_down_proj",
-            "linear_kv_up_proj",
-            "linear_proj",
-        ]
 
 
 @pytest.mark.parametrize(
