@@ -11,7 +11,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import torch
 from PIL import Image
 from rouge import Rouge
@@ -24,7 +23,7 @@ PROMPT_HEAD = (
     "replacing N with its number in the context. Do not repeat the citation. If uncertain, give your best "
     "answer and picture choice. Known content: "
 )
-PAIR_FIELDS = (
+RESUME_FIELDS = (
     "input_ids_sha256",
     "prompt_sha256",
     "image_paths",
@@ -105,27 +104,6 @@ def prepare(row: dict, proc: Any, images_root: Path) -> tuple[dict, dict]:
     return inputs, audit
 
 
-def paired(before: list[float], after: list[float], *, groups: list[str] | None = None) -> dict:
-    """Exploratory paired bootstrap; group shared IITC articles when provided."""
-    delta = np.asarray(after, dtype=float) - np.asarray(before, dtype=float)
-    rng = np.random.default_rng(20261005)
-    if groups is None:
-        boot = rng.choice(delta, (10000, len(delta)), replace=True).mean(axis=1)
-    else:
-        membership = [np.asarray([i for i, g in enumerate(groups) if g == value]) for value in sorted(set(groups))]
-        sizes = np.asarray([len(x) for x in membership])
-        sums = np.asarray([delta[x].sum() for x in membership])
-        draws = rng.integers(0, len(sizes), (10000, len(sizes)))
-        boot = sums[draws].sum(axis=1) / sizes[draws].sum(axis=1)
-    return {
-        "n": len(delta),
-        "original": float(np.mean(before)),
-        "finetuned": float(np.mean(after)),
-        "delta_pp": float(delta.mean() * 100),
-        "ci95_pp": (np.quantile(boot, [0.025, 0.975]) * 100).tolist(),
-    }
-
-
 def read(path: Path) -> list[dict]:
     """Read JSONL, preserving published row order."""
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
@@ -165,51 +143,18 @@ def load_model(path: Path) -> torch.nn.Module:
     return model
 
 
-def compare(before: Path, after: Path) -> dict:
-    """Require complete paired inputs before computing article-clustered bootstrap intervals."""
-    for directory in (before, after):
-        assert (directory / "COMPLETE").exists()
-    a, b = read(before / "predictions.jsonl"), read(after / "predictions.jsonl")
-    a, b = sorted(a, key=lambda r: r["row_index"]), sorted(b, key=lambda r: r["row_index"])
-    assert len(a) == len(b) == 658
-    assert [r["row_index"] for r in a] == [r["row_index"] for r in b] == list(range(658))
-    pa, pb = [json.loads((path / "protocol.json").read_text()) for path in (before, after)]
-    for field in (
-        "source_sha256",
-        "processor",
-        "prompt_head",
-        "max_new_tokens",
-        "do_sample",
-        "enable_thinking",
-        "versions",
-    ):
-        assert pa[field] == pb[field], field
-    for original, trained in zip(a, b):
-        assert all(original[field] == trained[field] for field in PAIR_FIELDS), original["row_index"]
-    return {
-        metric: paired([r[metric] for r in a], [r[metric] for r in b], groups=[r["title"] for r in a])
-        for metric in ("picture_accuracy", "rouge_l")
-    }
-
-
 def main() -> None:
-    """Generate all 658 responses, or compare two completed generation directories."""
+    """Generate and score all 658 IITC-8K test responses."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path)
-    parser.add_argument("--processor", type=Path, help="Use the original processor for every checkpoint")
-    parser.add_argument("--source", type=Path, help="Published IITC_8k_test.json (JSONL)")
-    parser.add_argument("--images", type=Path)
+    parser.add_argument("--model", type=Path, required=True)
+    parser.add_argument(
+        "--processor", type=Path, required=True, help="Use the original processor for every checkpoint"
+    )
+    parser.add_argument("--source", type=Path, required=True, help="Published IITC_8k_test.json (JSONL)")
+    parser.add_argument("--images", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--compare", type=Path, nargs=2, metavar=("ORIGINAL", "FINETUNED"))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
-    if args.compare:
-        result = compare(*args.compare)
-        args.output.write_text(json.dumps(result, indent=2))
-        logging.info("Matched comparison: %s", json.dumps(result))
-        return
-    if any(getattr(args, name) is None for name in ("model", "processor", "source", "images")):
-        parser.error("Generation needs --model, --processor, --source and --images")
     assert importlib.metadata.version("rouge") == "1.0.1"
     torch.set_num_threads(4)
     torch.manual_seed(20261005)
@@ -242,7 +187,7 @@ def main() -> None:
     for index, row in enumerate(rows):
         inputs, audit = prepare(row, proc, args.images)
         if index in done:
-            assert all(done[index][key] == audit[key] for key in PAIR_FIELDS if key != "gold")
+            assert all(done[index][key] == audit[key] for key in RESUME_FIELDS if key != "gold")
             assert done[index]["gold"] == row["answer"]
             continue
         model.expected_image_tokens = audit["image_tokens"]

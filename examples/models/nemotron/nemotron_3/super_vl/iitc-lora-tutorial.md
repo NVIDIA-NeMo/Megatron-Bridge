@@ -1,40 +1,38 @@
 # Nemotron 3.5 Super VL: IITC LoRA fine-tuning
 
 [VEGA IITC](https://huggingface.co/datasets/zhourax977/VEGA) contains
-questions about documents with interleaved text and images. Answers include
-supporting picture references such as `[Picture 2]`. This example fine-tunes
+questions about documents with interleaved text and images. This example fine-tunes
 Nemotron 3.5 Super VL with Bridge's standard LoRA recipe on 10,000 examples,
 then evaluates answer overlap and picture-reference accuracy.
 
 ## Prepare the data
 
-From a configured Bridge checkout, download an available Nemotron 3.5 Super VL
-checkpoint from Hugging Face and set `HF_MODEL` to its downloaded directory.
-
 ```bash
 export EXAMPLE="$PWD/examples/models/nemotron/nemotron_3/super_vl/iitc"
 export IITC_ROOT="$PWD/work/super-vl-iitc"
-export HF_MODEL=/path/to/hf-checkpoint
-export OUTPUT_DIR="$IITC_ROOT/lora-run"
 
 uv run --no-project python "$EXAMPLE/prepare_data.py" --download \
   --source "$IITC_ROOT/source" --images "$IITC_ROOT/images" \
   --output "$IITC_ROOT/energon"
 ```
 
-We select **10,000 training and 210 validation examples** from the published
-IITC-4K/8K **training** splits; the test splits remain separate.
+The published IITC-4K/8K splits contain 374,575 training examples
+(192,442 + 182,133) and 1,330 test examples (672 + 658).
+For illustration, we select 10,000 for training and reserve 210 for validation
+from the training splits. Final evaluation uses all 658 IITC-8K test examples.
 [selection.csv](iitc/selection.csv) fixes the selected rows and their order for
 reproducibility. Preparation preserves text/image order and writes Energon
 shards. The image archive is about 46 GB; use new output directories.
 
 ## Train through the Bridge CLI
 
-Use a Slurm allocation with two nodes, each with eight H100 80GB GPUs, shared
-paths, and the configured Bridge environment. Authenticate W&B, then launch
-once from the allocation with `srun`; Bridge derives ranks from Slurm.
+Run the following command on two nodes with eight H100 GPUs each, using the
+default LoRA recipe with CLI overrides. Set `HF_MODEL` to a downloaded
+Hugging Face Nemotron 3.5 Super VL checkpoint.
 
 ```bash
+export HF_MODEL=/path/to/hf-checkpoint
+export OUTPUT_DIR="$IITC_ROOT/lora-run"
 export CUDA_DEVICE_MAX_CONNECTIONS=1 NCCL_NVLS_ENABLE=0 OMP_NUM_THREADS=8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
@@ -63,18 +61,20 @@ srun --nodes=2 --ntasks=16 --ntasks-per-node=8 \
   logger.save_config_filepath="$OUTPUT_DIR/resolved-config.yaml"
 ```
 
-Recipe defaults supply rank/alpha **32/32**, dropout **0**, language-only adapter
-targets, global/micro batch **16/1**, TP/PP/EP **4/2/8**, BF16, seed **1234**, and
-LR **1e-4 → 0**. Vision tower and projector are frozen.
-**625 optimizer updates × 16 samples = 10,000 sample presentations**, about
+Recipe defaults supply rank/alpha 32/32, dropout 0, language-only adapter
+targets, global/micro batch 16/1, TP/PP/EP 4/2/8, BF16, seed 1234, and
+LR 1e-4 → 0. Vision tower and projector are frozen.
+625 optimizer updates × 16 samples = 10,000 sample presentations, about
 one epoch's worth. `16384` is the training sequence limit in tokens.
 
-## Merge and export after training
+## Merge and export to HF format after training
 
-Merge the **step-625** adapters into the original base weights and export a
-standalone HF checkpoint **before inference**. The training CLI saves native
-adapters; it does not automatically produce a merged model. The following
-small export script uses Bridge's loading and merge/export APIs on eight GPUs.
+After step 625, merge the adapters with the base weights and export to HF
+before evaluation. This checkout provides Bridge APIs for this operation,
+but no single CLI command for merging a native LoRA checkpoint.
+
+<details>
+<summary>Bridge merge/export commands (one eight-GPU node)</summary>
 
 ```bash
 export ADAPTER_CKPT="$OUTPUT_DIR/checkpoints/iter_0000625"
@@ -126,13 +126,15 @@ srun --nodes=1 --ntasks=8 --ntasks-per-node=8 \
   uv run --no-project python "$OUTPUT_DIR/merge_export.py"
 ```
 
+</details>
+
 ## Evaluate the original and merged checkpoints
 
 Run one process on an eight-GPU node with `rouge==1.0.1`.
-Use the **full IITC-8K test split (658 examples)**; 8K labels its context-length
+Use the full IITC-8K test split (658 examples); 8K labels its context-length
 category, not the number of examples. Keep the original processor, image order,
 chat template (`enable_thinking=False`), and greedy 512-token decoding matched.
-The evaluator records full answers and rejects mismatched paired inputs.
+The evaluator saves generations and metrics for each checkpoint.
 
 ```bash
 uv run --no-project python "$EXAMPLE/evaluate.py" \
@@ -145,14 +147,6 @@ uv run --no-project python "$EXAMPLE/evaluate.py" \
   --output "$IITC_ROOT/eval-finetuned"
 ```
 
-Compare the saved answers (CPU only; this is **not a third inference run**):
-
-```bash
-uv run --no-project python "$EXAMPLE/evaluate.py" \
-  --compare "$IITC_ROOT/eval-original" "$IITC_ROOT/eval-finetuned" \
-  --output "$IITC_ROOT/comparison.json"
-```
-
 Picture-reference accuracy requires exactly one correct `[Picture N]` citation;
 ROUGE-L is mean reference-answer overlap. The scoring follows
 [VEGA's evaluator](https://github.com/zhourax/VEGA/blob/96d4be247fb4385b23265ac4f0b6079a9225698d/eval/IITC.py),
@@ -161,13 +155,13 @@ prompt difference when sharing scores.
 
 ## Results
 
-Evaluation on all **658 IITC-8K held-out test examples**:
+Evaluation on all 658 IITC-8K held-out test examples:
 
 | Checkpoint | Picture-reference accuracy | ROUGE-L × 100 |
 | --- | ---: | ---: |
 | Original | 85.71% | 35.83 |
 | Bridge LoRA, step 625 | 87.99% | 54.01 |
 
-Step 625 logged **10,000 consumed training samples** (625 updates × global
+Step 625 logged 10,000 consumed training samples (625 updates × global
 batch size 16). This counter measures consumed samples, not distinct dataset
 rows visited.
