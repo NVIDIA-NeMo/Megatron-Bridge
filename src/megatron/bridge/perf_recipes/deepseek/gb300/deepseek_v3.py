@@ -453,7 +453,8 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.expert_data_parallel_sharding_strategy = None
     cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
-    cfg.model.fine_grained_activation_offloading = 1
+    # cfg.model.fine_grained_activation_offloading = True
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
     cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
     # cfg.model.cuda_graph_impl = "none"
