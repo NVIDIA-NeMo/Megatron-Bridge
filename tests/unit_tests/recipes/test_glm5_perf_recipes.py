@@ -129,7 +129,7 @@ def test_glm5_h100_parallel_topology(
     recipe_func: Callable[[], ConfigContainer],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both 416-GPU H100 recipes use the TP1/PP13/VPP2/CP32 topology."""
+    """Both 416-GPU H100 recipes use the TP1/PP13/CP32 topology without VPP."""
     cfg = _build_recipe(recipe_func, monkeypatch)
 
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64

@@ -54,9 +54,10 @@ The initial recipes use BF16 and non-VPP pipeline segments. Pattern boundaries
 must begin on DSA compute layers. Full recomputation replays an entire pipeline
 stage to preserve forward-local top-k sharing, so memory and throughput must be
 remeasured. Selective `core_attn` recomputation is rejected because its backward
-replay does not preserve the forward-local DSA sharing state. GPU round-trip,
-parity, MTP, packed CP, training and Hybrid checkpoint
-resume require fresh verification. Historical GPT results do not verify Hybrid.
+replay does not preserve the forward-local DSA sharing state. Verified Hybrid
+conversion, forward correlation, inference, and GB200 training/resume results,
+including MTP and packed CP, are recorded below. Historical GPT results do not
+verify Hybrid.
 
 {/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 

@@ -4,8 +4,8 @@
 Megatron checkpoint conversion. It uses NeMo Run for both local execution and
 Slurm submission and selects one of two conversion backends:
 
-- `--device cpu`: CPU conversion, with optional distributed export across
-  Gloo ranks for checkpoints that cannot be exported on one host;
+- `--device cpu`: CPU conversion, with optional distributed import and export
+  across Gloo ranks for checkpoints that cannot be converted on one host;
 - `--device gpu`: distributed conversion with one process per GPU and TP, PP,
   EP, and ETP support.
 
@@ -178,9 +178,14 @@ CPU mode submits one task and does not request GPUs or GRES:
   --megatron-path /workspace/models/llama32-1b
 ```
 
-For a very large Megatron checkpoint, distribute only the export load and save
+For a very large Megatron checkpoint, distribute the export load and save
 across CPU processes. This uses Gloo, initializes every model shard on CPU, and
-enables distributed Hugging Face saving by default. It does not request GPUs:
+enables distributed Hugging Face saving by default. It does not request GPUs.
+CPU describes weight placement: model initialization can still require CUDA RNG
+state. The verified distributed GLM-5/5.2 CPU workflows require a visible CUDA
+device on each node, so select GPU-equipped nodes for those models.
+
+Example export launch:
 
 ```bash
 ./scripts/conversion/convert.sh export \
@@ -192,7 +197,7 @@ enables distributed Hugging Face saving by default. It does not request GPUs:
   --mem 0 \
   --exclusive \
   --account ACCOUNT \
-  --partition CPU_PARTITION \
+  --partition PARTITION \
   --container-image /path/to/megatron-bridge.sqsh \
   --mount /workspace \
   --hf-model MODEL \
@@ -221,7 +226,7 @@ remains GPU-only:
   --mem 0 \
   --exclusive \
   --account ACCOUNT \
-  --partition CPU_PARTITION \
+  --partition PARTITION \
   --container-image /path/to/megatron-bridge.sqsh \
   --mount /workspace \
   --hf-model MODEL \

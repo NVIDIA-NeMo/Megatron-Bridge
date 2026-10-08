@@ -10957,7 +10957,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
+          "bridge_commit": "6887e0393b07640feec3e891753d245bb52e6482",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -10975,9 +10975,9 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-manual-forward-pass",
-          "expected_result": "The pinned HF and Hybrid Megatron next-token results match at token 12089 (`Paris`). The HF side is a rank-0 memory-bounded BF16 SDPA reference forward of the immutable revision stored as input_ids plus last-token logits; the Megatron side is the 16-GB200 TP1/PP2/EP8/ETP1 Hybrid forward. Cosine similarity is 0.995756, maximum absolute logit difference is 1.171875, and mean absolute logit difference is 0.207517. The Hybrid DSA layers use AbsorbedMLA, which rejects inference contexts, so the comparison runs the plain full-prefix forward via --legacy-full-prefix.",
+          "expected_result": "The public model-comparison launcher completed the 16-GB200 TP1/PP2/EP8/ETP1 Hybrid forward within one NVLink domain. The pinned HF and Hybrid next-token predictions match at token 12089 (`Paris`). The HF side is a memory-bounded BF16 SDPA reference forward of the immutable revision, stored as input_ids plus last-token logits and checked against the same prompt. Cosine similarity is 0.995756, maximum absolute logit difference is 1.171875, and mean absolute logit difference is 0.207517. The Hybrid DSA layers use AbsorbedMLA, which rejects inference contexts, so the comparison uses --legacy-full-prefix.",
           "hardware": null,
-          "last_verified": "2026-09-22",
+          "last_verified": "2026-10-08",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.manual_forward_pass",
@@ -11345,7 +11345,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "fc668edc894255bc1d20043af179a09646046289",
+          "bridge_commit": "6887e0393b07640feec3e891753d245bb52e6482",
           "command_topologies": [
             {
               "expert_parallel": "8",
@@ -11363,9 +11363,9 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "glm5-2-manual-forward-pass",
-          "expected_result": "The pinned HF and Hybrid Megatron next-token results match at token 12089 (`Paris`). The HF side is a rank-0 memory-bounded BF16 SDPA reference forward of the immutable revision stored as input_ids plus last-token logits; the Megatron side is the 16-GB200 TP1/PP2/EP8/ETP1 Hybrid forward. Cosine similarity is 0.996149, maximum absolute logit difference is 1.125000, and mean absolute logit difference is 0.166074. The Hybrid DSA layers use AbsorbedMLA, which rejects inference contexts, so the comparison runs the plain full-prefix forward via --legacy-full-prefix.",
+          "expected_result": "The public model-comparison launcher completed the 16-GB200 TP1/PP2/EP8/ETP1 Hybrid forward within one NVLink domain. The pinned HF and Hybrid next-token predictions match at token 12089 (`Paris`). The HF side is a memory-bounded BF16 SDPA reference forward of the immutable revision, stored as input_ids plus last-token logits and checked against the same prompt. Cosine similarity is 0.996149, maximum absolute logit difference is 1.125000, and mean absolute logit difference is 0.166074. The Hybrid DSA layers use AbsorbedMLA, which rejects inference contexts, so the comparison uses --legacy-full-prefix.",
           "hardware": null,
-          "last_verified": "2026-09-22",
+          "last_verified": "2026-10-08",
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.manual_forward_pass",
