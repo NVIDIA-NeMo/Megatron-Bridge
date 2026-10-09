@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from megatron.bridge.models import ColumnParallelMapping, RowParallelMapping
-from megatron.bridge.models._deprecation import raise_if_removed_model
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -65,7 +64,6 @@ class NemotronVLBridge(MegatronModelBridge):
         return bridge
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):  # type: ignore[override]
-        raise_if_removed_model(hf_pretrained.config)
         hf_config = hf_pretrained.config
 
         if _is_legacy_v2_omni_config(hf_config):

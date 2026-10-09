@@ -18,7 +18,6 @@ import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import MistralForCausalLM
 
-from megatron.bridge.models._deprecation import raise_if_removed_model
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -46,7 +45,6 @@ class MistralBridge(MegatronModelBridge):
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
-        raise_if_removed_model(hf_pretrained.config)
         hf_config = hf_pretrained.config
 
         if getattr(hf_config, "rope_scaling", None) is not None and hf_config.rope_scaling.get("rope_type") == "yarn":

@@ -304,14 +304,14 @@ def test_flat_environment_preparation_defaults_missing_recipe_environment(model_
 
 def test_missing_exact_gpu_recipe_uses_canonical_family_recipe(monkeypatch):
     """Weak scaling falls back to the canonical recipe for the same workload."""
-    canonical_name = "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config"
+    canonical_name = "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config"
     args = SimpleNamespace(
         model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
+        model_recipe_name="nemotron_3_super",
         task="pretrain",
         num_gpus=8,
         gpu="b300",
-        compute_dtype="fp8_cs",
+        compute_dtype="fp8_mx",
         config_variant=None,
         global_batch_size=None,
     )
@@ -399,11 +399,11 @@ def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
 def test_missing_perf_recipe_family_reports_requested_workload(monkeypatch):
     args = SimpleNamespace(
         model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
+        model_recipe_name="nemotron_3_super",
         task="pretrain",
         num_gpus=8,
         gpu="b300",
-        compute_dtype="fp8_cs",
+        compute_dtype="fp8_mx",
         config_variant=None,
         global_batch_size=None,
     )
@@ -412,14 +412,14 @@ def test_missing_perf_recipe_family_reports_requested_workload(monkeypatch):
         raise utils.PerfRecipeNotFoundError("missing exact 8-GPU recipe")
 
     def missing_family(**_kwargs):
-        raise ValueError("No flat perf recipe found for nemotronh_56b/pretrain/b300/fp8_cs/default")
+        raise ValueError("No flat perf recipe found for nemotron_3_super/pretrain/b300/fp8_mx/default")
 
     monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
     monkeypatch.setattr(run_script, "get_perf_optimized_recipe", missing_family)
 
     with pytest.raises(
         ValueError,
-        match=r"nemotronh_56b/pretrain/b300/fp8_cs/default",
+        match=r"nemotron_3_super/pretrain/b300/fp8_mx/default",
     ):
         run_script._prepare_perf_recipe(args, [])
 
@@ -474,9 +474,9 @@ def test_exp_name_rejects_fractional_data_parallel_weak_scaling(monkeypatch):
         utils.get_exp_name_config(
             args,
             model_family_name="nemotronh",
-            model_recipe_name="nemotronh_56b",
+            model_recipe_name="nemotron_3_super",
             gpu="b300",
-            compute_dtype="fp8_cs",
+            compute_dtype="fp8_mx",
             task="pretrain",
         )
 

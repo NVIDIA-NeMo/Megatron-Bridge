@@ -221,8 +221,6 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
 
 Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the full list of model bridges.
 
-> **Deprecation notice:** Nemotron H v1 (4B/8B/47B/56B) is no longer actively maintained and will be removed in Megatron Bridge 0.7.0.
-
 | Family | Supported variants |
 |----------------|--------------------|
 | [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
@@ -244,7 +242,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
 | [**Muse Glimmer**](docs/models/muse_glimmer/muse-glimmer.md) | Muse Glimmer 30B |
-| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H v1 (deprecated), Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Nemotron-3 Nano Omni |
+| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
 | [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |

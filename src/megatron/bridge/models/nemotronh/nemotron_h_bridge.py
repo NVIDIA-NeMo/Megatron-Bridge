@@ -18,7 +18,6 @@ import torch
 from megatron.core.activations import squared_relu
 from megatron.core.models.hybrid.hybrid_model import HybridModel
 
-from megatron.bridge.models._deprecation import raise_if_removed_model
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -247,7 +246,7 @@ class NemotronHBridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
 
@@ -347,7 +346,6 @@ class NemotronHBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
         """Convert HuggingFace Nemotron-H config to HybridModelProvider."""
-        raise_if_removed_model(hf_pretrained.config)
         # Use base class for common config conversion
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config

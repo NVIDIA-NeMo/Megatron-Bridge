@@ -25,7 +25,6 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
-from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     MixedPrecisionConfig,
@@ -60,11 +59,6 @@ def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
-
-
-def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
-    cfg.train.global_batch_size = global_batch_size
-    return cfg
 
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:

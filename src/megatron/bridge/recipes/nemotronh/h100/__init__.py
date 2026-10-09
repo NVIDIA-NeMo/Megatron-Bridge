@@ -16,7 +16,6 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import *  # noqa: F4
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano_4b import *  # noqa: F403
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import *  # noqa: F403
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import *  # noqa: F403
-from megatron.bridge.recipes.nemotronh.h100.nemotronh import *  # noqa: F403
 
 
 __all__ = [
@@ -40,16 +39,4 @@ __all__ = [
     "nemotron_3_ultra_pretrain_24gpu_h100_bf16_config",
     "nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config",
     "nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config",
-    "nemotronh_47b_peft_4gpu_h100_bf16_config",
-    "nemotronh_47b_pretrain_8gpu_h100_bf16_config",
-    "nemotronh_47b_sft_16gpu_h100_bf16_config",
-    "nemotronh_4b_peft_1gpu_h100_bf16_config",
-    "nemotronh_4b_pretrain_1gpu_h100_bf16_config",
-    "nemotronh_4b_sft_1gpu_h100_bf16_config",
-    "nemotronh_56b_peft_4gpu_h100_bf16_config",
-    "nemotronh_56b_pretrain_8gpu_h100_bf16_config",
-    "nemotronh_56b_sft_8gpu_h100_bf16_config",
-    "nemotronh_8b_peft_1gpu_h100_bf16_config",
-    "nemotronh_8b_pretrain_2gpu_h100_bf16_config",
-    "nemotronh_8b_sft_2gpu_h100_bf16_config",
 ]

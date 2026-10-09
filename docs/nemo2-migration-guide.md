@@ -30,7 +30,7 @@ Megatron Bridge supports the following model families through bridge mappings an
 - **Llama**: Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek V3, DeepSeek V4
-- **Nemotron**: Nemotron 3, Nemotron 3.5, Nemotron H (deprecated)
+- **Nemotron**: Nemotron 3, Nemotron 3.5
 - **NVIDIA Mamba**: Mamba variants and hybrid models
 
 For a complete list of bridge mappings, providers, and their parameters, see {py:mod}`bridge.models`.

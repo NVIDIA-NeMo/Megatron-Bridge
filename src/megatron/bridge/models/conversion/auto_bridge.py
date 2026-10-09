@@ -42,12 +42,6 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
-from megatron.bridge.models._deprecation import (
-    _removed_model_name,
-    raise_if_removed_model,
-    reject_legacy_nemotron_path,
-    warn_if_deprecated_model,
-)
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -378,19 +372,6 @@ class AutoBridge(Generic[MegatronModelT]):
         self.hf_pretrained: (
             PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig
         ) = hf_pretrained
-        if isinstance(hf_pretrained, PretrainedConfig):
-            hf_config = hf_pretrained
-            model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
-        else:
-            # Pretrained wrappers load their config lazily. A deprecation
-            # warning must not turn construction into an HF Hub request.
-            wrapper_state = vars(hf_pretrained)
-            hf_config = wrapper_state.get("_config")
-            model_name_or_path = wrapper_state.get("_model_name_or_path")
-        if hf_config is not None:
-            raise_if_removed_model(hf_config, model_name_or_path)
-            warn_if_deprecated_model(hf_config, model_name_or_path)
-
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.text_only = getattr(hf_pretrained, "_text_only", False) is True
@@ -439,7 +420,7 @@ class AutoBridge(Generic[MegatronModelT]):
             True if this bridge can handle the model, False otherwise
         """
         architectures = getattr(config, "architectures", [])
-        if not architectures or _removed_model_name(config) is not None:
+        if not architectures:
             return False
         return any(arch.endswith(SUPPORTED_HF_ARCHITECTURES) for arch in architectures)
 
@@ -467,7 +448,6 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
-        reject_legacy_nemotron_path(hf_model_id)
 
         from transformers import AutoConfig
 
@@ -620,7 +600,6 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> # Works with local paths too
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
-        reject_legacy_nemotron_path(path)
 
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
@@ -2341,7 +2320,6 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 hf_config = self.hf_pretrained
 
-        raise_if_removed_model(hf_config, getattr(self.hf_pretrained, "_model_name_or_path", None))
         bridge = model_bridge.get_model_bridge(self._causal_lm_architecture, hf_config=hf_config)
         bridge.export_weight_dtype = self.export_weight_dtype
         return bridge
@@ -2456,7 +2434,6 @@ class AutoBridge(Generic[MegatronModelT]):
 
     @classmethod
     def _validate_config(cls, config: PretrainedConfig, path: str | None = None) -> None:
-        raise_if_removed_model(config, path)
         # Check if this is a causal LM model
         if not cls.supports(config):
             architectures = getattr(config, "architectures", [])

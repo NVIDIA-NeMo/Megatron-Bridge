@@ -35,7 +35,7 @@ _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c
 _NEMOTRONH_RECIPE_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in getattr(_nemotronh_module, "__all__", [])
-    if callable(getattr(_nemotronh_module, name, None)) and not name.startswith("nemotronh_")
+    if callable(getattr(_nemotronh_module, name, None))
 ]
 
 

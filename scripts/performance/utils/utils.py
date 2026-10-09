@@ -75,8 +75,6 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
     ("llama3_8b", "pretrain", "gb300", "nvfp4", None): 8,
     ("llama3_8b", "pretrain", "h100", "bf16", None): 8,
     ("llama3_8b", "pretrain", "h100", "fp8cs", None): 8,
-    ("nemotronh_56b", "pretrain", "b200", "fp8cs", None): 64,
-    ("nemotronh_56b", "pretrain", "gb300", "fp8cs", None): 64,
     ("qwen3_30b_a3b", "pretrain", "b200", "bf16", None): 8,
     ("qwen3_30b_a3b", "pretrain", "b200", "fp8cs", None): 8,
     ("qwen3_30b_a3b", "pretrain", "gb200", "bf16", None): 8,

@@ -112,8 +112,6 @@ navigation:
       path: ./nightly/pages/models/moonlight/moonlight.mdx
     section: Moonlight
   - contents:
-    - page: Nemotron H
-      path: ./nightly/pages/models/nemotron/nemotronh.mdx
     - page: Nemotron 3 Nano 30B-A3B
       path: ./nightly/pages/models/nemotron/nemotron3-nano.mdx
     - page: Nemotron 3 Nano 4B

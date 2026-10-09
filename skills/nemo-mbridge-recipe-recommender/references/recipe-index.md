@@ -97,7 +97,6 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 | Recipe | Mode | TP | PP | EP | Notes |
 |--------|------|----|----|-----|-------|
-| `nemotronh_{4b,8b,47b,56b}_*_config` | P/S/PEFT | 1–8 | 1–4 | — | Dense SSM-hybrid |
 | `nemotron_3_nano_*_config` | P/S/PEFT | varies | 1 | 8 | MoE + Mamba |
 | `nemotron_3_super_*_config` | P/S/PEFT | 4 | 1 | 8 | MoE + Mamba, ~40% CUDA graph gain |
 
@@ -192,7 +191,6 @@ SFT/LoRA variants also exist (e.g. 8B SFT with packed sequences, 70B SFT on 32 G
 |-------|------|-----------|--------------|
 | Nemotron 3 Nano (30B MoE+Mamba) | 8–16 | H100, B200, B300, GB200, GB300 | TE CUDA graphs (attn+mamba+moe), HybridEP |
 | Nemotron 3 Super | 64 | H100, B200, B300, GB200, GB300 | TE CUDA graphs, EP=64 |
-| NemotronH 56B | 64 | H100, B200, B300 | TP=2–8, TE graphs (mamba+attn) |
 
 ### GPT-OSS
 

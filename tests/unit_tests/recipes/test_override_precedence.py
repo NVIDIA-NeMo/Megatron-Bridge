@@ -236,7 +236,7 @@ class TestRecomputePrecedence:
 
 class TestGbsPrecedence:
     @staticmethod
-    def _nemotronh_64gpu_base_recipe():
+    def _mock_64gpu_base_recipe():
         return SimpleNamespace(
             optimizer=SimpleNamespace(optimizer="adam"),
             model=SimpleNamespace(
@@ -249,8 +249,8 @@ class TestGbsPrecedence:
             comm_overlap=None,
         )
 
-    def test_nemotronh_b300_64gpu_recipe_weak_scales_to_8_gpus(self, monkeypatch):
-        """Nemotron-H preserves samples per GPU when its canonical recipe is reused."""
+    def test_mock_recipe_weak_scales_from_64_to_8_gpus(self, monkeypatch):
+        """Reusing a canonical recipe preserves samples per GPU."""
         from utils import overrides as override_utils
 
         base_config = SimpleNamespace(
@@ -268,12 +268,12 @@ class TestGbsPrecedence:
         monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
 
         recipe = override_utils.set_post_overrides(
-            self._nemotronh_64gpu_base_recipe(),
+            self._mock_64gpu_base_recipe(),
             model_family_name="nemotronh",
-            model_recipe_name="nemotronh_56b",
+            model_recipe_name="nemotron_3_super",
             gpu="b300",
             num_gpus=8,
-            compute_dtype="fp8_cs",
+            compute_dtype="fp8_mx",
             task="pretrain",
         )
 
@@ -293,16 +293,16 @@ class TestGbsPrecedence:
             global_batch_size=192,
         )
         monkeypatch.setattr(override_utils, "get_workload_base_config", lambda *_args, **_kwargs: base_config)
-        recipe = self._nemotronh_64gpu_base_recipe()
+        recipe = self._mock_64gpu_base_recipe()
         recipe.model.tensor_model_parallel_size = 1
 
         recipe = override_utils.set_post_overrides(
             recipe,
             model_family_name="nemotronh",
-            model_recipe_name="nemotronh_56b",
+            model_recipe_name="nemotron_3_super",
             gpu="b300",
             num_gpus=8,
-            compute_dtype="fp8_cs",
+            compute_dtype="fp8_mx",
             task="pretrain",
         )
 

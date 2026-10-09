@@ -377,11 +377,8 @@ def test_dense_legacy_v2_checkpoint_is_rejected():
     hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = hf_config
 
-    assert not AutoBridge.supports(hf_config)
-    with pytest.raises(ValueError, match="Nano v2.*removed"):
-        AutoBridge.from_hf_config(hf_config)
     bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
-    with pytest.raises(ValueError, match="Nano v2.*removed"):
+    with pytest.raises(ValueError, match="Only Nemotron Omni MoE"):
         bridge.provider_bridge(hf_pretrained)
 
 

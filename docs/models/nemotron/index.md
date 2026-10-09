@@ -5,7 +5,6 @@ Nemotron model documentation is organized by model variant.
 ```{toctree}
 :hidden:
 
-nemotronh.md
 nemotron3-nano.md
 nemotron3-nano-4b.md
 nemotron3-super.md
@@ -18,7 +17,6 @@ nemotron-3-omni.md
 
 | Variant | Guide |
 |---------|-------|
-| Nemotron H (deprecated) | [nemotronh.md](nemotronh.md) |
 | Nemotron-3 Nano 30B-A3B | [nemotron3-nano.md](nemotron3-nano.md) |
 | Nemotron-3 Nano 4B | [nemotron3-nano-4b.md](nemotron3-nano-4b.md) |
 | Nemotron-3 Super | [nemotron3-super.md](nemotron3-super.md) |
