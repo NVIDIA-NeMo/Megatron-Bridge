@@ -74,87 +74,87 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-lightning-pretrain-h100" aria-controls="nemotron-3-5-lightning-pretrain-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-lightning-pretrain-h100" aria-controls="nemotron-3-5-lightning-pretrain-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-pretrain-gb200" aria-controls="nemotron-3-5-lightning-pretrain-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-pretrain-gb200" aria-controls="nemotron-3-5-lightning-pretrain-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-pretrain-fsdp-gb200-bf16" aria-controls="nemotron-3-5-lightning-pretrain-fsdp-gb200-bf16" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-pretrain-fsdp-gb200-bf16" aria-controls="nemotron-3-5-lightning-pretrain-fsdp-gb200-bf16" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · FSDP · GB200 · bf16</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="fp8_mx" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-pretrain-fsdp-gb200-fp8-mx" aria-controls="nemotron-3-5-lightning-pretrain-fsdp-gb200-fp8-mx" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="fp8_mx" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-pretrain-fsdp-gb200-fp8-mx" aria-controls="nemotron-3-5-lightning-pretrain-fsdp-gb200-fp8-mx" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · FSDP · GB200 · fp8_mx</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">FP8 MX</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-lightning-sft-h100" aria-controls="nemotron-3-5-lightning-sft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-lightning-sft-h100" aria-controls="nemotron-3-5-lightning-sft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-sft-gb200" aria-controls="nemotron-3-5-lightning-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-sft-gb200" aria-controls="nemotron-3-5-lightning-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-lightning-sft-long-context-h100" aria-controls="nemotron-3-5-lightning-sft-long-context-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-lightning-sft-long-context-h100" aria-controls="nemotron-3-5-lightning-sft-long-context-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-sft-long-context-gb200" aria-controls="nemotron-3-5-lightning-sft-long-context-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-sft-long-context-gb200" aria-controls="nemotron-3-5-lightning-sft-long-context-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Long Context · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-lightning-peft-h100" aria-controls="nemotron-3-5-lightning-peft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-lightning-peft-h100" aria-controls="nemotron-3-5-lightning-peft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-peft-gb200" aria-controls="nemotron-3-5-lightning-peft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-peft-gb200" aria-controls="nemotron-3-5-lightning-peft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>LoRA · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-lightning-pretrain-performance-h100" aria-controls="nemotron-3-5-lightning-pretrain-performance-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-lightning-pretrain-performance-h100" aria-controls="nemotron-3-5-lightning-pretrain-performance-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Benchmark · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-lightning-pretrain-performance-gb200" aria-controls="nemotron-3-5-lightning-pretrain-performance-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-lightning-pretrain-performance-gb200" aria-controls="nemotron-3-5-lightning-pretrain-performance-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Benchmark · GB200</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -267,43 +267,43 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-5-lightning-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-pretrain-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.18927</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>7.239111</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>36,869.270 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>200.180 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>7,110.095 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>68.547 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>73.893 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -319,50 +319,50 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete eight-H100 nodes, the real-data RP2 CP2/p2p run completes exactly 20 sequence-length-8,192, GBS/MBS 512/1 optimizer steps with natural routing and finite LM/MTP-1/MTP-2 losses. LM loss is 12.18927 -&gt; 7.239111, steps 11-20 average 36,869.270 ms / 200.180 TFLOP/s/GPU, no iteration is skipped or NaN, and complete 20-file, 430-GiB checkpoints are written at steps 10 and 20.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-pretrain-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.17197</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>5.798433</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>21,483.630 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>686.920 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>24,404.070 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>158.220 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>162.290 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -378,50 +378,50 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, the sequence-length-8,192, GBS/MBS 512/2 real-data RP2 convergence-verification run completes exactly 100 finite-loss optimizer steps with natural routing, Transformer Engine fused cross entropy, CUDA graphs disabled, finite LM/MTP-1/MTP-2 losses, and no skipped or NaN iterations. LM loss is 12.171970 -&gt; 5.798433; real-data steps 91-100 average 21,483.630 ms / 686.920 TFLOP/s/GPU with 158.220 GiB peak allocated and 162.290 GiB peak reserved memory. Complete 15-file, 430-GiB checkpoints with distributed metadata are written at steps 50 and 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-pretrain-fsdp-gb200-bf16" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-pretrain-fsdp-gb200-bf16" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · FSDP · GB200 · bf16</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.17197</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>5.797082</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>26,665.830 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>553.430 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>19,661.417 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>160.760 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>166.230 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -437,50 +437,50 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, the sequence-length-8,192, GBS/MBS 512/2 BF16 real-data RP2 FSDP convergence-verification run completes exactly 100 finite-loss optimizer steps with natural routing, Transformer Engine fused cross entropy, active MTP-1/MTP-2 losses, and no skipped or NaN iterations. LM loss is 12.171970 -&gt; 5.797082; real-data steps 91-100 average 26,665.830 ms / 553.430 TFLOP/s/GPU with 160.760 GiB peak allocated and 166.230 GiB peak reserved memory. Complete 14-file, 369-GiB FSDP checkpoints with distributed metadata are written at steps 50 and 100. Do not use this run to claim convergence neutrality against ordinary BF16 pretraining: 188 of 300 shared LM/MTP loss values exceed the 1% loss gate, with a maximum relative difference of 12.95%, despite the similar final loss.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-pretrain-fsdp-gb200-fp8-mx" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-pretrain-fsdp-gb200-fp8-mx" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · FSDP · GB200 · fp8_mx</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>FP8 MX</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-24</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.19034</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>3.913218</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>13,917.000 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>795.390 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>28,254.365 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>169.540 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>173.860 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -496,42 +496,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, the sequence-length-8,192 MXFP8 FSDP recipe completes exactly 20 finite-loss optimizer steps with GBS/MBS 384/3, active MTP-1 and MTP-2 losses, and no skipped or NaN iterations. LM loss is 12.19034 -&gt; 3.913218, and steps 11-20 average 13,917.000 ms / 795.390 TFLOP/s/GPU with 169.54 GiB peak allocated and 173.86 GiB peak reserved memory. This run must not be compared with the BF16 real-data pretrain or BF16 FSDP runs: it uses MXFP8, mock data, forced routing, GBS/MBS 384/3, and no CUDA graphs.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-sft-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-03</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4406566</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2757806</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>9,887.800 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>79.240 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,313.983 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -547,50 +547,50 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed OpenMathInstruct-2 full SFT completes 100 finite-loss steps with active MTP gradients, LM loss 0.4406566 -&gt; 0.2757806, finite MTP-1 loss 0.7371141 -&gt; 0.4133309, and no skipped or NaN iterations. Steps 91-100 average 9,887.800 ms / 79.240 TFLOP/s/GPU, and the complete reloadable full-model checkpoint is written at step 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-04</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4407797</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2762039</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>6,795.830 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>256.990 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>9,643.561 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>101.510 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>103.960 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -606,42 +606,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On two complete four-GPU GB200 nodes in one segment-2 NVLink domain, packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss optimizer steps with active MTP gradients. LM loss is 0.4407797 -&gt; 0.2762039, MTP-1 loss is 0.7373838 -&gt; 0.4146959, and MTP-2 loss is 0.8092746 -&gt; 0.4744196. Steps 91-100 average 6,795.830 ms / 256.990 TFLOP/s/GPU with 101.510 GiB peak allocated and 103.960 GiB peak reserved memory. No iteration is skipped or NaN, and the complete 12-file reloadable full-model checkpoint is written at step 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-sft-long-context-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-03</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4268321</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2650192</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>40,863.010 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>188.950 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>6,415.191 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -657,42 +657,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268321 -&gt; 0.2650192 and MTP-1 loss 0.7322379 -&gt; 0.4439273. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 40,863.010 ms / 188.950 TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 20 files, distributed metadata, saved run configuration and training state, with latest marker 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-sft-long-context-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Long Context · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-04</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4268995</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2649925</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>129,692.530 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>119.030 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>4,042.546 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -708,42 +708,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268995 -&gt; 0.2649925 and MTP-1 loss 0.7322624 -&gt; 0.4439029. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 129,692.530 ms / 119.030 TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata, saved run configuration and training state, 12 files, and a latest marker of 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-peft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-peft-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-03</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4406696</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2854756</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>16,900.360 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>92.890 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,877.787 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -759,42 +759,42 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss steps with adapters on the MTP layers, LM loss 0.4406696 -&gt; 0.2854756, finite MTP-1 loss 0.7370828 -&gt; 0.4362708, and no skipped or NaN iterations. The complete adapter checkpoint is written at step 100 and reloads over the pinned base checkpoint at step 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-peft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-peft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>LoRA · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-04</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>0.4406088</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.2855029</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>19,230.400 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>81.780 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>3,407.937 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -810,50 +810,50 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss steps with 48 rank-local adapter attachment records covering MTP attention, expert, and shared-expert layers, LM loss 0.4406088 -&gt; 0.2855029, finite MTP-1 loss 0.7371238 -&gt; 0.4362065, and no skipped or NaN iterations. The complete adapter checkpoint is written at step 100 and reloads over the pinned base checkpoint at step 100.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-pretrain-performance-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-pretrain-performance-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Benchmark · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-03</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.16197</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.01217863</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>18,467.280 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>399.580 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>14,195.052 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>72.066 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>75.340 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -869,50 +869,50 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 16x H100, the exact mock-data, force-balanced BF16 performance recipe completes exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or NaN iterations. Transformer Engine CUDA graphs cover attention and Mamba scopes, while expert-FC1 activations are offloaded. Steps 41-50 average 18,467.280 ms and 399.580 model TFLOP/s/GPU; peak rank-0 allocated/reserved memory is 72.066/75.340 GiB. This benchmark-only run stores Adam moments in BF16, so its losses are not convergence-comparable with FP32 optimizer-state runs.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>
     <article id="nemotron-3-5-lightning-pretrain-performance-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-lightning-pretrain-performance-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Benchmark · GB200</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-28</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.1825</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>0.03325584</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>18,236.060 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>809.220 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>28,750.070 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
           <div>
             <dt>Peak allocated memory</dt>
-            <dd>156.850 GiB</dd>
+            <dd>None GiB</dd>
           </div>
           <div>
             <dt>Peak reserved memory</dt>
-            <dd>161.260 GiB</dd>
+            <dd>None GiB</dd>
           </div>
         </dl>
       </section>
@@ -928,7 +928,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 8x GB200, the exact mock-data BF16 performance recipe completes exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or NaN iterations. Transformer Engine CUDA graphs cover attention, Mamba, MoE-router, and MoE-preprocess scopes. Steps 41-50 average 18,236.060 ms and 809.220 model TFLOP/s/GPU; peak rank-0 allocated/reserved memory is 156.850/161.260 GiB.
+        <p>Verification is pending on the card default revision, which contains this recipe. The originally recorded revision did not contain this recipe, so its verification date and metrics are not attributed to this command. A fresh run must complete the command with finite losses and no skipped or NaN iterations. Record all metrics from that run before marking this item verified.
 </p>
       </section>
     </article>

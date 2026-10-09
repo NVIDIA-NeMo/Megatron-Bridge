@@ -11,9 +11,13 @@ summary: >
   while adopting the corresponding hardware performance recipe's execution
   stack. The H100 performance leaf uses BF16 Adam moments in a benchmark-only
   workload and is not convergence-comparable with FP32 optimizer-state runs.
-  Nemotron 3.5 Lightning support verification covers conversion, inference,
-  and training on H100 and GB200. Recipe names, work paths, and this
-  verification-card path use the public Lightning name. The evidence used the 26.08
+  Nemotron 3.5 Lightning support verification covers conversion and
+  inference. Training, FSDP, and performance verification on H100 and GB200
+  is pending on the card default revision; the revisions originally recorded
+  for those items did not contain the Lightning recipe names their commands
+  use, so their dates and metrics are not attributed to these commands.
+  Recipe names, work paths, and this verification-card path use the public
+  Lightning name. The evidence used the 26.08
   release-candidate software stack; the environment records its corresponding
   public 26.08 base container.
 verification_index:
@@ -27,14 +31,14 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
-      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
   performance:
-    H100: verified
-    GB200: verified
+    H100: unverified
+    GB200: unverified
   fsdp:
-    GB200: verified
+    GB200: unverified
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16
   hf_revision: b3caaabed0263651a17dc1f2d4ce97e794f76c44  # pragma: allowlist secret
@@ -42,7 +46,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08
-  bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
+  bridge_commit: bcd2d134c59d096f9f9231fd03d7d5ddede3665e  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -65,6 +69,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --tp 1 --pp 1 --ep 8 --etp 1
@@ -99,6 +104,7 @@ items:
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8 --tp 1 --pp 1 --ep 8 --etp 1
@@ -116,6 +122,7 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
+    bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -134,6 +141,7 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: 619a2df1da9517b4408ea475b428bf2aba618c8f  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/hf_to_megatron_generate_text.py
@@ -149,9 +157,8 @@ items:
 
   pretrain:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 33ede31740aa44183a253a62a4bcf968f176e161  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
         context_parallel_size: 2
@@ -173,28 +180,26 @@ items:
         --save_interval 10 checkpoint.async_save=false
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-28
+      last_verified: null
       metrics:
-        initial_loss: 12.18927
-        final_loss: 7.239111
-        last_10_steps_step_time_ms_avg: 36869.270
-        # Real RP2 convergence-verification run, not a mock-data benchmark.
-        last_10_steps_model_tflops_per_gpu_avg: 200.180
-        last_10_steps_tokens_per_second_per_gpu_avg: 7110.095
-        peak_allocated_memory_gib: 68.547
-        peak_reserved_memory_gib: 73.893
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On two complete eight-H100 nodes, the real-data RP2 CP2/p2p run
-        completes exactly 20 sequence-length-8,192, GBS/MBS 512/1 optimizer
-        steps with natural routing and finite LM/MTP-1/MTP-2 losses. LM loss is
-        12.18927 -> 7.239111, steps 11-20 average 36,869.270 ms / 200.180
-        TFLOP/s/GPU, no iteration is skipped or NaN, and complete 20-file,
-        430-GiB checkpoints are written at steps 10 and 20.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: hybridep
       command: >
@@ -212,36 +217,30 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/pretrain-reference
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-28
+      last_verified: null
       metrics:
-        initial_loss: 12.171970
-        final_loss: 5.798433
-        last_10_steps_step_time_ms_avg: 21483.630
-        # Real RP2 convergence-verification run, not a mock-data benchmark.
-        last_10_steps_model_tflops_per_gpu_avg: 686.920
-        last_10_steps_tokens_per_second_per_gpu_avg: 24404.070
-        peak_allocated_memory_gib: 158.220
-        peak_reserved_memory_gib: 162.290
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
-        the sequence-length-8,192, GBS/MBS 512/2 real-data RP2
-        convergence-verification run completes exactly 100 finite-loss
-        optimizer steps with natural routing, Transformer Engine fused cross
-        entropy, CUDA graphs disabled, finite LM/MTP-1/MTP-2 losses, and no
-        skipped or NaN iterations. LM loss is 12.171970 -> 5.798433;
-        real-data steps 91-100 average 21,483.630 ms / 686.920 TFLOP/s/GPU
-        with 158.220 GiB peak allocated and 162.290 GiB peak reserved memory.
-        Complete 15-file, 430-GiB checkpoints with distributed metadata are
-        written at steps 50 and 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
   pretrain_fsdp:
     GB200:
-      status: verified
+      status: unverified
       variants:
         bf16:
-          status: verified
+          status: unverified
           precision: bf16
-          bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
           enabled_features:
             moe_dispatcher: hybridep
             megatron_fsdp: optim_grads_params
@@ -260,36 +259,26 @@ items:
             --save_dir work/model-verification/nemotron-3.5-lightning-gb200/pretrain-fsdp
             logger.log_interval=1 logger.log_throughput=true
             logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-          last_verified: 2026-07-28
+          last_verified: null
           metrics:
-            initial_loss: 12.171970
-            final_loss: 5.797082
-            last_10_steps_step_time_ms_avg: 26665.830
-            # Real RP2 convergence-verification run, not a mock-data benchmark.
-            last_10_steps_model_tflops_per_gpu_avg: 553.430
-            last_10_steps_tokens_per_second_per_gpu_avg: 19661.417
-            peak_allocated_memory_gib: 160.760
-            peak_reserved_memory_gib: 166.230
+            initial_loss: null
+            final_loss: null
+            last_10_steps_step_time_ms_avg: null
+            last_10_steps_model_tflops_per_gpu_avg: null
+            last_10_steps_tokens_per_second_per_gpu_avg: null
+            peak_allocated_memory_gib: null
+            peak_reserved_memory_gib: null
           expected_result: >
-            On two complete four-GPU GB200 nodes in one segment-2 NVLink
-            domain, the sequence-length-8,192, GBS/MBS 512/2 BF16 real-data
-            RP2 FSDP convergence-verification run completes exactly 100
-            finite-loss optimizer steps with natural routing, Transformer
-            Engine fused cross entropy, active MTP-1/MTP-2 losses, and no
-            skipped or NaN iterations. LM loss is 12.171970 -> 5.797082;
-            real-data steps 91-100 average 26,665.830 ms / 553.430
-            TFLOP/s/GPU with 160.760 GiB peak allocated and 166.230 GiB peak
-            reserved memory. Complete 14-file, 369-GiB FSDP checkpoints with
-            distributed metadata are written at steps 50 and 100. Do not use
-            this run to claim convergence neutrality against ordinary BF16
-            pretraining: 188 of 300 shared LM/MTP loss values exceed the 1%
-            loss gate, with a maximum relative difference of 12.95%, despite
-            the similar final loss.
+            Verification is pending on the card default revision, which contains
+            this recipe. The originally recorded revision did not contain this
+            recipe, so its verification date and metrics are not attributed to this
+            command. A fresh run must complete the command with finite losses and
+            no skipped or NaN iterations. Record all metrics from that run before
+            marking this item verified.
 
         fp8_mx:
-          status: verified
+          status: unverified
           precision: fp8_mx
-          bridge_commit: 968ab25dd0e8b76801e757ee9976d9806af9c11a  # pragma: allowlist secret
           enabled_features:
             moe_dispatcher: hybridep
             megatron_fsdp: optim_grads_params
@@ -298,30 +287,26 @@ items:
             --additional-slurm-params segment=2
             --recipe nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config
             --mode pretrain --max_steps 20
-          last_verified: 2026-07-24
+          last_verified: null
           metrics:
-            initial_loss: 12.19034
-            final_loss: 3.913218
-            last_10_steps_step_time_ms_avg: 13917.000
-            # Mock-data performance run; not a convergence measurement.
-            last_10_steps_model_tflops_per_gpu_avg: 795.390
-            last_10_steps_tokens_per_second_per_gpu_avg: 28254.365
-            peak_allocated_memory_gib: 169.54
-            peak_reserved_memory_gib: 173.86
+            initial_loss: null
+            final_loss: null
+            last_10_steps_step_time_ms_avg: null
+            last_10_steps_model_tflops_per_gpu_avg: null
+            last_10_steps_tokens_per_second_per_gpu_avg: null
+            peak_allocated_memory_gib: null
+            peak_reserved_memory_gib: null
           expected_result: >
-            On two complete four-GPU GB200 nodes in one segment-2 NVLink
-            domain, the sequence-length-8,192 MXFP8 FSDP recipe completes
-            exactly 20 finite-loss optimizer steps with GBS/MBS 384/3, active
-            MTP-1 and MTP-2 losses, and no skipped or NaN iterations. LM loss
-            is 12.19034 -> 3.913218, and steps 11-20 average 13,917.000 ms /
-            795.390 TFLOP/s/GPU with 169.54 GiB peak allocated and 173.86 GiB
-            peak reserved memory. This run must not be compared with the BF16
-            real-data pretrain or BF16 FSDP runs: it uses MXFP8, mock data,
-            forced routing, GBS/MBS 384/3, and no CUDA graphs.
+            Verification is pending on the card default revision, which contains
+            this recipe. The originally recorded revision did not contain this
+            recipe, so its verification date and metrics are not attributed to this
+            command. A fresh run must complete the command with finite losses and
+            no skipped or NaN iterations. Record all metrics from that run before
+            marking this item verified.
 
   sft:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -332,24 +317,24 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-lightning-h100/sft-checkpoints
-      last_verified: 2026-08-03
+      last_verified: null
       metrics:
-        initial_loss: 0.4406566
-        final_loss: 0.2757806
-        last_10_steps_step_time_ms_avg: 9887.800
-        last_10_steps_model_tflops_per_gpu_avg: 79.240
-        last_10_steps_tokens_per_second_per_gpu_avg: 3313.983
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Packed OpenMathInstruct-2 full SFT completes 100 finite-loss steps with
-        active MTP gradients, LM loss 0.4406566 -> 0.2757806, finite MTP-1
-        loss 0.7371141 -> 0.4133309, and no skipped or NaN iterations. Steps
-        91-100 average 9,887.800 ms / 79.240 TFLOP/s/GPU, and the complete
-        reloadable full-model checkpoint is written at step 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: hybridep
@@ -360,28 +345,26 @@ items:
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/sft-checkpoints
-      last_verified: 2026-08-04
+      last_verified: null
       metrics:
-        initial_loss: 0.4407797
-        final_loss: 0.2762039
-        last_10_steps_step_time_ms_avg: 6795.830
-        last_10_steps_model_tflops_per_gpu_avg: 256.990
-        last_10_steps_tokens_per_second_per_gpu_avg: 9643.561
-        peak_allocated_memory_gib: 101.510
-        peak_reserved_memory_gib: 103.960
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
-        packed OpenMathInstruct-2 full SFT completes exactly 100 finite-loss
-        optimizer steps with active MTP gradients. LM loss is 0.4407797 ->
-        0.2762039, MTP-1 loss is 0.7373838 -> 0.4146959, and MTP-2 loss is
-        0.8092746 -> 0.4744196. Steps 91-100 average 6,795.830 ms / 256.990
-        TFLOP/s/GPU with 101.510 GiB peak allocated and 103.960 GiB peak
-        reserved memory. No iteration is skipped or NaN, and the complete
-        12-file reloadable full-model checkpoint is written at step 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
   sft_export_inference:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: sft
       commands:
@@ -399,13 +382,18 @@ items:
           --hf-model work/model-verification/nemotron-3.5-lightning-h100/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-08-03
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
+      last_verified: null
+      expected_result: >
+        Verification is pending on the card default revision. The SFT checkpoint
+        this item exports was recorded at a revision that did not contain the
+        SFT recipe, so its verification date and result are not attributed to
+        these commands. A fresh run must export the step-100 SFT checkpoint of a
+        fresh SFT run and complete the deterministic inference check before this
+        item is marked verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -422,12 +410,18 @@ items:
           --hf-model work/model-verification/nemotron-3.5-lightning-gb200/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: 2026-08-04
-      expected_result: "The step-100 SFT checkpoint exports 6,513 tensors, including all 270 MTP tensors, to native Hugging Face format and reloads as NemotronHForCausalLM. The deterministic verifier performs one greedy generation and produces exactly 45 new tokens. The literal completion is: \"To solve for \u0024x\u0024, follow these steps:\n\n1. Subtract 5 from both sides of the equation:\n\\[ 3x + 5 - 5 = 20 - 5 \\Rightarrow 3x\"."
+      last_verified: null
+      expected_result: >
+        Verification is pending on the card default revision. The SFT checkpoint
+        this item exports was recorded at a revision that did not contain the
+        SFT recipe, so its verification date and result are not attributed to
+        these commands. A fresh run must export the step-100 SFT checkpoint of a
+        fresh SFT run and complete the deterministic inference check before this
+        item is marked verified.
 
   sft_long_context:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -456,24 +450,23 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-h100/long-sft-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-03
+      last_verified: null
       metrics:
-        initial_loss: 0.4268321
-        final_loss: 0.2650192
-        last_10_steps_step_time_ms_avg: 40863.010
-        last_10_steps_model_tflops_per_gpu_avg: 188.950
-        last_10_steps_tokens_per_second_per_gpu_avg: 6415.191
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268321 -> 0.2650192 and MTP-1 loss 0.7322379 ->
-        0.4439273. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 40,863.010 ms / 188.950
-        TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 20
-        files, distributed metadata, saved run configuration and training
-        state, with latest marker 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -503,25 +496,24 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/long-sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-04
+      last_verified: null
       metrics:
-        initial_loss: 0.4268995
-        final_loss: 0.2649925
-        last_10_steps_step_time_ms_avg: 129692.530
-        last_10_steps_model_tflops_per_gpu_avg: 119.030
-        last_10_steps_tokens_per_second_per_gpu_avg: 4042.546
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268995 -> 0.2649925 and MTP-1 loss 0.7322624 ->
-        0.4439029. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 129,692.530 ms / 119.030
-        TFLOP/s/GPU. The complete step-100 checkpoint has distributed metadata,
-        saved run configuration and training state, 12 files, and a latest
-        marker of 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
   peft:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -544,22 +536,23 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-h100/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-03
+      last_verified: null
       metrics:
-        initial_loss: 0.4406696
-        final_loss: 0.2854756
-        last_10_steps_step_time_ms_avg: 16900.360
-        last_10_steps_model_tflops_per_gpu_avg: 92.890
-        last_10_steps_tokens_per_second_per_gpu_avg: 3877.787
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
-        steps with adapters on the MTP layers, LM loss 0.4406696 -> 0.2854756,
-        finite MTP-1 loss 0.7370828 -> 0.4362708, and no skipped or NaN
-        iterations. The complete adapter checkpoint is written at step 100 and
-        reloads over the pinned base checkpoint at step 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -583,26 +576,25 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-04
+      last_verified: null
       metrics:
-        initial_loss: 0.4406088
-        final_loss: 0.2855029
-        last_10_steps_step_time_ms_avg: 19230.400
-        last_10_steps_model_tflops_per_gpu_avg: 81.780
-        last_10_steps_tokens_per_second_per_gpu_avg: 3407.937
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Packed rank-32, alpha-32, zero-dropout LoRA completes 100 finite-loss
-        steps with 48 rank-local adapter attachment records covering MTP
-        attention, expert, and shared-expert layers, LM loss 0.4406088 ->
-        0.2855029, finite MTP-1 loss 0.7371238 -> 0.4362065, and no skipped or
-        NaN iterations. The complete adapter checkpoint is written at step 100
-        and reloads over the pinned base checkpoint at step 100.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
   checkpoint_resume:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 33ede31740aa44183a253a62a4bcf968f176e161  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
@@ -619,33 +611,31 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-h100/pretrain-resumed
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-28
+      last_verified: null
       metrics:
-        initial_loss: 7.981691
-        final_loss: 7.238846
-        last_10_steps_step_time_ms_avg: 56671.640
-        last_10_steps_model_tflops_per_gpu_avg: 176.630
-        last_10_steps_tokens_per_second_per_gpu_avg: 4625.665
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [11, 20]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: null
       expected_result: >
-        The continuation restores optimizer, scheduler, data-order, and RNG
-        state from step 10, begins at step 11, finishes at step 20 in a distinct
-        output root, and writes a complete step-20 checkpoint. Resumed losses
-        7.981691 and 7.238846 match uninterrupted losses 7.981684 and 7.239111
-        at steps 11 and 20 within the declared tolerance. All 30 shared
-        LM/MTP-1/MTP-2 values pass with a maximum relative difference of
-        0.0851%, with no skipped or NaN iterations, and the 20-file, 430-GiB
-        step-20 checkpoint is complete.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date, metrics, and sentinel comparison are
+        not attributed to this command. A fresh continuation of a fresh pretrain
+        reference must match it at the declared sentinel steps with no skipped
+        or NaN iterations. Record all metrics from that run before marking this
+        item verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: edca4a7d868cd1214bf5292f28a515139470dd99  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
@@ -663,77 +653,73 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-gb200/pretrain-resumed
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
-      last_verified: 2026-07-28
+      last_verified: null
       metrics:
-        initial_loss: 6.166278
-        final_loss: 5.796845
-        last_10_steps_step_time_ms_avg: 22233.450
-        last_10_steps_model_tflops_per_gpu_avg: 663.860
-        last_10_steps_tokens_per_second_per_gpu_avg: 23581.046
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: null
       expected_result: >
-        The continuation restores optimizer, scheduler, data-order, and RNG
-        state from the matched 8K step-50 reference, begins at step 51, and
-        finishes at step 100 in a distinct output root. Resumed losses
-        6.166278 and 5.796845 match uninterrupted losses 6.166278 and 5.798433
-        at steps 51 and 100. All 150 shared LM/MTP-1/MTP-2 values pass with a
-        maximum relative difference of 0.127978%, no iteration is skipped or
-        NaN, and the 15-file, 430-GiB step-100 checkpoint is complete.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date, metrics, and sentinel comparison are
+        not attributed to this command. A fresh continuation of a fresh pretrain
+        reference must match it at the declared sentinel steps with no skipped
+        or NaN iterations. Record all metrics from that run before marking this
+        item verified.
 
   pretrain_performance:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 573e088c9c6740082c39744e03dc5b009e730ed4  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config
         --max_steps 50
-      last_verified: 2026-08-03
+      last_verified: null
       metrics:
-        initial_loss: 12.16197
-        final_loss: 0.01217863
-        last_10_steps_step_time_ms_avg: 18467.280
-        last_10_steps_model_tflops_per_gpu_avg: 399.580
-        last_10_steps_tokens_per_second_per_gpu_avg: 14195.052
-        peak_allocated_memory_gib: 72.066
-        peak_reserved_memory_gib: 75.340
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On 16x H100, the exact mock-data, force-balanced BF16 performance
-        recipe completes exactly 50 steps with finite LM/MTP-1/MTP-2 losses
-        and no skipped or NaN iterations. Transformer Engine CUDA graphs cover
-        attention and Mamba scopes, while expert-FC1 activations are offloaded.
-        Steps 41-50 average 18,467.280 ms and 399.580 model TFLOP/s/GPU; peak
-        rank-0 allocated/reserved memory is 72.066/75.340 GiB. This
-        benchmark-only run stores Adam moments in BF16, so its losses are not
-        convergence-comparable with FP32 optimizer-state runs.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
 
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      bridge_commit: 9b0c2dff42e6175e91d34cd2a504529f803ebde9  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --recipe nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config
         --max_steps 50
-      last_verified: 2026-07-28
+      last_verified: null
       metrics:
-        initial_loss: 12.18250
-        final_loss: 0.03325584
-        last_10_steps_step_time_ms_avg: 18236.060
-        last_10_steps_model_tflops_per_gpu_avg: 809.220
-        last_10_steps_tokens_per_second_per_gpu_avg: 28750.070
-        peak_allocated_memory_gib: 156.850
-        peak_reserved_memory_gib: 161.260
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+        peak_allocated_memory_gib: null
+        peak_reserved_memory_gib: null
       expected_result: >
-        On 8x GB200, the exact mock-data BF16 performance recipe completes
-        exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or NaN
-        iterations. Transformer Engine CUDA graphs cover attention, Mamba,
-        MoE-router, and MoE-preprocess scopes. Steps 41-50 average 18,236.060 ms
-        and 809.220 model TFLOP/s/GPU; peak rank-0 allocated/reserved memory is
-        156.850/161.260 GiB.
+        Verification is pending on the card default revision, which contains
+        this recipe. The originally recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to this
+        command. A fresh run must complete the command with finite losses and
+        no skipped or NaN iterations. Record all metrics from that run before
+        marking this item verified.
