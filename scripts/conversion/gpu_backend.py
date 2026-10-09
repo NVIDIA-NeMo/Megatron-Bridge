@@ -21,14 +21,24 @@ from pathlib import Path
 import torch
 import yaml
 from rich.console import Console
-from utils import parse_dtype, prepare_output_directory, resolve_hf_model_revision, validate_output_path
+from utils import (
+    _configure_distributed_env,
+    _configure_model_config,
+    _configure_model_provider,
+    _hf_tokenizer_kwargs,
+    _maybe_generate_pipeline_layout,
+    _uses_model_builder,
+    parse_dtype,
+    prepare_output_directory,
+    resolve_hf_model_revision,
+    validate_output_path,
+)
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import print_rank_0
-from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
 
 
 _IGNORE_PRECISION_PARAMS = (
@@ -53,16 +63,7 @@ def _ensure_distributed_initialized(timeout_minutes: int | None, *, use_cpu: boo
     """Initialize a distributed process group from torchrun or Slurm task state."""
     if torch.distributed.is_initialized():
         return
-    if os.environ.get("WORLD_SIZE") is None and os.environ.get("SLURM_NTASKS") is not None:
-        os.environ["RANK"] = os.environ["SLURM_PROCID"]
-        os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
-        os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
-        master_addr = resolve_slurm_master_addr()
-        master_port = resolve_slurm_master_port()
-        if master_addr is not None:
-            os.environ["MASTER_ADDR"] = master_addr
-        if master_port is not None:
-            os.environ["MASTER_PORT"] = str(master_port)
+    _configure_distributed_env()
     if os.environ.get("WORLD_SIZE") is None:
         raise RuntimeError("Distributed conversion must be launched through NeMo Run's local or Slurm executor.")
     if not use_cpu:
@@ -93,25 +94,6 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
         torch.distributed.barrier()
     else:
         torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
-
-
-def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
-    """Generate a bridge-specific pipeline layout when the model requires one.
-
-    A bridge returns ``None`` when the default pipeline split already applies.
-    """
-    if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
-        return False
-    num_layers = bridge.hf_pretrained.config.num_hidden_layers
-    # The layout must match the model being built, which may omit the checkpoint's MTP layers.
-    model_config = getattr(model_provider, "transformer", model_provider)
-    mtp_layers = getattr(model_config, "mtp_num_layers", None) or 0
-    layout = bridge._model_bridge.generate_pipeline_layout(num_layers, pp, mtp_layers)
-    if layout is None:
-        return False
-    model_provider.pipeline_model_parallel_layout = layout
-    print_rank_0(f"Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp_layers} MTP)")
-    return True
 
 
 def _rebalance_pipeline_layout(saved_layout: list[list[str]], pp: int) -> list[list[str]]:
@@ -171,66 +153,6 @@ def _maybe_restore_pipeline_layout(
                 model_provider.pipeline_model_parallel_layout = _rebalance_pipeline_layout(saved_layout, pp)
             return
     _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-
-
-def _configure_model_provider(
-    model_provider: GPTModelProvider,
-    *,
-    tp: int,
-    pp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-    use_cpu: bool = False,
-) -> None:
-    """Apply distributed parallelism and dtype settings to a model provider."""
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = dtype
-    model_provider.params_dtype = dtype
-    if use_cpu:
-        model_provider.use_cpu_initialization = True
-
-
-def _uses_model_builder(bridge: AutoBridge) -> bool:
-    """Return whether the selected bridge supports native builder construction."""
-    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
-
-
-def _configure_model_config(
-    model_config,
-    *,
-    tp: int,
-    pp: int,
-    ep: int,
-    etp: int,
-    dtype: torch.dtype,
-    use_cpu: bool = False,
-) -> None:
-    """Apply distributed parallelism and dtype settings to a builder config."""
-    transformer = model_config.transformer
-    transformer.tensor_model_parallel_size = tp
-    transformer.pipeline_model_parallel_size = pp
-    transformer.expert_model_parallel_size = ep
-    transformer.expert_tensor_parallel_size = etp
-    transformer.pipeline_dtype = dtype
-    transformer.params_dtype = dtype
-    if use_cpu:
-        transformer.use_cpu_initialization = True
-
-
-def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
-    """Build tokenizer metadata for a saved Megatron checkpoint."""
-    tokenizer_kwargs: dict[str, object] = {}
-    if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
-        tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs() or {}
-    if trust_remote_code:
-        tokenizer_kwargs["trust_remote_code"] = True
-    if bridge.hf_model_revision is not None:
-        tokenizer_kwargs["revision"] = bridge.hf_model_revision
-    return tokenizer_kwargs
 
 
 def _roundtrip_weights_match(name: str, exported: torch.Tensor, original: torch.Tensor) -> tuple[bool, bool]:

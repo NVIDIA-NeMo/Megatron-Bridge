@@ -84,6 +84,7 @@ from megatron.bridge.utils.cuda_graph import (
     is_full_iteration_cuda_graph,
     validate_cuda_graph_configuration,
 )
+from megatron.bridge.utils.gdn_utils import validate_cudnn_gdn_stack
 
 
 @dataclass
@@ -1678,6 +1679,7 @@ class ConfigContainer(Container):
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
         _validate_fine_grained_activation_offloading(self)
+        validate_cudnn_gdn_stack(self.model)
 
         # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
         if is_full_iteration_cuda_graph(self.model):
