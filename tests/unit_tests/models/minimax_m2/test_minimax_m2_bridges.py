@@ -33,6 +33,7 @@ from megatron.bridge.models.minimax_m2.minimax_m2_provider import (
     FullDimKNorm,
     FullDimQNorm,
     _FullDimRMSNorm,
+    minimax_m2_layer_spec,
 )
 
 
@@ -503,3 +504,89 @@ class TestFullDimQKNormMappingReplicatedKV:
             result["model.layers.*.self_attn.k_norm.weight"],
             torch.arange(8, dtype=torch.bfloat16),
         )
+
+
+class TestMiniMaxM2BuilderConfig:
+    """Builder-backed ModelConfig path for MiniMax-M2."""
+
+    @staticmethod
+    def _config(**attrs):
+        from transformers import MiniMaxM2Config
+
+        config = MiniMaxM2Config(
+            hidden_size=64,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            head_dim=8,
+            num_local_experts=8,
+            num_experts_per_tok=2,
+            max_position_embeddings=4096,
+            vocab_size=128,
+            torch_dtype="bfloat16",
+        )
+        config.architectures = ["MiniMaxM2ForCausalLM"]
+        for key, value in attrs.items():
+            setattr(config, key, value)
+        return config
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in MiniMaxM2Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert MiniMaxM2Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        config = self._config(rotary_dim=4)
+        bridge = MiniMaxM2Bridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.transformer_layer_spec is minimax_m2_layer_spec
+        assert result.qk_layernorm is True
+        assert result.rotary_percent == 0.5
+        assert result.position_embedding_type == "rope"
+        assert result.moe_router_score_function == "sigmoid"
+        assert result.moe_router_enable_expert_bias is True
+        assert result.moe_aux_loss_coeff == config.router_aux_loss_coef
+
+    @pytest.mark.parametrize("attrs", [{}, {"rotary_dim": 4}], ids=["full-rotary", "rotary-dim"])
+    def test_model_config_matches_provider_runtime_config(self, attrs):
+        from dataclasses import fields
+
+        config = self._config(**attrs)
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = MiniMaxM2Bridge()
+
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        for field_name in sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"}):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        # Both paths build the full-dimension QK norm through the same layer spec.
+        assert model_config.transformer_layer_spec is minimax_m2_layer_spec
+        assert provider.transformer_layer_spec is minimax_m2_layer_spec
+
+    def test_layer_spec_matches_between_provider_and_builder_config(self):
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = MiniMaxM2Bridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        # functools.partial (used for the MoE layer) compares by identity, so compare structure.
+        assert repr(minimax_m2_layer_spec(model_config)) == repr(minimax_m2_layer_spec(provider))

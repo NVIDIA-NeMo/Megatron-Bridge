@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from collections.abc import Mapping
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -128,46 +129,52 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M2")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace MiniMax-M2 config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        hf_config = hf_pretrained.config
-
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.position_embedding_type = "rope"
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False
-        provider.hidden_dropout = 0.0
-        provider.autocast_dtype = torch.bfloat16
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face MiniMax-M2 config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            position_embedding_type="rope",
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # Full-dimension QK norm via custom layer spec (see minimax_m2_provider.py).
+            # qk_layernorm=True so mcore creates QK norms; the spec overrides the default
+            # TENorm with FullDimQNorm/FullDimKNorm for full-dimension normalization.
+            qk_layernorm=True,
+            transformer_layer_spec=minimax_m2_layer_spec,
+            # MoE settings — sigmoid routing with expert bias (same pattern as DeepSeek V3)
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 1e-3),
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+        )
 
         # MiniMax-M2 uses rotary_dim instead of partial_rotary_factor
         rotary_dim = getattr(hf_config, "rotary_dim", None)
         head_dim = getattr(hf_config, "head_dim", None)
         if rotary_dim is not None and head_dim is not None:
-            provider.rotary_percent = rotary_dim / head_dim
+            config_kwargs["rotary_percent"] = rotary_dim / head_dim
 
-        # Full-dimension QK norm via custom layer spec (see minimax_m2_provider.py).
-        # qk_layernorm=True so mcore creates QK norms; the spec overrides the default
-        # TENorm with FullDimQNorm/FullDimKNorm for full-dimension normalization.
-        provider.qk_layernorm = True
-        provider.transformer_layer_spec = minimax_m2_layer_spec
+        return config_kwargs
 
-        # MoE settings — sigmoid routing with expert bias (same pattern as DeepSeek V3)
-        provider.moe_grouped_gemm = True
-        provider.moe_router_pre_softmax = False
-        provider.moe_router_load_balancing_type = "aux_loss"
-        provider.moe_aux_loss_coeff = getattr(hf_config, "router_aux_loss_coef", 1e-3)
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_permute_fusion = True
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
