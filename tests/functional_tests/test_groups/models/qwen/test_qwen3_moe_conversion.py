@@ -242,7 +242,6 @@ class TestQwen3MoEConversion:
             str(pp),
             "--ep",
             str(ep),
-            "--verify-pipeline-stage-local",
         ]
 
         try:
@@ -301,7 +300,6 @@ class TestQwen3MoEConversion:
             assert saved_config[num_experts_key] == 4, "Number of experts should match toy config"
             assert saved_config["num_experts_per_tok"] == 4, "Number of experts per token should match toy config"
             assert saved_config["moe_intermediate_size"] == 768, "MoE intermediate size should match toy config"
-            assert "PP-local verification:" in result.stdout
 
             print(f"SUCCESS: Qwen3 MoE {test_name} conversion test completed successfully")
             print(f"Converted model saved at: {converted_model_dir}")
@@ -312,6 +310,39 @@ class TestQwen3MoEConversion:
         except Exception as e:
             print(f"Error during Qwen3 MoE {test_name} conversion test: {e}")
             raise
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize("tp,pp,ep", [(2, 1, 1), (1, 2, 1), (1, 1, 2)])
+    def test_qwen3_moe_current_pp_stage_only_export(self, qwen3_moe_toy_model_path, tp, pp, ep):
+        """Verify MoE stage-local streams against full export on two GPUs."""
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "tests/functional_tests/test_groups/models/qwen/pipeline_stage_local_export.py",
+            "--hf-model-id",
+            qwen3_moe_toy_model_path,
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+            "--ep",
+            str(ep),
+        ]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parents[5],
+            timeout=300,
+        )
+        assert result.returncode == 0, (
+            f"PP-local MoE export failed for TP={tp}, PP={pp}, EP={ep}\n"
+            f"STDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+        )
+        assert "PP-local verification passed:" in result.stdout
 
     @pytest.mark.run_only_on("GPU")
     def test_qwen3_moe_autoconfig_roundtrip(self, qwen3_moe_toy_model_path, tmp_path):
