@@ -601,9 +601,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # The offloading buys the headroom that moe_expert_rank_capacity_factor=5 above needs.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = []
-    cfg.model.offload_modules = []
-    #cfg.model.offload_modules = ["core_attn"]
-    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    cfg.model.fine_grained_activation_offloading = True
     
     # cfg.model.cpu_offloading_num_layers = 95
     cfg.model.high_priority_a2a_comm_stream = True
