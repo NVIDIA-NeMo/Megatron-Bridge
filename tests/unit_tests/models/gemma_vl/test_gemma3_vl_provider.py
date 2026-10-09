@@ -18,6 +18,7 @@ from unittest.mock import patch
 import pytest
 import torch
 from megatron.core.transformer.enums import AttnBackend, AttnMaskType
+from megatron.training.utils.checkpoint_utils import apply_run_config_backward_compat
 from transformers import SiglipVisionConfig
 
 from megatron.bridge.models.gemma.gemma3_provider import (
@@ -27,7 +28,6 @@ from megatron.bridge.models.gemma.gemma3_provider import (
 )
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLMultimodalProjectorConfig
-from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.instantiate_utils import instantiate
 
 
