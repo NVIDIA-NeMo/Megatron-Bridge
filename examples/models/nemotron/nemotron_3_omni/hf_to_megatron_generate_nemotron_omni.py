@@ -964,7 +964,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--hf_model_path",
         type=str,
-        default="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+        default="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16",
         help="Path to the HuggingFace Nemotron Omni VL model.",
     )
     parser.add_argument(

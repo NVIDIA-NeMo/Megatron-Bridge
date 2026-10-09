@@ -20,6 +20,7 @@ import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import LlamaForCausalLM
 
+from megatron.bridge.models._deprecation import raise_if_removed_model
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
@@ -48,6 +49,7 @@ class LlamaBridge(MegatronModelBridge):
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Hugging Face Llama config to builder config kwargs."""
+        raise_if_removed_model(hf_config)
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
             normalization="RMSNorm",

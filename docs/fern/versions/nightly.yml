@@ -46,8 +46,6 @@ navigation:
       path: ./nightly/pages/models/bailing/ling-2.mdx
     section: Bailing
   - contents:
-    - page: DeepSeek V2
-      path: ./nightly/pages/models/deepseek/deepseek-v2.mdx
     - page: DeepSeek V3
       path: ./nightly/pages/models/deepseek/deepseek-v3.mdx
     - page: DeepSeek V4
@@ -58,10 +56,6 @@ navigation:
       path: ./nightly/pages/models/falcon/falcon-h1.mdx
     section: Falcon
   - contents:
-    - page: Gemma
-      path: ./nightly/pages/models/gemma/gemma.mdx
-    - page: Gemma 2
-      path: ./nightly/pages/models/gemma/gemma2.mdx
     - page: Gemma 3
       path: ./nightly/pages/models/gemma/gemma3.mdx
     - page: Gemma 3 VL (Vision-Language)
@@ -96,8 +90,6 @@ navigation:
       path: ./nightly/pages/models/kimi/kimi-k3.mdx
     section: Kimi
   - contents:
-    - page: Llama 2
-      path: ./nightly/pages/models/llama/llama2.mdx
     - page: Llama 3
       path: ./nightly/pages/models/llama/llama3.mdx
     section: Llama
@@ -108,8 +100,6 @@ navigation:
       path: ./nightly/pages/models/minimax/minimax-m3.mdx
     section: MiniMax
   - contents:
-    - page: Mistral
-      path: ./nightly/pages/models/mistral/mistral.mdx
     - page: Ministral 3
       path: ./nightly/pages/models/mistral/ministral3.mdx
     section: Mistral
@@ -122,9 +112,7 @@ navigation:
       path: ./nightly/pages/models/moonlight/moonlight.mdx
     section: Moonlight
   - contents:
-    - page: Llama Nemotron
-      path: ./nightly/pages/models/nemotron/llama-nemotron.mdx
-    - page: Nemotron H and Nemotron Nano v2
+    - page: Nemotron H
       path: ./nightly/pages/models/nemotron/nemotronh.mdx
     - page: Nemotron 3 Nano 30B-A3B
       path: ./nightly/pages/models/nemotron/nemotron3-nano.mdx
@@ -140,8 +128,6 @@ navigation:
       path: ./nightly/pages/models/nemotron/nemotron3.5-super-vl-text-only.mdx
     - page: Nemotron 3 Ultra
       path: ./nightly/pages/models/nemotron/nemotron3-ultra.mdx
-    - page: Nemotron Nano V2 VL
-      path: ./nightly/pages/models/nemotron/nemotron-nano-v2-vl.mdx
     - page: Nemotron-3 Nano Omni
       path: ./nightly/pages/models/nemotron/nemotron-3-omni.mdx
     section: Nemotron

@@ -66,7 +66,6 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
 )
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
 from megatron.bridge.training.config import ConfigContainer
 
@@ -372,18 +371,18 @@ def test_legacy_v2_moe_checkpoint_routes_to_canonical_nemotron_omni():
     assert all(not mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
 
 
-def test_dense_legacy_v2_checkpoint_keeps_nemotron_vl_path():
+def test_dense_legacy_v2_checkpoint_is_rejected():
     hf_config = _mock_legacy_v2_omni_hf_config()
     del hf_config.llm_config.n_routed_experts
     hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = hf_config
 
+    assert not AutoBridge.supports(hf_config)
+    with pytest.raises(ValueError, match="Nano v2.*removed"):
+        AutoBridge.from_hf_config(hf_config)
     bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
-    provider = bridge.provider_bridge(hf_pretrained)
-    registry = bridge.mapping_registry()
-
-    assert isinstance(provider, NemotronVLModelProvider)
-    assert any(mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
+    with pytest.raises(ValueError, match="Nano v2.*removed"):
+        bridge.provider_bridge(hf_pretrained)
 
 
 def test_nemotron_omni_provider_bridge_maps_public_config_fields():

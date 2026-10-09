@@ -221,34 +221,30 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
 
 Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the full list of model bridges.
 
-> **Deprecation notice:** Gemma 1 (2B/7B), Gemma 2 (2B/9B/27B), Llama 2,
-> Mistral 7B, Mistral Small 3 24B, Nemotron H v1 (4B/8B/47B/56B), and the
-> legacy `NemotronForCausalLM` bridge previously documented for Nemotron-4 340B
-> are no longer actively maintained or tested against current upstream
-> checkpoints. They will be removed in Megatron Bridge 0.7.0.
+> **Deprecation notice:** Nemotron H v1 (4B/8B/47B/56B) is no longer actively maintained and will be removed in Megatron Bridge 0.7.0.
 
 | Family | Supported variants |
 |----------------|--------------------|
 | [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
-| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite (deprecated), DeepSeek V3, DeepSeek V4 / V4 Flash |
+| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V3, DeepSeek V4 / V4 Flash |
 | [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
 | **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
 | [**EXAONE**](docs/models/exaone/exaone.md) | EXAONE 4.0, EXAONE 4.5 VL, K-EXAONE MoE |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
-| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2 (deprecated), Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / GLM-4.7 / GLM-4.7-Flash, GLM-4.5V, GLM-5 / GLM-5.1 / GLM-5.2 / [GLM-5.3](docs/models/glm/glm5-2.md) |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
 | [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL, Kimi K3 |
-| [**Llama**](docs/models/llama/index.md) | Llama 2 (deprecated), Llama 3 / 3.1 / 3.2 / 3.3 |
+| [**Llama**](docs/models/llama/index.md) | Llama 3 / 3.1 / 3.2 / 3.3 |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7, MiniMax-M3 |
-| [**Mistral**](docs/models/mistral/index.md) | Mistral 7B / Small 3 24B (deprecated), Ministral 3 (3B/8B/14B) |
+| [**Mistral**](docs/models/mistral/index.md) | Ministral 3 (3B/8B/14B) |
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
 | [**Muse Glimmer**](docs/models/muse_glimmer/muse-glimmer.md) | Muse Glimmer 30B |
-| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H v1 (deprecated), Nemotron Nano v2 (deprecated), Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Llama Nemotron (deprecated), Nemotron Nano v2 VL (deprecated), Nemotron-3 Nano Omni |
+| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H v1 (deprecated), Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
 | [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |

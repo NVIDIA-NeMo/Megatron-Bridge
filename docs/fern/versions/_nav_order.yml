@@ -8,20 +8,15 @@
 "./versions/nightly/pages/modelopt/quantization.mdx": 1
 "./versions/nightly/pages/models/README.mdx": 1
 "./versions/nightly/pages/models/bailing/ling-2.mdx": 1
-"./versions/nightly/pages/models/deepseek/deepseek-v2.mdx": 1
 "./versions/nightly/pages/models/falcon/falcon-h1.mdx": 1
-"./versions/nightly/pages/models/gemma/gemma.mdx": 1
 "./versions/nightly/pages/models/glm/glm45.mdx": 1
 "./versions/nightly/pages/models/gpt_oss/gpt-oss-20b.mdx": 1
 "./versions/nightly/pages/models/gpt_oss/gpt-oss-120b.mdx": 2
 "./versions/nightly/pages/models/kimi/kimi-k2.mdx": 1
-"./versions/nightly/pages/models/llama/llama2.mdx": 1
 "./versions/nightly/pages/models/mimo/mimo.mdx": 1
 "./versions/nightly/pages/models/minimax/minimax-m2.mdx": 1
 "./versions/nightly/pages/models/minimax/minimax-m3.mdx": 2
-"./versions/nightly/pages/models/mistral/mistral.mdx": 1
 "./versions/nightly/pages/models/moonlight/moonlight.mdx": 1
-"./versions/nightly/pages/models/nemotron/llama-nemotron.mdx": 1
 "./versions/nightly/pages/models/olmoe/olmoe.mdx": 1
 "./versions/nightly/pages/models/qwen/qwen3-235b-a22b.mdx": 1
 "./versions/nightly/pages/models/qwen/qwen3-30b-a3b.mdx": 2
@@ -37,7 +32,6 @@
 "./versions/nightly/pages/modelopt/distillation.mdx": 2
 "./versions/nightly/pages/models/bailing/index.mdx": 2
 "./versions/nightly/pages/models/deepseek/deepseek-v3.mdx": 2
-"./versions/nightly/pages/models/gemma/gemma2.mdx": 2
 "./versions/nightly/pages/models/glm/glm-45v.mdx": 2
 "./versions/nightly/pages/models/kimi/kimi-k25-vl.mdx": 2
 "./versions/nightly/pages/models/llama/llama3.mdx": 2
@@ -76,7 +70,6 @@
 "./versions/nightly/pages/models/gemma/gemma4-vl.mdx": 5
 "./versions/nightly/pages/models/gemma/index.mdx": 5
 "./versions/nightly/pages/models/nemotron/nemotron3.5-lightning.mdx": 6
-"./versions/nightly/pages/models/nemotron/nemotron-nano-v2-vl.mdx": 7
 "./versions/nightly/pages/models/qwen/qwen3-vl.mdx": 7
 "./versions/nightly/pages/releases/known-issues.mdx": 5
 "./versions/nightly/pages/training/optimizer-scheduler.mdx": 5

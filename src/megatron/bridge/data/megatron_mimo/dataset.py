@@ -43,7 +43,7 @@ class MegatronMIMODataset(Dataset):
         >>> # Using HuggingFace Dataset
         >>> hf_ds = load_dataset("liuhaotian/LLaVA-Instruct-150K", split="train")
         >>> processor = AutoProcessor.from_pretrained("openai/clip-vit-large-patch14")
-        >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+        >>> tokenizer = AutoTokenizer.from_pretrained("meta-llama/Meta-Llama-3-8B")
         >>>
         >>> dataset = MegatronMIMODataset(
         ...     examples=hf_ds,

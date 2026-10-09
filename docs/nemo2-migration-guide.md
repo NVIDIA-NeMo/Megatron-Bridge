@@ -22,16 +22,15 @@ Megatron Bridge derives model provider settings from Hugging Face configs throug
 | `llm.Llama3Config8B` | `AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider()` |
 | `llm.Llama31Config70B` | `AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-70B").to_megatron_provider()` |
 | `llm.Qwen2Config7B` | `AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider()` |
-| `llm.DeepseekV2Config` | {py:class}`bridge.models.DeepseekV2ModelProvider` |
 
 ### Supported Model Families
 
 Megatron Bridge supports the following model families through bridge mappings and provider classes:
 - **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `HybridModelProvider`
-- **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
+- **Llama**: Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
-- **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
-- **Nemotron**: Nemotron3, Nemotron4, NemotronH, NemotronNano
+- **DeepSeek**: DeepSeek V3, DeepSeek V4
+- **Nemotron**: Nemotron 3, Nemotron 3.5, Nemotron H (deprecated)
 - **NVIDIA Mamba**: Mamba variants and hybrid models
 
 For a complete list of bridge mappings, providers, and their parameters, see {py:mod}`bridge.models`.

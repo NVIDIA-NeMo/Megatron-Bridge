@@ -35,10 +35,6 @@ _MODEL_COLLATE_SPECS = {
         "megatron.bridge.models.qwen_omni.data.collate_fn",
         "qwen3_omni_collate_fn",
     ),
-    "NemotronNanoVLV2Processor": _ModelCollateSpec(
-        "megatron.bridge.models.nemotron_vl.data.collate_fn",
-        "nemotron_nano_v2_vl_collate_fn",
-    ),
     "NemotronH_Nano_Omni_Reasoning_V3Processor": _ModelCollateSpec(
         "megatron.bridge.models.nemotron_omni.data.collate_fn",
         "nemotron_omni_expanded_collate_fn",

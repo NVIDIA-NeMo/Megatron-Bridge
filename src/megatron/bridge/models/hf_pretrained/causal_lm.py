@@ -56,7 +56,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         Basic usage with lazy loading:
         >>> from mbridge.pretrained import PreTrainedCausalLM
         >>> # Create instance - no model loading happens yet
-        >>> model = PreTrainedCausalLM.from_pretrained("meta-llama/Llama-2-7b-chat-hf")
+        >>> model = PreTrainedCausalLM.from_pretrained("meta-llama/Llama-3.1-8B-Instruct")
         >>> # Components are loaded on first access
         >>> config = model.config  # Loads config
         >>> tokenizer = model.tokenizer  # Loads tokenizer
@@ -70,7 +70,7 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         >>> from mbridge.pretrained import PreTrainedCausalLM
         >>> # Type-safe access to Llama-specific features
         >>> llama_model: PreTrainedCausalLM[LlamaForCausalLM] = PreTrainedCausalLM.from_pretrained(
-        ...     "meta-llama/Llama-2-7b-chat-hf",
+        ...     "meta-llama/Llama-3.1-8B-Instruct",
         ...     torch_dtype=torch.float16,
         ...     device="cuda"
         ... )
