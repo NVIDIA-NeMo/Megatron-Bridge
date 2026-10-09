@@ -461,6 +461,10 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     """
     cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
 
+    # cfg.mixed_precision = _perf_precision("bf16")
+    cfg.model.recompute_modules = []
+    cfg.model.offload_modules = []
+
     # cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     # cfg.ddp.expert_data_parallel_sharding_strategy = None
     # cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
@@ -469,14 +473,56 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     # cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
     # cfg.model.cuda_graph_impl = "none"
-    # cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_impl = "full_iteration"
     # cfg.model.cuda_graph_warmup_steps = 10
 
-    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.fine_grained_activation_offloading = False
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = False #True
+
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     cfg.ddp.megatron_fsdp_version = 2
+    return cfg
+
+
+def deepseek_v3_pretrain_4gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
+    """DeepSeek V3 Megatron-FSDP v2 debugging proxy: 8 decoder layers on 4 GB300 GPUs.
+
+    Inherits the 64-GPU fsdpv2 recipe so the v2 code path, MXFP8 settings and FSDP options stay
+    identical; only depth and the parallel layout shrink. Three leading dense layers are kept,
+    the remaining five are MoE, and the MTP layer is retained.
+
+    This is for reproducing setup-time and single-step failures quickly, not for performance or
+    convergence. Per-rank memory is *higher* than the 64-GPU recipe, not lower: expert
+    parallelism drops 64 -> 4 (16x fewer shards) while MoE layers drop 58 -> 5 (11.6x fewer), so
+    each rank holds 64 experts per layer instead of 4. Lower num_moe_experts if it does not fit.
+    """
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config()
+
+    cfg.model.num_layers = 4
+    # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern. The list length
+    # must equal num_layers.
+    cfg.model.moe_layer_freq = [0] * 2 + [1] * (cfg.model.num_layers - 2)
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    # Clear the inherited layout; embedding, decoder and MTP are colocated on the single stage.
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    # Expert parallelism cannot exceed the world size, so EP spans all 4 ranks.
+    cfg.model.expert_model_parallel_size = 4
+
+    # Tell HybridEP the EP group is 4 ranks wide, not the inherited 64. The whole job fits in one
+    # NVLink domain, so NVLINK_DOMAIN_SIZE stays at the hardware value. Mutating the inherited
+    # dict is safe: each recipe call builds a fresh env_vars from COMMON_PERF_ENV_VARS.
+    cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = 4
+
+    # DP is 4 at TP=PP=CP=1. GBS 16 over DP 4 at mbs 2 keeps the two gradient-accumulation steps
+    # the 64-GPU recipe runs (256 / (64 * 2)).
+    cfg.train.micro_batch_size = 2
+    cfg.train.global_batch_size = 16
+
+    # _enable_ncclep(cfg)
+
     return cfg
 
 
@@ -554,8 +600,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # offload_modules containing expert_fc1/moe_act/fused_group_mlp. core_attn avoids both.
     # The offloading buys the headroom that moe_expert_rank_capacity_factor=5 above needs.
     cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = []
-    cfg.model.offload_modules = []
+    cfg.model.recompute_modules = None
+    cfg.model.offload_modules = None
     #cfg.model.offload_modules = ["core_attn"]
     cfg.model.fine_grained_activation_offloading = True
     # cfg.model.cpu_offloading_num_layers = 95

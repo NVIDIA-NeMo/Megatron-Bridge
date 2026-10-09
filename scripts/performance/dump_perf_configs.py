@@ -167,6 +167,7 @@ COMBOS = [
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb300", "nvfp4"),
     ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "bf16", "fsdp"),
     ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "fp8_mx", "fsdp"),
+    ("deepseek", "deepseek_v3", "pretrain", 4, "gb300", "fp8_mx", "fsdpv2"),
     ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "fp8_mx", "fsdpv1"),
     ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "fp8_mx", "fsdpv2"),
     ("deepseek", "deepseek_v3", "pretrain", 128, "gb300", "fp8_mx", "hsdpv2"),
