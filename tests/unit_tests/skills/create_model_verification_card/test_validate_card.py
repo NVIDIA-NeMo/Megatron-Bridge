@@ -3,6 +3,7 @@
 """Focused tests for model-verification-card validation."""
 
 import importlib.util
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("deepseek-v4-flash", "sft_long_context", "GB200"): (1024, 128, 64),
     ("deepseek-v4-flash", "pretrain_performance", "GB200"): (4096, 2048, 128),
     ("deepseek-v4-flash", "pretrain_performance", "GB300"): (4096, 2048, 128),
+    ("gemma-3-4b-it", "sft", "H100"): (4096, 32, 8),
     ("gemma-4-26b-a4b-it", "sft", "H100"): (4096, 32, 8),
     ("gemma-4-26b-a4b-it", "peft", "H100"): (4096, 32, 4),
     ("glm5", "pretrain", "GB200"): (4096, 1024, 192),
@@ -480,6 +482,7 @@ def test_weak_scaling_tps_matches_point_workload():
 def test_shipped_training_tps_matches_audited_token_slot_inputs():
     validator = _load_validator()
     verified_leaves = {}
+    published_commands = {}
 
     for card_path in sorted((REPO_ROOT / "examples" / "model_verification_cards").glob("*/card.yaml")):
         card = yaml.safe_load(card_path.read_text())
@@ -491,19 +494,28 @@ def test_shipped_training_tps_matches_audited_token_slot_inputs():
                 if "metrics" in leaf:
                     if leaf.get("status") == "verified":
                         verified_leaves[(slug, item_name, hardware)] = leaf
+                        published_commands[(slug, item_name, hardware)] = leaf["command"]
                     else:
                         assert leaf["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
                 for variant_name, variant in leaf.get("variants", {}).items():
                     if variant.get("status") == "verified":
                         verified_leaves[(slug, item_name, hardware, variant_name)] = variant
+                        published_commands[(slug, item_name, hardware, variant_name)] = variant.get(
+                            "command", leaf.get("command")
+                        )
                     else:
                         assert variant["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
                 if leaf.get("status") == "verified":
                     for point in leaf.get("points", []):
                         verified_leaves[(slug, item_name, hardware, point["num_gpus"])] = point
+                        published_commands[(slug, item_name, hardware, point["num_gpus"])] = point["command"]
 
     assert verified_leaves.keys() == TRAINING_THROUGHPUT_INPUTS.keys()
     for leaf_key, (sequence_or_pack_length, global_batch_size, total_gpus) in TRAINING_THROUGHPUT_INPUTS.items():
+        argv = shlex.split(published_commands[leaf_key])
+        published_gpus = int(argv[argv.index("--nodes") + 1]) * int(argv[argv.index("--gpus-per-node") + 1])
+        assert published_gpus == total_gpus, f"{leaf_key}: command requests {published_gpus} GPUs"
+
         metrics = verified_leaves[leaf_key]["metrics"]
         token_slots_per_step = sequence_or_pack_length * global_batch_size
         expected_tps_per_gpu = token_slots_per_step / (metrics["last_10_steps_step_time_ms_avg"] / 1000) / total_gpus
