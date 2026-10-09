@@ -12,9 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import namedtuple
+
 import pytest
 
 from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size, remove_non_pickleables
+
+
+class MetadataList(list):
+    pass
+
+
+class MetadataTuple(tuple):
+    pass
+
+
+MetadataPair = namedtuple("MetadataPair", ["head_dim", "callback"])
+
+
+def test_remove_non_pickleables_preserves_torch_size():
+    import torch
+
+    original = torch.Size([8, 16])
+    cleaned = remove_non_pickleables(original)
+    assert type(cleaned) is torch.Size
+    assert cleaned == original
 
 
 @pytest.mark.parametrize(
@@ -111,3 +133,56 @@ def test_remove_non_pickleables_rejects_unsafe_subtree_without_losing_metadata()
     assert original.nested["metadata"] == {"head_dim": 8, "callback": hook}
     cleaned = remove_non_pickleables(original, max_depth=3)
     assert cleaned.nested["metadata"] == {"head_dim": 8, "callback": None}
+
+
+@pytest.mark.parametrize("max_depth", [2, 3])
+def test_remove_non_pickleables_cleans_defaultdict_factory(max_depth):
+    import pickle
+    from collections import defaultdict
+    from types import SimpleNamespace
+
+    factory = lambda: 0
+    original = SimpleNamespace(defaults=defaultdict(factory, head_dim=8))
+    cleaned = remove_non_pickleables(original, max_depth=max_depth)
+    restored = pickle.loads(pickle.dumps(cleaned))
+    assert isinstance(restored.defaults, defaultdict)
+    assert restored.defaults.default_factory is None
+    assert restored.defaults["head_dim"] == 8
+    assert original.defaults.default_factory is factory
+    assert original.defaults["missing"] == 0
+
+
+@pytest.mark.parametrize("max_depth", [2, 3])
+@pytest.mark.parametrize("sequence_type", [MetadataList, MetadataTuple])
+def test_remove_non_pickleables_preserves_sequence_subclass_metadata(max_depth, sequence_type):
+    import pickle
+    from types import SimpleNamespace
+
+    hook = lambda: None
+    values = sequence_type([1, 2, hook])
+    values.head_dim = 8
+    values.callback = hook
+    original = SimpleNamespace(values=values)
+    cleaned = remove_non_pickleables(original, max_depth=max_depth)
+    restored = pickle.loads(pickle.dumps(cleaned))
+    assert type(restored.values) is sequence_type
+    assert list(restored.values) == [1, 2, None]
+    assert restored.values.head_dim == 8
+    assert restored.values.callback is None
+    assert original.values[2] is hook
+    assert original.values.callback is hook
+
+
+@pytest.mark.parametrize("max_depth", [2, 3])
+def test_remove_non_pickleables_preserves_namedtuple_fields(max_depth):
+    import pickle
+    from types import SimpleNamespace
+
+    hook = lambda: None
+    original = SimpleNamespace(values=MetadataPair(8, hook))
+    cleaned = remove_non_pickleables(original, max_depth=max_depth)
+    restored = pickle.loads(pickle.dumps(cleaned))
+    assert type(restored.values) is MetadataPair
+    assert restored.values.head_dim == 8
+    assert restored.values.callback is None
+    assert original.values.callback is hook

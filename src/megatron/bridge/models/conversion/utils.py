@@ -17,6 +17,7 @@ import functools
 import pickle
 import re
 import types
+from collections import defaultdict
 from typing import Iterable, List, Optional, Tuple
 
 import torch
@@ -270,12 +271,25 @@ def remove_non_pickleables(obj, max_depth: int = 3, current_depth: int = 0):
     # Check containers before objects: OrderedDict has a __dict__, but its
     # hook values are mapping entries rather than object attributes.
     if isinstance(obj, list):
-        return [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
-    if isinstance(obj, tuple):
-        return tuple(remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj)
-    if isinstance(obj, dict):
+        cleaned_obj = copy.copy(obj)
+        for index, item in enumerate(obj):
+            cleaned_obj[index] = remove_non_pickleables(item, max_depth, current_depth + 1)
+    elif isinstance(obj, tuple):
+        # Build the tuple storage directly: named tuples and other subclasses
+        # may have constructors that take positional fields, not an iterable.
+        items = [remove_non_pickleables(item, max_depth, current_depth + 1) for item in obj]
+        if all(cleaned is original for cleaned, original in zip(items, obj)):
+            # Keep native tuple types such as torch.Size on their own copy path.
+            cleaned_obj = copy.copy(obj)
+        else:
+            cleaned_obj = tuple.__new__(type(obj), items)
+        if hasattr(obj, "__dict__"):
+            vars(cleaned_obj).update(vars(obj))
+    elif isinstance(obj, dict):
         # A shallow copy retains OrderedDict/defaultdict behavior and attributes.
         cleaned_obj = copy.copy(obj)
+        if isinstance(obj, defaultdict):
+            cleaned_obj.default_factory = remove_non_pickleables(obj.default_factory, max_depth, current_depth + 1)
         for key, value in obj.items():
             cleaned_obj[key] = remove_non_pickleables(value, max_depth, current_depth + 1)
     else:
