@@ -93,6 +93,10 @@ class TestMegatronQwen3Bridge:
         """Qwen3 should not maintain a separate provider construction path."""
         assert "provider_bridge" not in Qwen3Bridge.__dict__
 
+    def test_conversion_uses_builder_config(self):
+        """Checkpoint conversion constructs Qwen3 through its ModelBuilder."""
+        assert Qwen3Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
     def test_hf_config_to_model_config_uses_direct_mapping(self, mock_pretrained_qwen3, qwen3_config):
         """The builder config path must not route through the legacy provider."""
         bridge = Qwen3Bridge()

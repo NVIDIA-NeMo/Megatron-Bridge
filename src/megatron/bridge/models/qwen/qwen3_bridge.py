@@ -42,6 +42,8 @@ class Qwen3Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
+
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Convert a Hugging Face Qwen3 config to builder config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
