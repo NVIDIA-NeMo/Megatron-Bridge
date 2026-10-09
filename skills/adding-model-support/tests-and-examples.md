@@ -6,58 +6,78 @@ Location: `tests/unit_tests/models/<model>/`
 
 ### Bridge Unit Test
 
-Mock the HF config and pretrained model, then verify `provider_bridge()` and `mapping_registry()`.
+Build a small HF config, then verify `hf_config_to_model_config()` and `mapping_registry()`. Use the
+model's HF config class, or a `SimpleNamespace` when the class is not importable. Do not use a
+`Mock()` config: every attribute you do not set is itself a `Mock`, so the shared mapping picks up
+values such as `hidden_act` and the conversion fails.
 
 ```python
+from dataclasses import fields
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock
+import torch.nn.functional as F
+
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
-def _make_mock_config():
-    """Create a mock HF config with model-specific attributes."""
-    config = Mock()
-    config.num_hidden_layers = 4
-    config.hidden_size = 256
-    config.intermediate_size = 512
-    config.num_attention_heads = 4
-    config.num_key_value_heads = 2
-    config.vocab_size = 32000
-    config.max_position_embeddings = 2048
-    config.rope_theta = 10000.0
-    config.rms_norm_eps = 1e-6
-    config.tie_word_embeddings = False
-    # For VLMs: add text_config and vision_config
-    # config.text_config = _make_text_config()
-    # config.vision_config = _make_vision_config()
-    return config
 
-def _make_mock_pretrained(config):
-    pretrained = Mock(spec=PreTrainedCausalLM)
-    pretrained.config = config
-    return pretrained
+def _make_config(**overrides):
+    """Create a small HF config with model-specific attributes."""
+    values = dict(
+        num_hidden_layers=4,
+        hidden_size=256,
+        intermediate_size=512,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=32000,
+        max_position_embeddings=2048,
+        rope_theta=10000.0,
+        rms_norm_eps=1e-6,
+        tie_word_embeddings=False,
+        torch_dtype="bfloat16",
+    )
+    values.update(overrides)
+    return MyModelConfig(architectures=["MyModelForCausalLM"], **values)
 
-class TestMyModelBridgeProviderBridge:
-    @pytest.fixture
-    def bridge(self):
-        return MyModelBridge()
 
-    @pytest.fixture
-    def mock_pretrained(self):
-        return _make_mock_pretrained(_make_mock_config())
+class TestMyModelBridgeModelConfig:
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in MyModelBridge.__dict__
 
-    def test_provider_type(self, bridge, mock_pretrained):
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert isinstance(provider, GPTModelProvider)  # or custom provider class if one exists
+    def test_conversion_uses_builder_config(self):
+        assert MyModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
-    def test_config_mapping(self, bridge, mock_pretrained):
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.num_layers == 4
-        assert provider.hidden_size == 256
-        assert provider.num_attention_heads == 4
+    def test_config_mapping(self):
+        bridge = MyModelBridge()
+        # The builder path must not route through the legacy provider.
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            model_config = bridge.hf_config_to_model_config(_make_config())
 
-    def test_tie_word_embeddings(self, bridge, mock_pretrained):
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.share_embeddings_and_output_weights == False
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.num_layers == 4
+        assert model_config.hidden_size == 256
+        assert model_config.activation_func is F.silu
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.share_embeddings_and_output_weights is False
+
+    def test_model_config_matches_provider(self):
+        config = _make_config()
+        bridge = MyModelBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        pretrained = Mock(spec=PreTrainedCausalLM)
+        pretrained.config = config
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(pretrained)
+
+        model_fields = {f.name for f in fields(model_config)} | {f.name for f in fields(model_config.transformer)}
+        shared = ({f.name for f in fields(provider)} & model_fields) - {"transformer_layer_spec"}
+        for name in sorted(shared):
+            assert getattr(model_config, name) == getattr(provider, name), name
+
 
 class TestMyModelBridgeMappingRegistry:
     @pytest.fixture
@@ -66,8 +86,8 @@ class TestMyModelBridgeMappingRegistry:
 
     def test_has_embedding_mapping(self, bridge):
         registry = bridge.mapping_registry()
-        hf_params = {m.hf_param for m in registry.mappings if hasattr(m, 'hf_param')}
-        assert "model.embed_tokens.weight" in hf_params
+        mapping = registry.megatron_to_hf_lookup("embedding.word_embeddings.weight")
+        assert mapping.hf_param == "model.embed_tokens.weight"
 
     def test_has_output_layer_mapping(self, bridge):
         registry = bridge.mapping_registry()
@@ -75,10 +95,19 @@ class TestMyModelBridgeMappingRegistry:
         assert any("output_layer" in p for p in megatron_params)
 ```
 
-### Provider Unit Test (only if custom provider subclass exists)
+For a VLM, nest `text_config` and `vision_config` in the HF config and assert the fields read from the
+top-level config, such as `tie_word_embeddings` and `image_token_id`.
 
-Skip this if the bridge uses `GPTModelProvider` directly (most LLM bridges).
-Only needed for VLM providers or LLM providers with custom fields/`provide()` logic.
+### Config and Builder Unit Test (only if a custom config or builder exists)
+
+Skip this if the bridge uses `BridgeGPTModelConfig` (most LLM bridges). For a custom `ModelConfig`,
+test its defaults, serialization roundtrip, and the builder's model construction; see
+`tests/unit_tests/models/muse_glimmer/`.
+
+### Provider Unit Test (legacy provider subclasses only)
+
+Only needed when changing a family that still has a provider subclass with custom fields or
+`provide()` logic.
 
 ```python
 class TestMyModelProvider:
