@@ -138,9 +138,15 @@ def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int | None):
         (1, 1): None,
         (2, 1): [["embedding"] + ["decoder"] * 14, ["decoder"] * 13 + ["loss"]],
         (4, 1): [["embedding"] + ["decoder"] * 7] + [["decoder"] * 7] * 2 + [["decoder"] * 6 + ["loss"]],
-        (8, 1): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 6 + [["decoder"] * 3 + ["loss"]],
+        (8, 1): [["embedding"] + ["decoder"] * 4]
+        + [["decoder"] * 4] * 2
+        + [["decoder"] * 3] * 4
+        + [["decoder"] * 3 + ["loss"]],
         (2, 2): [["embedding"] + ["decoder"] * 7] + [["decoder"] * 7] * 2 + [["decoder"] * 6 + ["loss"]],
-        (4, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 6 + [["decoder"] * 3 + ["loss"]],
+        (4, 2): [["embedding"] + ["decoder"] * 4]
+        + [["decoder"] * 4] * 2
+        + [["decoder"] * 3] * 4
+        + [["decoder"] * 3 + ["loss"]],
     }
     vp_size = 1 if vp_size is None else vp_size
     if (pp_size, vp_size) not in map_pp_vp_to_layout:
