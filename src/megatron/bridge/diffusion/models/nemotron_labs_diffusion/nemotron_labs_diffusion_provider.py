@@ -14,10 +14,14 @@
 
 """NemotronLabsDiffusion model provider: text-only GPTModel + NemotronLabsDiffusionAttention for sbd_block_diff."""
 
+import functools
 import inspect
 from dataclasses import dataclass
 
-from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import NemotronLabsDiffusionAttention
+from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
+    Ministral3RotaryEmbedding,
+    NemotronLabsDiffusionAttention,
+)
 from megatron.bridge.models import Ministral3ModelProvider
 from megatron.bridge.models.gpt_provider import ModuleSpec
 
@@ -30,10 +34,16 @@ class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
     dlm_paradigm: str = "sbd_block_diff"
     block_size: int = 64
     different_seed_per_dp: bool = True
-    apply_llama4_style_query_key_layer_scaling: bool = True
+    # Native runtime configuration, populated by provider_bridge from the checkpoint.
+    rope_type: str = "default"
+    yarn_attention_factor: float | None = None
+    apply_llama4_style_query_key_layer_scaling: bool = False
+    llama4_scaling_beta: float | None = None
     dlm_loss_weight: float = 0.3
     ar_loss_weight: float = 1.0
     position_embedding_type: str = "none"
+    # This text-only path uses GPT embeddings, without the VLM wrapper scatter.
+    scatter_embedding_sequence_parallel: bool = True
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         transformer_layer_spec = self.transformer_layer_spec
@@ -44,7 +54,10 @@ class NemotronLabsDiffusionModelProvider(Ministral3ModelProvider):
                 transformer_layer_spec = transformer_layer_spec(self)
 
         if hasattr(transformer_layer_spec, "submodules"):
-            transformer_layer_spec.submodules.self_attention.submodules.core_attention = NemotronLabsDiffusionAttention
+            rope_module = Ministral3RotaryEmbedding.from_megatron_config(self)
+            transformer_layer_spec.submodules.self_attention.submodules.core_attention = functools.partial(
+                NemotronLabsDiffusionAttention, rope_module=rope_module
+            )
 
         original_spec = self.transformer_layer_spec
         self.transformer_layer_spec = transformer_layer_spec
