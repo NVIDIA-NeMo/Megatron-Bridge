@@ -35,12 +35,12 @@ The three-tier evaluation checks whether the skill:
 
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 97.1% — baseline ran, but no comparable score was available; uplift unavailable | 93.9% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 93.6% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 46.7% → 100.0% (+53.3 points) | 93.3% → 93.3% (±0.0 points) |
+| Correctness | 40.0% → 86.7% (+46.7 points) | 80.0% → 93.3% (+13.3 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 26.1% → 87.5% (+61.4 points) | 65.6% → 84.5% (+18.9 points) |
-| Efficiency | 98.2% — baseline ran, but no comparable score was available; uplift unavailable | 96.9% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 18.6% → 83.3% (+64.7 points) | 55.6% → 90.3% (+34.7 points) |
+| Efficiency | 97.9% — baseline ran, but no comparable score was available; uplift unavailable | 96.4% — baseline ran, but no comparable score was available; uplift unavailable |
 
 **How to read this table:** baseline is the same task attempted without the target skill. Scores are rounded to one decimal; threshold-adjacent values use additional precision so their displayed band matches the verdict. Uplift is derived from those displayed scores and shown in percentage points.
 
@@ -54,15 +54,15 @@ Actual Tier 3 execution usage is reported for every observed agent/case pair and
 
 | Agent | Dataset case | With skill | Without skill | Delta | Change | Coverage |
 |---|---|---:|---:|---:|---:|---|
-| claude-code | All cases | 196,033 | 691,943 | -495,910 | -71.67% | skill 3/3; base 3/3 |
-| claude-code | vision-dp-over-cp-negative-hierarchical-cp | 61,679 | 94,586 | -32,907 | -34.79% | skill 1/1; base 1/1 |
-| claude-code | vision-dp-over-cp-positive-enablement | 67,801 | 186,317 | -118,516 | -63.61% | skill 1/1; base 1/1 |
-| claude-code | vision-dp-over-cp-positive-load-imbalance | 66,553 | 411,040 | -344,487 | -83.81% | skill 1/1; base 1/1 |
-| codex | All cases | 140,247 | 207,481 | -67,234 | -32.40% | skill 3/3; base 3/3 |
-| codex | vision-dp-over-cp-negative-hierarchical-cp | 80,268 | 72,715 | +7,553 | +10.39% | skill 1/1; base 1/1 |
-| codex | vision-dp-over-cp-positive-enablement | 30,114 | 52,057 | -21,943 | -42.15% | skill 1/1; base 1/1 |
-| codex | vision-dp-over-cp-positive-load-imbalance | 29,865 | 82,709 | -52,844 | -63.89% | skill 1/1; base 1/1 |
-| ALL AGENTS | Dataset aggregate | 336,280 | 899,424 | -563,144 | -62.61% | skill 6/6; base 6/6 |
+| claude-code | All cases | 259,284 | 706,809 | -447,525 | -63.32% | skill 3/3; base 3/3 |
+| claude-code | vision-dp-over-cp-negative-hierarchical-cp | 125,049 | 32,049 | +93,000 | +290.18% | skill 1/1; base 1/1 |
+| claude-code | vision-dp-over-cp-positive-enablement | 67,695 | 445,733 | -378,038 | -84.81% | skill 1/1; base 1/1 |
+| claude-code | vision-dp-over-cp-positive-load-imbalance | 66,540 | 229,027 | -162,487 | -70.95% | skill 1/1; base 1/1 |
+| codex | All cases | 195,879 | 178,491 | +17,388 | +9.74% | skill 3/3; base 3/3 |
+| codex | vision-dp-over-cp-negative-hierarchical-cp | 118,635 | 87,227 | +31,408 | +36.01% | skill 1/1; base 1/1 |
+| codex | vision-dp-over-cp-positive-enablement | 47,360 | 49,255 | -1,895 | -3.85% | skill 1/1; base 1/1 |
+| codex | vision-dp-over-cp-positive-load-imbalance | 29,884 | 42,009 | -12,125 | -28.86% | skill 1/1; base 1/1 |
+| ALL AGENTS | Dataset aggregate | 455,163 | 885,300 | -430,137 | -48.59% | skill 6/6; base 6/6 |
 
 Prompt tokens include cached reads, so total tokens are `prompt + completion` (cached is not added twice). The Efficiency score uses `(prompt - cached) + completion`. N/A means the relevant trajectory counters were not available; coverage is never estimated.
 
