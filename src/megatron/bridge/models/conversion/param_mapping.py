@@ -3453,8 +3453,13 @@ class FusedExpertMapping(AutoMapping):
         return self.hf_param
 
     def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
-        """Describe this local expert as a canonical per-expert HF weight."""
-        if self.permute_dims is not None or self.transpose_on_export:
+        """Describe a canonical per-expert view, not the grouped destination layout.
+
+        Grouped transposition applies only after expert assembly. These logical
+        views do not qualify direct native MXFP8 transport, which rejects it.
+        """
+        # Grouped destination transposition does not change the canonical expert view.
+        if self.permute_dims is not None:
             return ()
         expert_idx = extract_expert_number_from_param(global_param_name or self.megatron_param)
         prefix = self.hf_param.removesuffix(".weight").removesuffix(".down_proj")
@@ -3539,8 +3544,13 @@ class FusedGatedExpertMapping(AutoMapping):
         return self.hf_param
 
     def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
-        """Describe canonical gate and up views for this local expert."""
-        if self.permute_dims is not None or self.transpose_on_export:
+        """Describe canonical gate/up views, not the grouped destination layout.
+
+        Grouped transposition applies only after expert assembly. These logical
+        views do not qualify direct native MXFP8 transport, which rejects it.
+        """
+        # Grouped destination transposition does not change the canonical expert views.
+        if self.permute_dims is not None:
             return ()
         expert_idx = extract_expert_number_from_param(global_param_name or self.megatron_param)
         prefix = self.hf_param.removesuffix(".weight").removesuffix(".gate_up_proj")

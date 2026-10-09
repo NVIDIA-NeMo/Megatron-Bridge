@@ -105,7 +105,8 @@ def transformer_config():
     )
 
 
-def test_local_hf_param_specs_cover_gated_and_expert_views():
+@pytest.mark.parametrize("transpose_on_export", [False, True])
+def test_local_hf_param_specs_cover_gated_and_expert_views(transpose_on_export):
     logical = torch.arange(32).reshape(8, 4)
     gated = GatedMLPMapping(
         "decoder.mlp.linear_fc1.weight",
@@ -125,12 +126,14 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     down = FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in down.local_hf_param_specs()] == ["model.mlp.experts.3.down_proj.weight"]
 
     gate_up = FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
         "model.mlp.experts.gate_up_proj",
+        transpose_on_export=transpose_on_export,
     )
     assert [spec.name for spec in gate_up.local_hf_param_specs()] == [
         "model.mlp.experts.3.gate_proj.weight",
@@ -138,8 +141,8 @@ def test_local_hf_param_specs_cover_gated_and_expert_views():
     ]
 
 
-def test_local_hf_param_specs_reject_grouped_or_transformed_views():
-    """Mappings that need export transforms must use the normal Bridge path."""
+def test_local_hf_param_specs_reject_unsupported_local_transforms():
+    """Canonical local specs do not support arbitrary mapping transforms."""
 
     class GroupedAutoMapping(AutoMapping):
         is_grouped_export = True
@@ -179,17 +182,7 @@ def test_local_hf_param_specs_reject_grouped_or_transformed_views():
     assert not FusedExpertMapping(
         "decoder.mlp.experts.linear_fc2.weight3",
         "model.mlp.experts.down_proj",
-        transpose_on_export=True,
-    ).local_hf_param_specs()
-    assert not FusedExpertMapping(
-        "decoder.mlp.experts.linear_fc2.weight3",
-        "model.mlp.experts.down_proj",
         permute_dims=(1, 0),
-    ).local_hf_param_specs()
-    assert not FusedGatedExpertMapping(
-        "decoder.mlp.experts.linear_fc1.weight3",
-        "model.mlp.experts.gate_up_proj",
-        transpose_on_export=True,
     ).local_hf_param_specs()
     assert not FusedGatedExpertMapping(
         "decoder.mlp.experts.linear_fc1.weight3",
