@@ -126,3 +126,37 @@ class TestMimoBridge:
 
         expected = torch.cat((weight[:, 4:], weight[:, :4]), dim=1)
         assert torch.equal(modified["model.mtp_layers.0.input_proj.weight"], expected)
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        """MiMo builds both paths from its builder-config kwargs."""
+        assert "provider_bridge" not in MimoBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert MimoBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_model_config_maps_mtp_config(self, mock_pretrained_mimo):
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        model_config = MimoBridge().hf_config_to_model_config(mock_pretrained_mimo.config)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert model_config.qk_layernorm is False
+        assert model_config.add_qkv_bias is True
+        assert model_config.mtp_num_layers == mock_pretrained_mimo.config.num_nextn_predict_layers
+        assert model_config.mtp_loss_scaling_factor == 0.1
+        assert model_config.position_embedding_type == "rope"
+        assert model_config.normalization == "RMSNorm"
+
+    def test_model_config_matches_provider_runtime_config(self, mock_pretrained_mimo):
+        from dataclasses import fields
+
+        bridge = MimoBridge()
+        model_config = bridge.hf_config_to_model_config(mock_pretrained_mimo.config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained_mimo)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        for field_name in sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"}):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
