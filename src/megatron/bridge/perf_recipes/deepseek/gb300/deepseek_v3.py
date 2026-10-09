@@ -327,24 +327,34 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
-
-
-def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.fp8_output_proj = True
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
 
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 64
+    # ZeRO-2 sharding for dense params to avoid fsdp pre-fetch comms interfering with the expert routing/combine comms.
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads"
+    cfg.ddp.expert_data_parallel_sharding_strategy = "optim_grads_params"
+
+    cfg.model.gradient_accumulation_fusion = False
+
     cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 1024
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
+    cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
+
+    cfg.optimizer.lr = 3e-7
+    cfg.optimizer.min_lr = 1e-7
 
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
+    cfg.model.average_in_collective = cfg.ddp.average_in_collective = True
 
     # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
     cfg.model.cuda_graph_impl = "full_iteration"
@@ -355,22 +365,39 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = []
+
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+
+    # cfg.model.cpu_offloading_num_layers = 95
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.fused_residual_rmsnorm = True
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+
+    # Comm overlap settings.
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.align_param_gather = True
 
     # CuTeDSL fused grouped MLP (moe_a2a_overlap disabled).
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
-    # The fused grouped MLP (ScaledSwiGLU) does not support moe_act recomputation; keep the other
-    # selective-recompute modules inherited from the FSDP base.
-    cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
+
+    cfg.model.mla_down_proj_fusion = True
 
     cfg.mixed_precision.fp8_dot_product_attention = False
 
     cfg.model.moe_router_force_load_balancing = True
-    _enable_ncclep(cfg)
+    # TODO: NCCL EP, seeing uneven perf. WAR to hybridEP.
+    # _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
@@ -379,12 +406,18 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_CUDNN_MXFP8_NORM_OUTPUT_IN_INPUT_DTYPE": 0,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
