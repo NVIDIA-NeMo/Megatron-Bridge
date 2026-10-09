@@ -578,6 +578,8 @@ def main(
     nvcre_node_selector_json: Optional[str] = None,
     nvcre_volumes_json: Optional[str] = None,
     nvcre_volume_mounts_json: Optional[str] = None,
+    nvcre_init_containers_json: Optional[str] = None,
+    nvcre_bridge_root: str = "/opt/Megatron-Bridge",
     nvcre_timeout_per_job: str = "24h",
     nvcre_kubeconfig: Optional[str] = None,
     nvcre_kube_context: Optional[str] = None,
@@ -656,8 +658,10 @@ def main(
     # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
+    # On NVCRE the root can be redirected to a checkout an init container placed in the pod.
     if kubeflow_namespace or nvcre_namespace:
-        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+        bridge_root = nvcre_bridge_root.rstrip("/") if nvcre_namespace else "/opt/Megatron-Bridge"
+        in_container_script_dir = f"{bridge_root}/scripts/performance"
         in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
         in_container_script_dir = str(SCRIPT_DIR)
@@ -732,6 +736,7 @@ def main(
             node_selector=json.loads(nvcre_node_selector_json) if nvcre_node_selector_json else None,
             volumes=json.loads(nvcre_volumes_json) if nvcre_volumes_json else None,
             volume_mounts=json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else None,
+            init_containers=json.loads(nvcre_init_containers_json) if nvcre_init_containers_json else None,
             timeout_per_job=nvcre_timeout_per_job,
             kubeconfig=nvcre_kubeconfig,
             kube_context=nvcre_kube_context,
@@ -1150,6 +1155,8 @@ if __name__ == "__main__":
         nvcre_node_selector_json=args.nvcre_node_selector_json,
         nvcre_volumes_json=args.nvcre_volumes_json,
         nvcre_volume_mounts_json=args.nvcre_volume_mounts_json,
+        nvcre_init_containers_json=args.nvcre_init_containers_json,
+        nvcre_bridge_root=args.nvcre_bridge_root,
         nvcre_timeout_per_job=args.nvcre_timeout_per_job,
         nvcre_kubeconfig=args.nvcre_kubeconfig,
         nvcre_kube_context=args.nvcre_kube_context,
