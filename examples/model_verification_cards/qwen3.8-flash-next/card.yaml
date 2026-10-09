@@ -1,0 +1,120 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_8_flash_next
+summary: >
+  Full released language-checkpoint import and ten loaded-weight real-text
+  pretraining steps passed on 32 GB200 GPUs with text_only=True in NeMo
+  26.10.rc4. Loss and pre-clipping gradient norm were finite at every step,
+  with zero skipped updates and nonzero sampled optimizer-weight changes.
+  Vision-language execution, HF numerical parity, checkpoint round trips,
+  convergence, and performance are unverified.
+verification_index:
+  model_level:
+    verified: [hf_to_megatron_gpu]
+  training:
+    GB200:
+      verified: [pretrain]
+model:
+  hf_id: Qwen/Qwen3.8-Flash-Next
+  hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540  # pragma: allowlist secret
+  architecture: Qwen4ExpForConditionalGeneration
+  min_transformers_version: "5.16.1"
+verification_environment:
+  base_container: nvcr.io/nvidian/nemo:26.10.rc4
+  transformers: "5.16.1"
+  tokenizers: "0.23.1"
+  megatron_core_commit: d6316eb45bf1bfbb6f1f848c0b56e55166564d80  # pragma: allowlist secret
+  dependency_note: >
+    Transformers and tokenizers use an isolated overlay; Megatron-Core and
+    the GPU runtime come from the release-candidate container.
+
+items:
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    last_verified: 2026-10-08
+    expected_result: >
+      The 32-GB200 TP8/EP32 import completed all 2427 mappings for the full
+      48-layer language model, including PLE, before DDP and optimizer
+      construction. Rank 0 reported 11,455,020,976 local parameters, including
+      replicated parameters. This is an
+      in-memory import; persisted Megatron checkpoint reload is a separate,
+      unverified operation. text_only=True excludes vision and MTP weights.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    expected_result: >
+      A standalone forward comparison with HF has not been run. The pretrain
+      item separately checks real-data training forward execution; this does
+      not establish HF logit parity.
+
+  inference:
+    status: unverified
+    expected_result: >
+      No standalone generation result is available. Cached generation is
+      currently unsupported by this model implementation.
+
+  pretrain:
+    GB200:
+      status: verified
+      precision: bf16
+      last_verified: 2026-10-08
+      command: >
+        uv run --no-sync python -m torch.distributed.run
+        --nnodes=8 --nproc_per_node=4 --node_rank="$NODE_RANK"
+        --master_addr="$MASTER_ADDR" --master_port=29500
+        examples/model_verification_cards/qwen3.8-flash-next/verify_pretrain.py
+        --checkpoint work/qwen3.8-flash-next/hf
+        --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540
+        --data-prefix work/data/wikitext2_qwen38_train_text_document
+        --output work/qwen3.8-flash-next/pretrain --steps 10
+      enabled_features:
+        text_only: true
+        tensor_model_parallel_size: 8
+        expert_model_parallel_size: 32
+        expert_tensor_parallel_size: 1
+        pipeline_model_parallel_size: 1
+        context_parallel_size: 1
+        sequence_parallel: true
+        grad_reduce_in_fp32: false
+        moe_token_dispatcher_type: allgather
+        moe_permute_fusion: false
+        moe_shared_expert_overlap: false
+      dataset:
+        hf_id: Salesforce/wikitext
+        hf_revision: b08601e04326c79dfdd32d625aee71d232d685c3  # pragma: allowlist secret
+        subset: wikitext-2-raw-v1
+        split: train
+        tokens: 1000000
+        documents: 9460
+        token_file_sha256: c67464af837ccb18834130ad6fb853b42e5157f5337cb67eb2b55c12eb3a0fd0  # pragma: allowlist secret
+        index_file_sha256: 55d1cd0dc221cf1942368458221925fa5015709dded14f36d1a3e87d4b096d7b  # pragma: allowlist secret
+      observed_result:
+        completed_steps: 10
+        skipped_steps: 0
+        first_lm_loss: 2.246053695678711
+        last_lm_loss: 2.0654714107513428
+        lm_loss_min: 2.0654714107513428
+        lm_loss_max: 2.4887423515319824
+        pre_clipping_grad_norm_min: 16.23810386657715
+        pre_clipping_grad_norm_max: 26.358875274658203
+        sampled_master_update_min_global: 1.0132789611816406e-6
+        clean_exit: true
+      expected_result: >
+        Ten standard Bridge pretraining steps from the pinned HF weights,
+        with real indexed text, sequence length 512, microbatch size 1,
+        global batch size 4, and distributed Adam at learning rate 1e-6 and
+        zero weight decay. Gradient-reduction overlap is disabled because
+        the QSA hard-selection indexer receives no language-loss gradients.
+        Record every step's loss,
+        pre-clipping gradient norm, skipped-update count, and evidence that
+        optimizer updates changed a parameter. No checkpoint output or
+        convergence claim. At this sequence length QSA does not exercise
+        selection beyond its 2048-token budget. RC4 SPCX variable-split
+        all-to-all corrupted this workload; this check uses unfused all-gather.
+        All ten ordinary steps passed, including metric logging. These losses
+        and gradient norms support numerical training health; they do not
+        establish HF parity or convergence. Each process prepares its small
+        dataset cache locally before distributed initialization.

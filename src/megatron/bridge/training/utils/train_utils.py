@@ -644,7 +644,10 @@ def _get_num_moe_layers(model_config: Any) -> int:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
 
-    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
+    is_hybrid = getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None)
+    # Full-block hybrid symbols include their MLP, so their MoE placement is
+    # defined by moe_layer_freq rather than separate E symbols in the pattern.
+    if is_hybrid and not getattr(model_config, "hybrid_attention_layers_include_mlp", False):
         pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
         main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
         mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
@@ -663,7 +666,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
         else:
             raise ValueError(f"Invalid moe_layer_freq: {moe_layer_freq}")
 
-        # Non-hybrid MTP copies the final main layer's dense/MoE layout.
+        # Transformer and full-block hybrid MTP copy the final main layer's layout.
         mtp_moe_layers = int(last_layer_is_moe and mtp_num_layers > 0)
         mtp_depth = mtp_num_layers
 

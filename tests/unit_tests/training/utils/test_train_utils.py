@@ -182,6 +182,65 @@ def test_get_num_moe_layers(num_layers, mtp_num_layers, hybrid_pattern, moe_laye
     assert _get_num_moe_layers(model_config) == expected
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("moe_layer_freq", "expected"),
+    [
+        pytest.param(None, 48, id="all_layers_default"),
+        pytest.param(1, 48, id="all_layers_explicit"),
+        pytest.param(2, 24, id="alternating_layers"),
+        pytest.param([0] * 3 + [1] * 45, 45, id="explicit_layer_layout"),
+    ],
+)
+def test_get_num_moe_layers_qwen4_full_block_hybrid(moe_layer_freq: int | list[int] | None, expected: int) -> None:
+    """Qwen4's G/* blocks contain MoE layers even without E pattern symbols."""
+    from megatron.bridge.models.qwen.modeling_qwen4_exp.model_config import (
+        Qwen4ExpModelConfig,
+        Qwen4ExpTransformerConfig,
+    )
+
+    model_config = Qwen4ExpModelConfig(
+        transformer=Qwen4ExpTransformerConfig(
+            num_layers=48,
+            hidden_size=128,
+            num_attention_heads=2,
+            num_moe_experts=512,
+            moe_layer_freq=moe_layer_freq,
+        ),
+        hybrid_layer_pattern="GGG*" * 12,
+    )
+
+    assert model_config.hybrid_attention_layers_include_mlp is True
+    assert _get_num_moe_layers(model_config) == expected
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("moe_layer_freq", "repeated_mtp", "expected"),
+    [
+        pytest.param([1, 0, 1, 1], False, 5, id="distinct_mtp"),
+        pytest.param([1, 0, 1, 1], True, 4, id="repeated_mtp"),
+        pytest.param([1, 0, 1, 0], False, 2, id="dense_final_layer"),
+        pytest.param(2, False, 2, id="periodic_dense_final_layer"),
+    ],
+)
+def test_get_num_moe_layers_full_block_hybrid_mtp(
+    moe_layer_freq: int | list[int], repeated_mtp: bool, expected: int
+) -> None:
+    """Full-block hybrids retain Transformer MTP contributor counting."""
+    model_config = SimpleNamespace(
+        num_layers=4,
+        moe_layer_freq=moe_layer_freq,
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated_mtp,
+        is_hybrid_model=True,
+        hybrid_layer_pattern="GGG*",
+        hybrid_attention_layers_include_mlp=True,
+    )
+
+    assert _get_num_moe_layers(model_config) == expected
+
+
 class TestTrainingLog:
     """Test suite for the training_log function."""
 
