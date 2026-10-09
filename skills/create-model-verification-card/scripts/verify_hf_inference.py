@@ -21,6 +21,8 @@ import argparse
 import io
 import json
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -60,10 +62,16 @@ def _parse_args() -> argparse.Namespace:
         help="Pass enable_thinking=False to the tokenizer chat template.",
     )
     parser.add_argument("--device", default="cuda", help="Torch device used for inference.")
-    parser.add_argument(
+    sharding = parser.add_mutually_exclusive_group()
+    sharding.add_argument(
         "--device-map",
         choices=("auto", "balanced", "balanced_low_0", "sequential"),
         help="Optional Hugging Face device-map strategy for sharded model loading.",
+    )
+    sharding.add_argument(
+        "--tp-plan",
+        choices=("auto",),
+        help="Use the model's native Hugging Face tensor-parallel plan, with one launcher process per GPU.",
     )
     parser.add_argument(
         "--dtype",
@@ -91,6 +99,28 @@ def _parse_args() -> argparse.Namespace:
     if args.separate_image_processing and not args.image:
         parser.error("--separate-image-processing requires --image")
     return args
+
+
+@contextmanager
+def _tensor_parallel_context(enabled: bool) -> Iterator[None]:
+    """Use the shared Slurm/torchrun bootstrap and release only groups created here."""
+    if not enabled:
+        yield
+        return
+
+    import torch
+
+    from megatron.bridge.utils.common_utils import get_world_size_safe, maybe_initialize_distributed
+
+    if get_world_size_safe() < 2:
+        raise ValueError("--tp-plan requires at least two processes, one per GPU")
+    owns_group = not torch.distributed.is_initialized()
+    try:
+        maybe_initialize_distributed()
+        yield
+    finally:
+        if owns_group and torch.distributed.is_initialized():
+            torch.distributed.destroy_process_group()
 
 
 def _format_prompt(tokenizer: Any, prompt: str, *, chat_template: bool, disable_thinking: bool) -> str:
@@ -235,9 +265,11 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         model_kwargs["config"] = config
     if args.device_map:
         model_kwargs["device_map"] = args.device_map
+    if args.tp_plan:
+        model_kwargs["tp_plan"] = args.tp_plan
     model, loading_info = model_cls.from_pretrained(args.hf_model, **model_kwargs)
     _validate_loading_info(loading_info)
-    if not args.device_map:
+    if not args.device_map and not args.tp_plan:
         model = model.to(args.device)
     model = model.eval()
     if args.require_gpu_only:
@@ -257,9 +289,8 @@ def _model_input_device(model: Any) -> Any:
     return model.device
 
 
-def main() -> int:
-    """Run one bounded greedy generation and print its completion."""
-    args = _parse_args()
+def _run_inference(args: argparse.Namespace) -> int:
+    """Load the checkpoint and run bounded greedy generation on every participating rank."""
     torch, model, processor = _load_runtime(args)
     tokenizer = getattr(processor, "tokenizer", processor)
     input_device = _model_input_device(model)
@@ -284,13 +315,21 @@ def main() -> int:
 
     completion_ids = output[0, prompt_length:].tolist()
     completion = processor.decode(completion_ids, skip_special_tokens=True)
-    LOG.info(
-        "HF completion (%d generated tokens; maximum %d): %s",
-        len(completion_ids),
-        args.max_new_tokens,
-        json.dumps(completion, ensure_ascii=False),
-    )
+    if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
+        LOG.info(
+            "HF completion (%d generated tokens; maximum %d): %s",
+            len(completion_ids),
+            args.max_new_tokens,
+            json.dumps(completion, ensure_ascii=False),
+        )
     return 0
+
+
+def main() -> int:
+    """Run one bounded greedy generation and print its completion."""
+    args = _parse_args()
+    with _tensor_parallel_context(args.tp_plan is not None):
+        return _run_inference(args)
 
 
 if __name__ == "__main__":

@@ -4493,6 +4493,22 @@ class TestDistributedOptimizerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
 
+@pytest.mark.unit
+class TestCudnnGdnStackValidationHook:
+    """ConfigContainer.validate() runs the cuDNN GDN stack check; see tests/unit_tests/utils/test_gdn_utils.py."""
+
+    @patch("megatron.bridge.training.config.validate_cudnn_gdn_stack")
+    def test_config_container_validate_runs_the_check(self, mock_check):
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=create_test_gpt_config()
+        )
+        try:
+            container.validate()
+            mock_check.assert_called_once_with(container.model)
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+
 class TestSampleBasedTraining:
     """Tests for sample-based training configuration and validation."""
 
