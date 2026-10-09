@@ -5,11 +5,11 @@ This directory contains model-specific examples for the Nemotron family:
 | Model | Parameters | Active Parameters | Subdirectory |
 |-------|-----------|-------------------|--------------|
 | Nemotron 3 Nano | 30B | A3B | [nemotron_3_nano/](nemotron_3_nano/) |
-| Nemotron 3.5 Lightning | 30B | A3B | [nemotron_3_5_lightning/](nemotron_3_5_lightning/) |
-| Nemotron 3 Super | 120B | A12B | [nemotron_3_super/](nemotron_3_super/) |
 | Nemotron 3 Nano Omni | 30B | A3B | [nemotron_3_nano_omni/](nemotron_3_nano_omni/) |
-| Nemotron 3.5 Super VL | 120B language model | A12B | [nemotron_3_5_super_vl/](nemotron_3_5_super_vl/) (draft) |
+| Nemotron 3 Super | 120B | A12B | [nemotron_3_super/](nemotron_3_super/) |
 | Nemotron 3 Ultra | 550B | A55B | [nemotron_3_ultra/](nemotron_3_ultra/) |
+| Nemotron 3.5 Lightning | 30B | A3B | [nemotron_3_5_lightning/](nemotron_3_5_lightning/) |
+| Nemotron 3.5 Super VL | 120B language model | A12B | [nemotron_3_5_super_vl/](nemotron_3_5_super_vl/) (draft) |
 
 ## Path migration
 
