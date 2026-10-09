@@ -602,8 +602,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = []
 
-    cfg.model.fine_grained_activation_offloading = False #True
-    cfg.model.offload_modules = [] #["core_attn", "attn_proj"]
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
     
     # cfg.model.cpu_offloading_num_layers = 95
     cfg.model.high_priority_a2a_comm_stream = True
@@ -628,7 +628,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_dot_product_attention = False
 
     cfg.model.moe_router_force_load_balancing = True
-    _enable_ncclep(cfg)
+    # _enable_ncclep(cfg)
     # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
     # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
     cfg.model.moe_use_grouped_tensor = True
