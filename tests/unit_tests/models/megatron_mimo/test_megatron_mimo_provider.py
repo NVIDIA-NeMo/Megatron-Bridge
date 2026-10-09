@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO Model Provider."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -386,6 +387,7 @@ class TestMegatronMIMOProvider:
 
         injected_spec = provider._inject_pg_collection_into_modality_spec(modality_spec, mock_pg_collection)
 
+        assert injected_spec.params["pg_collection"] == mock_pg_collection
         # Check encoder has pg_collection
         assert injected_spec.submodules["encoders"]["clip"].params["pg_collection"] == mock_pg_collection
         assert (
@@ -989,3 +991,40 @@ class TestCastModelDtypeExceptFp32Marked:
         assert model.marked.dtype == torch.float32
         assert model.router.expert_bias.dtype == torch.float32
         assert torch.equal(model.router.expert_bias, expected_bias)
+
+
+class TestModalityConfigParallelismAlignment:
+    def test_encoder_and_projection_configs_follow_component_groups(self):
+        provider = MegatronMIMOProvider(
+            language_model_spec=ModuleSpec(module=object),
+            modality_submodules_spec={},
+        )
+        encoder_cfg = SimpleNamespace(
+            tensor_model_parallel_size=8, expert_model_parallel_size=4, expert_tensor_parallel_size=2
+        )
+        projection_cfg = SimpleNamespace(
+            tensor_model_parallel_size=8, expert_model_parallel_size=4, expert_tensor_parallel_size=2
+        )
+        modality_spec = ModuleSpec(
+            module=object,
+            params={},
+            submodules={
+                "encoders": {"radio": ModuleSpec(module=object, params={"transformer_config": encoder_cfg})},
+                "input_projections": [ModuleSpec(module=object, params={"config": projection_cfg})],
+            },
+        )
+        pg_collection = Mock()
+        pg_collection.tp.size.return_value = 2
+
+        injected = provider._inject_pg_collection_into_modality_spec(modality_spec, pg_collection)
+
+        injected_encoder_cfg = injected.submodules["encoders"]["radio"].params["transformer_config"]
+        injected_projection = injected.submodules["input_projections"][0]
+        assert injected_encoder_cfg.tensor_model_parallel_size == 2
+        assert injected_encoder_cfg.expert_model_parallel_size == 1
+        assert injected_encoder_cfg.expert_tensor_parallel_size == 1
+        assert injected_projection.params["config"].tensor_model_parallel_size == 2
+        assert injected_projection.params["config"].expert_model_parallel_size == 1
+        assert injected_projection.params["tp_group"] is pg_collection.tp
+        # The source spec is left untouched.
+        assert encoder_cfg.tensor_model_parallel_size == 8

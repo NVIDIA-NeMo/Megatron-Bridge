@@ -35,6 +35,7 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
     unwrap_megatron_mimo_model,
     zero_grad_buffer_for_multimodule,
 )
+from megatron.bridge.training.megatron_mimo_step import reduce_mimo_losses
 from megatron.bridge.training.profiling import (
     handle_profiling_step,
     handle_profiling_stop,
@@ -148,17 +149,7 @@ def train_step_megatron_mimo(
 
         if is_last_stage:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
-            for key in losses_reduced[0].keys():
-                val = [x[key].view(-1) for x in losses_reduced]
-                if val[0].numel() == 2:
-                    val = torch.vstack(val).sum(dim=0)
-                    if llm_pg is not None and llm_pg.dp_cp is not None:
-                        torch.distributed.all_reduce(val, group=llm_pg.dp_cp)
-                    loss_dict[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
-                elif val[0].numel() == 1:
-                    loss_dict[key] = torch.cat(val).mean()
-                else:
-                    raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+            loss_dict = reduce_mimo_losses(losses_reduced, llm_pg)
 
     # Broadcast loss_dict to all ranks (the last rank is the logging rank for
     # W&B/TensorBoard). Use broadcast_object_list from the source rank so every

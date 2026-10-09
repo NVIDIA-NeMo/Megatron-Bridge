@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from megatron.bridge.training.megatron_mimo_step import resolve_step_packing
+from megatron.bridge.training.megatron_mimo_step import reduce_mimo_losses, resolve_step_packing
 
 
 class TestLossFunc:
@@ -83,6 +83,17 @@ class TestLossFunc:
 
         assert total_loss.item() == 3.0
         assert num_tokens.item() == 2
+
+
+def test_reduce_mimo_losses_aggregates_microbatches():
+    losses = [
+        {"lm loss": torch.tensor([6.0, 2.0])},
+        {"lm loss": torch.tensor([4.0, 2.0])},
+    ]
+
+    reduced = reduce_mimo_losses(losses, None)
+
+    assert reduced["lm loss"].item() == 2.5
 
 
 class TestGetBatch:

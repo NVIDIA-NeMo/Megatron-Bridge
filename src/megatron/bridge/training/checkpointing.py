@@ -48,7 +48,10 @@ from megatron.core.dist_checkpointing.strategies.torch import (
     TorchDistSaveShardedStrategy,
     _get_filesystem_reader,
 )
-from megatron.core.dist_checkpointing.utils import _clean_metadata_for_serialization
+from megatron.core.dist_checkpointing.utils import (
+    _clean_metadata_for_serialization,
+    apply_prefix_mapping,
+)
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer, MegatronOptimizer, distrib_optimizer
@@ -2186,6 +2189,73 @@ def _generate_model_state_dict(
     return state_dict
 
 
+def _mimo_component_wrapper_prefix(
+    keys: set[str],
+    *,
+    module_name: str,
+) -> str:
+    """Return the common component prefix, including runtime wrapper levels."""
+    # Keep the experimental MIMO dependency out of ordinary checkpoint imports.
+    from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+
+    component_root = (
+        "language_model." if module_name == MIMO_LANGUAGE_MODULE_KEY else f"modality_submodules.{module_name}."
+    )
+    depths = set()
+    for key in keys:
+        if not key.startswith(component_root):
+            continue
+        suffix = key[len(component_root) :]
+        depth = 0
+        while suffix.startswith("module."):
+            depth += 1
+            suffix = suffix[len("module.") :]
+        depths.add(depth)
+
+    if len(depths) != 1:
+        raise RuntimeError(
+            f"MIMO component {module_name!r} must have one checkpoint wrapper depth; found {sorted(depths)}."
+        )
+    return component_root + ("module." * depths.pop())
+
+
+def _align_mimo_model_sharded_keys(
+    sharded_state_dict: dict[str, Any],
+    *,
+    checkpoint_name: str,
+    module_name: str,
+) -> None:
+    """Map runtime MIMO wrapper keys onto the checkpoint's wrapper layout.
+
+    Megatron-LM training wraps each active component as
+    ``DDP(Float16Module(component))``, while Bridge conversion deliberately
+    constructs an unwrapped component. MCore records those wrapper levels in
+    MIMO sharded keys. Keep the runtime dictionary keys unchanged for
+    ``load_state_dict`` and change only the distributed-checkpoint lookup keys.
+    """
+    model_state = sharded_state_dict.get("model")
+    if not isinstance(model_state, dict):
+        raise RuntimeError("MIMO checkpoint loading requires a flat 'model' sharded state dictionary.")
+
+    runtime_prefix = _mimo_component_wrapper_prefix(
+        set(model_state),
+        module_name=module_name,
+    )
+    checkpoint_metadata = TorchDistLoadShardedStrategy().load_sharded_metadata(Path(checkpoint_name))
+    checkpoint_prefix = _mimo_component_wrapper_prefix(
+        set(checkpoint_metadata),
+        module_name=module_name,
+    )
+    if runtime_prefix == checkpoint_prefix:
+        return
+
+    apply_prefix_mapping(model_state, {runtime_prefix: checkpoint_prefix})
+    print_rank_0(
+        f"Mapped MIMO checkpoint component {module_name!r} from runtime prefix "
+        f"{runtime_prefix!r} to stored prefix {checkpoint_prefix!r}"
+    )
+
+
 def generate_state_dict(
     ckpt_cfg: CheckpointConfig,
     model: list[MegatronModule],
@@ -3140,6 +3210,13 @@ def _load_checkpoint_from_path(
                 pg_collection=pg_collection,
             )
 
+            if module_name is not None and ckpt_type != CheckpointType.LOCAL:
+                _align_mimo_model_sharded_keys(
+                    load_kwargs["sharded_state_dict"],
+                    checkpoint_name=checkpoint_name,
+                    module_name=module_name,
+                )
+
     elif ckpt_format == "fsdp_dtensor":
         # Handle fsdp_dtensor format
         if state_dict is None:
@@ -3921,6 +3998,7 @@ def _load_base_checkpoint(
                 checkpointing_context=checkpointing_context,
                 pg_collection=pg_collection,
                 cfg=cfg,
+                is_megatron_mimo=is_megatron_mimo,
             )
         elif ckpt_format == "fsdp_dtensor":
             return load_fsdp_dtensor_checkpoint(

@@ -18,6 +18,7 @@ from typing import Dict, Iterable, Optional, Tuple
 import torch
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
 from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
@@ -110,6 +111,29 @@ def loss_func(
         check_for_nan_in_loss=check_for_nan_in_loss,
         check_for_spiky_loss=check_for_spiky_loss,
     )
+
+
+def reduce_mimo_losses(
+    losses_reduced: list[dict[str, torch.Tensor]],
+    llm_pg: ProcessGroupCollection | None,
+) -> dict[str, torch.Tensor]:
+    """Aggregate MIMO language losses across microbatches and language DP/CP."""
+    loss_dict: dict[str, torch.Tensor] = {}
+    if not losses_reduced:
+        return loss_dict
+
+    for name in losses_reduced[0]:
+        values = [metrics[name].view(-1) for metrics in losses_reduced]
+        if values[0].numel() == 2:
+            reduced = torch.vstack(values).sum(dim=0)
+            if llm_pg is not None and llm_pg.dp_cp is not None:
+                torch.distributed.all_reduce(reduced, group=llm_pg.dp_cp)
+            loss_dict[name] = torch.where(reduced[1] > 0, reduced[0] / reduced[1], torch.zeros_like(reduced[0]))
+        elif values[0].numel() == 1:
+            loss_dict[name] = torch.cat(values).mean()
+        else:
+            raise ValueError(f"Invalid value shape: {values[0].shape} for key {name}")
+    return loss_dict
 
 
 def get_batch(data_iterator: Iterable) -> Optional[Dict[str, torch.Tensor]]:

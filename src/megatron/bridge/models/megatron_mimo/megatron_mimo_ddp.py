@@ -1,5 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""DDP wrapping utilities for MegatronMIMO models.
+"""Mixed-precision and DDP wrapping utilities for MegatronMIMO models.
 
 Called from the training layer after MegatronMIMOProvider.provide().
 
@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Dict, Optional
 
+import torch
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from megatron.core.models.mimo.model import MimoEncoderFloat16Module
+from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 if TYPE_CHECKING:
@@ -22,6 +26,19 @@ if TYPE_CHECKING:
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 
 
+def _wrap_mixed_precision(
+    module: torch.nn.Module,
+    config: TransformerConfig,
+    *,
+    encoder: bool,
+) -> torch.nn.Module:
+    """Apply the MCore mixed-precision wrapper when the component requests it."""
+    if not (config.fp16 or config.bf16):
+        return module
+    wrapper = MimoEncoderFloat16Module if encoder else Float16Module
+    return wrapper(config, module)
+
+
 def wrap_megatron_mimo_model_distributed(
     megatron_mimo_model: "MimoModel",
     ddp_config: "DistributedDataParallelConfig",
@@ -29,7 +46,7 @@ def wrap_megatron_mimo_model_distributed(
     grids: Dict[str, "HyperCommGrid"],
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
 ) -> "MimoModel":
-    """Wrap MegatronMIMO model's submodules with DDP.
+    """Wrap MegatronMIMO model's submodules with mixed precision and DDP.
 
     Modifies megatron_mimo_model in-place and returns it.
 
@@ -54,10 +71,16 @@ def wrap_megatron_mimo_model_distributed(
         if llm_grid is not None and is_current_rank_in_grid(llm_grid):
             llm_pg = pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
+                language_config = megatron_mimo_model.language_model.config
+                language_model = _wrap_mixed_precision(
+                    megatron_mimo_model.language_model,
+                    language_config,
+                    encoder=False,
+                )
                 wrapped_lm = DistributedDataParallel(
-                    config=megatron_mimo_model.language_model.config,
+                    config=language_config,
                     ddp_config=ddp_config,
-                    module=megatron_mimo_model.language_model,
+                    module=language_model,
                     pg_collection=llm_pg,
                 )
                 # MCore's DDP wrapper does not proxy arbitrary module methods.
@@ -98,10 +121,16 @@ def wrap_megatron_mimo_model_distributed(
                         f"a 'config' attribute. Encoders must be MegatronModule subclasses."
                     )
 
+                component_config = first_encoder.config
+                precision_wrapped = _wrap_mixed_precision(
+                    submodule,
+                    component_config,
+                    encoder=True,
+                )
                 wrapped = DistributedDataParallel(
-                    config=first_encoder.config,
+                    config=component_config,
                     ddp_config=ddp_config,
-                    module=submodule,
+                    module=precision_wrapped,
                     pg_collection=module_pg,
                 )
                 # MCore optimizers unwrap DDP and read process groups from the wrapped module.

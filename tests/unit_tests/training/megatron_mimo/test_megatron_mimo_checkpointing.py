@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import time
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict
 from unittest.mock import MagicMock, Mock, call, patch
@@ -21,6 +22,32 @@ import pytest
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def test_mimo_checkpoint_load_maps_runtime_wrapper_depth_to_stored_depth():
+    """MIMO loads preserve runtime keys while looking up stored wrapper keys."""
+    from megatron.bridge.training.checkpointing import _align_mimo_model_sharded_keys
+
+    model_state = {"language_model.module.weight": object()}
+    sharded_state = {"model": model_state}
+    checkpoint_metadata = {"language_model.module.module.weight": object()}
+
+    with (
+        patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy") as load_strategy,
+        patch("megatron.bridge.training.checkpointing.apply_prefix_mapping") as apply_mapping,
+    ):
+        load_strategy.return_value.load_sharded_metadata.return_value = checkpoint_metadata
+        _align_mimo_model_sharded_keys(
+            sharded_state,
+            checkpoint_name="/checkpoint",
+            module_name="language",
+        )
+
+    apply_mapping.assert_called_once_with(
+        model_state,
+        {"language_model.module.": "language_model.module.module."},
+    )
+    load_strategy.return_value.load_sharded_metadata.assert_called_once_with(Path("/checkpoint"))
 
 
 def _make_scheduler_mock() -> MagicMock:

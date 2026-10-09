@@ -1,7 +1,11 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO DDP wrapping utilities."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+
+import torch
+from megatron.core.transformer.module import Float16Module
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
@@ -20,6 +24,8 @@ class TestWrapMegatronMIMOModelDistributed:
         if has_language_model:
             mock_model.language_model = MagicMock()
             mock_model.language_model.config = MagicMock()
+            mock_model.language_model.config.fp16 = False
+            mock_model.language_model.config.bf16 = False
         else:
             mock_model.language_model = None
 
@@ -29,6 +35,8 @@ class TestWrapMegatronMIMOModelDistributed:
                 submodule = MagicMock()
                 submodule.encoders = {"encoder": MagicMock()}
                 submodule.encoders["encoder"].config = MagicMock()
+                submodule.encoders["encoder"].config.fp16 = False
+                submodule.encoders["encoder"].config.bf16 = False
                 mock_model.modality_submodules[name] = submodule
         else:
             mock_model.modality_submodules = {}
@@ -310,3 +318,42 @@ class TestWrapMegatronMIMOModelDistributed:
         assert call_kwargs["pg_collection"] == llm_pg_collection
         assert call_kwargs["config"] == original_lm_config
         assert call_kwargs["module"] == original_lm
+
+    @patch("megatron.core.distributed.DistributedDataParallel")
+    @patch("torch.distributed.get_rank")
+    def test_language_mixed_precision_wrapper_is_nested_inside_ddp(self, mock_get_rank, mock_ddp):
+        """Training uses the same Float16Module-inside-DDP stack as MCore MIMO."""
+        mock_get_rank.return_value = 0
+        mock_ddp.return_value = MagicMock()
+
+        config = SimpleNamespace(
+            fp16=False,
+            bf16=True,
+            virtual_pipeline_model_parallel_size=None,
+        )
+
+        class LanguageModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = config
+                self.weight = torch.nn.Parameter(torch.ones(1))
+
+        language_model = LanguageModule()
+        megatron_mimo_model = SimpleNamespace(
+            language_model=language_model,
+            modality_submodules={},
+        )
+        parallelism = self._create_megatron_mimo_parallelism_config({"language": {"tp": 1, "dp": 1}})
+
+        wrap_megatron_mimo_model_distributed(
+            megatron_mimo_model,
+            MagicMock(),
+            parallelism,
+            {"language": self._create_mock_grid(rank_offset=0, size=1)},
+            {"language": MagicMock()},
+        )
+
+        precision_wrapped = mock_ddp.call_args.kwargs["module"]
+        assert isinstance(precision_wrapped, Float16Module)
+        assert precision_wrapped.module is language_model
+        assert language_model.weight.dtype == torch.bfloat16
