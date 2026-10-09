@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training vision-language models in Megatron-Bridge who need to enable, verify, or debug vision_dp_over_cp to shard vision-encoder images across context-parallel ranks and reduce encoder memory and step time at CP>1. <br>
+Developers and engineers training vision-language models with Megatron-Bridge use this skill to enable, verify, and troubleshoot `vision_dp_over_cp`, which shards images or temporal tubelets across the language model's context-parallel ranks to reduce vision-encoder memory and step time when CP>1. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,13 +25,15 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [SKILL.md](SKILL.md) <br>
-- [card.yaml](card.yaml) <br>
+- [card.yaml (validation status and feature meanings)](card.yaml) <br>
+- [nemo-mbridge-perf-moe-vlm-training skill](../nemo-mbridge-perf-moe-vlm-training/SKILL.md) <br>
+- [nemo-mbridge-perf-memory-tuning skill](../nemo-mbridge-perf-memory-tuning/SKILL.md) <br>
+- [nemo-mbridge-perf-hierarchical-context-parallel skill](../nemo-mbridge-perf-hierarchical-context-parallel/SKILL.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -43,15 +45,15 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-3 evaluation tasks (2 positive, 1 negative), 1 attempt per task, each run in an isolated k8s-sandbox pod; baseline runs attempted the same tasks without the skill. <br>
+3 evaluation tasks (2 positive, 1 negative), 1 attempt per task, each run in an isolated sandbox pod and compared against a no-skill baseline. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
-- Security: Is it safe to use? Scored from the security signal. <br>
-- Correctness: Is the answer correct? Scored from the accuracy signal. <br>
-- Discoverability: Was the right skill loaded when needed? Scored from the skill_execution signal. <br>
-- Effectiveness: Did the skill help complete the task? Equal-weight mean of goal_accuracy and behavior_check. <br>
-- Efficiency: Did it avoid wasted tool calls and token usage? Equal-weight mean of skill_efficiency and token_efficiency. <br>
+- Security: Is it safe to use? Scored from the `security` signal. <br>
+- Correctness: Is the answer correct? Scored from the `accuracy` signal. <br>
+- Discoverability: Was the right skill loaded when needed? Scored from the `skill_execution` signal. <br>
+- Effectiveness: Did the skill help complete the task? Equal-weight mean of `goal_accuracy` and `behavior_check`. <br>
+- Efficiency: Did it avoid wasted tool calls and token usage? Equal-weight mean of `skill_efficiency` and `token_efficiency`. <br>
 
 Underlying evaluation signals used in this run: <br>
 - `security`: Unsafe operations, secret leakage, and unauthorized access. <br>
@@ -60,19 +62,19 @@ Underlying evaluation signals used in this run: <br>
 - `accuracy`: Final-answer correctness against the reference answer. <br>
 - `goal_accuracy`: Whether the user's goal was achieved. <br>
 - `behavior_check`: Whether the expected workflow behavior was followed. <br>
-- `token_efficiency`: Actual uncached prompt plus completion token usage. <br>
+- `token_efficiency`: Actual uncached prompt plus completion usage. <br>
 
 
 
 ## Evaluation Results: <br>
 | Measure | Claude Code (Baseline → Skill Uplift) | Codex (Baseline → Skill Uplift) |
 |---|---:|---:|
-| Overall | 93.3% — baseline ran, but no comparable score was available; uplift unavailable | 93.8% — baseline ran, but no comparable score was available; uplift unavailable |
+| Overall | 97.1% — baseline ran, but no comparable score was available; uplift unavailable | 93.9% — baseline ran, but no comparable score was available; uplift unavailable |
 | Security | 100.0% → 100.0% (±0.0 points) | 100.0% → 100.0% (±0.0 points) |
-| Correctness | 53.3% → 86.7% (+33.4 points) | 80.0% → 93.3% (+13.3 points) |
+| Correctness | 46.7% → 100.0% (+53.3 points) | 93.3% → 93.3% (±0.0 points) |
 | Discoverability | 100.0% — baseline ran, but no comparable score was available; uplift unavailable | 95.0% — baseline ran, but no comparable score was available; uplift unavailable |
-| Effectiveness | 39.2% → 81.7% (+42.5 points) | 66.7% → 83.6% (+16.9 points) |
-| Efficiency | 98.0% — baseline ran, but no comparable score was available; uplift unavailable | 97.2% — baseline ran, but no comparable score was available; uplift unavailable |
+| Effectiveness | 26.1% → 87.5% (+61.4 points) | 65.6% → 84.5% (+18.9 points) |
+| Efficiency | 98.2% — baseline ran, but no comparable score was available; uplift unavailable | 96.9% — baseline ran, but no comparable score was available; uplift unavailable |
 
 ## Skill Version(s): <br>
 1.0.0+9edee0c (source: pyproject.toml) <br>
