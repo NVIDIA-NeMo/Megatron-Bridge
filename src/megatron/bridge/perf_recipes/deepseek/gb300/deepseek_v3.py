@@ -600,10 +600,11 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # offload_modules containing expert_fc1/moe_act/fused_group_mlp. core_attn avoids both.
     # The offloading buys the headroom that moe_expert_rank_capacity_factor=5 above needs.
     cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = None
-    cfg.model.offload_modules = None
+    cfg.model.recompute_modules = []
+    cfg.model.offload_modules = []
     #cfg.model.offload_modules = ["core_attn"]
-    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.fine_grained_activation_offloading = False
+    
     # cfg.model.cpu_offloading_num_layers = 95
     cfg.model.high_priority_a2a_comm_stream = True
     cfg.model.fused_residual_rmsnorm = True
@@ -620,7 +621,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_mlp_glu_interleave_size = 32
     # The fused grouped MLP (ScaledSwiGLU) does not support moe_act recomputation; keep the other
     # selective-recompute modules inherited from the FSDP base.
-    cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
+    # cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
 
     cfg.model.mla_down_proj_fusion = True
 
