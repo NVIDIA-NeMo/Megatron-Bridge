@@ -739,6 +739,28 @@ def parse_cli_args():
         default=None,
     )
     nvcre_args.add_argument(
+        "--nvcre_init_containers_json",
+        type=str,
+        help=(
+            "JSON-encoded list of Kubernetes init container dicts, emitted as the WorkloadRun's "
+            "spec.initContainers (e.g. to clone a pinned Megatron-Bridge into a shared volume). "
+            "Volumes they mount must also be given via --nvcre_volumes_json / --nvcre_volume_mounts_json."
+        ),
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_bridge_root",
+        type=str,
+        help=(
+            "Megatron-Bridge checkout inside the pod that the job runs from. Defaults to the image's "
+            "/opt/Megatron-Bridge; set it to the path an init container (--nvcre_init_containers_json) "
+            "clones a pinned Megatron-Bridge into."
+        ),
+        required=False,
+        default="/opt/Megatron-Bridge",
+    )
+    nvcre_args.add_argument(
         "--nvcre_timeout_per_job",
         type=str,
         help="Per-job timeout passed to Nvcre orchestration (e.g. '24h').",
