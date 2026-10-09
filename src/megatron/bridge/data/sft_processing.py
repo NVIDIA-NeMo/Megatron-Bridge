@@ -206,6 +206,8 @@ def normalize_sft_example(
         raise ValueError("SFT rows must select exactly one schema: structured chat or prompt-completion.")
 
     if isinstance(preprocessing, ChatSFTPreprocessingConfig):
+        if sum(row.get(key) is not None for key in _CONVERSATION_KEYS) > 1:
+            raise ValueError("Chat rows must not contain multiple populated conversation columns.")
         if canonical_pair is not None:
             prompt, completion = canonical_pair
             metadata = {
