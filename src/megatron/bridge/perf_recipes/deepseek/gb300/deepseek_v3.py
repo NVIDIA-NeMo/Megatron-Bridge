@@ -453,9 +453,12 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
 
     # cfg.model.cuda_graph_impl = "none"
     # cfg.model.cuda_graph_impl = "full_iteration"
+    # cfg.model.fine_grained_offloading_max_inflight_offloads = 1
     # cfg.model.cuda_graph_warmup_steps = 10
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
+    cfg.model.fine_grained_activation_offloading = False
+    
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     cfg.ddp.megatron_fsdp_version = 2
     return cfg
 
