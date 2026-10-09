@@ -561,7 +561,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = False
 
     cfg.model.expert_model_parallel_size = 64
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
     cfg.train.global_batch_size = 1024
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
@@ -586,8 +586,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
     cfg.model.moe_expert_rank_capacity_factor = 5
-    # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 2.0
-    # cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
     # Offload the attention activations rather than recomputing them. recompute_granularity and
