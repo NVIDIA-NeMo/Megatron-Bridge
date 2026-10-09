@@ -22,6 +22,7 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes._common import _enable_ncclep
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_5_lightning_pretrain_8gpu_b200_bf16_config,
     nemotron_3_5_lightning_pretrain_8gpu_b200_fp8mx_config,
@@ -350,16 +351,22 @@ def test_nemotron_3_5_perf_recipes_inherit_nemotron_3_policy(
     cfg = recipe_factory()
     base_cfg = base_recipe_factory()
 
+    base_env = base_cfg.env_vars
+    if recipe_factory in _NCCLEP_RECIPES and base_cfg.model.moe_flex_dispatcher_backend == "hybridep":
+        # The GB200 Lightning benchmarks dispatch through NCCL EP while their Nemotron 3 Nano bases keep HybridEP.
+        base_env = {name: value for name, value in base_env.items() if name not in HYBRID_EP_ENV_NAMES}
+        base_env["NCCL_EP_HT_EM_PULL_PUSH"] = 1
+
     if recipe_factory in _B_MXFP8_RECIPES:
-        assert cfg.env_vars == {**base_cfg.env_vars, "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1}
+        assert cfg.env_vars == {**base_env, "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1}
     elif recipe_factory in _FULL_ITERATION_MXFP8_RECIPES:
         assert cfg.env_vars == {
-            **base_cfg.env_vars,
+            **base_env,
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
             "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         }
     elif recipe_factory is not nemotron_3_5_lightning_pretrain_16gpu_h100_bf16_config:
-        assert cfg.env_vars == base_cfg.env_vars
+        assert cfg.env_vars == base_env
     assert cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
     assert cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model

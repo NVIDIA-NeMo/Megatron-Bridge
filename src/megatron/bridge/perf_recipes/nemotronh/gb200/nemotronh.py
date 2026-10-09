@@ -401,7 +401,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB200, BF16, NCCL EP."""
+    """Nemotron 3 Nano pretrain: 8× GB200, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
     _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("bf16")
@@ -425,10 +425,6 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_hybridep_num_sms = 16
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -440,8 +436,11 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -480,15 +479,11 @@ def _build_nemotron_3_nano_gb200_mxfp8() -> ConfigContainer:
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× GB200, MXFP8, NCCL EP."""
+    """Nemotron 3 Nano pretrain: 8× GB200, MXFP8."""
     cfg = _build_nemotron_3_nano_gb200_mxfp8()
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.mixed_precision.fp8_dot_product_attention = True
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -500,8 +495,11 @@ def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -568,7 +566,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 
 def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× GB200, BF16, NCCL EP (inherited from Nemotron 3 Nano)."""
+    """Nemotron 3.5 Lightning pretrain: 8× GB200, BF16, NCCL EP."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
     cfg.model.recompute_modules = []
     cfg.model.mtp_num_layers = 2
@@ -580,6 +578,10 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.hf_model_revision = _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_LIGHTNING_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION}
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -587,7 +589,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode (inherited from the Nemotron 3 Nano BF16 recipe).
+        # NCCL EP dispatcher mode.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
