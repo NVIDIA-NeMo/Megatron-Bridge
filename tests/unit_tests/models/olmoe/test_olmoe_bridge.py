@@ -478,3 +478,114 @@ class TestAutoBridgeIntegration:
         # Test non-causal LM architecture
         non_causal_config = SimpleNamespace(architectures=["OlmoeModel"])  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
+
+
+class TestOlMoEBuilderConfig:
+    """Builder-backed ModelConfig path for OlMoE."""
+
+    @staticmethod
+    def _config(**overrides):
+        from transformers import OlmoeConfig
+
+        kwargs = dict(
+            hidden_size=64,
+            intermediate_size=32,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=4,
+            num_experts=8,
+            num_experts_per_tok=2,
+            max_position_embeddings=4096,
+            vocab_size=128,
+            router_aux_loss_coef=0.01,
+            torch_dtype="bfloat16",
+        )
+        kwargs.update(overrides)
+        config = OlmoeConfig(**kwargs)
+        config.architectures = ["OlmoeForCausalLM"]
+        return config
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in OlMoEBridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert OlMoEBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+        from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
+
+        config = self._config()
+        bridge = OlMoEBridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.transformer_layer_spec is olmoe_layer_spec
+        assert result.kv_channels == config.hidden_size // config.num_attention_heads
+        assert result.qk_layernorm is True
+        assert result.normalization == "RMSNorm"
+        assert result.position_embedding_type == "rope"
+        assert result.num_moe_experts == config.num_experts
+        assert result.moe_router_topk == config.num_experts_per_tok
+        assert result.moe_ffn_hidden_size == config.intermediate_size
+        assert result.moe_router_load_balancing_type == "seq_aux_loss"
+        assert result.moe_router_pre_softmax is True
+        assert result.moe_router_score_function == "softmax"
+        assert result.moe_token_dispatcher_type == "alltoall"
+
+    def test_model_config_matches_provider_runtime_config(self):
+        from dataclasses import fields
+
+        from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
+
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = OlMoEBridge()
+
+        mapped_kwargs = bridge.hf_config_to_model_config_kwargs(config)
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        comparable_fields = sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"})
+
+        assert set(mapped_kwargs) - {"transformer_layer_spec"} <= set(comparable_fields)
+        for field_name in comparable_fields:
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        # Both paths build the QK-layernorm attention through the same OlMoE layer spec.
+        assert model_config.transformer_layer_spec is olmoe_layer_spec
+        assert provider.transformer_layer_spec is olmoe_layer_spec
+
+    def test_non_softmax_scoring_is_rejected_on_builder_path(self):
+        config = self._config()
+        config.scoring_func = "sigmoid"
+
+        with pytest.raises(ValueError, match="scoring_func='softmax'"):
+            OlMoEBridge().hf_config_to_model_config(config)
+
+    def test_layer_spec_matches_between_provider_and_builder_config(self):
+        """The OlMoE layer spec is identical whether built from the provider or the builder config."""
+        from megatron.bridge.models.olmoe.olmoe_provider import OLMoESelfAttention, olmoe_layer_spec
+
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = OlMoEBridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        builder_spec = olmoe_layer_spec(model_config)
+        assert builder_spec.submodules.self_attention.module is OLMoESelfAttention
+        # functools.partial (used for the MoE layer) compares by identity, so compare structure.
+        assert repr(builder_spec) == repr(olmoe_layer_spec(provider))
