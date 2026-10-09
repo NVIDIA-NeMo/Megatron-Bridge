@@ -20,6 +20,7 @@ override system while maintaining compatibility with Megatron Core's post_init b
 
 import copy
 from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Literal
 
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.heterogeneous.heterogeneous_config import (
@@ -167,6 +168,10 @@ class TransformerConfig(MCoreTransformerConfig):
     """
 
     _NO_COPY_KEYS = {"_pg_collection"}
+
+    # Match the FA2 validation policy in NVIDIA/Megatron-LM#7725. The TE environment
+    # flag alone does not control MCore's direct inference attention dispatch.
+    flash_attention_version: Literal[2, 3, 4] | None = 2
 
     # Generalized tensor-parallel metadata was added after the frozen MCore dev pin.
     # Keep it on the Bridge wrapper so one configuration remains usable with both pins.
