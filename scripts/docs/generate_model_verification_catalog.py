@@ -133,6 +133,13 @@ MODEL_PAGE_TITLES = {
     "qwen3.6-35b-a3b": "Qwen3.6-35B-A3B",
     "qwen3.8-27b": "Qwen3.8-27B",
 }
+# Retain the cards and canonical sources, but do not link unpublished guides.
+UNPUBLISHED_MODEL_DOCS = frozenset(
+    {
+        "models/nemotron/nemotron3.5-super-vl.md",
+        "models/nemotron/nemotron3.5-super-vl-text-only.md",
+    }
+)
 MODEL_INTRO_SOURCES = {
     "glm5-2": "models/glm/glm5.md",
     "gpt-oss-120b": "models/gpt_oss/gpt-oss.md",
@@ -804,6 +811,7 @@ def _model_explorer(entries: list[dict[str, object]], *, heading_level: int = 2,
 def render_supported_models_page(catalog: dict[str, object], repo_root: Path, *, fern: bool) -> str:
     """Render the generated Supported Models directory for Sphinx or Fern."""
     models = [_mapping(model, "catalog model") for model in catalog["models"]]
+    models = [model for model in models if _find_model_doc(repo_root, model) not in UNPUBLISHED_MODEL_DOCS]
     entry_count = sum(len(model["entries"]) for model in models)
     lines = [
         FERN_GENERATED_NOTICE if fern else GENERATED_NOTICE,
@@ -820,7 +828,7 @@ def render_supported_models_page(catalog: dict[str, object], repo_root: Path, *,
         "SFT and immediately see the exact command and expected result for the recorded precision and GPU.",
         "",
     ]
-    lines.extend(_model_directory(catalog, repo_root, fern=fern))
+    lines.extend(_model_directory({**catalog, "models": models}, repo_root, fern=fern))
     lines.extend(
         [
             "## Verification status",

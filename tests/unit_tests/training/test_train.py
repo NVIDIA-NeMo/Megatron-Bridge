@@ -1652,6 +1652,16 @@ def test_train_step_token_weighted_loss(
     else:
         mock_reduce.assert_not_called()
 
+    # A substituted zero is indistinguishable from a real 0.0 loss, so the step is
+    # counted to keep an all-masked global batch visible at log time.
+    token_total = sum(mb[1] for mb in microbatches if len(mb) == 2) + remote[1]
+    recorded = getattr(global_state, "_zero_token_iters", None)
+    if len(microbatches[0]) == 2:
+        assert recorded.item() == int(token_total == 0)
+    else:
+        # The legacy microbatch-mean path has no denominator to guard.
+        assert recorded is None
+
 
 @pytest.mark.parametrize("dp_rank", [0, 1])
 @patch("megatron.bridge.training.train.wrap_data_iterator_for_global_batch_packing")

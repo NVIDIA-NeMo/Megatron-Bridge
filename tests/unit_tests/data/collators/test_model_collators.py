@@ -1775,6 +1775,59 @@ def test_ministral3_nonpacked_collate_supervises_each_rows_last_real_token(monke
     assert batch["labels"][1].tolist() == [-100, 2, -100, -100, -100]
 
 
+class _Gemma4MmTokenTypeProcessor(_Ministral3InstructionProcessor):
+    def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+        result = super().apply_chat_template(conversations, tokenize=tokenize, **kwargs)
+        if isinstance(result, dict):
+            batch_size = len(conversations)
+            result["input_ids"] = result["input_ids"].expand(batch_size, -1).clone()
+            result["mm_token_type_ids"] = (
+                torch.tensor([[0, 1, 1, 0, 0]], dtype=torch.long).expand(batch_size, -1).clone()
+            )
+        return result
+
+
+def _mm_token_type_examples():
+    return [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": text}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+        for text in ("first", "second")
+    ]
+
+
+def test_ministral3_collate_pads_mm_token_type_ids_with_sequence():
+    batch = collate.ministral3_collate_fn(
+        _mm_token_type_examples(),
+        _Gemma4MmTokenTypeProcessor(),
+        sequence_length=8,
+        pad_to_multiple_of=8,
+    )
+
+    mm_token_type_ids = batch["visual_inputs"].mm_token_type_ids
+    assert "mm_token_type_ids" not in batch
+    assert mm_token_type_ids.shape == batch["input_ids"].shape == (2, 8)
+    assert mm_token_type_ids.tolist() == [[0, 1, 1, 0, 0, 0, 0, 0]] * 2
+
+
+def test_ministral3_packed_collate_packs_mm_token_type_ids_with_sequence():
+    batch = collate.ministral3_collate_fn(
+        _mm_token_type_examples(),
+        _Gemma4MmTokenTypeProcessor(),
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    mm_token_type_ids = batch["visual_inputs"].mm_token_type_ids
+    assert "mm_token_type_ids" not in batch
+    assert mm_token_type_ids.shape == batch["input_ids"].shape == (1, 16)
+    assert mm_token_type_ids.tolist() == [[0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0]]
+
+
 class _Gemma4ProcessorBase:
     """Minimal Gemma4Processor stub for ministral3_collate_fn tests."""
 
