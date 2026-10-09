@@ -34,5 +34,5 @@ nemotron-3-omni.md
 
 ## Examples
 
-- Nemotron-3 examples: [`examples/models/nemotron/nemotron_3/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3/README.md)
-- Nemotron-3 Omni examples: [`examples/models/nemotron/nemotron_3_omni/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md)
+- Nemotron-3 examples: [`examples/models/nemotron/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/README.md)
+- Nemotron-3 Omni examples: [`examples/models/nemotron/nemotron_3_nano_omni/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_nano_omni/README.md)
