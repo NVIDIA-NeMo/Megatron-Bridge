@@ -244,7 +244,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # its CUTLASS-backed kernels.
     if [ "$MBRIDGE_PRESERVE_BASE_RUNTIME" != "True" ]; then \
         pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
-        pip install nvidia-cutlass-dsl[cu13]==4.8.0; \
+        pip install nvidia-cutlass-dsl[cu13]==4.8.0 && \
+        # FA4 includes the single-tile scheduler deadlock fix from Dao-AILab/flash-attention#2705.
+        # Keep FA4 and Quack compatible with the installed CUTLASS 4.8 runtime.
+        uv pip install --python /usr/bin/python3 --break-system-packages --no-deps \
+            flash-attn-4==4.0.0b34 quack-kernels==0.6.5; \
     fi && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: syncing the dispatched dependency delta"; \
