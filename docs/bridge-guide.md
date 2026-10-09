@@ -108,11 +108,12 @@ The provider pattern is especially useful when you need to:
 
 ### Using Builder-backed Model Configs
 
-Llama and dense Qwen3 also support the builder-backed configuration path. This
-keeps model configuration as serializable data and leaves construction to
-Megatron Core's `GPTModelBuilder`. The provider API remains available for
-compatibility while other model families migrate. Calling the legacy provider
-API for a builder-backed family emits a deprecation warning.
+Model families are migrating to the builder-backed configuration path. It keeps
+model configuration as serializable data and leaves construction to the
+family's Megatron Core `ModelBuilder`, such as `GPTModelBuilder` or
+`HybridModelBuilder`. The provider API remains available for compatibility
+while other model families migrate. Calling the legacy provider API for a
+builder-backed family emits a deprecation warning.
 
 ```python
 from megatron.bridge import AutoBridge
@@ -134,9 +135,10 @@ Use `load_weights=False` for random initialization. A bridge created with
 `from_hf_config()` has no weights, so it requires `load_weights=False` or an
 explicit `hf_path`.
 
-Llama and dense Qwen3 training recipes store the result of `get_model_config()`
-in `ConfigContainer.model`. The training setup recognizes `ModelConfig` and
-calls its `ModelBuilder` directly; it does not create a legacy model provider.
+Training recipes for builder-backed families store the result of
+`get_model_config()` in `ConfigContainer.model`. The training setup recognizes
+`ModelConfig` and calls its `ModelBuilder` directly; it does not create a
+legacy model provider.
 
 ## Check Supported Models
 
