@@ -739,11 +739,16 @@ def parse_cli_args():
         default=None,
     )
     nvcre_args.add_argument(
+        "--nvcre_use_mbridge_commit",
+        action="store_true",
+        help=("Run this Megatron-Bridge checkout in the pods instead of the image's /opt/Megatron-Bridge"),
+    )
+    nvcre_args.add_argument(
         "--nvcre_timeout_per_job",
         type=str,
-        help="Per-job timeout passed to Nvcre orchestration (e.g. '24h').",
+        help="Per-job timeout passed to Nvcre orchestration (e.g. '12h').",
         required=False,
-        default="24h",
+        default="12h",
     )
 
     nvcre_args.add_argument(

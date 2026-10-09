@@ -280,6 +280,40 @@ def test_nvcre_executor_optional_fields():
 
 
 @pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
+def test_nvcre_executor_init_containers_default_to_none():
+    """Without init containers the executor is built exactly as before."""
+    executor = nvcre_executor(namespace="ns", container_image="img:latest", nodes=1, num_gpus_per_node=8)
+
+    assert not getattr(executor, "init_containers", [])
+
+
+@pytest.mark.skipif(
+    not HAS_NVCRE or "init_containers" not in getattr(NvcreExecutor, "__dataclass_fields__", {}),
+    reason="nemo_run NvcreExecutor without init_containers",
+)
+def test_nvcre_executor_forwards_init_containers():
+    """init_containers must reach NvcreExecutor unchanged."""
+    init_container = {
+        "name": "megatron-bridge-clone",
+        "image": "nvcr.io/nvidia/nemo:26.08.01",
+        "command": ["/bin/bash", "-c"],
+        "args": ["git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git /mnt/workspace/megatron-bridge"],
+        "volumeMounts": [{"name": "workspace", "mountPath": "/mnt/workspace"}],
+    }
+    executor = nvcre_executor(
+        namespace="ns",
+        container_image="img:latest",
+        nodes=1,
+        num_gpus_per_node=8,
+        volumes=[{"name": "workspace", "emptyDir": {}}],
+        volume_mounts=[{"name": "workspace", "mountPath": "/mnt/workspace"}],
+        init_containers=[init_container],
+    )
+
+    assert executor.init_containers == [init_container]
+
+
+@pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
 def test_nvcre_executor_has_no_test_scale():
     """test_scale must not be wired up — it was intentionally removed."""
     import inspect
