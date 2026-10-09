@@ -72,9 +72,9 @@ def configure_mcore_attention(config):
     not hasattr(attention_module.Attention, "_resolve_flash_version"),
     reason="The frozen MCore dev pin predates FlashAttention version controls",
 )
-def test_default_flash_version_disables_fa4_without_changing_backend(config_type, backend, monkeypatch):
+def test_explicit_fa2_disables_fa4_without_changing_backend(config_type, backend, monkeypatch):
     monkeypatch.setenv("NVTE_FLASH_ATTN_V4", "0")
-    config = make_config(config_type, backend)
+    config = make_config(config_type, backend, flash_attention_version=2)
 
     config.finalize()
     configure_mcore_attention(config)
@@ -89,10 +89,10 @@ def test_default_flash_version_disables_fa4_without_changing_backend(config_type
     not hasattr(attention_module.Attention, "_resolve_flash_version"),
     reason="The frozen MCore dev pin predates FlashAttention version controls",
 )
-def test_direct_attention_defaults_to_fa2_even_when_fa4_is_installed(config_type, monkeypatch):
+def test_direct_attention_uses_explicit_fa2_even_when_fa4_is_installed(config_type, monkeypatch):
     monkeypatch.setattr(attention_module, "HAVE_FA4", True)
     monkeypatch.setattr(attention_module, "HAVE_FA3", True)
-    config = make_config(config_type, AttnBackend.auto)
+    config = make_config(config_type, AttnBackend.auto, flash_attention_version=2)
     config.finalize()
 
     attention = SimpleNamespace(flash_attention_version=config.flash_attention_version)
@@ -101,12 +101,26 @@ def test_direct_attention_defaults_to_fa2_even_when_fa4_is_installed(config_type
 
 @pytest.mark.parametrize("config_type", CONFIG_TYPES)
 @pytest.mark.parametrize("version", [None, 2, 3, 4])
+@pytest.mark.skipif(
+    not hasattr(attention_module.Attention, "_resolve_flash_version"),
+    reason="The frozen MCore dev pin predates FlashAttention version controls",
+)
 def test_explicit_flash_version_is_preserved(config_type, version):
     config = make_config(config_type, AttnBackend.auto, flash_attention_version=version)
 
     config.finalize()
 
     assert config.flash_attention_version == version
+
+
+@pytest.mark.parametrize("config_type", CONFIG_TYPES)
+def test_default_flash_version_is_inherited_from_mcore(config_type):
+    config = make_config(config_type, AttnBackend.auto)
+
+    config.finalize()
+
+    assert getattr(config, "flash_attention_version", None) is None
+    assert all(name not in os.environ for name in FLASH_VERSION_ENV)
 
 
 @pytest.mark.parametrize("config_type", CONFIG_TYPES)
