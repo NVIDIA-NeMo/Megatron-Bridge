@@ -20,7 +20,8 @@ from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import DPODatasetConfig, GPTSFTDatasetConfig
+from megatron.bridge.data.datasets.preference import build_preference_data_loader
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
 from megatron.bridge.training.state import TrainState
@@ -199,6 +200,72 @@ def build_train_valid_test_datasets_for_num_epochs(
     return train_ds, valid_ds, test_ds
 
 
+def build_dpo_data_loaders(
+    cfg: ConfigContainer,
+    train_state: TrainState,
+    datasets_provider: Callable,
+    dp_group: torch.distributed.ProcessGroup,
+) -> tuple[DataLoader, DataLoader | None, None]:
+    """DPO branch of ``build_train_valid_test_data_loaders``: row→pair-halved train/valid loaders."""
+    train_ds, valid_ds, test_ds = build_train_valid_test_datasets(
+        cfg=cfg, build_train_valid_test_datasets_provider=datasets_provider
+    )
+    if test_ds is not None:
+        raise ValueError("DPO does not support a test split; the provider must not return a test dataset.")
+    if len(train_ds) < cfg.train.global_batch_size // 2:
+        raise RuntimeError(
+            f"Not enough preference pairs for a single global batch: {len(train_ds)} pairs "
+            f"< {cfg.train.global_batch_size // 2} (global_batch_size {cfg.train.global_batch_size} rows)."
+        )
+
+    dp_rank = torch.distributed.get_rank(group=dp_group)
+    dp_size = torch.distributed.get_world_size(group=dp_group)
+    train_dataloader = build_preference_data_loader(
+        train_ds,
+        micro_batch_size=cfg.train.micro_batch_size,
+        global_batch_size=cfg.train.global_batch_size,
+        data_parallel_rank=dp_rank,
+        data_parallel_size=dp_size,
+        consumed_samples=train_state.consumed_train_samples,
+        num_workers=cfg.dataset.num_workers,
+        pin_memory=cfg.dataset.pin_memory,
+        shuffle=cfg.dataset.shuffle,
+        seed=cfg.rng.seed,
+    )
+
+    valid_dataloader = None
+    eval_iters = cfg.validation.eval_iters or 0
+    if valid_ds is not None and eval_iters > 0:
+        eval_gbs = cfg.validation.eval_global_batch_size or cfg.train.global_batch_size
+        eval_mbs = cfg.validation.eval_micro_batch_size or cfg.train.micro_batch_size
+        if len(valid_ds) < eval_gbs // 2:
+            raise RuntimeError(
+                f"Not enough validation preference pairs for a single eval global batch: {len(valid_ds)} "
+                f"pairs < {eval_gbs // 2} (eval_global_batch_size {eval_gbs} rows)."
+            )
+        valid_dataloader = build_preference_data_loader(
+            valid_ds,
+            micro_batch_size=eval_mbs,
+            global_batch_size=eval_gbs,
+            data_parallel_rank=dp_rank,
+            data_parallel_size=dp_size,
+            consumed_samples=0 if cfg.validation.skip_train else train_state.consumed_valid_samples,
+            num_workers=cfg.dataset.num_workers,
+            pin_memory=cfg.dataset.pin_memory,
+            shuffle=cfg.dataset.shuffle,
+            seed=cfg.rng.seed,
+        )
+
+    flags = torch.tensor(
+        [int(cfg.train.train_iters > 0), int(valid_dataloader is not None), 0], dtype=torch.long, device="cuda"
+    )
+    torch.distributed.broadcast(flags, 0)
+    train_state.do_train = flags[0].item()
+    train_state.do_valid = flags[1].item()
+    train_state.do_test = False
+    return train_dataloader, valid_dataloader, None
+
+
 def build_train_valid_test_data_loaders(
     cfg: ConfigContainer,
     train_state: TrainState,
@@ -226,6 +293,9 @@ def build_train_valid_test_data_loaders(
     # Check for MegatronMIMO path
     from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+    if isinstance(cfg.dataset, DPODatasetConfig):
+        return build_dpo_data_loaders(cfg, train_state, build_train_valid_test_datasets_provider, dp_group)
 
     eval_iters = cfg.validation.eval_iters or 0
     if isinstance(cfg.model, MegatronMIMOProvider):

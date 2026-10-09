@@ -593,6 +593,7 @@ def test_training_stack_is_registered_for_lazy_import(recipe_runner: ModuleType)
     assert recipe_runner.TRAIN_FUNCTIONS == {
         "pretrain": ("megatron.bridge.training.pretrain", "pretrain"),
         "finetune": ("megatron.bridge.training.finetune", "finetune"),
+        "dpo": ("megatron.bridge.training.dpo_train", "dpo_train"),
     }
 
 

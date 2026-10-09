@@ -194,6 +194,7 @@ def test_model_selection_requires_mode_when_it_cannot_be_inferred():
         ("gpt_oss_20b_pretrain_config", "pretrain"),
         ("llama3_8b_sft_8gpu_gb200_bf16_config", "sft"),
         ("llama3_70b_peft_8gpu_gb200_bf16_config", "lora"),
+        ("qwen3_30b_a3b_dpo_8gpu_h100_bf16_config", "dpo"),
     ],
 )
 def test_conventional_recipe_name_infers_mode(recipe_name, mode):
@@ -1535,3 +1536,15 @@ def test_config_container_overrides_are_forwarded_directly():
     )
     handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_dpo_mode_selects_dpo_recipe_step_and_train_loop():
+    module, handles = _load_module()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(["--model", "qwen3_30b_a3b", "--mode", "dpo"])
+
+    handles.recipe_runner.load_recipe.assert_called_once_with("qwen3_30b_a3b_dpo_config", peft_scheme=None)
+    handles.recipe_runner.load_forward_step.assert_called_once_with("dpo_step", mode="dpo")
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "dpo"
