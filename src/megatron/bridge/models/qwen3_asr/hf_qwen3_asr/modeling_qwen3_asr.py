@@ -20,6 +20,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
+from transformers import initialization as init
 from transformers.activations import ACT2FN
 from transformers.cache_utils import Cache, DynamicCache
 from transformers.generation import GenerationMixin
@@ -42,6 +43,7 @@ from transformers.utils.generic import TransformersKwargs
 from .configuration_qwen3_asr import (
     Qwen3ASRAudioEncoderConfig,
     Qwen3ASRConfig,
+    Qwen3ASRTextConfig,
     Qwen3ASRThinkerConfig,
 )
 
@@ -293,6 +295,11 @@ class Qwen3ASRPreTrainedModel(PreTrainedModel):
         "attentions": Qwen3ASRTextAttention,
     }
 
+    def _init_weights(self, module: nn.Module) -> None:
+        super()._init_weights(module)
+        if isinstance(module, SinusoidsPositionEmbedding):
+            init.copy_(module.positional_embedding, module.compute_default_singular_positional_embedding())
+
 
 @dataclass
 class Qwen3ASRThinkerCausalLMOutputWithPast(MoeCausalLMOutputWithPast):
@@ -439,10 +446,11 @@ class Qwen3ASRPreTrainedModelForConditionalGeneration(Qwen3ASRPreTrainedModel):
         """
         mrope_position_deltas = []
 
-        position_ids = attention_mask.float().cumsum(-1) - 1
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        # Padding uses a placeholder position, which must not affect the reported offset.
+        max_position_ids = position_ids.max(-1, keepdim=True).values
         position_ids.masked_fill_(attention_mask == 0, 1)
         position_ids = position_ids.unsqueeze(0).expand(3, -1, -1).to(attention_mask.device)
-        max_position_ids = position_ids.max(0, keepdim=False)[0].max(-1, keepdim=True)[0]
         mrope_position_deltas = max_position_ids + 1 - torch.sum(attention_mask, dim=-1, keepdim=True)
 
         return position_ids, mrope_position_deltas
@@ -581,14 +589,19 @@ class SinusoidsPositionEmbedding(nn.Module):
         super().__init__()
         if channels % 2 != 0:
             raise ValueError("SinusoidsPositionEmbedding needs even channels input")
-        log_timescale_increment = np.log(max_timescale) / (channels // 2 - 1)
-        inv_timescales = torch.exp(-log_timescale_increment * torch.arange(channels // 2).float())
-        scaled_time = torch.arange(length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
+        self.length = length
+        self.channels = channels
+        self.max_timescale = max_timescale
         self.register_buffer(
-            "positional_embedding",
-            torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1),
-            persistent=False,
+            "positional_embedding", self.compute_default_singular_positional_embedding(), persistent=False
         )
+
+    def compute_default_singular_positional_embedding(self) -> torch.Tensor:
+        """Rebuild the deterministic audio positions, including after checkpoint loading."""
+        log_timescale_increment = np.log(self.max_timescale) / (self.channels // 2 - 1)
+        inv_timescales = torch.exp(-log_timescale_increment * torch.arange(self.channels // 2).float())
+        scaled_time = torch.arange(self.length)[:, np.newaxis] * inv_timescales[np.newaxis, :]
+        return torch.cat([torch.sin(scaled_time), torch.cos(scaled_time)], dim=1)
 
     def forward(self, seqlen: int):
         return self.positional_embedding[:seqlen, :]
@@ -779,25 +792,39 @@ class Qwen3ASRAudioEncoder(Qwen3ASRPreTrainedModel):
 
 
 class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
+    attention_scaling: float
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
 
     def __init__(self, config: Qwen3ASRConfig, device=None):
         super().__init__()
-        if hasattr(config, "rope_scaling") and config.rope_scaling is not None:
-            self.rope_type = config.rope_scaling.get("rope_type", "default")
-        else:
-            self.rope_type = "default"
+        self.rope_type = config.rope_parameters["rope_type"]
         self.max_seq_len_cached = config.max_position_embeddings
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        self.rope_init_fn = (
+            self.compute_default_rope_parameters
+            if self.rope_type == "default"
+            else ROPE_INIT_FUNCTIONS[self.rope_type]
+        )
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
         self.original_inv_freq = self.inv_freq
 
-        self.mrope_section = config.rope_scaling.get("mrope_section", [24, 20, 20])
+        self.mrope_section = config.rope_parameters.get("mrope_section", [24, 20, 20])
+
+    @staticmethod
+    def compute_default_rope_parameters(
+        config: Qwen3ASRTextConfig,
+        device: torch.device | None = None,
+        seq_len: int | None = None,
+    ) -> tuple[torch.Tensor, float]:
+        """Return unscaled rotary frequencies for initialization and checkpoint loading."""
+        base = config.rope_parameters["rope_theta"]
+        head_dim = config.head_dim
+        inv_freq = 1.0 / (base ** (torch.arange(0, head_dim, 2, dtype=torch.float32, device=device) / head_dim))
+        return inv_freq, 1.0
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -967,7 +994,7 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
 
     def __init__(self, config: Qwen3ASRConfig):
         super().__init__(config)
-        self.padding_idx = config.pad_token_id
+        self.padding_idx = getattr(config, "pad_token_id", None)
         self.vocab_size = config.vocab_size
 
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx)
@@ -1027,9 +1054,8 @@ class Qwen3ASRThinkerTextModel(Qwen3ASRPreTrainedModel):
 
         attention_mask = create_causal_mask(
             config=self.config,
-            input_embeds=inputs_embeds,
+            inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
-            cache_position=cache_position,
             past_key_values=past_key_values,
             position_ids=text_position_ids,
         )
@@ -1070,7 +1096,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
 
     config: Qwen3ASRThinkerConfig
     base_model_prefix = "thinker"
-    _tied_weights_keys = ["model.embed_tokens.weight", "lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _no_split_modules = [
         "Qwen3ASRAudioEncoderLayer",
         "Qwen3ASRThinkerTextDecoderLayer",
@@ -1081,6 +1107,8 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
     }
 
     def __init__(self, config):
+        # Transformers checks the owning model's config; Bridge uses the nested text setting.
+        config.tie_word_embeddings = config.text_config.tie_word_embeddings
         super().__init__(config)
         self.audio_tower = Qwen3ASRAudioEncoder._from_config(config.audio_config)
         self.vocab_size = config.text_config.vocab_size
@@ -1089,7 +1117,8 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
             self.lm_head = nn.Linear(config.text_config.hidden_size, config.classify_num, bias=False)
         else:
             self.lm_head = nn.Linear(config.text_config.hidden_size, config.text_config.vocab_size, bias=False)
-        self.pad_token_id = self.config.pad_token_id if self.config.pad_token_id is not None else -1
+        pad_token_id = getattr(config, "pad_token_id", None)
+        self.pad_token_id = pad_token_id if pad_token_id is not None else -1
         self.rope_deltas = None
         self.post_init()
 
@@ -1212,25 +1241,18 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
         else:
             audio_feature_lengths = None
 
-        if attention_mask is not None and position_ids is None:
-            if (
-                cache_position is None
-                or (cache_position is not None and cache_position[0] == 0)
-                or self.rope_deltas is None
-            ):
-                delta0 = (1 - attention_mask).sum(dim=-1).unsqueeze(1)
-                position_ids, rope_deltas = self.get_rope_index(
-                    attention_mask,
-                )
-                rope_deltas = rope_deltas - delta0
-                self.rope_deltas = rope_deltas
-            else:
-                batch_size, seq_length = input_ids.shape
-                delta = cache_position[0] + self.rope_deltas if cache_position is not None else 0
-                position_ids = torch.arange(seq_length, device=input_ids.device)
-                position_ids = position_ids.view(1, -1).expand(batch_size, -1)
-                position_ids = position_ids.add(delta)
-                position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
+        # Transformers 5 generation tracks the cache length instead of passing cache_position.
+        if cache_position is None:
+            past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
+            cache_position = torch.arange(
+                past_seen_tokens, past_seen_tokens + inputs_embeds.shape[1], device=inputs_embeds.device
+            )
+
+        if attention_mask is not None and attention_mask.ndim == 2 and position_ids is None:
+            # Derive positions from this request, including padding, rather than mutable model state.
+            position_ids, rope_deltas = self.get_rope_index(attention_mask)
+            self.rope_deltas = rope_deltas - (1 - attention_mask).sum(dim=-1).unsqueeze(1)
+            position_ids = position_ids[..., -inputs_embeds.shape[1] :]
 
         outputs = self.model(
             attention_mask=attention_mask,
@@ -1259,39 +1281,6 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
             past_key_values=outputs.past_key_values,
             rope_deltas=self.rope_deltas,
         )
-
-    def prepare_inputs_for_generation(
-        self,
-        input_ids,
-        past_key_values=None,
-        attention_mask=None,
-        inputs_embeds=None,
-        cache_position=None,
-        position_ids=None,
-        use_cache=True,
-        input_features=None,
-        feature_attention_mask=None,
-        **kwargs,
-    ):
-        model_inputs = super().prepare_inputs_for_generation(
-            input_ids,
-            past_key_values=past_key_values,
-            attention_mask=attention_mask,
-            inputs_embeds=inputs_embeds,
-            cache_position=cache_position,
-            position_ids=position_ids,
-            use_cache=use_cache,
-            input_features=input_features,
-            feature_attention_mask=feature_attention_mask,
-            **kwargs,
-        )
-
-        model_inputs["position_ids"] = None
-
-        if cache_position[0] != 0:
-            model_inputs["input_features"] = None
-
-        return model_inputs
 
 
 @auto_docstring

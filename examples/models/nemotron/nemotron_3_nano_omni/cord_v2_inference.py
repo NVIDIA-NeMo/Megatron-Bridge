@@ -18,7 +18,7 @@ Vision backbone: dynamic resolution, temporal_patch_dim=1, separate_video_embedd
 (matches `nemotron_omni_cord_v2_sft_config` with the updated dynamic-resolution training).
 
 Usage:
-  uv run torchrun --nproc-per-node=8 examples/models/nemotron/nemotron_3_omni/cord_v2_inference.py \
+  uv run torchrun --nproc-per-node=8 examples/models/nemotron/nemotron_3_nano_omni/cord_v2_inference.py \
     --hf_model_path /chcui/pretrained_models/Nemotron-3-Nano-Omni-30B-A3B-Reasoning \
     --megatron_model_path /path/to/cord_v2/checkpoints \
     --tp 4 --ep 2 \

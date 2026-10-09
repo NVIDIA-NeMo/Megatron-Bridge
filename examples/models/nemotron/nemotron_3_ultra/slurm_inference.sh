@@ -19,7 +19,7 @@
 # Usage:
 #   1. Set CONTAINER_IMAGE, CONTAINER_MOUNTS, and cache/token environment variables.
 #   2. Optionally set HF_MODEL_PATH to a local Hugging Face snapshot.
-#   3. Submit with: sbatch examples/models/nemotron/nemotron_3/ultra/slurm_inference.sh
+#   3. Submit with: sbatch examples/models/nemotron/nemotron_3_ultra/slurm_inference.sh
 # ==============================================================================
 
 #SBATCH --job-name=nemotron-ultra-inference

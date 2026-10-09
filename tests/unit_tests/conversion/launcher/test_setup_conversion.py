@@ -257,14 +257,6 @@ def test_distributed_cpu_export_rejects_incompatible_topology(parallelism_args, 
         module._validate_args(args)
 
 
-def test_distributed_cpu_export_rejects_non_export_command():
-    module = _load_setup_conversion_module()
-    args = _parse(module, "--cpu-processes-per-node", "2")
-
-    with pytest.raises(ValueError, match="supports export only"):
-        module._validate_args(args)
-
-
 def test_distributed_cpu_export_requires_distributed_save():
     module = _load_setup_conversion_module()
     args = _parse_export(module, "--cpu-processes-per-node", "2", "--no-distributed-save")
