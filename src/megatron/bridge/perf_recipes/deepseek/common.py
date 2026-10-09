@@ -18,6 +18,9 @@ import torch
 
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
+    _enable_cutedsl_fused_grouped_mlp,
+    _enable_full_iteration_cuda_graph,
+    _enable_moe_a2a_overlap,
     _perf_precision,
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import (
@@ -43,30 +46,6 @@ def _enable_deepseek_precision_aware_optimizer(cfg: ConfigContainer) -> None:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-
-
-def _enable_deepseek_full_iteration(cfg: ConfigContainer) -> None:
-    """Apply legacy DeepSeek V3 HybridEP full-iteration settings."""
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.model.moe_hybridep_num_sms = 32
-    cfg.model.cuda_graph_impl = "full_iteration"
-    cfg.model.cuda_graph_scope = []
-    cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_hybridep_num_sms_preprocessing = 32
-    cfg.model.moe_mlp_glu_interleave_size = 32
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.use_te_rng_tracker = True
-    cfg.rng.te_rng_tracker = True
-
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
 
 def _enable_deepseek_transformer_engine_graph(cfg: ConfigContainer) -> None:
