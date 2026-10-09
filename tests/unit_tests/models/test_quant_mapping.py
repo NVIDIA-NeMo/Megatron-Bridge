@@ -673,7 +673,7 @@ class TestMoeAmaxFanoutMapping:
         assert m._get_num_experts(megatron_module) == 8
 
     def test_megatron_to_hf_raises_when_num_experts_undeterminable(self):
-        """If num_experts is neither in the ctor nor on the module/config, raise RuntimeError."""
+        """If num_experts is neither in the ctor nor on the module/config, raise with the parameter name."""
         hf_pattern = "model.layers.0.mlp.experts.*.gate_proj.weight_quantizer._amax"
         megatron_param = "decoder.layers.0.mlp.experts.linear_fc1.weight_quantizer._amax"
         m = MoeAmaxFanoutMapping(megatron_param, [hf_pattern], num_experts=None)
@@ -686,9 +686,9 @@ class TestMoeAmaxFanoutMapping:
         with (
             patch.object(ReplicatedMapping, "megatron_to_hf", return_value={hf_pattern: weight}),
             patch.object(MoeAmaxFanoutMapping, "ep_size", new=1),
-            patch.object(MoeAmaxFanoutMapping, "broadcast_obj_from_pp_rank", side_effect=lambda obj, **_: obj),
+            patch.object(MoeAmaxFanoutMapping, "pp_size", new=1),
         ):
-            with pytest.raises(RuntimeError, match="Could not determine num_experts"):
+            with pytest.raises(ValueError, match=megatron_param):
                 m.megatron_to_hf(weight, megatron_module)
 
 

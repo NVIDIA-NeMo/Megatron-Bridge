@@ -87,6 +87,12 @@ def test_cpu_import_dispatches_to_cpu_backend():
             "torch_dtype": "bfloat16",
             "trust_remote_code": False,
             "overwrite": False,
+            "use_distributed": False,
+            "tp": 1,
+            "pp": 1,
+            "ep": 1,
+            "etp": 1,
+            "distributed_timeout_minutes": None,
         }
     ]
 

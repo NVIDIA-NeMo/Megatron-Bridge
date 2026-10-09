@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import torch
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from transformers import GlmMoeDsaForCausalLM
 
 from megatron.bridge.models.conversion import quantization_utils
@@ -28,59 +28,22 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider, glm_hybrid_pattern
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
 logger = logging.getLogger(__name__)
 
 
-def _partition_layer_groups(group_sizes: list[int], num_stages: int) -> list[int]:
-    """Split ordered layer groups into contiguous stages that minimize the largest stage.
-
-    Args:
-        group_sizes: Number of layers in each group, in layer order.
-        num_stages: Number of stages; must not exceed the number of groups.
-
-    Returns:
-        Number of layers in each stage. Every stage receives at least one whole group.
-    """
-
-    def stages_needed(capacity: int) -> int:
-        count, load = 1, 0
-        for size in group_sizes:
-            if load + size > capacity:
-                count, load = count + 1, 0
-            load += size
-        return count
-
-    capacity = max(group_sizes)
-    while stages_needed(capacity) > num_stages:
-        capacity += 1
-
-    stage_sizes: list[int] = []
-    start = 0
-    for stage_index in range(num_stages):
-        # Fill each stage up to the minimal capacity while leaving one group for every later stage.
-        last_start = len(group_sizes) - (num_stages - stage_index - 1)
-        end, load = start + 1, group_sizes[start]
-        while end < last_start and load + group_sizes[end] <= capacity:
-            load += group_sizes[end]
-            end += 1
-        stage_sizes.append(load)
-        start = end
-    return stage_sizes
-
-
 @MegatronModelBridge.register_bridge(
-    source=GlmMoeDsaForCausalLM, target=GPTModel, provider=MLAModelProvider, model_type="glm_moe_dsa"
+    source=GlmMoeDsaForCausalLM, target=HybridModel, provider=GLM5ModelProvider, model_type="glm_moe_dsa"
 )
 class GLM5Bridge(MegatronModelBridge):
     """
     Megatron Bridge for the GLM-5 family (MoE + MLA + DSA).
 
     This bridge handles conversion between HuggingFace GlmMoeDsaForCausalLM
-    and Megatron-Core GPTModel formats. ``zai-org/GLM-5``,
+    and Megatron-Core HybridModel formats. ``zai-org/GLM-5``,
     ``zai-org/GLM-5.1``, ``zai-org/GLM-5.2``, and ``zai-org/GLM-5.3`` are auto-detected through
     this bridge, with version-specific DSA settings read from the HF config.
 
@@ -97,6 +60,24 @@ class GLM5Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    # Until the declarative Hybrid builder supports the GLM adapters, fail clearly
+    # rather than returning the inherited GPT builder configuration.
+    MODEL_CONFIG_CLASS = None
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: GLM5ModelProvider) -> dict:
+        """Export HF block counts and preserve the reference model's context length."""
+        config = super().megatron_to_hf_config(provider)
+        pattern = provider.hybrid_layer_pattern.split("/")[0].replace("|", "")
+        config["num_hidden_layers"] = pattern.count("D")
+        config["first_k_dense_replace"] = pattern.count("-")
+        config["index_topk_freq"] = provider.dsa_indexer_topk_freq
+        config["index_skip_topk_offset"] = provider.dsa_indexer_skip_topk_offset
+        # Training seq_length is not the pretrained context limit. Let the HF
+        # reference config supply max_position_embeddings (or use its default).
+        config.pop("max_position_embeddings", None)
+        return config
+
     def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
         """Return whether an HF config field should be mapped to the Megatron provider."""
         # Transformers 5.11-5.12 has an upstream GLM config bug: ``GlmMoeDsaConfig`` declares an independent
@@ -109,19 +90,9 @@ class GLM5Bridge(MegatronModelBridge):
             return False
         return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GLM5ModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
-
-        # Use experimental-attention spec for DSA
-        try:
-            from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-                get_transformer_block_with_experimental_attention_variant_spec,
-            )
-
-            provider.transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec
-        except (ImportError, ModuleNotFoundError):
-            logger.warning("DSA spec not available; falling back to standard GPT decoder block spec.")
 
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
@@ -129,6 +100,9 @@ class GLM5Bridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = False
         provider.qk_layernorm = True
         provider.multi_latent_attention = True
+        # Megatron Core DSA prohibits rope fusion
+        provider.apply_rope_fusion = False
+        provider.is_hybrid_model = True
 
         # Disable MTP (Multi-Token Prediction) by default
         # HF config has num_nextn_predict_layers=1
@@ -154,9 +128,11 @@ class GLM5Bridge(MegatronModelBridge):
         provider.make_vocab_size_divisible_by = 1280
 
         # GLM5-specific: computed fields not in CONFIG_MAPPING
-        provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
-            hf_config.num_hidden_layers - hf_config.first_k_dense_replace
+        provider.hybrid_layer_pattern = glm_hybrid_pattern(
+            num_layers=hf_config.num_hidden_layers, first_k_dense_replace=hf_config.first_k_dense_replace
         )
+        provider.num_layers = 2 * hf_config.num_hidden_layers
+        provider.moe_layer_freq = [int(symbol == "E") for symbol in provider.hybrid_layer_pattern]
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
         # GlmMoeDsaConfig may normalize qk_rope_head_dim to head_dim while
         # loading GLM-5.2. Recover the RoPE width from the model's invariant:
@@ -187,55 +163,13 @@ class GLM5Bridge(MegatronModelBridge):
         return provider
 
     def generate_pipeline_layout(self, num_layers: int, pp: int, mtp_layers: int = 0) -> list[list[str]] | None:
-        """Generate a conversion pipeline layout that keeps DSA top-k sharing groups on one stage.
+        """Defer DSA-aligned placement to the Hybrid provider's pattern finalization.
 
-        GLM-5.2 decoder layers reuse the DSA top-k indices computed by an earlier
-        layer (``index_topk_freq`` and ``index_skip_topk_offset`` in the HF config).
-        Megatron-Core rejects a pipeline split that separates a reusing layer from
-        its source, and no uniform split of GLM-5.2's 78 decoder layers satisfies
-        that constraint for PP > 1. The conversion launcher calls this hook so every
-        stage starts on a layer that computes its own top-k indices. Sharing groups
-        are assigned to contiguous stages to minimize the largest stage, with
-        embeddings on the first stage and MTP plus loss on the last stage.
-
-        Args:
-            num_layers: Number of decoder layers.
-            pp: Pipeline parallel size.
-            mtp_layers: Number of MTP layers in the converted model.
-
-        Returns:
-            A flexible pipeline layout with exactly ``pp`` stages, or ``None`` when
-            the checkpoint does not share DSA top-k indices across layers and the
-            default pipeline split applies.
-
-        Raises:
-            ValueError: If ``pp`` exceeds the number of DSA top-k sharing groups.
+        The conversion launcher calls this hook before finalizing the provider.
+        GPT decoder/embedding/MTP token layouts cannot describe GLM's split D-/DE
+        layers; GLM5ModelProvider.finalize builds their stage boundaries instead.
         """
-        topk_freq = getattr(self.hf_config, "index_topk_freq", 1)
-        if topk_freq <= 1:
-            return None
-
-        from megatron.core.transformer.experimental_attention_variant.dsa import is_dsa_skip_topk_layer
-
-        skip_topk_offset = getattr(self.hf_config, "index_skip_topk_offset", 0)
-        # Each group starts on a layer that computes top-k indices and includes the layers that reuse them.
-        group_sizes: list[int] = []
-        for layer_number in range(1, num_layers + 1):
-            if is_dsa_skip_topk_layer(layer_number, skip_topk_offset, topk_freq):
-                group_sizes[-1] += 1
-            else:
-                group_sizes.append(1)
-        if pp > len(group_sizes):
-            raise ValueError(
-                f"PP={pp} exceeds the {len(group_sizes)} DSA top-k sharing groups in {num_layers} decoder layers; "
-                "each pipeline stage must start on a layer that computes its own top-k indices."
-            )
-
-        layout = [["decoder"] * stage_size for stage_size in _partition_layer_groups(group_sizes, pp)]
-        layout[0].insert(0, "embedding")
-        layout[-1].extend(["mtp"] * mtp_layers)
-        layout[-1].append("loss")
-        return layout
+        return None
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
@@ -330,80 +264,51 @@ class GLM5Bridge(MegatronModelBridge):
             ]
         )
 
-        hf_config = self.hf_config
-        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
-        num_transformer_layers = hf_config.num_hidden_layers
-        for mtp_layer in range(num_mtp_layers):
-            # MTP specific mappings
-            mapping_list.extend(
-                [
-                    AutoMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.enorm.weight",
-                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.enorm.weight",
-                    ),
-                    AutoMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.hnorm.weight",
-                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.hnorm.weight",
-                    ),
-                    AutoMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.eh_proj.weight",
-                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.eh_proj.weight",
-                    ),
-                    AutoMapping(
-                        megatron_param=f"mtp.layers.{mtp_layer}.final_layernorm.weight",
-                        hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.shared_head.norm.weight",
-                    ),
-                ]
+        # Expand block indices explicitly; remaining wildcards only identify experts.
+        # The same templates describe each MTP depth's inner D/E pair.
+        def remap(mapping, megatron_name, hf_layer):
+            hf = mapping.hf_param
+            if isinstance(hf, dict):
+                return type(mapping)(
+                    megatron_param=megatron_name,
+                    **{key: value.replace("layers.*", f"layers.{hf_layer}") for key, value in hf.items()},
+                )
+            return AutoMapping(
+                megatron_param=megatron_name,
+                hf_param=hf.replace("layers.*", f"layers.{hf_layer}"),
             )
 
-            for layer_prefix in ("transformer_layer", "mtp_model_layer"):
-                for megatron_param, hf_param in param_mappings.items():
-                    megatron_param = (
-                        megatron_param.replace(".*", f".*.{layer_prefix}", 1)
-                        .replace("decoder", "mtp")
-                        .replace(".*", f".{mtp_layer}", 1)
-                    )
-                    hf_param = hf_param.replace("layers.*", f"layers.{mtp_layer + num_transformer_layers}")
-                    mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
-                # Special mappings that require parameter concatenation/transformation
-                mapping_list.extend(
-                    [
-                        QKVMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.{layer_prefix}.self_attention.linear_qkv.weight",
-                            q=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.q_proj.weight",
-                            k=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.k_proj.weight",
-                            v=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.v_proj.weight",
-                        ),
-                        QKVMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.{layer_prefix}.self_attention.linear_qkv.bias",
-                            q=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.q_proj.bias",
-                            k=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.k_proj.bias",
-                            v=f"model.layers.{mtp_layer + num_transformer_layers}.self_attn.v_proj.bias",
-                        ),
-                        GatedMLPMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.linear_fc1.weight",
-                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.gate_proj.weight",
-                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.up_proj.weight",
-                        ),
-                        GatedMLPMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.shared_experts.linear_fc1.weight",
-                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.gate_proj.weight",
-                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.shared_experts.up_proj.weight",
-                        ),
-                        GatedMLPMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.experts.linear_fc1.weight*",
-                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
-                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
-                        ),
-                        GatedMLPMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.experts.local_experts.*.linear_fc1.weight",
-                            gate=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.gate_proj.weight",
-                            up=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.experts.*.up_proj.weight",
-                        ),
-                    ]
+        mappings = []
+        num_blocks = self.hf_config.num_hidden_layers
+        num_mtp = getattr(self.hf_config, "num_nextn_predict_layers", 0) or 0
+        for mapping in mapping_list:
+            name = mapping.megatron_param
+            if not name.startswith("decoder.layers.*."):
+                mappings.append(remap(mapping, name.replace("final_layernorm", "final_norm"), 0))
+                continue
+            suffix = name.removeprefix("decoder.layers.*.")
+            is_mlp = suffix.startswith(("mlp.", "pre_mlp_layernorm."))
+            inner = int(is_mlp)
+            for block in range(num_blocks):
+                mappings.append(remap(mapping, f"decoder.layers.{2 * block + inner}.{suffix}", block))
+            for depth in range(num_mtp):
+                mappings.append(
+                    remap(mapping, f"mtp.layers.{depth}.mtp_model_layer.layers.{inner}.{suffix}", num_blocks + depth)
                 )
-
-        return MegatronMappingRegistry(*mapping_list)
+        for depth in range(num_mtp):
+            for name, suffix in {
+                "enorm.weight": "enorm.weight",
+                "hnorm.weight": "hnorm.weight",
+                "eh_proj.weight": "eh_proj.weight",
+                "final_layernorm.weight": "shared_head.norm.weight",
+            }.items():
+                mappings.append(
+                    AutoMapping(
+                        megatron_param=f"mtp.layers.{depth}.{name}",
+                        hf_param=f"model.layers.{num_blocks + depth}.{suffix}",
+                    )
+                )
+        return MegatronMappingRegistry(*mappings)
 
     def maybe_modify_loaded_hf_weight(
         self,
