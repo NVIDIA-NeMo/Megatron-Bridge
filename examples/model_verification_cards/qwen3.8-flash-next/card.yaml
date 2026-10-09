@@ -61,15 +61,6 @@ items:
       status: verified
       precision: bf16
       last_verified: 2026-10-08
-      command: >
-        uv run --no-sync python -m torch.distributed.run
-        --nnodes=8 --nproc_per_node=4 --node_rank="$NODE_RANK"
-        --master_addr="$MASTER_ADDR" --master_port=29500
-        examples/model_verification_cards/qwen3.8-flash-next/verify_pretrain.py
-        --checkpoint work/qwen3.8-flash-next/hf
-        --hf-revision de4b8e4d43b917e7706784d8bb445c9af86a3540
-        --data-prefix work/data/wikitext2_qwen38_train_text_document
-        --output work/qwen3.8-flash-next/pretrain --steps 10
       enabled_features:
         text_only: true
         tensor_model_parallel_size: 8
