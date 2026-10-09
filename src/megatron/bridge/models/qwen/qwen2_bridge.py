@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen2ForCausalLM
+from transformers import PretrainedConfig, Qwen2ForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -35,26 +37,37 @@ class Qwen2Bridge(MegatronModelBridge):
     configuration translation.
 
     Qwen2 inherits CONFIG_MAPPING from MegatronModelBridge base class.
-    Model-specific settings are applied in provider_bridge.
+    Model-specific settings are applied in hf_config_to_model_config_kwargs.
 
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen2 config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = True
-        provider.hidden_dropout = 0.0
-        provider.autocast_dtype = torch.bfloat16
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen2 config to builder config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=True,
+            hidden_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+        )
+        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
