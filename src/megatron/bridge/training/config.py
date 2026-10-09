@@ -1161,6 +1161,10 @@ class ConfigContainer(Container):
         Checkpointing and tensor/pipeline parallelism remain intentionally unsupported
         upstream and are rejected here before model construction.
         """
+        if not self.model.bf16 or self.model.fp16 or not self.optimizer.bf16 or self.optimizer.fp16:
+            raise ValueError("MFSDP V2 requires BF16 training (model.bf16=True and optimizer.bf16=True).")
+        if self.model.params_dtype != torch.bfloat16:
+            raise ValueError("MFSDP V2 requires model.params_dtype=torch.bfloat16.")
 
         unsupported_parallelisms = (
             "tensor_model_parallel_size",
@@ -1173,6 +1177,9 @@ class ConfigContainer(Container):
         ]
         if configured_parallelisms:
             raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
+        if self.model.expert_model_parallel_size > 1:
+            if self.model.num_moe_experts is None:
+                raise ValueError("MFSDP V2 expert parallelism requires an MoE model.")
         if self.model.virtual_pipeline_model_parallel_size is not None:
             raise ValueError("MFSDP V2 does not currently support multiple model chunks.")
         if self.dist.use_tp_pp_dp_mapping:
@@ -1191,6 +1198,8 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
+        if self.model.fp8 or self.model.fp4 or self.ddp.fp8_param_gather or self.ddp.fp4_param_gather:
+            raise ValueError("MFSDP V2 does not support FP8 or FP4.")
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False

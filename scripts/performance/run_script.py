@@ -186,8 +186,6 @@ def _run_training(args, cli_overrides: list[str]) -> None:
     else:
         forward_step_func = forward_step
 
-    # recipe.model.use_te_rng_tracker = True
-    # recipe.rng.te_rng_tracker = True
     pretrain(config=recipe, forward_step_func=forward_step_func)
 
 
