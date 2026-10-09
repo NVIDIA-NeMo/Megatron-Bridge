@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for DeepSeek V3."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
@@ -26,8 +27,8 @@ from megatron.bridge.perf_recipes.deepseek.common import (
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
-def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, BF16."""
+def _build_deepseek_v3_gb200_bf16() -> ConfigContainer:
+    """Shared HybridEP BF16 base for the DeepSeek V3 256-GPU GB200 BF16 and NVFP4 recipes."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _deepseek_v3_common(cfg)
@@ -52,6 +53,16 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB200, BF16, NCCL EP."""
+    cfg = _build_deepseek_v3_gb200_bf16()
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -67,11 +78,8 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
         "TORCH_CPP_LOG_LEVEL": "ERROR",
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -133,7 +141,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, MXFP8."""
+    """DeepSeek V3 pretrain: 256× GB200, MXFP8, NCCL EP."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     _deepseek_v3_common(cfg)
@@ -161,6 +169,10 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = False
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -172,11 +184,8 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -192,8 +201,8 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with optimizer CUDA graph."""
-    cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+    """DeepSeek V3 pretrain: 256× GB200, NVFP4 with optimizer CUDA graph, NCCL EP."""
+    cfg = _build_deepseek_v3_gb200_bf16()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _enable_deepseek_full_iteration(cfg)
     cfg.model.fp8_output_proj = False
@@ -204,6 +213,10 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.mla_down_proj_fusion = True
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
     cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -215,11 +228,8 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -235,7 +245,7 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× GB200, MXFP8, large-scale proxy (GBS=256)."""
+    """DeepSeek V3 pretrain: 256× GB200, MXFP8, large-scale proxy (GBS=256), NCCL EP."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
     cfg.train.global_batch_size = 256
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -249,11 +259,8 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContai
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode (inherited from the 256-GPU MXFP8 recipe).
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,

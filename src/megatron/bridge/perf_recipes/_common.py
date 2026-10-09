@@ -96,7 +96,7 @@ def _benchmark_common(
 
 
 def _enable_ncclep(cfg: ConfigContainer) -> None:
-    """Switch a flex-dispatcher recipe to the NCCL EP backend (GB300 MoE default).
+    """Switch a flex-dispatcher recipe to the NCCL EP backend (GB200 and GB300 MoE default).
 
     Call after ``_benchmark_common``. Only the dispatch stack changes; parallelism, precision,
     recompute and the CUDA graph mode stay as the recipe set them. The calling recipe still declares
