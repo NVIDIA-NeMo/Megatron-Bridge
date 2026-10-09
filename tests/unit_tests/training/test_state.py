@@ -1001,6 +1001,24 @@ class TestGlobalState:
         assert state.rank_monitor_client is not None or state.rank_monitor_client is None  # Could be either
         assert isinstance(state.start_time, float)
 
+    def test_reset_for_restart_discards_zero_token_interval(self):
+        from megatron.bridge.training.utils.train_utils import _consume_zero_token_iters, accumulate_zero_token_step
+
+        state = GlobalState()
+        accumulate_zero_token_step(state, torch.tensor(True))
+        previous_buffer = state._zero_token_iters
+        assert previous_buffer.item() == 1
+
+        state.reset_for_restart()
+
+        assert state._zero_token_iters is None
+        assert _consume_zero_token_iters(state) == 0
+        accumulate_zero_token_step(state, torch.tensor(False))
+        assert state._zero_token_iters is not previous_buffer
+        assert _consume_zero_token_iters(state) == 0
+        accumulate_zero_token_step(state, torch.tensor(True))
+        assert _consume_zero_token_iters(state) == 1
+
     def test_reset_for_restart_preserves_config_and_async_queue(self):
         """Test reset_for_restart preserves config and async queue."""
         state = GlobalState()

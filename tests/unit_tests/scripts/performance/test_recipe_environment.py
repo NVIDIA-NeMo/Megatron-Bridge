@@ -370,6 +370,69 @@ def test_exact_gpu_recipe_takes_precedence_over_canonical_fallback(monkeypatch):
     assert result is exact_recipe
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("gpu", ["gb200", "gb300", "vr200"])
+@pytest.mark.parametrize("precision", ["fp8_mx", "nvfp4"])
+@pytest.mark.parametrize("override", [None, 4, 8])
+def test_ultra_weak_scaling_resolves_hsdp_before_user_overrides(monkeypatch, gpu, precision, override):
+    """A 512-GPU fallback uses eight instances unless the user explicitly selects another count."""
+    suffix = "fp8mx" if precision == "fp8_mx" else precision
+    canonical_name = f"nemotron_3_ultra_pretrain_256gpu_{gpu}_{suffix}_config"
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_ultra",
+        task="pretrain",
+        num_gpus=512,
+        gpu=gpu,
+        compute_dtype=precision,
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    # Exercise the actual HSDP helper without importing GPU-only recipe dependencies.
+    path = utils._PERF_RECIPES_ROOT / "nemotronh" / "common.py"
+    tree = ast.parse(path.read_text())
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_apply_nemotron_3_ultra_fsdp_hsdp"
+    )
+    namespace = {
+        "ConfigContainer": object,
+        "_GB300_NVLINK_DOMAIN_GPUS": 64,
+        "torch": SimpleNamespace(bfloat16="bf16", float32="fp32"),
+    }
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), "exec"), namespace)
+
+    def build_recipe(*, num_gpus=256):
+        recipe = SimpleNamespace(ddp=SimpleNamespace(), model=SimpleNamespace(), checkpoint=SimpleNamespace())
+        namespace[helper.name](recipe, num_gpus)
+        return recipe
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 512-GPU recipe")
+
+    def apply_override(recipe, cli_overrides, _args):
+        assert recipe.ddp.num_distributed_optimizer_instances == 8
+        assert recipe.ddp.outer_dp_sharding_strategy == "optim"
+        if cli_overrides:
+            recipe.ddp.num_distributed_optimizer_instances = int(cli_overrides[0].split("=", 1)[1])
+        return recipe
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(utils, "flat_perf_recipe_names", lambda: (canonical_name,))
+    monkeypatch.setattr(utils, "find_perf_recipe", lambda _name: build_recipe)
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_override)
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_post_overrides = lambda recipe, **_kwargs: recipe
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+
+    cli_overrides = [] if override is None else [f"ddp.num_distributed_optimizer_instances={override}"]
+    result = run_script._prepare_perf_recipe(args, cli_overrides)
+
+    assert result.ddp.num_distributed_optimizer_instances == (8 if override is None else override)
+
+
 def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
     args = SimpleNamespace(
         model_family_name="test",
@@ -557,6 +620,7 @@ def test_flat_hydra_ep_override_updates_hybridep_topology_environment(monkeypatc
     override_utils.set_cli_overrides = apply_hydra
     override_utils.set_user_overrides = lambda config, _args: config
     override_utils._apply_flat_cli_environment_compatibility = lambda config, *_args, **_kwargs: config
+    override_utils.apply_one_gpu_per_rank_device_mapping = lambda config: config
     monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
     environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
     environment_module.HYBRID_EP_ENV_NAMES = {

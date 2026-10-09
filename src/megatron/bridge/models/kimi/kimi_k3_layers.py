@@ -103,9 +103,10 @@ class KimiK3Attention(MegatronModule):
         pg_collection=None,
         pp_layer_offset: int | None = None,
         name: str | None = None,
+        is_mtp_layer: bool = False,
     ) -> None:
         super().__init__(config=config)
-        del pp_layer_offset, name
+        del pp_layer_offset, name, is_mtp_layer
         self.cp_comm_type = cp_comm_type
 
         if pg_collection is None:

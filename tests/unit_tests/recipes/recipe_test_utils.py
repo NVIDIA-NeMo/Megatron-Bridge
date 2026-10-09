@@ -181,12 +181,32 @@ class _OfflineAutoBridge:
 
     @classmethod
     def from_hf_pretrained(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
-        del args, kwargs
-        return cls()
+        bridge = cls()
+        bridge._model_id = str(args[0]) if args else str(kwargs.get("pretrained_model_name_or_path", ""))
+        return bridge
 
     def to_megatron_provider(self, *args: object, **kwargs: object) -> _OfflineModelProvider:
         del args, kwargs
-        return _OfflineModelProvider()
+        provider = _OfflineModelProvider()
+        model_id = getattr(self, "_model_id", "").lower()
+        if model_id in {"zai-org/glm-5", "zai-org/glm-5.1", "zai-org/glm-5.2", "zai-org/glm-5.3"}:
+            provider.hybrid_layer_pattern = "D-" * 3 + "DE" * 75
+            provider.num_layers = len(provider.hybrid_layer_pattern)
+            if model_id in {"zai-org/glm-5.2", "zai-org/glm-5.3"}:
+                provider.dsa_indexer_topk_freq = 4
+                provider.dsa_indexer_skip_topk_offset = 3
+        if "deepseek-v4-" in model_id:
+            logical_layers = 61 if "deepseek-v4-pro" in model_id else 43
+            provider.hybrid_layer_pattern = "WEWE" + "".join(
+                "CE" if i % 2 == 0 else "HE" for i in range(logical_layers - 2)
+            )
+            provider.num_layers = 2 * logical_layers
+            provider.mtp_hybrid_override_pattern = "WE"
+            provider.moe_num_hash_layers = 3
+            provider.csa_compress_ratios = [
+                {"C": 4, "H": 128}.get(symbol, 0) for symbol in provider.hybrid_layer_pattern
+            ] + [0, 0]
+        return provider
 
     def get_model_config(self) -> _OfflineModelProvider:
         """Return a mutable stand-in for builder-backed recipe construction."""
@@ -247,7 +267,14 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     def load_offline_auto_config(*args: object, **kwargs: object) -> SimpleNamespace:
         del args, kwargs
-        return SimpleNamespace(text_config=SimpleNamespace(architectures=None))
+        return SimpleNamespace(
+            tie_word_embeddings=False,
+            text_config=SimpleNamespace(
+                architectures=None,
+                model_type="qwen3_5_moe_text",
+                max_position_embeddings=262144,
+            ),
+        )
 
     monkeypatch.setattr(
         AutoConfig,

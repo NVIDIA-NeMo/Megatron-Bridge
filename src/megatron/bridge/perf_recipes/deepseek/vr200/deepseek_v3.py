@@ -23,10 +23,10 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import (
-    deepseek_v3_pretrain_256gpu_gb300_bf16_config,
+    _build_deepseek_v3_gb300_bf16,
+    _build_deepseek_v3_gb300_fp8mx,
+    _build_deepseek_v3_gb300_nvfp4,
     deepseek_v3_pretrain_256gpu_gb300_fp8cs_config,
-    deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
-    deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
@@ -244,7 +244,7 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
-    cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
+    cfg = _build_deepseek_v3_gb300_bf16()
     cfg.model.cuda_graph_scope = ["attn"]
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -302,7 +302,7 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
 
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB300)."""
-    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+    cfg = _build_deepseek_v3_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -328,7 +328,7 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -369,14 +369,14 @@ def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 1,
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
 
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, NVFP4 with full-iteration CUDA graph."""
-    cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
+    cfg = _build_deepseek_v3_gb300_nvfp4()
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

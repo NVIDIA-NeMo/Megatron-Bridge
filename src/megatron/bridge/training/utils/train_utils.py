@@ -114,7 +114,7 @@ def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
     """
     if profiling is None or not profiling.record_memory_history:
         return
-    if get_rank_safe() not in profiling.profile_ranks:
+    if profiling.profile_ranks and get_rank_safe() not in profiling.profile_ranks:
         return
 
     torch.cuda.memory._record_memory_history(
@@ -615,6 +615,24 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _step_num_microbatches(global_state: GlobalState) -> int:
+    """Return the microbatches this step ran: the packing scheduler's count, else the configured one."""
+    return getattr(global_state, "global_batch_packing_num_microbatches", None) or get_num_microbatches()
+
+
+def _mtp_loss_scale(global_state: GlobalState) -> float:
+    """Return the factor that turns the MTP loss tracker into a per-step loss for logging.
+
+    Megatron-Core releases that track MTP loss per token (with ``calculate_per_token_loss``)
+    already reduce raw loss sums and token counts into a per-token mean; earlier releases, and
+    microbatch-normalized training, accumulate one normalized loss per microbatch, which is
+    averaged over the microbatches this step ran. Megatron-LM's training loop applies the same rule.
+    """
+    if MTPLossLoggingHelper.tracker.get("calculate_per_token_loss", False):
+        return 1.0
+    return 1 / _step_num_microbatches(global_state)
+
+
 def _track_moe_metrics_supports_num_moe_layers() -> bool:
     """Return whether the active MCore accepts explicit MoE layer counts."""
     return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
@@ -626,7 +644,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
 
-    if getattr(model_config, "is_hybrid_model", False):
+    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
         pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
         main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
         mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
@@ -654,6 +672,48 @@ def _get_num_moe_layers(model_config: Any) -> int:
         mtp_moe_layers *= mtp_depth
 
     return main_moe_layers + mtp_moe_layers
+
+
+# Attribute on GlobalState holding the running count of steps whose global token
+# count was zero. GlobalState clears it when restarting an interrupted attempt.
+ZERO_TOKEN_ITERS_ATTR = "_zero_token_iters"
+
+
+def accumulate_zero_token_step(global_state: GlobalState, zero_token_step: torch.Tensor) -> None:
+    """Record whether this step reduced an empty global token count.
+
+    A zero global token count means every rank in the data-parallel x context-parallel
+    group had a fully masked batch, so the reported loss is a substituted zero rather
+    than a measured value. Counting these keeps a data or masking bug visible instead
+    of it reading as a genuine 0.0 loss.
+
+    The count stays on device and is only read back at the logging interval, so the
+    training step itself never synchronizes with the host.
+
+    Args:
+        global_state: The global training state the counter is attached to.
+        zero_token_step: Bool tensor that is True when the step had no tokens.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    # isinstance rather than "is None" so a mocked state does not masquerade as a counter.
+    if not isinstance(counter, torch.Tensor):
+        counter = torch.zeros((), dtype=torch.int32, device=zero_token_step.device)
+        setattr(global_state, ZERO_TOKEN_ITERS_ATTR, counter)
+    counter += zero_token_step
+
+
+def _consume_zero_token_iters(global_state: GlobalState) -> int:
+    """Read and reset the zero-token step counter. Returns 0 when never recorded.
+
+    Only pipeline-last-stage ranks compute a reduced loss, so ranks without a counter
+    report zero.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    if not isinstance(counter, torch.Tensor):
+        return 0
+    count = int(counter.item())
+    counter.zero_()
+    return count
 
 
 def training_log(
@@ -809,7 +869,7 @@ def training_log(
 
     if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
         rank = get_rank_safe()
-        if rank in config.profiling.profile_ranks:
+        if not config.profiling.profile_ranks or rank in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
@@ -826,7 +886,10 @@ def training_log(
     # emits the per-metric peak across the pipeline (issue #3167).
     memory_report: Optional[dict[str, Union[int, float]]] = None
     if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
-        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = report_memory(
+            memory_keys=logger_config.memory_keys,
+            log_device_memory_used=logger_config.log_device_memory_used,
+        )
         memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
         memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
 
@@ -1035,7 +1098,7 @@ def training_log(
 
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
     if num_moe_experts is not None:
-        moe_loss_scale = 1 / get_num_microbatches()
+        moe_loss_scale = 1 / _step_num_microbatches(global_state)
         track_names = []
 
         moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
@@ -1069,7 +1132,7 @@ def training_log(
             track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
         track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
-        mtp_loss_scale = 1 / get_num_microbatches()
+        mtp_loss_scale = _mtp_loss_scale(global_state)
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
@@ -1194,6 +1257,22 @@ def training_log(
             log_string += f" max attention logit: {log_max_attention_logit:.3f} |"
         log_string += " number of skipped iterations: {:3d} |".format(total_loss_dict[skipped_iters_key])
         log_string += " number of nan iterations: {:3d} |".format(total_loss_dict[nan_iters_key])
+        # Only surfaced when non-zero: these steps report a substituted 0.0 loss, which
+        # is otherwise indistinguishable from a real one. Keeping the field out of the
+        # normal log line leaves existing log output unchanged.
+        zero_token_iters = _consume_zero_token_iters(global_state)
+        if zero_token_iters > 0:
+            log_string += " number of zero-token iterations: {:3d} |".format(zero_token_iters)
+            # The substituted 0.0 loss also reaches the metric writers, so record the count
+            # next to it there. Written only when non-zero, so healthy runs log the same metrics.
+            if writer:
+                writer.add_scalar("zero-token-iterations", zero_token_iters, iteration)
+            if wandb_writer:
+                wandb_writer.log({"zero-token-iterations": zero_token_iters}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
@@ -1204,7 +1283,9 @@ def training_log(
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
             memory_string = f"(after {iteration} iterations) memory (GB)"
-            for metric, value in report_memory(logger_config.memory_keys).items():
+            for metric, value in report_memory(
+                logger_config.memory_keys, log_device_memory_used=logger_config.log_device_memory_used
+            ).items():
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
@@ -1230,7 +1311,7 @@ def training_log(
     return report_memory_flag
 
 
-def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
+def report_memory(memory_keys: Optional[dict[str, str]], *, log_device_memory_used: bool = False) -> dict:
     """
     Logs the memory usage of the model.
     This metric calls the torch memory stats API for CUDA and reports different memory statistics.
@@ -1261,9 +1342,22 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
             are the names of memory statistics to log from `torch.cuda.memory_stats()`, and values
             are the names they will be logged under. If not provided, the above statistics are
             logged. Defaults to None.
+        log_device_memory_used (bool): If True, also report ``mem-device-used-gigabytes``, the total
+            memory currently in use on the device as reported by NVML (``torch.cuda.device_memory_used``,
+            the same figure ``nvidia-smi`` shows). Unlike the allocator statistics above this covers
+            memory outside the caching allocator (CUDA context, NCCL / dispatcher buffers, other
+            processes). It is a point-in-time value, not a peak. Defaults to False.
     Returns:
         Memory metrics dictionary.
     """
+
+    def _to_gigabytes(num_bytes: int | float) -> float:
+        gigabytes = num_bytes / 1.0e9
+        # Round to preserve 5 significant digits
+        if gigabytes != 0:
+            order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
+            gigabytes = round(gigabytes, -order_of_magnitude + 4)
+        return gigabytes
 
     memory_stats = torch.cuda.memory_stats()
     memory_keys = memory_keys if memory_keys else MEMORY_KEYS
@@ -1274,14 +1368,18 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
         if torch_name in memory_stats:
             # Convert to gigabytes
             if "bytes" in torch_name:
-                gigabytes = memory_stats[torch_name] / 1.0e9
-                # Round to preserve 5 significant digits
-                if gigabytes != 0:
-                    order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
-                    gigabytes = round(gigabytes, -order_of_magnitude + 4)
-                memory_report[name.replace("bytes", "gigabytes")] = gigabytes
+                memory_report[name.replace("bytes", "gigabytes")] = _to_gigabytes(memory_stats[torch_name])
             else:
                 memory_report[name] = memory_stats[torch_name]
+
+    if log_device_memory_used:
+        device_memory_used = getattr(torch.cuda, "device_memory_used", None)
+        if device_memory_used is None:
+            raise RuntimeError(
+                "logger.log_device_memory_used requires torch.cuda.device_memory_used (PyTorch >= 2.7); "
+                "disable the option or upgrade PyTorch."
+            )
+        memory_report["mem-device-used-gigabytes"] = _to_gigabytes(device_memory_used())
 
     return memory_report
 

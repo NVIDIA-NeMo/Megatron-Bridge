@@ -75,6 +75,9 @@ def test_text_only_source_preserves_super_recipe_policy(monkeypatch, recipe):
             hf_model_id=path,
             hf_model_revision=kwargs.get("revision"),
             hf_model_text_only=kwargs.get("text_only", False),
+            mtp_num_layers=1,
+            mtp_hybrid_override_pattern="*E",
+            mtp_use_repeated_layer=True,
         )
         return SimpleNamespace(
             to_megatron_provider=lambda *, load_weights: provider,
@@ -84,6 +87,9 @@ def test_text_only_source_preserves_super_recipe_policy(monkeypatch, recipe):
     monkeypatch.setattr("megatron.bridge.AutoBridge.from_hf_pretrained", from_hf)
     original = recipe()
     selected = recipe(hf_path="org/vl", text_only=True, revision="pinned", trust_remote_code=True)
+    # HF stores one shared block; recipes explicitly choose two prediction depths.
+    assert original.model.mtp_num_layers == selected.model.mtp_num_layers == 2
+    assert original.model.mtp_use_repeated_layer is selected.model.mtp_use_repeated_layer is True
     assert calls[-1] == ("org/vl", {"text_only": True, "revision": "pinned", "trust_remote_code": True})
     assert selected.tokenizer.tokenizer_model == "org/vl"
     assert selected.tokenizer.hf_tokenizer_kwargs["revision"] == "pinned"
