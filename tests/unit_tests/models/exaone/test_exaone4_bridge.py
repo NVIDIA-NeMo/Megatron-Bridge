@@ -95,19 +95,31 @@ class TestExaone4Bridge:
         rope_scaling = {
             "rope_type": "llama3",
             "factor": 8.0,
-            "low_freq_factor": 2.0,
-            "high_freq_factor": 6.0,
-            "original_max_position_embeddings": 4096,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
         }
         provider = Exaone4Bridge().provider_bridge(make_pretrained(make_exaone4_config(rope_scaling=rope_scaling)))
 
         assert provider.rope_scaling is True
         assert provider.rope_scaling_factor == rope_scaling["factor"]
-        assert provider.rope_scaling_low_freq_factor == rope_scaling["low_freq_factor"]
-        assert provider.rope_scaling_high_freq_factor == rope_scaling["high_freq_factor"]
-        assert (
-            provider.rope_scaling_original_max_position_embeddings == rope_scaling["original_max_position_embeddings"]
-        )
+
+    def test_rope_scaling_warns_when_megatron_ignores_hf_values(self, caplog):
+        """Megatron Core applies llama3 scaling with fixed low/high/original values; only the factor is honored."""
+        rope_scaling = {
+            "rope_type": "llama3",
+            "factor": 8.0,
+            "low_freq_factor": 2.0,
+            "high_freq_factor": 6.0,
+            "original_max_position_embeddings": 4096,
+        }
+
+        with caplog.at_level("WARNING"):
+            model_config = Exaone4Bridge().hf_config_to_model_config(make_exaone4_config(rope_scaling=rope_scaling))
+
+        assert model_config.rope_scaling is True
+        assert model_config.rope_scaling_factor == 8.0
+        assert "differ from the fixed values Megatron Core applies" in caplog.text
 
     def test_provider_bridge_dtype_handling(self):
         provider = Exaone4Bridge().provider_bridge(make_pretrained(make_exaone4_config(torch_dtype=torch.float16)))
@@ -185,4 +197,67 @@ class TestExaone4Bridge:
         assert gated_mlp_mapping.hf_param == {
             "gate": "model.layers.0.mlp.gate_proj.weight",
             "up": "model.layers.0.mlp.up_proj.weight",
+        }
+
+
+class TestExaone4BuilderConfig:
+    """Builder-backed ModelConfig path for EXAONE 4.0."""
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in Exaone4Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert Exaone4Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        bridge = Exaone4Bridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(make_exaone4_config())
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        assert result.transformer_layer_spec is exaone4_layer_spec
+        assert result.normalization == "RMSNorm"
+        assert result.activation_func is F.silu
+        assert result.qk_layernorm is True
+        assert result.position_embedding_type == "rope"
+        assert result.rope_scaling is True
+        assert result.rope_scaling_factor == 16.0
+
+    def test_model_config_matches_provider_runtime_config(self):
+        from dataclasses import fields
+
+        import pytest
+
+        config = make_exaone4_config()
+        bridge = Exaone4Bridge()
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(make_pretrained(config))
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        for field_name in sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"}):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        assert model_config.transformer_layer_spec is exaone4_layer_spec
+        assert provider.transformer_layer_spec is exaone4_layer_spec
+
+    def test_megatron_to_hf_config_from_model_config_uses_megatron_rope_values(self):
+        model_config = Exaone4Bridge().hf_config_to_model_config(make_exaone4_config())
+
+        hf_config = Exaone4Bridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["rope_scaling"] == {
+            "rope_type": "llama3",
+            "factor": 16.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
         }
