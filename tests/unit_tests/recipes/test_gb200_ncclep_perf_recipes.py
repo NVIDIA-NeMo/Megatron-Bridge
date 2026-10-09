@@ -32,6 +32,8 @@ _GB200_NCCLEP_RECIPES = (
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8mx_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_nvfp4_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config"),
+    ("deepseek.gb200.deepseek_v4", "deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config"),
+    ("gpt_oss.gb200.gpt_oss", "gpt_oss_120b_pretrain_64gpu_gb200_bf16_config"),
     ("gpt_oss.gb200.gpt_oss", "gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config"),
