@@ -1263,6 +1263,16 @@ def training_log(
         zero_token_iters = _consume_zero_token_iters(global_state)
         if zero_token_iters > 0:
             log_string += " number of zero-token iterations: {:3d} |".format(zero_token_iters)
+            # The substituted 0.0 loss also reaches the metric writers, so record the count
+            # next to it there. Written only when non-zero, so healthy runs log the same metrics.
+            if writer:
+                writer.add_scalar("zero-token-iterations", zero_token_iters, iteration)
+            if wandb_writer:
+                wandb_writer.log({"zero-token-iterations": zero_token_iters}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0

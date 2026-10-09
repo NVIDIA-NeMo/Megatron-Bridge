@@ -394,7 +394,7 @@ def test_evaluate_runs_non_loss_collection_on_every_pipeline_rank():
     assert forward_backward_func.call_args.kwargs["collect_non_loss_data"] is True
 
 
-def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1, rank=1, remote=None):
+def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1, rank=1, remote=None, empty_loss_keys=None):
     """Drive evaluate() through its loss-aggregation path on the last pipeline stage."""
     state = _make_evaluate_state(eval_iters=eval_iters)
     pg_collection = SimpleNamespace(
@@ -436,6 +436,7 @@ def _run_evaluate_loss_reduction(loss_dicts, *, eval_iters=1, rank=1, remote=Non
             config=SimpleNamespace(timers=state.timers),
             p2p_communicator=MagicMock(),
             callback_manager=CallbackManager(),
+            empty_loss_keys=empty_loss_keys,
         )
     assert timelimit is False
     return total_loss_dict, [call.args[0] for call in printed.call_args_list]
@@ -485,3 +486,87 @@ def test_evaluate_locally_masked_batch_uses_remote_tokens():
 
     assert total_loss_dict["lm loss"].item() == pytest.approx(4.0)
     assert not any("no unmasked tokens" in message for message in messages)
+
+
+def test_evaluate_reports_empty_loss_keys():
+    """Callers can tell a substituted 0.0 from a measured loss."""
+    empty_loss_keys = set()
+    _run_evaluate_loss_reduction(
+        [
+            {
+                "lm loss": torch.tensor([0.0, 0.0], device="cuda"),
+                "aux loss": torch.tensor([6.0, 2.0], device="cuda"),
+            }
+        ],
+        empty_loss_keys=empty_loss_keys,
+    )
+
+    assert empty_loss_keys == {"lm loss"}
+
+
+@pytest.mark.parametrize(
+    ("local_losses", "rank", "remote"),
+    [
+        ([[6.0, 2.0]], 1, None),
+        ([[0.0, 0.0]], 1, [12.0, 3.0]),
+        ([], 0, None),
+    ],
+    ids=["healthy", "locally-masked-with-remote-tokens", "first-pipeline-stage"],
+)
+def test_evaluate_leaves_empty_loss_keys_unset_when_tokens_exist(local_losses, rank, remote):
+    # Tensors are built here rather than in the parametrize list so collection stays CUDA-free.
+    loss_dicts = [{"lm loss": torch.tensor(loss, device="cuda")} for loss in local_losses]
+    empty_loss_keys = set()
+    _run_evaluate_loss_reduction(loss_dicts, rank=rank, remote=remote, empty_loss_keys=empty_loss_keys)
+
+    assert empty_loss_keys == set()
+
+
+@patch("megatron.bridge.training.eval.is_last_rank", return_value=True)
+@patch("megatron.bridge.training.eval.print_rank_last")
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_skips_writers_for_empty_eval_set(
+    mock_evaluate, mock_print_rank_last, mock_is_last_rank
+):
+    """An empty evaluation set must not plot as a perfect model (loss 0.0, perplexity 1.0)."""
+    losses = {"empty loss": torch.tensor(0.0), "lm loss": torch.tensor(2.0)}
+
+    def fake_evaluate(*args, empty_loss_keys, **kwargs):
+        empty_loss_keys.add("empty loss")
+        return losses, None, False
+
+    mock_evaluate.side_effect = fake_evaluate
+    state = _make_state()
+    state.cfg.logger.log_validation_ppl_to_tensorboard = True
+    state.tensorboard_logger = MagicMock()
+    state.wandb_logger = MagicMock()
+    state.mlflow_logger = MagicMock()
+    state.comet_logger = MagicMock()
+
+    result = evaluate_and_print_results(
+        state=state,
+        prefix="iteration 10",
+        forward_step_func=MagicMock(),
+        data_iterator=object(),
+        model=[MagicMock()],
+        config=SimpleNamespace(),
+    )
+
+    # The returned values and the console line are unchanged.
+    assert result is losses
+    printed = " ".join(str(call.args[0]) for call in mock_print_rank_last.call_args_list)
+    assert "empty loss value" in printed
+    assert "lm loss value" in printed
+
+    writer_calls = str(
+        state.tensorboard_logger.add_scalar.call_args_list
+        + state.wandb_logger.log.call_args_list
+        + state.mlflow_logger.log_metrics.call_args_list
+        + state.comet_logger.log_metrics.call_args_list
+    )
+    assert "empty loss" not in writer_calls
+    state.tensorboard_logger.add_scalar.assert_any_call("lm loss validation", 2.0, 0)
+    state.tensorboard_logger.add_scalar.assert_any_call("lm loss validation ppl", pytest.approx(7.389056), 0)
+    state.wandb_logger.log.assert_any_call({"lm loss validation": 2.0}, 0)
+    state.mlflow_logger.log_metrics.assert_any_call({"val/lm loss": 2.0}, step=0)
+    state.comet_logger.log_metrics.assert_any_call({"lm loss validation": 2.0}, step=0)

@@ -1699,6 +1699,11 @@ class TestTrainingLog:
         )
 
         assert "number of zero-token iterations:   2" in mock_print_rank_last.call_args[0][0]
+        # The substituted 0.0 loss reaches the metric writers, so the count must too.
+        mock_global_state.tensorboard_logger.add_scalar.assert_any_call("zero-token-iterations", 2, 5)
+        mock_global_state.wandb_logger.log.assert_any_call({"zero-token-iterations": 2}, 5)
+        mock_global_state.mlflow_logger.log_metrics.assert_any_call({"zero-token-iterations": 2}, step=5)
+        mock_global_state.comet_logger.log_metrics.assert_any_call({"zero-token-iterations": 2}, step=5)
         # Reset so the next interval reports its own count, not a running total.
         assert mock_global_state._zero_token_iters.item() == 0
 
@@ -1742,6 +1747,14 @@ class TestTrainingLog:
         )
 
         assert "zero-token iterations" not in mock_print_rank_last.call_args[0][0]
+        # Healthy runs also keep the same set of metrics in every writer.
+        writer_calls = (
+            mock_global_state.tensorboard_logger.add_scalar.call_args_list
+            + mock_global_state.wandb_logger.log.call_args_list
+            + mock_global_state.mlflow_logger.log_metrics.call_args_list
+            + mock_global_state.comet_logger.log_metrics.call_args_list
+        )
+        assert "zero-token-iterations" not in str(writer_calls)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
