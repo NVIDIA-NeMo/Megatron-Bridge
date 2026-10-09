@@ -458,7 +458,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = False #True
     cfg.ddp.megatron_fsdp_version = 2
     return cfg
 
@@ -498,11 +498,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = False
 
     cfg.model.expert_model_parallel_size = 64
-    cfg.train.micro_batch_size = 1
-    # 2048 over DP 256 at mbs 1 is 8 gradient-accumulation steps, double the previous 4. More
-    # accumulation amortizes the per-step fixed costs over more work without changing
-    # per-microbatch activation memory.
-    cfg.train.global_batch_size = 2048
+    cfg.train.micro_batch_size = 2
+    cfg.train.global_batch_size = 1024
 
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
@@ -526,8 +523,8 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
     cfg.model.moe_expert_rank_capacity_factor = 5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 2.0
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.2
+    # cfg.model.moe_paged_stash_buffer_size_factor_cuda = 2.0
+    # cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.2
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
     # Offload the attention activations rather than recomputing them. recompute_granularity and
@@ -541,9 +538,10 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     # The offloading buys the headroom that moe_expert_rank_capacity_factor=5 above needs.
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = []
-    cfg.model.offload_modules = ["core_attn"]
+    cfg.model.offload_modules = []
+    #cfg.model.offload_modules = ["core_attn"]
     cfg.model.fine_grained_activation_offloading = True
-    cfg.model.cpu_offloading_num_layers = 95
+    # cfg.model.cpu_offloading_num_layers = 95
     cfg.model.high_priority_a2a_comm_stream = True
     cfg.model.fused_residual_rmsnorm = True
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
