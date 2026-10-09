@@ -60,7 +60,7 @@
 "./versions/nightly/pages/models/gemma/gemma3-vl.mdx": 4
 "./versions/nightly/pages/models/glm/glm5.mdx": 4
 "./versions/nightly/pages/models/glm/glm5-2.mdx": 5
-"./versions/nightly/pages/models/nemotron/nemotron3-super.mdx": 5
+"./versions/nightly/pages/models/nemotron/nemotron3-super.mdx": 6
 "./versions/nightly/pages/models/qwen/qwen2.5-vl.mdx": 6
 "./versions/nightly/pages/nemo2-migration-guide.mdx": 4
 "./versions/nightly/pages/releases/changelog.mdx": 4
@@ -73,7 +73,7 @@
 "./versions/nightly/pages/releases/known-issues.mdx": 5
 "./versions/nightly/pages/training/optimizer-scheduler.mdx": 5
 "./versions/nightly/pages/models/glm/index.mdx": 6
-"./versions/nightly/pages/models/nemotron/nemotron-3-omni.mdx": 8
+"./versions/nightly/pages/models/nemotron/nemotron-3-omni.mdx": 5
 "./versions/nightly/pages/models/qwen/qwen3.6-35b-a3b.mdx": 8
 "./versions/nightly/pages/models/qwen/qwen3.8-27b.mdx": 9
 "./versions/nightly/pages/training/logging.mdx": 6
@@ -110,3 +110,6 @@
 "./versions/nightly/pages/training/packed-sequences.mdx": 21
 "./versions/nightly/pages/training/multi-token-prediction.mdx": 22
 "./versions/nightly/pages/training/callbacks.mdx": 23
+"./versions/nightly/pages/models/nemotron/nemotron3-ultra.mdx": 7
+"./versions/nightly/pages/models/nemotron/nemotron3.5-super-vl.mdx": 9
+"./versions/nightly/pages/models/nemotron/nemotron3.5-super-vl-text-only.mdx": 10

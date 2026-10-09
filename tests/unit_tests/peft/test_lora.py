@@ -29,7 +29,7 @@ from megatron.bridge.peft import lora as lora_module
 from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA
 from megatron.bridge.peft.lora import LoRA, VLMLoRA
-from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear, TEFusedLoRALinear, TEFusedLoRAMergeLinear
 from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.peft.utils import (
     AdapterAttributes,
@@ -217,6 +217,7 @@ class TestLoRA:
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
         assert lora.share_expert_adapters is True
+        assert lora.use_transformer_engine_op_fuser is False
 
         # Test custom initialization
         custom_lora = LoRA(
@@ -228,6 +229,7 @@ class TestLoRA:
             sequence_parallel_input_regather=True,
             lora_A_init_method="uniform",
             share_expert_adapters=False,
+            use_transformer_engine_op_fuser=True,
         )
         assert custom_lora.target_modules == ["linear_qkv"]
         assert custom_lora.dim == 16
@@ -237,6 +239,50 @@ class TestLoRA:
         assert custom_lora.sequence_parallel_input_regather is True
         assert custom_lora.lora_A_init_method == "uniform"
         assert custom_lora.share_expert_adapters is False
+        assert custom_lora.use_transformer_engine_op_fuser is True
+
+    def test_lora_op_fuser_dispatches_without_global_transformer_fusion(self):
+        model = MockMegatronLinear(8, 8)
+        lora = LoRA(target_modules=["linear"], use_transformer_engine_op_fuser=True)
+        attrs = AdapterAttributes(
+            input_is_parallel=False,
+            in_features=8,
+            out_features=8,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=True,
+        )
+
+        with (
+            patch.object(parallel_state, "get_tensor_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", return_value=attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter", return_value=nn.Identity()),
+        ):
+            transformed = lora.transform(model, name="linear")
+
+        assert isinstance(transformed, TEFusedLoRALinear)
+
+    def test_lora_op_fuser_preserves_expert_base_linear(self):
+        model = MockMegatronLinear(8, 8)
+        lora = LoRA(target_modules=["linear_fc2"], use_transformer_engine_op_fuser=True)
+        attrs = AdapterAttributes(
+            input_is_parallel=True,
+            in_features=8,
+            out_features=8,
+            disable_tensor_parallel_comm=False,
+            disable_sequence_parallel_comm=True,
+            base_linear_is_parallel=True,
+        )
+
+        with (
+            patch.object(parallel_state, "get_tensor_model_parallel_world_size", return_value=1),
+            patch("megatron.bridge.peft.lora.is_expert_linear", return_value=True),
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", return_value=attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter", return_value=nn.Identity()),
+        ):
+            transformed = lora.transform(model, name="linear_fc2")
+
+        assert isinstance(transformed, TEFusedLoRAMergeLinear)
 
     def test_lora_transform_simple_model(self):
         """Test LoRA transformation on a simple model."""

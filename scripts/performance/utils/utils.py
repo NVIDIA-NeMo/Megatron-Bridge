@@ -837,8 +837,13 @@ def get_perf_optimized_recipe(
     config_variant: str | None = None,
     optimizer_type: str | None = None,
     num_gpus: int | None = None,
+    launch_num_gpus: int | None = None,
 ):
-    """Get a performance optimized recipe from flat perf recipes."""
+    """Get a performance optimized recipe from flat perf recipes.
+
+    ``num_gpus`` selects an exact-count recipe. ``launch_num_gpus`` supplies
+    the actual allocation when resizing the canonical Ultra HSDP recipe.
+    """
     del model_family_name, mock
     recipe_name = _first_matching_perf_recipe_name(
         model_recipe_name=model_recipe_name,
@@ -851,7 +856,12 @@ def get_perf_optimized_recipe(
     recipe_fn = find_perf_recipe(recipe_name)
     if recipe_fn is None:
         raise ValueError(f"No perf recipe {recipe_name!r} found.")
-    cfg = recipe_fn()
+    # The canonical Ultra recipe is also the weak-scaling seed. Resolve HSDP
+    # from the launch allocation before applying explicit user overrides.
+    if model_recipe_name == "nemotron_3_ultra" and launch_num_gpus is not None:
+        cfg = recipe_fn(num_gpus=launch_num_gpus)
+    else:
+        cfg = recipe_fn()
     if optimizer_type == "adam" and model_recipe_name == "kimi_k2":
         from megatron.bridge.recipes.kimi.kimi_k2 import _apply_kimi_k2_optimizer
 

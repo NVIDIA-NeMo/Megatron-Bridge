@@ -106,12 +106,13 @@ The provider pattern is especially useful when you need to:
 - Configure advanced features like MoE, activation recomputation, or mixed precision
 - Set up distributed training parameters
 
-### Using Builder-backed Llama Configs
+### Using Builder-backed Model Configs
 
-Llama also supports the builder-backed configuration path. This keeps model
-configuration as serializable data and leaves construction to Megatron Core's
-`GPTModelBuilder`. The provider API remains available for compatibility while
-other model families migrate. Calling the legacy provider API for a
+Model families are migrating to the builder-backed configuration path. It keeps
+model configuration as serializable data and leaves construction to the
+family's Megatron Core `ModelBuilder`, such as `GPTModelBuilder` or
+`HybridModelBuilder`. The provider API remains available for compatibility
+while other model families migrate. Calling the legacy provider API for a
 builder-backed family emits a deprecation warning.
 
 ```python
@@ -134,9 +135,10 @@ Use `load_weights=False` for random initialization. A bridge created with
 `from_hf_config()` has no weights, so it requires `load_weights=False` or an
 explicit `hf_path`.
 
-Llama training recipes store the result of `get_model_config()` in
-`ConfigContainer.model`. The training setup recognizes `ModelConfig` and calls
-its `ModelBuilder` directly; it does not create a legacy model provider.
+Training recipes for builder-backed families store the result of
+`get_model_config()` in `ConfigContainer.model`. The training setup recognizes
+`ModelConfig` and calls its `ModelBuilder` directly; it does not create a
+legacy model provider.
 
 ## Check Supported Models
 

@@ -46,6 +46,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.deepseek import (
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.diffusion_gemma import (
+    DiffusionGemmaBridge,
+    DiffusionGemmaModel,
+    DiffusionGemmaModelProvider,
+)
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
 )
@@ -304,6 +309,9 @@ __all__ = [
     "Gemma4VLBridge",
     "Gemma4VLModel",
     "Gemma4VLModelProvider",
+    "DiffusionGemmaBridge",
+    "DiffusionGemmaModel",
+    "DiffusionGemmaModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronOmniBridge",
