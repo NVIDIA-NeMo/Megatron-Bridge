@@ -383,7 +383,7 @@ class Qwen3VLVisionModel(VisionModule):
         cu_seqlens = seqlens.cumsum(dim=0)
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0).int()
 
-        max_seqlen_q = seqlens.max()
+        max_seqlen_q = int(seqlens.max().item())
         return PackedSeqParams(
             cu_seqlens_q=cu_seqlens,
             cu_seqlens_kv=cu_seqlens,

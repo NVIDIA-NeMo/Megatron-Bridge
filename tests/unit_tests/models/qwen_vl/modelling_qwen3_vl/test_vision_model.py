@@ -95,6 +95,36 @@ class TestMaybePadVisionSequenceForCudaGraph:
 class TestVisionForwardPackedAttentionSetup:
     """Tests for ``_vision_forward_packed_attention_setup``."""
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        "grid,expected_boundaries,expected_max",
+        [
+            ([[1, 2, 3]], [0, 6], 6),
+            ([[2, 2, 3], [1, 2, 4]], [0, 6, 12, 20], 8),
+        ],
+    )
+    def test_non_cuda_graph_path_uses_integer_maxima(self, grid, expected_boundaries, expected_max):
+        grid = torch.tensor(grid, dtype=torch.int64)
+        seq_len = expected_boundaries[-1]
+        packed, mask = _vision_forward_packed_attention_setup(
+            use_cuda_graph_padding=False,
+            hidden_states=torch.zeros(seq_len, 1, 8),
+            original_seq_len=seq_len,
+            seq_len=seq_len,
+            grid_thw=grid,
+            build_packed_seq_params=lambda value: Qwen3VLVisionModel.build_packed_seq_params(None, value),
+        )
+
+        assert mask is None
+        assert packed.qkv_format == "thd"
+        assert type(packed.max_seqlen_q) is int
+        assert type(packed.max_seqlen_kv) is int
+        assert packed.max_seqlen_q == packed.max_seqlen_kv == expected_max
+        for boundaries in (packed.cu_seqlens_q, packed.cu_seqlens_kv):
+            assert boundaries.tolist() == expected_boundaries
+            assert boundaries.dtype == torch.int32
+            assert boundaries.device == grid.device
+
     def test_non_cuda_graph_path_calls_builder_and_no_mask(self):
         grid = torch.tensor([[1, 4, 4]], dtype=torch.long)
         hidden = torch.zeros(5, 1, 8, dtype=torch.float32)
