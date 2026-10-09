@@ -327,6 +327,8 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
     cfg = deepseek_v3_pretrain_config()
@@ -368,7 +370,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.moe_expert_rank_capacity_factor = 5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    
+
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
     cfg.model.recompute_granularity = None
