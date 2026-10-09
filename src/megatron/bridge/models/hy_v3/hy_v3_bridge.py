@@ -13,10 +13,12 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Any
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -26,7 +28,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 try:
@@ -57,49 +58,61 @@ class HYV3Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("tencent/Hy3-preview-Base")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        """Convert HuggingFace Hy V3 config to GPTModelProvider."""
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face Hy V3 config to builder config kwargs.
 
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.add_qkv_bias = False  # Hy V3 does NOT have QKV bias
-        provider.hidden_dropout = 0.0
-        provider.qk_layernorm = True  # Hy V3 uses QK layernorm
-        provider.attention_softmax_in_fp32 = False
-        provider.autocast_dtype = torch.bfloat16
-        provider.fp16 = False
-        provider.bf16 = True
-        provider.params_dtype = torch.bfloat16
-        provider.moe_grouped_gemm = True
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_router_load_balancing_type = "none"
-        provider.moe_router_pre_softmax = False
-        provider.moe_router_score_function = "sigmoid"
-        provider.moe_router_enable_expert_bias = True
-        provider.moe_router_bias_update_rate = 0
-        provider.moe_router_dtype = "fp32"
-        provider.moe_permute_fusion = True
-        provider.moe_shared_expert_overlap = False
-        provider.moe_aux_loss_coeff = 0.0
-        provider.moe_router_topk_scaling_factor = float(hf_config.router_scaling_factor)
-
-        # Shared experts hidden dim = moe_intermediate_size * num_shared_experts.
-        provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.num_shared_experts
-
-        # Dense-first layer pattern.
-        provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
-            hf_config.num_hidden_layers - hf_config.first_k_dense_replace
+        The builder's default MoE layer spec already uses the GPT decoder block
+        spec, which honors the dense-first ``moe_layer_freq``.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,  # Hy V3 does NOT have QKV bias
+            hidden_dropout=0.0,
+            qk_layernorm=True,  # Hy V3 uses QK layernorm
+            attention_softmax_in_fp32=False,
+            autocast_dtype=torch.bfloat16,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="none",
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=0,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            moe_shared_expert_overlap=False,
+            moe_aux_loss_coeff=0.0,
+            moe_router_topk_scaling_factor=float(hf_config.router_scaling_factor),
+            # Shared experts hidden dim = moe_intermediate_size * num_shared_experts.
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.num_shared_experts,
+            # Dense-first layer pattern.
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
         )
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
 
-        return provider
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        provider_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        # The provider's default layer spec builds homogeneous layers; the decoder
+        # block spec is needed for the dense-first MoE layer pattern.
+        provider_kwargs["transformer_layer_spec"] = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        return provider_kwargs
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
