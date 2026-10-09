@@ -7,31 +7,36 @@ then evaluates answer overlap and picture-reference accuracy.
 
 ## Prepare the data
 
+Set `HF_MODEL` to a downloaded Nemotron 3.5 Super VL checkpoint. Preparation
+loads only its processor to check sample lengths.
+
 ```bash
 export EXAMPLE="$PWD/examples/models/nemotron/nemotron_3/super_vl/iitc/src"
 export IITC_ROOT="$PWD/work/super-vl-iitc"
+export HF_MODEL=/path/to/hf-checkpoint
 
 uv run --no-project python "$EXAMPLE/prepare_data.py" --download \
   --source "$IITC_ROOT/source" --images "$IITC_ROOT/images" \
-  --output "$IITC_ROOT/energon"
+  --output "$IITC_ROOT/energon" --processor "$HF_MODEL"
 ```
 
 The published IITC-4K/8K splits contain 374,575 training examples
 (192,442 + 182,133) and 1,330 test examples (672 + 658).
 For illustration, we select 10,000 for training and reserve 210 for validation
 from the training splits. Final evaluation uses all 658 IITC-8K test examples.
-[selection.csv](src/selection.csv) fixes the selected rows and their order for
-reproducibility. Preparation preserves text/image order and writes Energon
-shards. The image archive is about 46 GB; use new output directories.
+The original selection used seeded hash ranking, excluded test-paper/question
+and duplicate-image overlap, and kept complete examples within 16K tokens.
+The preparation script now creates a fresh illustrative subset with seed
+20261004, paper-disjoint splits, question deduplication, and the same token
+limit; it does not recreate the exact historical selection. Text/image order
+is preserved in Energon shards. The image archive is about 46 GB.
 
 ## Train through the Bridge CLI
 
 Run the following command on two nodes with eight H100 GPUs each, using the
-default LoRA recipe with CLI overrides. Set `HF_MODEL` to a downloaded
-Hugging Face Nemotron 3.5 Super VL checkpoint.
+default LoRA recipe with CLI overrides.
 
 ```bash
-export HF_MODEL=/path/to/hf-checkpoint
 export OUTPUT_DIR="$IITC_ROOT/lora-run"
 export CUDA_DEVICE_MAX_CONNECTIONS=1 NCCL_NVLS_ENABLE=0 OMP_NUM_THREADS=8
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
@@ -50,8 +55,8 @@ srun --nodes=2 --ntasks=16 --ntasks-per-node=8 \
   dataset.task_encoder.use_temporal_video_embedder=false \
   model.temporal_patch_dim=1 model.separate_video_embedder=false \
   model.temporal_ckpt_compat=false \
-  model.recompute_granularity=full model.recompute_method=uniform \
-  model.recompute_num_layers=1 \
+  model.recompute_granularity=selective \
+  'model.recompute_modules=[layernorm,moe]' \
   scheduler.lr_warmup_iters=10 scheduler.lr_decay_iters=625 \
   train.exit_duration_in_mins=210 \
   checkpoint.hf_source_path="$HF_MODEL" checkpoint.hf_trust_remote_code=true \
@@ -72,60 +77,29 @@ one epoch's worth. `16384` is the training sequence limit in tokens.
 After step 625, merge the adapters with the base weights and export to HF
 before evaluation.
 
-<details>
-<summary>Bridge merge/export commands (one eight-GPU node)</summary>
+Convert the base checkpoint once, then use Bridge's existing
+[merge script](../../../examples/peft/merge_lora.py) on the same two-node allocation, keeping the training parallelism:
 
 ```bash
-export ADAPTER_CKPT="$OUTPUT_DIR/checkpoints/iter_0000625"
+export BASE_NATIVE="$OUTPUT_DIR/base-native"
 export MERGED_HF="$OUTPUT_DIR/merged-hf"
-cat > "$OUTPUT_DIR/merge_export.py" <<'PYTHON'
-# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-import os
+export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
+export MASTER_PORT=29500
 
-import torch
-import torch.distributed as dist
-from megatron.bridge import AutoBridge
-from megatron.bridge.peft.utils import create_peft, create_peft_hook, load_peft_adapter_checkpoint
-from megatron.bridge.training.utils.checkpoint_utils import read_run_config
-from megatron.bridge.utils.common_utils import maybe_initialize_distributed
+srun --nodes=2 --ntasks=16 --ntasks-per-node=8 bash -c \
+  'RANK=$SLURM_PROCID WORLD_SIZE=$SLURM_NTASKS LOCAL_RANK=$SLURM_LOCALID uv run --no-project python "$@"' \
+  _ scripts/conversion/run_conversion.py import --device gpu \
+  --hf-model "$HF_MODEL" --megatron-path "$BASE_NATIVE" \
+  --tp 4 --pp 2 --ep 8 --etp 1 --torch-dtype bfloat16 \
+  --trust-remote-code --low-memory-save
 
-maybe_initialize_distributed()
-source = os.environ["HF_MODEL"]
-checkpoint = os.environ["ADAPTER_CKPT"]
-bridge = AutoBridge.from_hf_pretrained(source, trust_remote_code=True)
-provider = bridge.to_megatron_provider(load_weights=True)
-provider.tensor_model_parallel_size = 2
-provider.pipeline_model_parallel_size = 2
-provider.expert_model_parallel_size = 4
-provider.expert_tensor_parallel_size = 1
-provider.sequence_parallel = True
-provider.params_dtype = provider.pipeline_dtype = torch.bfloat16
-provider.bf16 = True
-provider.temporal_patch_dim = 1
-provider.separate_video_embedder = False
-provider.temporal_ckpt_compat = False
-provider.moe_token_dispatcher_type = "alltoall"
-provider.moe_permute_fusion = False
-provider.finalize()
-peft_config = read_run_config(f"{checkpoint}/run_config.yaml")["peft"]
-peft = create_peft(peft_config)
-provider.register_pre_wrap_hook(create_peft_hook(peft, training=False))
-provider.initialize_model_parallel(seed=1234)
-model = provider.provide_distributed_model(wrap_with_ddp=False)
-load_peft_adapter_checkpoint(model, checkpoint, peft)
-bridge.save_hf_pretrained(
-    model, os.environ["MERGED_HF"], source_path=source,
-    merge_adapter_weights=True, strict=True, weight_dtype=torch.bfloat16,
-)
-dist.barrier()
-dist.destroy_process_group()
-PYTHON
-srun --nodes=1 --ntasks=8 --ntasks-per-node=8 \
-  uv run --no-project python "$OUTPUT_DIR/merge_export.py"
+srun --nodes=2 --ntasks=16 --ntasks-per-node=8 bash -c \
+  'RANK=$SLURM_PROCID WORLD_SIZE=$SLURM_NTASKS LOCAL_RANK=$SLURM_LOCALID uv run --no-project python "$@"' \
+  _ examples/peft/merge_lora.py \
+  --lora-checkpoint "$OUTPUT_DIR/checkpoints/iter_0000625" \
+  --pretrained "$BASE_NATIVE" --hf-model-path "$HF_MODEL" \
+  --output "$MERGED_HF" --tp 4 --pp 2 --ep 8
 ```
-
-</details>
 
 ## Evaluate the original and merged checkpoints
 
@@ -149,12 +123,13 @@ uv run --no-project python "$EXAMPLE/evaluate.py" \
 Picture-reference accuracy requires exactly one correct `[Picture N]` citation;
 ROUGE-L is mean reference-answer overlap. The scoring follows
 [VEGA's evaluator](https://github.com/zhourax/VEGA/blob/96d4be247fb4385b23265ac4f0b6079a9225698d/eval/IITC.py),
-with the custom prompt defined in [evaluate.py](src/evaluate.py); report that
+with the custom prompt defined in [evaluate.py](../../../examples/models/nemotron/nemotron_3/super_vl/iitc/src/evaluate.py); report that
 prompt difference when sharing scores.
 
 ## Results
 
-Evaluation on all 658 IITC-8K held-out test examples:
+Historical results using the original selection, evaluated on all 658
+IITC-8K held-out test examples:
 
 | Checkpoint | Picture-reference accuracy | ROUGE-L × 100 |
 | --- | ---: | ---: |
