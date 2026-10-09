@@ -450,7 +450,14 @@ def build_catalog(repo_root: Path) -> dict[str, object]:
     if not cards:
         raise CatalogError(f"no cards matched {CARD_GLOB}")
     models = [normalize_card(card, repo_root) for card in cards]
-    models.sort(key=lambda model: (str(model["hf_id"]).casefold(), str(model["slug"])))
+    # Ignore the repeated vendor prefix so Nano precedes Nano Omni, followed
+    # by Super, Ultra, Lightning, and Super VL in every generated model list.
+    models.sort(
+        key=lambda model: (
+            str(model["hf_id"]).casefold().replace("nvidia/nvidia-nemotron-", "nvidia/nemotron-"),
+            str(model["slug"]),
+        )
+    )
     return {
         "schema_version": CATALOG_SCHEMA_VERSION,
         "source": CARD_GLOB,

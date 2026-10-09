@@ -130,17 +130,17 @@ navigation:
       path: ./nightly/pages/models/nemotron/nemotron3-nano.mdx
     - page: Nemotron 3 Nano 4B
       path: ./nightly/pages/models/nemotron/nemotron3-nano-4b.mdx
+    - page: Nemotron-3 Nano Omni
+      path: ./nightly/pages/models/nemotron/nemotron-3-omni.mdx
     - page: Nemotron 3 Super
       path: ./nightly/pages/models/nemotron/nemotron3-super.mdx
+    - page: Nemotron 3 Ultra
+      path: ./nightly/pages/models/nemotron/nemotron3-ultra.mdx
     - page: Nemotron 3.5 Lightning
       path: ./nightly/pages/models/nemotron/nemotron3.5-lightning.mdx
     # Super VL guides remain in GitHub, but are excluded from publication.
-    - page: Nemotron 3 Ultra
-      path: ./nightly/pages/models/nemotron/nemotron3-ultra.mdx
     - page: Nemotron Nano V2 VL
       path: ./nightly/pages/models/nemotron/nemotron-nano-v2-vl.mdx
-    - page: Nemotron-3 Nano Omni
-      path: ./nightly/pages/models/nemotron/nemotron-3-omni.mdx
     section: Nemotron
   - contents:
     - page: OLMoE
