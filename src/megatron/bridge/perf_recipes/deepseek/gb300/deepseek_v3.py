@@ -308,8 +308,6 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        # "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -504,8 +502,9 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.fp8_output_proj = True
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
 
-    cfg.model.gradient_accumulation_fusion = False
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads"
 
+    cfg.model.gradient_accumulation_fusion = False
 
     cfg.model.expert_model_parallel_size = 64
     cfg.train.micro_batch_size = 1
@@ -517,9 +516,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.ddp.outer_dp_sharding_strategy = "optim"
     cfg.ddp.expert_outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.num_distributed_optimizer_instances = 4
-    # Stays on v1: this recipe is the measured 256-GPU baseline and v1 is what produced it.
-    # Megatron-FSDP v2 is exercised by the 64-GPU fsdpv2 and 128-GPU hsdpv2 recipes instead.
-    cfg.ddp.megatron_fsdp_version = 1
 
     cfg.optimizer.lr = 3e-7
     cfg.optimizer.min_lr = 1e-7
@@ -527,12 +523,10 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
-    cfg.model.average_in_collective = True
-    cfg.ddp.average_in_collective = True
+    cfg.model.average_in_collective = cfg.ddp.average_in_collective = True
 
     # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
     cfg.model.cuda_graph_impl = "full_iteration"
-    #cfg.model.cuda_graph_impl = "none"
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
     cfg.ddp.megatron_fsdp_cuda_graph_mode = True
     cfg.ddp.fsdp_all_gather_in_start_param_sync = False
@@ -540,15 +534,9 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    # Back to 5. Lowering this to 1.5 tightened the dropless-MoE per-expert capacity enough to
-    # cost measurable throughput on this recipe, and 1.5 also sits below the >=2.0 that the
-    # paged stash expects.
     cfg.model.moe_expert_rank_capacity_factor = 5
-    # Positive sign means average-based sizing with the magnitude as headroom, so 1.5 is 50%
-    # over the perfectly balanced case. Undersizing causes stash overflow, which makes the
-    # paged-stash runner rerun the step.
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 2.0
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.2
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
     # Offload the attention activations rather than recomputing them. recompute_granularity and
@@ -609,8 +597,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
-        # Keep DeepSeek kernel selection aligned with the measured baseline.
-        #"NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 

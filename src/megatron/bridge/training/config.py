@@ -1157,7 +1157,6 @@ class ConfigContainer(Container):
             for name in unsupported_parallelisms
             if getattr(self.model, name) != 1
         ]
-        """
         if configured_parallelisms:
             raise ValueError("MFSDP V2 requires TP=PP=1; unsupported settings: " + ", ".join(configured_parallelisms))
         if self.model.virtual_pipeline_model_parallel_size is not None:
@@ -1178,7 +1177,6 @@ class ConfigContainer(Container):
             raise ValueError("MFSDP V2 does not support layer-wise distributed optimizer.")
         if self.model.calculate_per_token_loss:
             raise ValueError("MFSDP V2 does not support per-token loss normalization.")
-        """
 
         self.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         self.ddp.use_distributed_optimizer = False
