@@ -1285,6 +1285,10 @@ class ConfigContainer(Container):
                 f"model.dynamic_context_parallel requires a dynamic-CP scheduler {DYNAMIC_CP_SCHEDULERS}, "
                 f"got model.sequence_packing_scheduler={scheduler!r}."
             )
+        if scheduler in DYNAMIC_CP_SCHEDULERS and not dynamic_cp:
+            raise ValueError(
+                f"model.sequence_packing_scheduler={scheduler!r} requires model.dynamic_context_parallel=True."
+            )
         unsupported = probe_global_batch_packing_support(scheduler, dynamic_cp=dynamic_cp)
         if unsupported is not None:
             raise ValueError(f"{feature}: {unsupported}")

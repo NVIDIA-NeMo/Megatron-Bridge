@@ -5470,6 +5470,33 @@ class TestGlobalBatchPackingValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_dynamic_scheduler_requires_dynamic_context_parallel(self, monkeypatch):
+        from megatron.bridge.training import global_batch_packing
+
+        probe = MagicMock(return_value=None)
+        monkeypatch.setattr(global_batch_packing, "probe_global_batch_packing_support", probe)
+        model_cfg = create_test_gpt_config(
+            calculate_per_token_loss=True,
+            max_seqlen_per_dp_cp_rank=256,
+            sequence_packing_scheduler="default_dynamic_cp",
+        )
+        # The flag defaults to False on the dev pin and is absent on older main pins.
+        assert not getattr(model_cfg, "dynamic_context_parallel", False)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=self._gpt_sft_unpacked_dataset(512),
+        )
+        container.ddp.average_in_collective = False
+        try:
+            with pytest.raises(ValueError, match="requires model.dynamic_context_parallel=True"):
+                container.validate()
+            probe.assert_not_called()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_model_scheduler_without_dataset_switch_is_rejected(self):
         model_cfg = create_test_gpt_config(calculate_per_token_loss=True, sequence_packing_scheduler="dp_balanced")
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
