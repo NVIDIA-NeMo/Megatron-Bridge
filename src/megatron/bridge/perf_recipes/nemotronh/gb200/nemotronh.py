@@ -222,10 +222,10 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB200, MXFP8, Megatron-FSDP (HSDP).
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB200, MXFP8, GTP.
 
     TP2 + SP (due to smaller GB200 HBM) / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
-    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective recompute +
+    precision, dense GTP32, NCCLEP flex dispatcher, CuteDSL fused grouped MLP, selective recompute +
     fine-grained activation offload of the expert MLP, MTP=2.
 
     Args:
@@ -289,6 +289,11 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
+
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -303,14 +308,14 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # HybridEP topology for the target system.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": hybrid_ep_ranks_per_nvlink_domain,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN normalization kernels for the VR200 performance candidate.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
         # offloading weights;
         "NVTE_CPU_OFFLOAD_V1": 1,

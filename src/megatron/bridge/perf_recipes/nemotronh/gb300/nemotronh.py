@@ -308,7 +308,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
     """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, MXFP8, GTP.
 
     TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
-    precision, dense GTP64, HybridEP flex dispatcher, CuteDSL fused grouped MLP,
+    precision, dense GTP64, NCCLEP flex dispatcher, CuteDSL fused grouped MLP,
     selective recompute + fine-grained activation offload of the expert MLP, MTP=2.
 
     Args:
@@ -340,6 +340,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN normalization kernels for the VR200 performance candidate.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
         # offloading weights;
         "NVTE_CPU_OFFLOAD_V1": 1,
