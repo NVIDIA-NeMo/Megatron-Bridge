@@ -330,3 +330,84 @@ class TestGLM45Bridge:
         assert provider.fp16 is False
         assert provider.bf16 is False
         assert provider.params_dtype == torch.float32
+
+
+class TestGLM45BuilderConfig:
+    """Builder-backed ModelConfig path for GLM-4.5."""
+
+    @staticmethod
+    def _config(**overrides):
+        from transformers import Glm4MoeConfig
+
+        kwargs = dict(
+            hidden_size=64,
+            intermediate_size=128,
+            moe_intermediate_size=32,
+            num_hidden_layers=4,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            n_routed_experts=8,
+            n_shared_experts=1,
+            num_experts_per_tok=2,
+            first_k_dense_replace=1,
+            max_position_embeddings=4096,
+            vocab_size=128,
+            torch_dtype="bfloat16",
+        )
+        kwargs.update(overrides)
+        config = Glm4MoeConfig(**kwargs)
+        config.architectures = ["Glm4MoeForCausalLM"]
+        config.num_nextn_predict_layers = 1
+        return config
+
+    def test_provider_bridge_is_inherited_compatibility_only(self):
+        assert "provider_bridge" not in GLM45Bridge.__dict__
+
+    def test_conversion_uses_builder_config(self):
+        assert GLM45Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
+
+    def test_hf_config_to_model_config_uses_direct_mapping(self):
+        from unittest.mock import patch
+
+        from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+        config = self._config()
+        bridge = GLM45Bridge()
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path used")),
+            patch.object(bridge, "hf_config_to_provider_kwargs", side_effect=AssertionError("provider kwargs used")),
+        ):
+            result = bridge.hf_config_to_model_config(config)
+
+        assert isinstance(result, BridgeGPTModelConfig)
+        # The builder's default MoE spec is the decoder block spec, so none is configured here.
+        assert result.transformer_layer_spec is None
+        assert result.moe_layer_freq == [0, 1, 1, 1]
+        assert result.moe_shared_expert_intermediate_size == config.moe_intermediate_size
+        assert result.moe_router_score_function == "sigmoid"
+        assert result.moe_router_enable_expert_bias is True
+        assert result.mtp_num_layers == 1
+        assert result.mtp_loss_scaling_factor == 0.3
+        assert result.position_embedding_type == "rope"
+
+    def test_model_config_matches_provider_runtime_config(self):
+        from dataclasses import fields
+
+        from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+
+        config = self._config()
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = config
+        bridge = GLM45Bridge()
+
+        model_config = bridge.hf_config_to_model_config(config)
+        with pytest.warns(FutureWarning, match=r"deprecated.*get_model_config.*get_model"):
+            provider = bridge.provider_bridge(mock_pretrained)
+
+        provider_fields = {field.name for field in fields(provider)}
+        model_config_fields = {field.name for field in fields(model_config)}
+        model_config_fields.update(field.name for field in fields(model_config.transformer))
+        for field_name in sorted((provider_fields & model_config_fields) - {"transformer_layer_spec"}):
+            assert getattr(model_config, field_name) == getattr(provider, field_name), field_name
+        # The provider keeps its explicit decoder block spec for mixed dense/MoE layers.
+        assert provider.transformer_layer_spec.func is get_gpt_decoder_block_spec
