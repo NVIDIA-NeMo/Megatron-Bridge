@@ -428,3 +428,128 @@ def test_mimo_checkpoint_load_without_top_level_quantization_fields():
     assert result is loaded
     assert tensor.allow_shape_mismatch is False
     assert load.call_args.kwargs["validate_access_integrity"] is False
+
+
+@pytest.mark.parametrize("local", [False, True])
+@pytest.mark.parametrize("saved_version", [3.0, 3.1])
+def test_optimizer_dtype_key_resume_round_trip(tmp_path, load_checkpoint_fixtures, local, saved_version):
+    """Bridge metadata must restore real optimizer shards, including changed gradient dtype."""
+    from megatron.core.dist_checkpointing.tensor_aware_state_dict import MCoreTensorAwareStateDict
+    from megatron.core.optimizer import DistributedOptimizer
+
+    if checkpointing._get_legacy_grad_dtypes is None:
+        pytest.skip("MCore has not adopted the version 3.1 optimizer schema")
+    torch.distributed.init_process_group("gloo", init_method=f"file://{tmp_path}/rendezvous", rank=0, world_size=1)
+    try:
+        prefix = "optimizer.distributed.dp_group_idx_0.gbuf_idx_0.dtype_"
+        suffix = ".bucket_idx_0.exp_avg"
+        saved_dtype = "(torch.bfloat16, torch.bfloat16)" if saved_version < 3.1 else "param_torch:bfloat16"
+        expected = torch.tensor([0.125, -0.25])
+        saved_tensor = ShardedTensor.from_rank_offsets(prefix + saved_dtype + suffix, expected)
+        common = {"checkpoint_version": saved_version, "iteration": 3}
+        stored = MCoreTensorAwareStateDict(common=common, sharded_state_dict={"optimizer": saved_tensor})
+        ckpt_dir = tmp_path / "checkpoint"
+        ckpt_dir.mkdir()
+        if not local:
+            dist_checkpointing.save(dict(common, optimizer=saved_tensor), ckpt_dir)
+        manager = Mock()
+        manager.load.return_value = (stored, (3, 0))
+        fixtures = load_checkpoint_fixtures
+        cfg = fixtures["mock_cfg"]
+        cfg.peft = None
+        cfg.checkpoint.load_rng = False
+        cfg.checkpoint.save_rng = False
+        cfg.checkpoint.non_persistent_ckpt_type = "local" if local else None
+        cfg.checkpoint.non_persistent_local_ckpt_algo = "atomic"
+        cfg.optimizer.use_distributed_optimizer = True
+        del cfg.model.megatron_mimo_parallelism_config
+        metadata = {"distrib_optim_sharding_type": "dp_reshardable"}
+        pg = SimpleNamespace(
+            tp=torch.distributed.group.WORLD, pp=torch.distributed.group.WORLD, dp_cp=torch.distributed.group.WORLD
+        )
+        restored = {}
+
+        def generate(*args, **kwargs):
+            template = {
+                "optimizer": ShardedTensor.from_rank_offsets(
+                    prefix + "param_torch:bfloat16" + suffix, torch.zeros_like(expected)
+                )
+            }
+            load_metadata = kwargs["optim_sd_kwargs"]["metadata"]
+            # Execute MCore's actual version-selected FQN translation with fp32 resume gradients.
+            optimizer = SimpleNamespace(
+                buffers=[SimpleNamespace(param_dtype=torch.bfloat16, grad_dtype=torch.float32)]
+            )
+            DistributedOptimizer._back_compat_normalize_loaded_dtype_keys(
+                optimizer,
+                template,
+                load_metadata.get("checkpoint_version"),
+                load_metadata.get("legacy_grad_dtypes"),
+            )
+            return template
+
+        def load_base(*args, rank0, **kwargs):
+            ckpt_type = checkpointing.CheckpointType.LOCAL if local else checkpointing.CheckpointType.GLOBAL
+            if rank0:
+                return ({} if local else common), str(ckpt_dir), False, ckpt_type
+            if local:
+                result = checkpointing._load_non_persistent_base_checkpoint(
+                    "",
+                    cfg.checkpoint,
+                    False,
+                    kwargs["sharded_state_dict"],
+                    3,
+                    kwargs["checkpointing_context"],
+                    pg_collection=pg,
+                )
+            else:
+                result = (
+                    dist_checkpointing.load(kwargs["sharded_state_dict"], ckpt_dir),
+                    str(ckpt_dir),
+                    False,
+                    ckpt_type,
+                )
+            restored.update(result[0])
+            return result
+
+        with ExitStack() as stack:
+            replacements = {
+                "is_hf_checkpoint_dir": False,
+                "file_exists": True,
+                "update_num_microbatches": None,
+                "read_train_state": TrainState(step=3),
+                "set_checkpoint_version": None,
+                "unwrap_model": fixtures["mock_model"],
+                "_build_sharded_state_dict_metadata": metadata,
+                "read_run_config": {
+                    "model": {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
+                    "checkpoint": {"save_rng": False, "save_optim": True},
+                },
+            }
+            for name, value in replacements.items():
+                stack.enter_context(patch.object(checkpointing, name, return_value=value))
+            stack.enter_context(patch.object(checkpointing, "generate_state_dict", side_effect=generate))
+            stack.enter_context(patch.object(checkpointing, "_load_base_checkpoint", side_effect=load_base))
+            stack.enter_context(patch.object(dist_checkpointing, "load_content_metadata", return_value=metadata))
+            scan = stack.enter_context(
+                patch.object(
+                    dist_checkpointing, "load_tensors_metadata", wraps=dist_checkpointing.load_tensors_metadata
+                )
+            )
+            for logger in (checkpointing.wandb_utils, checkpointing.mlflow_utils, checkpointing.comet_utils):
+                stack.enter_context(patch.object(logger, "on_load_checkpoint_success"))
+            checkpointing._load_checkpoint_from_path(
+                str(ckpt_dir),
+                fixtures["mock_state"],
+                fixtures["mock_model"],
+                fixtures["mock_optimizer"],
+                None,
+                checkpointing_context={"local_checkpoint_manager": manager},
+                skip_load_to_model_and_opt=True,
+                pg_collection=pg,
+            )
+        torch.testing.assert_close(restored["optimizer"], expected, rtol=0, atol=0)
+        assert manager.load.call_count == int(local)
+        assert scan.call_count == int(not local and saved_version < 3.1)
+    finally:
+        torch.distributed.destroy_process_group()

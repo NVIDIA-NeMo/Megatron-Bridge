@@ -37,6 +37,10 @@ compatibility path and requires `--legacy-full-prefix`. It recomputes the
 accumulated prefix for every decoding step for models such as GLM-5 whose
 AbsorbedMLA attention does not yet support cached inference.
 
+`--task model-comparison` also accepts `--legacy-full-prefix` to compare HF and
+Megatron logits without an MCore inference context. Both inference entry points
+initialize distributed state from the Slurm or torchrun environment.
+
 Nemotron Omni-family visual inference uses the checkpoint's native processor
 and passes its post-resize image sizes and video frame counts to Bridge.
 Generation accepts `--image_path`, `--image_paths`, or `--video_path`; comparison

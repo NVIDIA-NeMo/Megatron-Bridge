@@ -219,6 +219,43 @@ class TestNemotronHBridge:
         # assert any([isinstance(m, PrunedVocabMapping) for m in mapping_registry.mappings])
         assert any([isinstance(m, QKVMapping) for m in mapping_registry.mappings])
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("hf_embedding_key", ["backbone.embedding.weight", "backbone.embeddings.weight"])
+    def test_embedding_mapping_preserves_checkpoint_key(self, hf_embedding_key: str) -> None:
+        bridge = NemotronHBridge()
+        bridge.hf_pretrained = SimpleNamespace(
+            state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: [hf_embedding_key, "lm_head.weight"]))
+        )
+
+        registry = bridge.mapping_registry()
+        megatron_name = "embedding.word_embeddings.weight"
+        mapping = registry.megatron_to_hf_lookup(megatron_name)
+
+        assert mapping.hf_param == hf_embedding_key
+        assert registry.hf_to_megatron_lookup(hf_embedding_key).megatron_param == megatron_name
+        assert not mapping.allow_hf_name_mismatch
+        assert bridge._validate_conversion_mappings(registry, [megatron_name], [hf_embedding_key])
+
+    @pytest.mark.unit
+    def test_config_only_embedding_mapping_keeps_legacy_name(self) -> None:
+        registry = NemotronHBridge().mapping_registry()
+
+        assert (
+            registry.megatron_to_hf_lookup("embedding.word_embeddings.weight").hf_param == "backbone.embeddings.weight"
+        )
+
+    @pytest.mark.unit
+    def test_missing_embedding_remains_a_conversion_error(self) -> None:
+        bridge = NemotronHBridge()
+        bridge.hf_pretrained = SimpleNamespace(
+            state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: ["lm_head.weight"]))
+        )
+
+        with pytest.raises(ValueError, match="Hugging Face checkpoint is missing mapped parameter"):
+            bridge._validate_conversion_mappings(
+                bridge.mapping_registry(), ["embedding.word_embeddings.weight"], ["lm_head.weight"]
+            )
+
     def test_mapping_registry_contains_mamba_conv1d_compat_mappings(self):
         """Test that Mamba conv mappings support old and new Megatron-Core names."""
         registry = NemotronHBridge().mapping_registry()
@@ -584,6 +621,26 @@ class TestNemotronHBridgeMegatronToHFConfig:
         assert hf_cfg["hybrid_override_pattern"] == "MEME"
         assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
         assert hf_cfg["num_nextn_predict_layers"] == expected_num_nextn_predict_layers
+
+    @pytest.mark.parametrize("depth", [0, 1, 2, 3])
+    @pytest.mark.parametrize("repeated", [False, True])
+    @pytest.mark.parametrize("text_only", [False, True])
+    def test_export_preserves_physical_mtp_block_count(self, depth, repeated, text_only):
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME" + "/*E" * depth,
+            mtp_num_layers=depth,
+            mtp_use_repeated_layer=repeated,
+            hf_model_text_only=text_only,
+        )
+        config = NemotronHBridge.megatron_to_hf_config(provider)
+        physical_blocks = 1 if depth and repeated else depth
+        assert config["num_nextn_predict_layers"] == physical_blocks
+        reimported = SimpleNamespace()
+        # Reimport preserves stored blocks; the training recipe selects repetitions.
+        config["mtp_use_repeated_layer"] = repeated
+        NemotronHBridge._configure_mtp_provider(reimported, SimpleNamespace(**config))
+        assert reimported.mtp_num_layers == physical_blocks
+        assert reimported.mtp_use_repeated_layer is bool(depth and repeated)
 
     def test_megatron_to_hf_config_disables_mtp_with_zero_physical_layers(self):
         """Export zero physical MTP layers when MTP is disabled."""

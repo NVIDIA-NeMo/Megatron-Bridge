@@ -32,6 +32,7 @@ from megatron.core.utils import (
 )
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion.gtp import _get_mapping_shape, _is_gtp_param
 from megatron.bridge.models.conversion.utils import (
     get_module_and_param_from_name,
     is_modelopt_dynamic_module,
@@ -360,6 +361,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             )
         if isinstance(weight, DTensor) or _module_uses_fsdp(megatron_module):
             raise ValueError(f"{global_param_name}: local HF parameter iteration does not support DTensor/FSDP")
+        if _is_gtp_param(weight):
+            raise ValueError(
+                f"{global_param_name}: local HF parameter views cannot represent GTP sharding; "
+                "use the gathered HF weight export instead"
+            )
 
         specs = self.local_hf_param_specs(global_param_name)
         if not specs:
@@ -710,6 +716,8 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             ValueError: If object does not exist on any rank.
         """
         if self.pp_size == 1:
+            if obj is None:
+                raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
             return obj
 
         # Check if we already have a cached result (only if cache_key is provided)
@@ -735,7 +743,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 break
 
         if src_rank is None:
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
 
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
@@ -1297,13 +1305,15 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             actual_dim0_size = hf_weights.shape[0]
             # DTensor.shape is already the global shape across TP ranks, while
             # a regular Megatron parameter stores only its local TP shard.
-            expect_dim0_size = target_param.shape[0]
+            expect_dim0_size = _get_mapping_shape(target_param)[0]
             if not isinstance(target_param, DTensor):
                 expect_dim0_size *= self.tp_size
             if actual_dim0_size != expect_dim0_size:
-                assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
-                    f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
-                )
+                assert self.megatron_param in {
+                    "embedding.word_embeddings.weight",
+                    "output_layer.weight",
+                    "output_layer.bias",
+                }, f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
                 hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
 
             # For bias (1D), we still split along dim 0
@@ -1319,7 +1329,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -1483,13 +1493,14 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         # HF fused expert weights (e.g. down_proj) may be stored in [in, out]
         # layout while Megatron expects [out, in]. Detect via the unsharded dim:
-        # for RowParallel, dim 0 is never split, so hf_weights.shape[0] must
-        # equal target_param.shape[0].
+        # RowParallel TP does not split dim 0. GTP may split it further in storage,
+        # so compare against the logical TP-local shape.
+        target_shape = _get_mapping_shape(target_param)
         if (
             hf_weights is not None
             and hf_weights.ndim == 2
-            and hf_weights.shape[0] != target_param.shape[0]
-            and hf_weights.shape[1] == target_param.shape[0]
+            and hf_weights.shape[0] != target_shape[0]
+            and hf_weights.shape[1] == target_shape[0]
         ):
             hf_weights = hf_weights.t().contiguous()
 
@@ -1520,7 +1531,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -1972,15 +1983,6 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             else:
                 # Receive from owning rank
                 self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
-                if self._detected_type is None:
-                    # PP group likely has 1 member - skipping.
-                    return {}
-
-            # If no PP rank detected a type (e.g. Megatron parameter without an
-            # HF counterpart, such as MoE modules on dense layers created by
-            # moe_layer_freq), skip export gracefully.
-            if self._detected_type is None:
-                return {}
 
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
@@ -2186,7 +2188,25 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         # Dequantize if needed
         if megatron_weights is not None:
             megatron_weights = self.maybe_dequantize(megatron_weights)
+        return self._megatron_to_hf(megatron_weights, megatron_module, scale_row_block_size=None)
 
+    def megatron_to_hf_scale(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        *,
+        row_block_size: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather and split QKV inverse scales using an explicit row block size."""
+        return self._megatron_to_hf(megatron_weights, megatron_module, scale_row_block_size=row_block_size)
+
+    def _megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        *,
+        scale_row_block_size: int | None,
+    ) -> Dict[str, torch.Tensor]:
         # ------------------------------------------------------------------
         # Broadcast / retrieve the transformer configuration so that every PP
         # rank (also the ones that will early-return) participates in the
@@ -2210,8 +2230,13 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Check if we're dealing with biases (1D) or weights (2D)
         if packed_qkv.ndim == 1:
+            if scale_row_block_size is not None:
+                raise ValueError("QKV inverse scales must be at least two-dimensional")
             # Split biases
             q, k, v = split_qkv_biases(config, packed_qkv)
+        elif scale_row_block_size is not None:
+            q, k, v = _split_qkv_weights_scale_by_row(config, packed_qkv, scale_row_block_size)
+            q, k, v = q.squeeze(-1), k.squeeze(-1), v.squeeze(-1)
         else:
             # Split weights
             q, k, v = split_qkv_weights(config, packed_qkv)
@@ -3151,7 +3176,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
@@ -3556,7 +3581,7 @@ class FusedGatedExpertMapping(AutoMapping):
 
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        target_shape = target_param.shape
+        target_shape = _get_mapping_shape(target_param)
 
         if target_shape[0] % 2 != 0:
             raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
@@ -3671,12 +3696,12 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(config, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3684,6 +3709,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -3825,8 +3851,7 @@ def split_qkv_weights(
         qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
         feature_dim: Trailing tensor dimension used for reshape/split.
             Defaults to ``provider.hidden_size`` for base weights, but LoRA
-            paths can pass the adapter rank here to bypass the FP8 scale
-            inference logic.
+            paths can pass the adapter rank explicitly.
 
     Returns:
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
@@ -3848,51 +3873,22 @@ def split_qkv_weights(
         hidden_size = 1
         qkv_reshaped = qkv.view(qkv_total_dim, head_size)
     elif feature_dim is not None:
-        # Explicit feature_dim (e.g. LoRA rank) — use it directly, no FP8 inference.
+        # Explicit feature_dim (e.g. LoRA rank).
         hidden_size = feature_dim
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
-        # NOTE: For standard (BF16/FP16) weights, `head_size` is the usual kv_channels/head_dim.
-        # For blockwise FP8 scale tensors (e.g. the rowwise_scale_inv metadata tensor),
-        # the last dim is typically compressed by a block-size factor (e.g. 4096 -> 32).
-        # In that case we infer a divisor and scale down `head_size` accordingly so that the
-        # same QKV slicing logic works for both weight tensors and their scale tensors.
-        orig_hidden_size = provider.hidden_size
-        current_last_dim = qkv.shape[-1]
-
-        # If last dim matches the model hidden size, it's a normal weight.
-        # Otherwise, treat it as a "scale-domain" tensor with compressed dims.
-        if current_last_dim == orig_hidden_size:
-            hidden_size = current_last_dim
-            scaled_head_size = head_size
-        else:
-            # Infer block divisor (e.g., 4096 / 32 = 128).
-            if orig_hidden_size % current_last_dim != 0:
-                raise ValueError(
-                    f"Cannot infer block divisor for qkv tensor: "
-                    f"provider.hidden_size={orig_hidden_size} is not divisible by qkv.shape[-1]={current_last_dim}"
-                )
-            divisor = orig_hidden_size // current_last_dim
-            if head_size % divisor != 0:
-                raise ValueError(
-                    f"Cannot scale head_size for qkv tensor: "
-                    f"head_size={head_size} is not divisible by divisor={divisor} "
-                    f"(provider.hidden_size={orig_hidden_size}, qkv.shape[-1]={current_last_dim})"
-                )
-            hidden_size = current_last_dim
-            scaled_head_size = head_size // divisor
-
-        qkv_reshaped = qkv.view(qkv_total_dim, scaled_head_size, hidden_size)
+        hidden_size = provider.hidden_size
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
 
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3900,6 +3896,7 @@ def split_qkv_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -3940,10 +3937,16 @@ def split_qkv_weights_scale(
         Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
             weight matrices.
     """
+    return _split_qkv_weights_scale_by_row(provider, qkv, quant_block_size[0])
+
+
+def _split_qkv_weights_scale_by_row(
+    provider: TransformerConfig, qkv: torch.Tensor, row_block_size: int
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     head_num = provider.num_attention_heads
     num_query_groups = provider.num_query_groups
     heads_per_group = head_num // num_query_groups
-    head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // quant_block_size[0]
+    head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // row_block_size
 
     if getattr(provider, "attention_output_gate", False):
         qkv_total_dim = 2 * head_num + 2 * num_query_groups
@@ -3963,12 +3966,12 @@ def split_qkv_weights_scale(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3976,6 +3979,7 @@ def split_qkv_weights_scale(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -4024,7 +4028,9 @@ def split_qkvg_weights(
 
         q_slice = torch.cat(
             [
-                torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+                torch.arange(
+                    total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkvg.device
+                )
                 for i in range(num_query_groups)
             ]
         )
@@ -4033,12 +4039,13 @@ def split_qkvg_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkvg.device,
                 )
                 for i in range(num_query_groups)
             ]
         )
-        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group)
-        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group)
+        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
+        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
 
         q = qkvg_reshaped[q_slice].reshape(-1, hidden_size)
         k = qkvg_reshaped[k_slice].reshape(-1, hidden_size)
@@ -4299,8 +4306,8 @@ def split_kv_biases(config: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.
 
     kv_reshaped = kv.view(kv_total_dim, head_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1)
     v = kv_reshaped[v_slice].reshape(-1)
@@ -4334,8 +4341,8 @@ def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[tor
 
     kv_reshaped = kv.view(kv_total_dim, head_size, hidden_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1, hidden_size)
     v = kv_reshaped[v_slice].reshape(-1, hidden_size)

@@ -367,6 +367,13 @@ Never record or reproduce:
 - tokens, token-loading commands, private URLs, or private registry references;
 - environment-specific launcher overlays.
 
+Literal chat delimiters (`<|im_start|>`, `<|im_end|>`, `<think>`, and
+`</think>`) are prompt or output data, not placeholders or storage paths.
+Loopback IP literals (IPv4 `127.0.0.0/8` and IPv6 `::1`) may identify a
+single-node inference coordinator; they do not identify private infrastructure.
+These narrow exceptions do not exempt text enclosed by chat delimiters, other
+IP addresses, URLs, runtime orchestration flags, or caller-supplied deny terms.
+
 Keep private run notes outside the tracked repository and public PR text. If a
 private codename cannot be recognized generically, pass it to the validator via
 `--deny-term` or an untracked file through `--denylist "$PRIVATE_DENYLIST"`.
@@ -854,6 +861,27 @@ Then parse the YAML, run relevant targeted tests, run
 `uv run pre-commit run --all-files`, and inspect the complete diff. Do not mark
 an item verified merely to make validation pass.
 
+### 9. Regenerate the catalog docs
+
+The model verification catalog docs are generated from the cards. After the
+validator passes, and again after any later card edit, regenerate them, confirm
+they are current, and run the consistency test from CI's unit-test job:
+
+```bash
+uv run python scripts/docs/generate_model_verification_catalog.py
+uv run python scripts/docs/generate_model_verification_catalog.py --check
+uv run python -m pytest tests/unit_tests/doc_consistency/test_model_verification_catalog.py
+```
+
+Commit every file the generator rewrites together with the card change:
+`docs/_static/model-verification/catalog-v1.json`, the model guide under
+`docs/models/<family>/`, and its Fern mirror under
+`docs/fern/versions/nightly/pages/models/<family>/`. Inventory and overall
+status changes also rewrite `docs/models/README.md` and its Fern `README.mdx`.
+Neither the validator nor pre-commit detects stale generated files; CI does.
+A new card also needs a canonical guide under `docs/models/<family>/` and an
+entry in the generator's `MODEL_PAGE_PATHS` table.
+
 ## Completion checklist
 
 - Keep all twelve core inventory items and use only the four statuses. Include
@@ -914,4 +942,6 @@ an item verified merely to make validation pass.
   natural-routing pretrain or performance behavior.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.
+- Regenerate the catalog docs after the final card edit, pass `--check` and the
+  catalog consistency test, and commit the regenerated files with the card.
 - Confirm the card, commit, and PR contain no private runtime information.

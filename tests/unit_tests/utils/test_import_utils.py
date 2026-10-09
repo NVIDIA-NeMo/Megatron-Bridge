@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 import types
 from unittest.mock import MagicMock, patch
 
@@ -21,9 +22,11 @@ from packaging.version import Version as PkgVersion
 from megatron.bridge.utils.import_utils import (
     UnavailableError,
     UnavailableMeta,
+    get_distribution_version,
     get_torch_version,
     gpu_only_import,
     gpu_only_import_from,
+    is_module_available,
     is_torch_min_version,
     is_unavailable,
     safe_import,
@@ -368,6 +371,42 @@ class TestTorchVersionUtils:
             assert is_torch_min_version("1.9.0", check_equality=False) is True
             assert is_torch_min_version("2.0.0", check_equality=False) is False
             assert is_torch_min_version("2.1.0", check_equality=False) is False
+
+
+class TestDistributionAndModuleChecks:
+    """Test suite for get_distribution_version and is_module_available."""
+
+    def test_get_distribution_version_reads_metadata(self):
+        """An installed distribution reports the version from its metadata."""
+        assert get_distribution_version("pytest") == pytest.__version__
+
+    def test_get_distribution_version_missing(self):
+        """A distribution that is not installed reports None instead of raising."""
+        assert get_distribution_version("megatron-bridge-no-such-distribution") is None
+
+    def test_is_module_available_does_not_execute_the_module(self, tmp_path, monkeypatch):
+        """A findable top-level module is reported without running its code."""
+        package = tmp_path / "mbridge_probe_pkg"
+        package.mkdir()
+        (package / "__init__.py").write_text("raise RuntimeError('is_module_available must not import me')\n")
+        monkeypatch.syspath_prepend(str(tmp_path))
+
+        assert is_module_available("mbridge_probe_pkg") is True
+        assert "mbridge_probe_pkg" not in sys.modules
+
+    def test_is_module_available_honors_sys_modules(self, monkeypatch):
+        """An imported module without __spec__ is available; a None entry (import blocked) is not."""
+        stub = types.ModuleType("mbridge_stub_module")  # __spec__ is None, so find_spec would raise ValueError
+        monkeypatch.setitem(sys.modules, "mbridge_stub_module", stub)
+        monkeypatch.setitem(sys.modules, "mbridge_blocked_module", None)
+
+        assert is_module_available("mbridge_stub_module") is True
+        assert is_module_available("mbridge_blocked_module") is False
+
+    def test_is_module_available_missing(self):
+        """Missing top-level and dotted modules report False instead of raising."""
+        assert is_module_available("megatron_bridge_no_such_module") is False
+        assert is_module_available("megatron_bridge_no_such_module.child") is False
 
 
 class TestIsUnavailable:

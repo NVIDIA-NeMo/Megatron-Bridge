@@ -78,6 +78,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
+    "DiffusionGemmaForBlockDiffusion",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
     "ForTokenClassification",
@@ -2038,11 +2039,15 @@ class AutoBridge(Generic[MegatronModelT]):
                 ]
 
             model_config.finalize()
+            from megatron.bridge.training.gtp import classify_gtp_remat_chains, configure_gtp_remat
+
+            configure_gtp_remat(model_config)
             builder = model_config.get_builder_cls()(model_config)
             if pg_collection is None:
                 pg_collection = self._get_or_initialize_pg_collection(transformer_config)
             kwargs.setdefault("data_parallel_random_init", False)
             models = builder.build_distributed_models(pg_collection=pg_collection, **kwargs)
+            classify_gtp_remat_chains(models, model_config)
             for model in models:
                 model.model_config = model_config
             succeeded = True
@@ -2083,6 +2088,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 context_parallel_size=transformer_config.context_parallel_size or 1,
                 expert_model_parallel_size=transformer_config.expert_model_parallel_size or 1,
                 expert_tensor_parallel_size=transformer_config.expert_tensor_parallel_size,
+                gtp_remat_size=transformer_config.gtp_weight_remat_size,
+                expert_gtp_remat_size=transformer_config.expert_gtp_weight_remat_size,
             )
             if torch.cuda.is_available():
                 from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
@@ -2572,9 +2579,9 @@ class AutoBridge(Generic[MegatronModelT]):
         fp8 = getattr(model_config, "fp8", None)
         fp8_recipe = getattr(model_config, "fp8_recipe", None)
         fp8_param = getattr(model_config, "fp8_param", None)
-        if fp8 is None or fp8_recipe != "blockwise" or not fp8_param:
+        if fp8 is None or fp8_recipe not in ("blockwise", "mxfp8") or not fp8_param:
             raise ValueError(
-                "export_weight_dtype='fp8' only supports blockwise FP8 parameter export. "
-                f"Expected fp8 to be enabled, fp8_recipe='blockwise', and fp8_param=True, "
+                "export_weight_dtype='fp8' only supports blockwise or MXFP8 parameter export. "
+                "Expected fp8 to be enabled, fp8_recipe to be 'blockwise' or 'mxfp8', and fp8_param=True, "
                 f"but got fp8={fp8!r}, fp8_recipe={fp8_recipe!r}, fp8_param={fp8_param!r}."
             )

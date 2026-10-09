@@ -615,6 +615,24 @@ def _build_moe_metric_writer(
     return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
 
 
+def _step_num_microbatches(global_state: GlobalState) -> int:
+    """Return the microbatches this step ran: the packing scheduler's count, else the configured one."""
+    return getattr(global_state, "global_batch_packing_num_microbatches", None) or get_num_microbatches()
+
+
+def _mtp_loss_scale(global_state: GlobalState) -> float:
+    """Return the factor that turns the MTP loss tracker into a per-step loss for logging.
+
+    Megatron-Core releases that track MTP loss per token (with ``calculate_per_token_loss``)
+    already reduce raw loss sums and token counts into a per-token mean; earlier releases, and
+    microbatch-normalized training, accumulate one normalized loss per microbatch, which is
+    averaged over the microbatches this step ran. Megatron-LM's training loop applies the same rule.
+    """
+    if MTPLossLoggingHelper.tracker.get("calculate_per_token_loss", False):
+        return 1.0
+    return 1 / _step_num_microbatches(global_state)
+
+
 def _track_moe_metrics_supports_num_moe_layers() -> bool:
     """Return whether the active MCore accepts explicit MoE layer counts."""
     return "num_moe_layers" in inspect.signature(track_moe_metrics).parameters
@@ -626,7 +644,7 @@ def _get_num_moe_layers(model_config: Any) -> int:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     repeated_mtp = getattr(model_config, "mtp_use_repeated_layer", False)
 
-    if getattr(model_config, "is_hybrid_model", False):
+    if getattr(model_config, "is_hybrid_model", False) or getattr(model_config, "hybrid_layer_pattern", None):
         pattern = parse_hybrid_pattern(getattr(model_config, "hybrid_layer_pattern", None))
         main_moe_layers = (pattern.main_pattern or "").count(Symbols.MOE)
         mtp_moe_layers = (pattern.mtp_pattern or "").count(Symbols.MOE)
@@ -654,6 +672,48 @@ def _get_num_moe_layers(model_config: Any) -> int:
         mtp_moe_layers *= mtp_depth
 
     return main_moe_layers + mtp_moe_layers
+
+
+# Attribute on GlobalState holding the running count of steps whose global token
+# count was zero. GlobalState clears it when restarting an interrupted attempt.
+ZERO_TOKEN_ITERS_ATTR = "_zero_token_iters"
+
+
+def accumulate_zero_token_step(global_state: GlobalState, zero_token_step: torch.Tensor) -> None:
+    """Record whether this step reduced an empty global token count.
+
+    A zero global token count means every rank in the data-parallel x context-parallel
+    group had a fully masked batch, so the reported loss is a substituted zero rather
+    than a measured value. Counting these keeps a data or masking bug visible instead
+    of it reading as a genuine 0.0 loss.
+
+    The count stays on device and is only read back at the logging interval, so the
+    training step itself never synchronizes with the host.
+
+    Args:
+        global_state: The global training state the counter is attached to.
+        zero_token_step: Bool tensor that is True when the step had no tokens.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    # isinstance rather than "is None" so a mocked state does not masquerade as a counter.
+    if not isinstance(counter, torch.Tensor):
+        counter = torch.zeros((), dtype=torch.int32, device=zero_token_step.device)
+        setattr(global_state, ZERO_TOKEN_ITERS_ATTR, counter)
+    counter += zero_token_step
+
+
+def _consume_zero_token_iters(global_state: GlobalState) -> int:
+    """Read and reset the zero-token step counter. Returns 0 when never recorded.
+
+    Only pipeline-last-stage ranks compute a reduced loss, so ranks without a counter
+    report zero.
+    """
+    counter = getattr(global_state, ZERO_TOKEN_ITERS_ATTR, None)
+    if not isinstance(counter, torch.Tensor):
+        return 0
+    count = int(counter.item())
+    counter.zero_()
+    return count
 
 
 def training_log(
@@ -1038,7 +1098,7 @@ def training_log(
 
     num_moe_experts = getattr(config.model, "num_moe_experts", None)
     if num_moe_experts is not None:
-        moe_loss_scale = 1 / get_num_microbatches()
+        moe_loss_scale = 1 / _step_num_microbatches(global_state)
         track_names = []
 
         moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
@@ -1072,7 +1132,7 @@ def training_log(
             track_moe_metrics_kwargs["num_moe_layers"] = _get_num_moe_layers(config.model)
         track_moe_metrics(**track_moe_metrics_kwargs)
     if getattr(config.model, "mtp_num_layers", None) is not None:
-        mtp_loss_scale = 1 / get_num_microbatches()
+        mtp_loss_scale = _mtp_loss_scale(global_state)
         mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         MTPLossLoggingHelper.track_mtp_metrics(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
@@ -1197,6 +1257,22 @@ def training_log(
             log_string += f" max attention logit: {log_max_attention_logit:.3f} |"
         log_string += " number of skipped iterations: {:3d} |".format(total_loss_dict[skipped_iters_key])
         log_string += " number of nan iterations: {:3d} |".format(total_loss_dict[nan_iters_key])
+        # Only surfaced when non-zero: these steps report a substituted 0.0 loss, which
+        # is otherwise indistinguishable from a real one. Keeping the field out of the
+        # normal log line leaves existing log output unchanged.
+        zero_token_iters = _consume_zero_token_iters(global_state)
+        if zero_token_iters > 0:
+            log_string += " number of zero-token iterations: {:3d} |".format(zero_token_iters)
+            # The substituted 0.0 loss also reaches the metric writers, so record the count
+            # next to it there. Written only when non-zero, so healthy runs log the same metrics.
+            if writer:
+                writer.add_scalar("zero-token-iterations", zero_token_iters, iteration)
+            if wandb_writer:
+                wandb_writer.log({"zero-token-iterations": zero_token_iters}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0

@@ -35,6 +35,12 @@ TEXT_IDS = {
     "Seattle is 12 C.": 38,
 }
 
+# Texts that quote a role marker and therefore tokenize to more than one id.
+QUOTED_MARKER_TEXTS = {
+    "question two about <|observation|>": [TEXT_IDS["question two"], TOOL_RESULT],
+    "answer one about <|observation|>": [TEXT_IDS["answer one"], TOOL_RESULT],
+}
+
 
 class _ModelChatTokenizer:
     """Small semantic renderer for three official chat-template boundary formats."""
@@ -81,6 +87,8 @@ class _ModelChatTokenizer:
             "]~b]user\n": [USER_START],
             "]~b]tool": [TOOL_RESULT],
         }
+        if text in QUOTED_MARKER_TEXTS:
+            return list(QUOTED_MARKER_TEXTS[text])
         return marker_ids.get(text, [TEXT_IDS.get(text, 99)])
 
     def __call__(self, text: str, add_special_tokens: bool = False) -> dict[str, list[int]]:
@@ -107,7 +115,7 @@ class _ModelChatTokenizer:
                 result.append(THINK_CLOSE)
 
         if isinstance(content, str) and content:
-            result.append(TEXT_IDS[content])
+            result.extend(self.encode(content))
         if self.model == "kimi":
             result.append(RESPONSE_CLOSE)
         for tool_call in message.get("tool_calls", []):
@@ -147,7 +155,7 @@ class _ModelChatTokenizer:
             elif role == "tool":
                 input_ids.extend([TOOL_RESULT, TEXT_IDS[message["content"]], TURN_END])
             else:
-                input_ids.extend([USER_START, TEXT_IDS[message["content"]], TURN_END])
+                input_ids.extend([USER_START, *self.encode(message["content"]), TURN_END])
         if truncation and max_length is not None:
             input_ids = input_ids[:max_length]
         return {"input_ids": input_ids} if return_dict else input_ids
@@ -292,6 +300,44 @@ def test_glm_history_thinking_truncation_preserves_historical_answer_loss() -> N
         THINK_CLOSE,
         TEXT_IDS["answer two"],
     ]
+
+
+def _glm_history_truncation_example(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "messages": messages,
+        "chat_template_kwargs": {"enable_thinking": True, "truncate_history_thinking": True},
+    }
+
+
+def test_glm_role_marker_quoted_in_a_user_turn_still_masks_the_historical_answer() -> None:
+    """A role marker quoted outside the assistant turn does not veto its loss boundary."""
+    tokenizer = _ModelChatTokenizer("glm")
+    messages = _messages(tools=False, thinking=True)
+    messages[2] = {**messages[2], "content": "question two about <|observation|>"}
+
+    tokenized = tokenize_chat_example(_glm_history_truncation_example(messages), tokenizer, warn_on_all_masked=False)
+
+    supervised_ids = tokenized.input_ids[tokenized.assistant_mask].tolist()
+    assert supervised_ids == [
+        THINK_OPEN,
+        THINK_CLOSE,
+        TEXT_IDS["answer one"],
+        THINK_OPEN,
+        TEXT_IDS["reason two"],
+        THINK_CLOSE,
+        TEXT_IDS["answer two"],
+    ]
+    assert TOOL_RESULT not in supervised_ids
+
+
+def test_glm_role_marker_quoted_in_an_assistant_turn_still_fails_closed() -> None:
+    """A role marker quoted inside the assistant payload keeps refusing an ambiguous boundary."""
+    tokenizer = _ModelChatTokenizer("glm")
+    messages = _messages(tools=False, thinking=True)
+    messages[1] = {**messages[1], "content": "answer one about <|observation|>"}
+
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        tokenize_chat_example(_glm_history_truncation_example(messages), tokenizer, warn_on_all_masked=False)
 
 
 @pytest.mark.parametrize("model", ["glm", "kimi", "minimax"])

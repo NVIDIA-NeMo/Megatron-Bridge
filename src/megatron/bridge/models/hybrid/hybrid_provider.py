@@ -27,7 +27,12 @@ from megatron.core.models.hybrid.hybrid_layer_specs import (
     hybrid_stack_spec as default_hybrid_stack_spec,
 )
 from megatron.core.models.hybrid.hybrid_model import HybridModel as MCoreHybridModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_total_layer_count, parse_hybrid_pattern
@@ -297,11 +302,6 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         """
         hybrid_stack_spec = self._resolve_hybrid_stack_spec()
 
-        assert getattr(self, "virtual_pipeline_model_parallel_size", None) is None and vp_stage is None, (
-            "Virtual pipeline model parallelism is temporarily unsupported in Hybrid "
-            "models due to upstream MCore HybridModel API dependency"
-        )
-
         assert self.vocab_size is not None, "vocab_size must be configured before calling provide()"
         if self.should_pad_vocab:
             padded_vocab_size = calculate_padded_vocab_size(
@@ -310,8 +310,16 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         else:
             padded_vocab_size = self.vocab_size
 
-        pre_process = pre_process if pre_process is not None else is_pp_first_stage(self._pg_collection.pp)
-        post_process = post_process if post_process is not None else is_pp_last_stage(self._pg_collection.pp)
+        vp_size = self.virtual_pipeline_model_parallel_size
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self._pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self._pg_collection.pp
+            )
+        self._vp_stage = vp_stage
 
         # MCore creates independent per-layer configs by deep-copying this config. Detach
         # runtime-only process groups during construction and pass them through the dedicated
@@ -338,6 +346,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
                 pre_process=pre_process,
                 post_process=post_process,
                 pg_collection=pg_collection,
+                vp_stage=vp_stage,
             )
         finally:
             self._pg_collection = pg_collection

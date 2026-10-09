@@ -28,8 +28,10 @@ import torch
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
     LinearForLastLayer,
+    _consume_zero_token_iters,
     _get_num_moe_layers,
     _track_moe_metrics_supports_num_moe_layers,
+    accumulate_zero_token_step,
     calc_params_l2_norm,
     create_value_head_hook,
     freeze_moe_router,
@@ -1656,6 +1658,103 @@ class TestTrainingLog:
         mock_global_state.tensorboard_logger.add_scalar.assert_any_call(
             "power/gpu", mock.ANY, mock_global_state.train_state.step
         )
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    def test_zero_token_iterations_reported_and_reset(
+        self,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """An all-masked step reports 0.0 loss, so the count is what makes it visible."""
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_global_state.train_state.step = 5
+        mock_config.logger.log_interval = 5
+        mock_global_state._zero_token_iters = torch.tensor(2, dtype=torch.int32)
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=self.get_fresh_total_loss_dict(),
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        assert "number of zero-token iterations:   2" in mock_print_rank_last.call_args[0][0]
+        # The substituted 0.0 loss reaches the metric writers, so the count must too.
+        mock_global_state.tensorboard_logger.add_scalar.assert_any_call("zero-token-iterations", 2, 5)
+        mock_global_state.wandb_logger.log.assert_any_call({"zero-token-iterations": 2}, 5)
+        mock_global_state.mlflow_logger.log_metrics.assert_any_call({"zero-token-iterations": 2}, step=5)
+        mock_global_state.comet_logger.log_metrics.assert_any_call({"zero-token-iterations": 2}, step=5)
+        # Reset so the next interval reports its own count, not a running total.
+        assert mock_global_state._zero_token_iters.item() == 0
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    def test_zero_token_field_absent_in_the_normal_case(
+        self,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Healthy runs keep their existing log line, so log consumers are unaffected."""
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_global_state.train_state.step = 5
+        mock_config.logger.log_interval = 5
+        mock_global_state._zero_token_iters = torch.tensor(0, dtype=torch.int32)
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=self.get_fresh_total_loss_dict(),
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        assert "zero-token iterations" not in mock_print_rank_last.call_args[0][0]
+        # Healthy runs also keep the same set of metrics in every writer.
+        writer_calls = (
+            mock_global_state.tensorboard_logger.add_scalar.call_args_list
+            + mock_global_state.wandb_logger.log.call_args_list
+            + mock_global_state.mlflow_logger.log_metrics.call_args_list
+            + mock_global_state.comet_logger.log_metrics.call_args_list
+        )
+        assert "zero-token-iterations" not in str(writer_calls)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -3668,7 +3767,7 @@ class TestCalcParamsL2Norm:
         expected_norm = 5.0  # sqrt(25 * 1.0^2)
         assert result == pytest.approx(expected_norm, rel=1e-3)
 
-    # ==================== MoE BF16 main_param tests ====================
+    # ==================== MoE BF16 main_param tests =============
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
@@ -4410,6 +4509,22 @@ def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
     assert shared_experts.gate_bias.requires_grad is False
 
 
+@pytest.mark.parametrize("repeated, expected", [(False, 4), (True, 3)])
+def test_hybrid_provider_moe_count_without_legacy_flag(repeated, expected):
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+    provider = HybridModelProvider(
+        num_layers=4,
+        hidden_size=128,
+        num_attention_heads=2,
+        hybrid_layer_pattern="MEME/*E/*E",
+        mtp_num_layers=2,
+        mtp_use_repeated_layer=repeated,
+    )
+    assert not provider.is_hybrid_model
+    assert _get_num_moe_layers(provider) == expected
+
+
 @pytest.mark.parametrize("rank", [0, 7])
 def test_empty_profile_ranks_records_on_every_rank(rank):
     profiling = SimpleNamespace(record_memory_history=True, profile_ranks=[], memory_snapshot_path="snapshot.pkl")
@@ -4421,3 +4536,71 @@ def test_empty_profile_ranks_records_on_every_rank(rank):
         start_memory_history_recording(profiling)
     record.assert_called_once()
     attach.assert_called_once()
+
+
+class TestZeroTokenIterationTracking:
+    """Counting steps whose global token count reduced to zero.
+
+    Such a step reports a substituted 0.0 loss, which is otherwise indistinguishable
+    from a genuine one, so the count is the only signal an all-masked batch happened.
+    """
+
+    def test_counter_is_created_lazily_on_the_flag_device(self):
+        state = SimpleNamespace()
+        accumulate_zero_token_step(state, torch.tensor(True))
+
+        assert isinstance(state._zero_token_iters, torch.Tensor)
+        assert state._zero_token_iters.item() == 1
+
+    def test_only_empty_steps_increment_the_counter(self):
+        state = SimpleNamespace()
+        for empty in [True, False, True, True, False]:
+            accumulate_zero_token_step(state, torch.tensor(empty))
+
+        assert _consume_zero_token_iters(state) == 3
+
+    def test_accumulation_reuses_the_same_buffer(self):
+        state = SimpleNamespace()
+        accumulate_zero_token_step(state, torch.tensor(True))
+        buffer = state._zero_token_iters
+        accumulate_zero_token_step(state, torch.tensor(True))
+
+        assert state._zero_token_iters is buffer
+
+    def test_consume_resets_so_counts_are_per_interval(self):
+        state = SimpleNamespace()
+        accumulate_zero_token_step(state, torch.tensor(True))
+
+        assert _consume_zero_token_iters(state) == 1
+        assert _consume_zero_token_iters(state) == 0
+
+    def test_ranks_without_a_counter_report_zero(self):
+        # Non-last pipeline stages never reduce a loss, so they never create one.
+        assert _consume_zero_token_iters(SimpleNamespace()) == 0
+
+    def test_mocked_state_does_not_masquerade_as_a_counter(self):
+        # getattr on a MagicMock returns a child mock rather than None.
+        assert _consume_zero_token_iters(mock.MagicMock()) == 0
+
+
+class TestStepLossScales:
+    """MoE/MTP logging scales under the packing scheduler's per-step microbatch count."""
+
+    def test_step_num_microbatches_prefers_the_scheduled_count(self, monkeypatch):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=5)) == 5
+        assert train_utils._step_num_microbatches(SimpleNamespace(global_batch_packing_num_microbatches=None)) == 16
+        assert train_utils._step_num_microbatches(SimpleNamespace()) == 16
+
+    @pytest.mark.parametrize(("per_token_tracker", "expected"), [(True, 1.0), (False, 0.25)])
+    def test_mtp_loss_scale_follows_the_tracker_mode(self, monkeypatch, per_token_tracker, expected):
+        from megatron.bridge.training.utils import train_utils
+
+        monkeypatch.setattr(train_utils, "get_num_microbatches", lambda: 16)
+        tracker = {"calculate_per_token_loss": True} if per_token_tracker else {}
+        monkeypatch.setattr(train_utils.MTPLossLoggingHelper, "tracker", tracker)
+        state = SimpleNamespace(global_batch_packing_num_microbatches=4)
+        # A per-token tracker already holds sum(loss) / sum(tokens) for the step.
+        assert train_utils._mtp_loss_scale(state) == expected
