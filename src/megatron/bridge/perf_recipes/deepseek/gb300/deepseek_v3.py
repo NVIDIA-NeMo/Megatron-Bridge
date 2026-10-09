@@ -444,28 +444,16 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     """
     cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
 
-    # Restore the shared helper's pre-change values. The helper now selects ZeRO-2 for the dense
-    # parameters and drops recompute plus fine-grained activation offloading; this recipe is
-    # meant to run the earlier configuration, and MFSDP v2 rejects anything other than
-    # "optim_grads_params" for the dense sharding strategy.
-    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-    cfg.ddp.expert_data_parallel_sharding_strategy = None
-    cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
+    # cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    # cfg.ddp.expert_data_parallel_sharding_strategy = None
+    # cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
     # cfg.model.fine_grained_activation_offloading = True
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    # cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+    # cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
     # cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_impl = "full_iteration"
-    # Delay graph capture well past the MCore default of 3. Capture freezes whatever state the
-    # run is in, so the later it happens the more of the MFSDP v2 setup has settled first.
-    cfg.model.cuda_graph_warmup_steps = 20
-
-    # Use TransformerEngine's RNG tracker rather than Megatron's. Both must be set: rng.* drives
-    # initialize_rng_tracker(), model.* is what the model config carries. TE's tracker is what
-    # TE modules already expect in reset_parameters(), and unlike Megatron's it does not compare
-    # CPU RNG state on every fork exit -- which this recipe triggers once per materialized module
-    # under init_model_with_meta_device.
+    # cfg.model.cuda_graph_impl = "full_iteration"
+    # cfg.model.cuda_graph_warmup_steps = 10
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
     cfg.ddp.megatron_fsdp_version = 2
