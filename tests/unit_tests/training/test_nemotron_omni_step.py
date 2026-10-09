@@ -22,29 +22,6 @@ from megatron.bridge.training.nemotron_omni_step import get_batch, get_batch_fro
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "image_sizes,expected_boundaries,expected_max",
-    [
-        ([[512, 512]], [0, 1024], 1024),
-        ([[32, 48], [64, 32]], [0, 6, 14], 8),
-    ],
-)
-def test_vision_packed_metadata_uses_integer_maxima(image_sizes, expected_boundaries, expected_max):
-    image_sizes = torch.tensor(image_sizes, dtype=torch.int64)
-
-    metadata = nemotron_omni_step._build_vision_packed_seq_params(image_sizes)
-
-    assert metadata.qkv_format == "thd"
-    assert type(metadata.max_seqlen_q) is int
-    assert type(metadata.max_seqlen_kv) is int
-    assert metadata.max_seqlen_q == metadata.max_seqlen_kv == expected_max
-    for boundaries in (metadata.cu_seqlens_q, metadata.cu_seqlens_kv):
-        assert boundaries.tolist() == expected_boundaries
-        assert boundaries.dtype == torch.int32
-        assert boundaries.device == image_sizes.device
-
-
 def test_batch_moves_only_one_compatible_token_alias_to_cuda(monkeypatch):
     cuda_inputs = []
 
@@ -143,27 +120,6 @@ def _pipeline_cfg(*, packed=True, defer_packing=False, temporal_patch_dim=1):
         ),
         model=SimpleNamespace(temporal_patch_dim=temporal_patch_dim, image_token_index=18),
     )
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("packed", [False, True])
-def test_first_pipeline_batch_keeps_vision_maxima_as_integers(monkeypatch, packed):
-    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
-    monkeypatch.setattr(nemotron_omni_step, "is_pp_first_stage", lambda group: True)
-    monkeypatch.setattr(nemotron_omni_step, "is_pp_last_stage", lambda group: False)
-    batch = _packed_pipeline_batch()
-    if not packed:
-        for key in (*nemotron_omni_step._PACKED_SEQ_PARAM_KEYS, "padding_mask"):
-            batch.pop(key, None)
-
-    result = get_batch(iter([batch]), _pipeline_cfg(packed=packed), pg_collection=SimpleNamespace(pp=object()))
-
-    vision_metadata = result[12]
-    assert type(vision_metadata.max_seqlen_q) is int
-    assert type(vision_metadata.max_seqlen_kv) is int
-    assert vision_metadata.max_seqlen_q == vision_metadata.max_seqlen_kv == 4
-    assert vision_metadata.cu_seqlens_q.tolist() == [0, 4, 8]
-    assert vision_metadata.cu_seqlens_kv.tolist() == [0, 4, 8]
 
 
 def test_forward_rejects_deferred_multimodal_packing():

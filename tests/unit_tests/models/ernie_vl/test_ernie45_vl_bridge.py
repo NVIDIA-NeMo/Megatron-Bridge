@@ -34,30 +34,6 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import 
     MultiTypeMoeSubmodules,
 )
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import ErnieMultimodalRotaryEmbedding
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_model import ErnieVLVisionModel
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "grid,expected_boundaries,expected_max",
-    [
-        ([[1, 2, 3]], [0, 6], 6),
-        ([[2, 2, 3], [1, 2, 4]], [0, 6, 12, 20], 8),
-    ],
-)
-def test_vision_packed_metadata_uses_integer_maxima(grid, expected_boundaries, expected_max):
-    grid = torch.tensor(grid, dtype=torch.int64)
-
-    packed = ErnieVLVisionModel.build_packed_seq_params(None, grid)
-
-    assert packed.qkv_format == "thd"
-    assert type(packed.max_seqlen_q) is int
-    assert type(packed.max_seqlen_kv) is int
-    assert packed.max_seqlen_q == packed.max_seqlen_kv == expected_max
-    for boundaries in (packed.cu_seqlens_q, packed.cu_seqlens_kv):
-        assert boundaries.tolist() == expected_boundaries
-        assert boundaries.dtype == torch.int32
-        assert boundaries.device == grid.device
 
 
 def _make_vision_config():

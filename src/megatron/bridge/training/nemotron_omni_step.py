@@ -158,7 +158,7 @@ def _build_vision_packed_seq_params(
         cu.append(cu[-1] + sl)
     device = imgs_sizes.device if torch.is_tensor(imgs_sizes) else torch.device("cpu")
     cu_tensor = torch.tensor(cu, dtype=torch.int32, device=device)
-    max_len = max(seq_lens, default=0)
+    max_len = torch.tensor(max(seq_lens) if seq_lens else 0, dtype=torch.int32, device=device)
     return PackedSeqParams(
         qkv_format="thd",
         cu_seqlens_q=cu_tensor,
