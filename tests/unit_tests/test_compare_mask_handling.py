@@ -166,6 +166,7 @@ class TestComparisonFailureHandling:
         monkeypatch.setattr(torch.Tensor, "cuda", lambda tensor: tensor)
         monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
         monkeypatch.setattr(compare, "is_vision_language_model", lambda *args: False)
+        monkeypatch.setattr(compare.AutoConfig, "from_pretrained", lambda *args, **kwargs: SimpleNamespace())
         monkeypatch.setattr(compare, "_load_megatron_model", lambda args: ([MagicMock()], MagicMock()))
         monkeypatch.setattr(compare, "_load_hf_model", lambda *args: MagicMock())
         monkeypatch.setattr(compare, "_setup_tokenizer_and_processor", lambda *args: (tokenizer, None))
