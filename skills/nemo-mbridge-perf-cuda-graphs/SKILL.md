@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-cuda-graphs
-description: Profile, validate, and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs. Covers replay evidence, matched eager A/Bs, model-specific scopes, regressions, and failures.
+description: Profile, validate, and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs. Covers replay evidence, matched eager A/Bs, model-specific scopes, regressions, and failures. Use when reducing host-driver overhead via CUDA graphs, or tracing a crash or regression to a CUDA graph config change; 'cuda_graph_impl', 'full iteration graph', 'TE scoped graph', 'graphed callables', 'CUDA graph capture'.
 license: Apache-2.0
-when_to_use: Reducing host-driver overhead via CUDA graphs, or tracing a crash or regression to a CUDA graph config change; 'cuda_graph_impl', 'full iteration graph', 'TE scoped graph', 'graphed callables', 'CUDA graph capture'.
 ---
 
 # CUDA Graphs
