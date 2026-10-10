@@ -35,6 +35,7 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseRotaryEmbedding,
     Gemma4OutputLayer,
     Gemma4RotaryEmbedding,
+    HAVE_TE,
     _attach_ple_modules,
     _install_ple_forward,
     _install_tied_kv,
@@ -200,18 +201,17 @@ class Gemma4DenseProvider(GPTModelProvider):
         if vp_stage is not None or getattr(self, "pipeline_model_parallel_size", 1) != 1:
             raise NotImplementedError("Gemma4DenseProvider currently supports PP=1 only.")
 
-        if getattr(self, "context_parallel_size", 1) != 1:
-            # get_gemma4_layer_spec() builds the dense layer from LocalSpecProvider,
-            # whose core_attention() is the non-TE DotProductAttention. That module
-            # asserts context_parallel_size == 1, so CP fails deep inside layer
-            # construction with "Context parallelism is only supported by
-            # TEDotProductAttention! when instantiating Gemma4DenseSelfAttention".
-            # Surface it here instead, next to the PP guard, so the message names the
-            # provider and the knob to change.
+        if getattr(self, "context_parallel_size", 1) != 1 and not HAVE_TE:
+            # The local backend core_attention() is the non-TE DotProductAttention, which
+            # asserts context_parallel_size == 1, so CP fails deep inside layer construction
+            # with "Context parallelism is only supported by TEDotProductAttention!" when
+            # instantiating Gemma4DenseSelfAttention. Surface it here instead, next to the PP
+            # guard, so the message names the provider and what to change. With TE available
+            # the layer spec uses TE attention and CP > 1 works.
             raise NotImplementedError(
-                "Gemma4DenseProvider currently supports CP=1 only: its layer spec uses "
-                "the local DotProductAttention, which does not implement context "
-                "parallelism."
+                "Gemma4DenseProvider supports CP > 1 only with Transformer Engine, which is "
+                "not available in this environment; the local DotProductAttention does not "
+                "implement context parallelism."
             )
 
         return self.build(
@@ -246,7 +246,7 @@ class Gemma4DenseProvider(GPTModelProvider):
         try:
             model = GPTModel(
                 config=config,
-                transformer_layer_spec=get_gemma4_layer_spec(config),
+                transformer_layer_spec=get_gemma4_layer_spec(config, use_transformer_engine=HAVE_TE),
                 vocab_size=padded_vocab,
                 max_sequence_length=self.seq_length,
                 **logit_dtype_kwarg(GPTModel, self.logit_dtype),

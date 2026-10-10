@@ -741,9 +741,33 @@ def wire_gemma4_kv_sharing(model: nn.Module) -> None:
 # ---------------------------------------------------------------------------
 
 
-def get_gemma4_layer_spec(config: Optional[TransformerConfig] = None) -> ModuleSpec:
-    """Return a ModuleSpec for a Gemma-4 Dense transformer layer (local/non-TE)."""
-    backend = LocalSpecProvider()
+def get_gemma4_layer_spec(
+    config: Optional[TransformerConfig] = None,
+    use_transformer_engine: bool = False,
+) -> ModuleSpec:
+    """Return a ModuleSpec for a Gemma-4 Dense transformer layer.
+
+    With ``use_transformer_engine=False`` the layer is built from ``LocalSpecProvider``, whose
+    ``core_attention`` is the non-TE ``DotProductAttention``. That module asserts
+    ``context_parallel_size == 1``, which is why the dense provider cannot do CP on that path.
+
+    Passing ``True`` routes attention through Transformer Engine instead. That is what makes
+    CP > 1 available on the dense model, and it lets the head_dim=512 global layers reach the
+    TE backends that can serve them; the local path cannot do both at once.
+    """
+    if use_transformer_engine:
+        from megatron.core.models.backends import get_backend
+
+        backend = get_backend("transformer_engine")
+    else:
+        backend = LocalSpecProvider()
+    # No Gemma-4-specific core attention here. Gemma4TEDotProductAttention exists to set the
+    # per-layer window from the MoE config field interleaved_attn_pattern, which the dense
+    # provider does not have; it uses window_attn_skip_freq instead, and MCore's own
+    # TEDotProductAttention already applies that per layer (extensions/transformer_engine.py,
+    # is_layer_window_attention). Using the MoE class here raises AttributeError on
+    # interleaved_attn_pattern, and duplicating the logic would risk the two disagreeing.
+    core_attention = backend.core_attention()
 
     submodules = Gemma4DenseTransformerLayerSubmodules(
         input_layernorm=RMSNorm,
@@ -752,7 +776,7 @@ def get_gemma4_layer_spec(config: Optional[TransformerConfig] = None) -> ModuleS
             params={"attn_mask_type": AttnMaskType.causal},
             submodules=SelfAttentionSubmodules(
                 linear_qkv=backend.column_parallel_linear(),
-                core_attention=backend.core_attention(),
+                core_attention=core_attention,
                 linear_proj=backend.row_parallel_linear(),
                 q_layernorm=RMSNorm,
                 k_layernorm=RMSNorm,
