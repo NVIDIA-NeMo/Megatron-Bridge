@@ -17,8 +17,10 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
-    _enable_deepseek_full_iteration,
+    _enable_cutedsl_fused_grouped_mlp,
     _enable_deepseek_precision_aware_optimizer,
+    _enable_full_iteration_cuda_graph,
+    _enable_moe_a2a_overlap,
     _perf_precision,
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -158,7 +160,9 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration(cfg)
+    _enable_full_iteration_cuda_graph(cfg)
+    _enable_moe_a2a_overlap(cfg)
+    _enable_cutedsl_fused_grouped_mlp(cfg)
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -195,7 +199,9 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, NVFP4 with optimizer CUDA graph."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    _enable_deepseek_full_iteration(cfg)
+    _enable_full_iteration_cuda_graph(cfg)
+    _enable_moe_a2a_overlap(cfg)
+    _enable_cutedsl_fused_grouped_mlp(cfg)
     cfg.model.fp8_output_proj = False
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.cuda_graph_use_single_mempool = True

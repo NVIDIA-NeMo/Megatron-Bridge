@@ -19,8 +19,10 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
     _benchmark_common,
     _deepseek_v3_common,
-    _enable_deepseek_full_iteration,
+    _enable_cutedsl_fused_grouped_mlp,
     _enable_deepseek_precision_aware_optimizer,
+    _enable_full_iteration_cuda_graph,
+    _enable_moe_a2a_overlap,
     _perf_precision,
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -159,7 +161,9 @@ def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration(cfg)
+    _enable_full_iteration_cuda_graph(cfg)
+    _enable_moe_a2a_overlap(cfg)
+    _enable_cutedsl_fused_grouped_mlp(cfg)
     cfg.model.fp8_output_proj = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     return cfg
@@ -219,7 +223,9 @@ def _build_deepseek_v3_gb300_nvfp4() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*5|(t*4|)*14mL")
 
     _benchmark_common(cfg)
-    _enable_deepseek_full_iteration(cfg)
+    _enable_full_iteration_cuda_graph(cfg)
+    _enable_moe_a2a_overlap(cfg)
+    _enable_cutedsl_fused_grouped_mlp(cfg)
     cfg.model.fp8_output_proj = False
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.mla_down_proj_fusion = True
@@ -346,23 +352,14 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
 
-    # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
-    cfg.model.cuda_graph_impl = "full_iteration"
+    _enable_full_iteration_cuda_graph(cfg)
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = False
     cfg.ddp.megatron_fsdp_cuda_graph_mode = True
     cfg.ddp.fsdp_all_gather_in_start_param_sync = False
-
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.fine_grained_offloading_max_inflight_offloads = 1
 
-    # CuTeDSL fused grouped MLP (moe_a2a_overlap disabled).
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
+    # CuTeDSL fused grouped MLP without MoE A2A overlap.
+    _enable_cutedsl_fused_grouped_mlp(cfg)
     # The fused grouped MLP (ScaledSwiGLU) does not support moe_act recomputation; keep the other
     # selective-recompute modules inherited from the FSDP base.
     cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
