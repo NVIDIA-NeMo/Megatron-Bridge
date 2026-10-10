@@ -359,7 +359,7 @@ items:
         final_loss: 5.146079
         last_10_steps_step_time_ms_avg: 3197.040
         last_10_steps_model_tflops_per_gpu_avg: 1332.420
-        last_10_steps_tokens_per_second_per_gpu_avg: 5124.777
+        last_10_steps_tokens_per_second_per_gpu_avg: 5124.740
       expected_result: >
         On exactly 256 GB300 GPUs, the 50-step mock-data MXFP8 Megatron Hybrid
         FSDP recipe completed at TP1/PP1/VP1/CP1/EP64/ETP1 and GBS/MBS 1024/1.

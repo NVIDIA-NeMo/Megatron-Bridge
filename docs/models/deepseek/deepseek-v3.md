@@ -121,6 +121,13 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">FP8 MX</span>
     </button>
+    <button type="button" class="verification-combination" data-capability="benchmark" data-precision="fp8_mx" data-hardware="GB300" data-status="verified" data-entry="deepseek-v3-pretrain-performance-hsdp-gb300" aria-controls="deepseek-v3-pretrain-performance-hsdp-gb300" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Benchmark · HSDP · GB300</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">FP8 MX</span>
+    </button>
   </div>
   <div class="verification-model-details">
     <article id="deepseek-v3-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="deepseek-v3-hf-to-megatron-cpu" tabindex="-1">
@@ -551,6 +558,57 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <section class="verification-expected-result">
         <h5>Expected result</h5>
         <p>On exactly 256 GB300 GPUs, the canonical 50-step mock-data MXFP8 recipe completed at TP1/PP2/VP8/CP1/EP32/ETP1 and GBS/MBS 4096/1. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations, and the resolved configuration was saved. Steps 41-50 averaged 10,667.300 ms and 1,597.310 model TFLOP/s/GPU, passing gates of at most 11,000 ms and at least 1,550 TFLOP/s/GPU. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.
+</p>
+      </section>
+    </article>
+    <article id="deepseek-v3-pretrain-performance-hsdp-gb300" class="verification-model-detail" data-entry-detail="deepseek-v3-pretrain-performance-hsdp-gb300" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Benchmark · HSDP · GB300</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB300</dd></div>
+        <div><dt>Precision</dt><dd>FP8 MX</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-09</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>11.89824</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>5.146079</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>3,197.040 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>1,332.420 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>5,124.740 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4 --recipe deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config --mode pretrain --max_steps 50 --seq_length 4096 logger.save_config_filepath=work/model-verification/deepseek-v3/gb300-hsdp-performance/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On exactly 256 GB300 GPUs, the 50-step mock-data MXFP8 Megatron Hybrid FSDP recipe completed at TP1/PP1/VP1/CP1/EP64/ETP1 and GBS/MBS 1024/1. Dense parameters use ZeRO-2 optim_grads sharding while expert parameters use optim_grads_params across four distributed optimizer instances, with full-iteration CUDA graphs and MoE paged stashing enabled. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations. Steps 41-50 averaged 3,197.040 ms and 1,332.420 model TFLOP/s/GPU. Do not compare this item against pretrain_performance.GB300: that recipe runs a different convergence contract at GBS 4096 with PP2/VP8/EP32, so step time and per-GPU throughput are not commensurable. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.
 </p>
       </section>
     </article>
