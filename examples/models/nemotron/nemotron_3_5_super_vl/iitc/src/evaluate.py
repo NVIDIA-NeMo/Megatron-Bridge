@@ -32,7 +32,8 @@ RESUME_FIELDS = (
     "pixel_shapes",
     "gold",
 )
-TEST_SHA256 = "11700fdd10a90c7583099b3eef11e4cdd79f1281a50d4593386c5b061c8db809"
+# Published IITC-8K test-file checksum, not a credential.
+TEST_SHA256 = "11700fdd10a90c7583099b3eef11e4cdd79f1281a50d4593386c5b061c8db809"  # pragma: allowlist secret
 
 
 def score(response: str, row: dict) -> dict:

@@ -16,7 +16,8 @@ from pathlib import Path
 
 
 DATASET = "zhourax977/VEGA"
-REVISION = "417bd55ab869a872cef9ae4f12a9b2073f619ac4"
+# Published dataset commit, not a credential.
+REVISION = "417bd55ab869a872cef9ae4f12a9b2073f619ac4"  # pragma: allowlist secret
 PROMPT = (
     "Based on the following known information, answer the user's questions concisely and professionally. "
     "If the answer is derived from an image, please indicate in the answer by referencing [Picture *], "
