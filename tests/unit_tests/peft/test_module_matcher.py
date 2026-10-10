@@ -71,6 +71,25 @@ class TestModuleMatcher:
         assert matcher.exclude_modules == []
         assert len(matcher.canonical_mapping) == 0
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("mode", ["target", "exclude", "canonical"])
+    def test_layer_wildcards_preserve_path_separators(self, mode: str) -> None:
+        """Selecting the first two layers must not include layers 10 through 19."""
+        patterns = ["*.layers.0.*.linear_qkv", "*.layers.1.*.linear_qkv"]
+        if mode == "exclude":
+            matcher = ModuleMatcher(target_modules=[], exclude_modules=patterns)
+        elif mode == "canonical":
+            matcher = ModuleMatcher(canonical_mapping={pattern: {"linear_qkv"} for pattern in patterns})
+        else:
+            matcher = ModuleMatcher(target_modules=patterns)
+        module = nn.Linear(2, 2)
+        selected = [
+            layer
+            for layer in range(24)
+            if matcher.match(module, name="linear_qkv", prefix=f"decoder.layers.{layer}.self_attention")
+        ]
+        assert selected == (list(range(2, 24)) if mode == "exclude" else [0, 1])
+
     def test_custom_target_modules(self):
         """Test ModuleMatcher with custom target modules."""
         target_modules = ["linear_qkv", "linear_proj"]
