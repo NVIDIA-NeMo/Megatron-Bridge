@@ -378,7 +378,7 @@ def test_dense_legacy_v2_checkpoint_is_rejected():
     hf_pretrained.config = hf_config
 
     bridge = get_model_bridge("NemotronH_Nano_VL_V2", hf_config=hf_config)
-    with pytest.raises(ValueError, match="Only Nemotron Omni MoE"):
+    with pytest.raises(ValueError, match=r"dense Nemotron Nano v2 VL was removed in Megatron Bridge 0\.7\.0.*0\.6\.x"):
         bridge.provider_bridge(hf_pretrained)
 
 

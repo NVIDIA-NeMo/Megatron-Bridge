@@ -83,6 +83,16 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForTokenClassification",
 )
 
+# Error-message metadata only: shared architectures used by supported successors
+# must not appear here. Consult this only after normal bridge lookup fails.
+_REMOVED_HF_ARCHITECTURES = {
+    "DeepseekV2ForCausalLM": "DeepSeek V2",
+    "DeciLMForCausalLM": "Llama Nemotron",
+    "GemmaForCausalLM": "Gemma 1",
+    "Gemma2ForCausalLM": "Gemma 2",
+    "NemotronForCausalLM": "Nemotron-4",
+}
+
 # hf_pretrained wrapper types that carry both a config and (optionally) loaded weights.
 # Used for isinstance checks that should accept any such wrapper, regardless of which
 # HF Auto* class it loads the underlying model with.
@@ -2479,6 +2489,13 @@ class AutoBridge(Generic[MegatronModelT]):
                     has_implementation = (arch_key in registry) or (getattr(arch_key, "__name__", None) in registry)
 
                 if not has_implementation:
+                    if architecture in _REMOVED_HF_ARCHITECTURES:
+                        raise ValueError(
+                            f"Support for {_REMOVED_HF_ARCHITECTURES[architecture]} "
+                            f"(architecture '{architecture}') was removed in Megatron Bridge 0.7.0. "
+                            "Use Megatron Bridge 0.6.x for this model."
+                        )
+
                     # Get list of supported models
                     supported_models = cls.list_supported_models()
 

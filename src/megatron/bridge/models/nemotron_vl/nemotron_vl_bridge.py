@@ -82,7 +82,11 @@ class NemotronVLBridge(MegatronModelBridge):
             provider.img_end_token_id = getattr(hf_config, "img_end_token_id", None) or 20
             return provider
 
-        raise ValueError("Only Nemotron Omni MoE checkpoints use this compatibility bridge.")
+        raise ValueError(
+            "Support for dense Nemotron Nano v2 VL was removed in Megatron Bridge 0.7.0. "
+            "Use Megatron Bridge 0.6.x for this model. "
+            "Only Nemotron Omni MoE checkpoints retain compatibility with the legacy V2 architecture label."
+        )
 
     # ------------------------------------------------------------------
     # Parameter mapping

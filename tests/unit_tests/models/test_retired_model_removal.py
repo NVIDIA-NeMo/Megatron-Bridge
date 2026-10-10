@@ -30,12 +30,20 @@ pytestmark = pytest.mark.unit
 def test_retired_architectures_have_no_bridge(architecture):
     config = PretrainedConfig(architectures=[architecture])
     assert architecture not in AutoBridge.list_supported_models()
-    with pytest.raises(ValueError, match="not yet supported"):
+    with pytest.raises(ValueError, match=r"removed in Megatron Bridge 0\.7\.0.*Use Megatron Bridge 0\.6\.x"):
         AutoBridge.from_hf_config(config)
     with patch("megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry", return_value=config):
         assert not AutoBridge.can_handle("local-checkpoint")
-        with pytest.raises(ValueError, match="not yet supported"):
+        with pytest.raises(ValueError, match=r"removed in Megatron Bridge 0\.7\.0.*Use Megatron Bridge 0\.6\.x"):
             AutoBridge.from_hf_pretrained("local-checkpoint")
+
+
+@pytest.mark.parametrize("architecture", ["CustomGemma2ForCausalLM", "UnknownForCausalLM"])
+def test_unknown_architecture_keeps_generic_unsupported_message(architecture):
+    config = PretrainedConfig(architectures=[architecture])
+    with pytest.raises(ValueError, match="not yet supported") as exc_info:
+        AutoBridge.from_hf_config(config)
+    assert "removed" not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
