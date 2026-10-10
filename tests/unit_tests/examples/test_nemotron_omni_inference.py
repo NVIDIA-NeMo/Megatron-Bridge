@@ -22,7 +22,7 @@ import torch
 import megatron.bridge.models.nemotron_vl.nemotron_vl_utils as vl_utils
 
 
-_EXAMPLE_ROOT = Path(__file__).parents[3] / "examples" / "models" / "nemotron" / "nemotron_3_omni"
+_EXAMPLE_ROOT = Path(__file__).parents[3] / "examples" / "models" / "nemotron" / "nemotron_3_nano_omni"
 
 
 class _VideoImageProcessor:

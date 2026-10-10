@@ -45,7 +45,7 @@ mkdir -p "$(dirname "$IMAGE_PATH")" "$(dirname "$VIDEO_PATH")" "$(dirname "$AUDI
 [[ -f "$VIDEO_PATH" ]] || curl -fL "${_HF_ASSETS}/demo.mp4"  -o "$VIDEO_PATH"
 [[ -f "$AUDIO_PATH" ]] || ffmpeg -y -i "$VIDEO_PATH" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$AUDIO_PATH"
 
-GEN_SCRIPT=examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py
+GEN_SCRIPT=examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py
 
 # 1) Image + Text (1 GPU)
 uv run python -m torch.distributed.run --nproc_per_node=1 ${GEN_SCRIPT} \

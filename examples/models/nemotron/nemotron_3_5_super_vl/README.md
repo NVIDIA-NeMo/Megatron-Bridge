@@ -13,7 +13,7 @@ For language-only conversion and reuse of the existing Nemotron 3 Super
 recipes, see [the text-only bridge guide](text-only.md).
 
 The functional recipes are defined under
-[`src/megatron/bridge/recipes/nemotronh_multimodal/`](../../../../../src/megatron/bridge/recipes/nemotronh_multimodal/):
+[`src/megatron/bridge/recipes/nemotronh_multimodal/`](../../../../src/megatron/bridge/recipes/nemotronh_multimodal/):
 
 - `nemotron_35_super_vl_pretrain_config`
 - `nemotron_35_super_vl_sft_config`
@@ -92,4 +92,9 @@ must preserve that qualification if language-only adapters are intended.
 - Add deterministic image and video inference examples.
 - Add SFT and PEFT dataset requirements and launch examples.
 - Document dynamic-resolution image and temporal-video preprocessing.
-- Link the completed page from the Nemotron 3 example index.
+- Replace the draft label in the Nemotron example index when the page is complete.
+
+## IITC LoRA tutorial
+
+See the [IITC fine-tuning tutorial](../../../../tutorials/recipes/nemotron/iitc-lora.md)
+for data preparation, LoRA training, HF export, and evaluation.

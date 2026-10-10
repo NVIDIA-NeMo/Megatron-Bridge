@@ -15,6 +15,7 @@
 """Unit tests for megatron.bridge.models.transformer_config."""
 
 import json
+from dataclasses import fields
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -463,3 +464,51 @@ class TestHeterogeneousTransformerConfigFinalize:
         cfg.finalize()
 
         assert cfg.pipeline_dtype is torch.float16
+
+
+# ---------------------------------------------------------------------------
+# YaRN fields
+# ---------------------------------------------------------------------------
+
+_YARN_FIELDS = (
+    "yarn_rotary_scaling_factor",
+    "yarn_original_max_position_embeddings",
+    "yarn_beta_fast",
+    "yarn_beta_slow",
+    "yarn_mscale",
+    "yarn_mscale_all_dim",
+    "yarn_correction_range_round_to_int",
+)
+
+
+class TestTransformerConfigYarnFields:
+    def test_yarn_fields_default_to_none(self):
+        cfg = _make_config()
+
+        for field_name in _YARN_FIELDS:
+            assert getattr(cfg, field_name) is None, field_name
+
+    def test_gpt_provider_inherits_yarn_fields(self):
+        from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+        provider_fields = {field.name for field in fields(GPTModelProvider)}
+        assert set(_YARN_FIELDS) <= provider_fields
+        for field_name in _YARN_FIELDS:
+            assert field_name not in GPTModelProvider.__dict__.get("__annotations__", {}), field_name
+
+    def test_attention_concentration_factor_ignores_unset_yarn(self):
+        """MCore attention must not treat a None-valued YaRN field as YaRN scaling."""
+        import megatron.core.transformer.attention as attention_module
+
+        cfg = _make_config()
+
+        assert attention_module._yarn_get_concentration_factor_from_config(cfg) == 1.0
+
+    def test_attention_concentration_factor_uses_yarn_scaling(self):
+        import megatron.core.models.common.embeddings.yarn_rotary_pos_embedding as yarn_module
+        import megatron.core.transformer.attention as attention_module
+
+        cfg = _make_config(yarn_rotary_scaling_factor=4.0, yarn_mscale=1.0, yarn_mscale_all_dim=1.0)
+
+        expected = yarn_module._yarn_get_concentration_factor(4.0, 1.0, 1.0)
+        assert attention_module._yarn_get_concentration_factor_from_config(cfg) == expected

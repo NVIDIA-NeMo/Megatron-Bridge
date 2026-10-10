@@ -40,28 +40,28 @@ settings are modality-dependent:
 
 Examples:
   # Single image:
-  uv run python examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --image_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
     --prompt="Describe this image." \
     --max_new_tokens 300
 
   # Multiple images:
-  uv run python examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --image_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/example1a.jpeg,https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/example1b.jpeg" \
     --prompt="Describe the two images in detail." \
     --max_new_tokens 300
 
   # Video description:
-  uv run python examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --video_path="https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/demo.mp4" \
     --prompt="Describe what you see." \
     --max_new_tokens 300
 
   # Audio transcription:
-  uv run python examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py \
+  uv run python examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py \
     --hf_model_path="nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16" \
     --audio_path="/path/to/audio.wav" \
     --prompt="Transcribe the audio." \

@@ -20,7 +20,7 @@ matching the shared SFT pipeline in ``nemotron_omni_expanded_collate_fn`` with
 exercises the trained `video_embedder`.
 
 Usage:
-  torchrun --nproc-per-node=8 examples/models/nemotron/nemotron_3_omni/valor32k_avqa_inference.py \
+  torchrun --nproc-per-node=8 examples/models/nemotron/nemotron_3_nano_omni/valor32k_avqa_inference.py \
     --hf_model_path /path/to/nemotron-3-nano-omni-ea1_v1.0 \
     --megatron_model_path /path/to/checkpoint \
     --data_root /path/to/valor32k_avqa \
@@ -93,7 +93,7 @@ def _build_vision_packed_seq_params(imgs_sizes: Optional[torch.Tensor]) -> Optio
 
 
 # ---------------------------------------------------------------------------
-# Forward step (same as examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py)
+# Forward step (same as examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py)
 # ---------------------------------------------------------------------------
 
 

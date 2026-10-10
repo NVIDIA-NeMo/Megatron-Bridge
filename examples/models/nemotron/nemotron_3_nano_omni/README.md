@@ -43,11 +43,14 @@ The scripts expect the following layout:
 - `${WORKSPACE}/assets/` — image / video / audio files used for `inference.sh` (auto-downloaded from the public HF model card on first run)
 - `${WORKSPACE}/results/` — training outputs (checkpoints, tensorboard logs)
 
-## Day-0 Code
+## Code checkout
 
-Use the NeMo 26.04 container as the base image: `nvcr.io/nvidia/nemo:26.04`.
+Use a NeMo container compatible with your checkout; see the
+[development environment instructions](../../../../CONTRIBUTING.md).
 
-The Day-0 code lives on the following public branches:
+The original Day-0 code is retained on the following public branches. Use
+`main` for the flat example paths documented below; use the README on the
+Day-0 branch when working with that historical checkout:
 
 | Repo | Branch | Remote |
 |---|---|---|
@@ -56,16 +59,15 @@ The Day-0 code lives on the following public branches:
 
 ```bash
 cd $WORKSPACE
-git clone -b nemotron_3_omni https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+git clone -b main https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
 cd Megatron-Bridge
 git submodule update --init --recursive --depth 1
 uv lock
 uv sync
 ```
 
-The `.gitmodules` already points the `3rdparty/Megatron-LM` submodule at
-`https://github.com/NVIDIA/Megatron-LM.git`, and the recorded gitlink is
-the tip of its `nemotron_3_omni` branch — `git submodule update --init
+The `.gitmodules` points the `3rdparty/Megatron-LM` submodule at
+`https://github.com/NVIDIA/Megatron-LM.git`. Use the recorded submodule commit — `git submodule update --init
 --recursive --depth 1` checks it out as a shallow clone automatically; no
 extra remote/fetch step needed. The `--depth 1` flag dramatically reduces
 clone time and disk usage (avoids fetching Megatron-LM's full history).
@@ -73,14 +75,8 @@ clone time and disk usage (avoids fetching Megatron-LM's full history).
 `3rdparty/Megatron-LM/` submodule rather than any pre-installed copy from
 the container. `uv sync` then materializes the resulting environment.
 
-> **`uv lock && uv sync` are mandatory before running any script in this
-> repo.** The `uv.lock` in this repo pins `flashinfer-python==0.6.8.post1`
-> to match the `flashinfer-cubin` pre-installed in the NeMo container.
-> Skipping `uv sync` will leave a stale version installed, producing:
-> ```
-> RuntimeError: flashinfer-cubin version (0.6.8.post1) does not match flashinfer version (X).
-> ```
-> Re-run `uv sync` from `$WORKSPACE/Megatron-Bridge` to resolve it.
+Run `uv lock` and `uv sync` before the examples so the environment uses
+the dependencies required by this checkout.
 
 Verify that `megatron.core` and `megatron.bridge` resolve to the cloned
 checkout (and not a pre-installed copy from the container):
@@ -138,13 +134,13 @@ export, and a multi-GPU HF↔Megatron round-trip verification.
 Run from `$WORKSPACE/Megatron-Bridge`:
 
 ```bash
-bash examples/models/nemotron/nemotron_3_omni/conversion.sh
+bash examples/models/nemotron/nemotron_3_nano_omni/conversion.sh
 ```
 
 ## Inference
 
 [inference.sh](inference.sh) drives
-`examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py` over the four
+`examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py` over the four
 modality combinations exercised by the model:
 
 | # | Modality | GPUs | Parallelism |
@@ -194,7 +190,7 @@ checkpoint.
 Run from `$WORKSPACE/Megatron-Bridge`:
 
 ```bash
-bash examples/models/nemotron/nemotron_3_omni/inference.sh
+bash examples/models/nemotron/nemotron_3_nano_omni/inference.sh
 ```
 
 ## Training
@@ -325,8 +321,8 @@ selective recompute. LoRA targets `linear_qkv`, `linear_proj`, `in_proj`,
 projections frozen.
 
 ```bash
-sbatch examples/models/nemotron/nemotron_3_omni/slurm_sft_cord_v2.sh
-sbatch examples/models/nemotron/nemotron_3_omni/slurm_peft_cord_v2.sh
+sbatch examples/models/nemotron/nemotron_3_nano_omni/slurm_sft_cord_v2.sh
+sbatch examples/models/nemotron/nemotron_3_nano_omni/slurm_peft_cord_v2.sh
 ```
 
 ### Audio-Video-Text — VALOR32K-AVQA
@@ -369,8 +365,8 @@ LR=1e-4 (adapters target the language model only; vision encoder, vision
 projection, sound encoder, and sound projection are frozen).
 
 ```bash
-sbatch examples/models/nemotron/nemotron_3_omni/slurm_sft_valor32k_avqa.sh
-sbatch examples/models/nemotron/nemotron_3_omni/slurm_peft_valor32k_avqa.sh
+sbatch examples/models/nemotron/nemotron_3_nano_omni/slurm_sft_valor32k_avqa.sh
+sbatch examples/models/nemotron/nemotron_3_nano_omni/slurm_peft_valor32k_avqa.sh
 ```
 
 ### Expected Training Dynamics
@@ -395,7 +391,7 @@ so substitute the matching `RUN_TAG` from your training job into
 
 ```bash
 uv run torchrun --nproc-per-node=8 \
-  examples/models/nemotron/nemotron_3_omni/cord_v2_inference.py \
+  examples/models/nemotron/nemotron_3_nano_omni/cord_v2_inference.py \
     --hf_model_path "$HF_MODEL_ID" \
     --megatron_model_path ${WORKSPACE}/results/nemotron_omni_cord_v2_sft_config_sft_<RUN_TAG>/checkpoints \
     --tp 4 --ep 2 \
@@ -403,7 +399,7 @@ uv run torchrun --nproc-per-node=8 \
     --output ${WORKSPACE}/results/cord_v2_eval.json
 
 uv run torchrun --nproc-per-node=8 \
-  examples/models/nemotron/nemotron_3_omni/valor32k_avqa_inference.py \
+  examples/models/nemotron/nemotron_3_nano_omni/valor32k_avqa_inference.py \
     --hf_model_path "$HF_MODEL_ID" \
     --megatron_model_path ${WORKSPACE}/results/nemotron_omni_valor32k_sft_config_sft_<RUN_TAG>/checkpoints \
     --data_root ${WORKSPACE}/datasets/valor32k_avqa \
