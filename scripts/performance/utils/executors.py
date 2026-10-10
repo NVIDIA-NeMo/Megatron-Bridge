@@ -381,6 +381,7 @@ def nvcre_executor(
     node_selector: Optional[dict] = None,
     volumes: Optional[list] = None,
     volume_mounts: Optional[list] = None,
+    init_containers: Optional[list] = None,
     timeout_per_job: str = "24h",
     kubeconfig: Optional[str] = None,
     kube_context: Optional[str] = None,
@@ -400,6 +401,8 @@ def nvcre_executor(
         node_selector: Kubernetes node selector labels for targeting specific nodes.
         volumes: Additional Kubernetes volume specs to attach to the pod.
         volume_mounts: Additional Kubernetes volume mount specs.
+        init_containers: Kubernetes init container specs emitted as the WorkloadRun's ``spec.initContainers``
+            (e.g. to clone a pinned Megatron-Bridge into a shared volume that replaces the image's copy).
         timeout_per_job: Maximum wall-clock time per job (e.g. ``"24h"``).
         kubeconfig: Path to the kubeconfig file. Defaults to the cluster default.
         kube_context: Kubernetes context to use from the kubeconfig.
@@ -413,6 +416,8 @@ def nvcre_executor(
             "NvcreExecutor is unavailable: the installed nemo_run does not provide nemo_run.core.execution.nvcre"
         )
 
+    # Only passed when requested, so a nemo_run without ``init_containers`` still works for jobs that don't use it.
+    extra = {"init_containers": init_containers} if init_containers else {}
     return NvcreExecutor(
         namespace=namespace,
         container_image=container_image,
@@ -429,4 +434,5 @@ def nvcre_executor(
         kubeconfig=kubeconfig,
         kube_context=kube_context,
         gang_scheduler_name=gang_scheduler_name,
+        **extra,
     )
