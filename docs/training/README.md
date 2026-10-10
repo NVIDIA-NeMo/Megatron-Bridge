@@ -63,6 +63,7 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[PEFT](peft.md)** | Parameter-Efficient Fine-Tuning (LoRA, etc.) | Fine-tuning with limited resources |
 | **[Packed Sequences](packed-sequences.md)** | Sequence packing for efficiency | Optimizing data loading |
+| **[MegatronMIMO Intra-Microbatch Reordering](mimo-intra-microbatch-reorder.md)** | Balance per-sample vision load across module DP ranks | Non-colocated MIMO VLM finetuning with uneven image load |
 | **[Megatron FSDP](megatron-fsdp.md)** | Stable overview of Megatron FSDP | Choosing an FSDP path |
 | **[Distillation](../modelopt/distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
 | **[Checkpointing](checkpointing.md)** | Checkpoint saving, loading, and resuming | Managing training state |
