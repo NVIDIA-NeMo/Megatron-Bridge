@@ -15,9 +15,11 @@
 """Tests for scripts/performance/utils/evaluate.py golden-value handling."""
 
 import json
+import logging
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 
@@ -118,6 +120,76 @@ def test_calc_convergence_supports_current_snapshot_file(tmp_path: Path, monkeyp
 
     assert passed is True
     assert error_message == ""
+
+
+@pytest.mark.parametrize(
+    "reference",
+    [
+        {"current": {"job_id": 123}},
+        {"baseline": {}, "current": {"0": {"lm loss": 1.0}}},
+        {"alloc": 4.0, "max_alloc": 5.0},
+    ],
+)
+def test_calc_convergence_rejects_empty_reference_and_preserves_actuals(tmp_path: Path, reference: dict):
+    golden_path = tmp_path / "golden.json"
+    golden_path.write_text(json.dumps(reference))
+    log_path = tmp_path / "log-allranks.out"
+    log_path.write_text(
+        "iteration 1/ 2 | lm loss: 2.0 | elapsed time per iteration (ms): 3.0 | grad norm: 0.5\n"
+        "iteration 2/ 2 | lm loss: 1.0 | elapsed time per iteration (ms): 3.0 | grad norm: 0.5\n"
+    )
+
+    passed, error_message, actuals = evaluate.calc_convergence_and_performance(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        assets_dir=str(tmp_path / "assets"),
+        log_paths=[str(log_path)],
+        loss_metric="lm loss",
+        timing_metric="elapsed time per iteration (ms)",
+        alloc_metric="alloc",
+        max_alloc_metric="max_alloc",
+        golden_values_path=str(golden_path),
+        convergence_config={},
+        performance_config={},
+        memory_config={},
+    )
+
+    assert passed is False
+    assert "no training step records" in error_message
+    assert str(golden_path) in error_message
+    assert actuals["0"]["lm loss"] == 2.0
+    assert actuals["1"]["lm loss"] == 1.0
+    assert json.loads((tmp_path / "assets" / "golden_values" / "golden.json").read_text()) == actuals
+    assert json.loads(golden_path.read_text()) == reference
+
+
+@pytest.mark.parametrize(
+    ("current", "golden", "steps", "config"),
+    [
+        ([], [], [], {}),
+        ([2.0, 1.0], [2.0], ["0", "1"], {}),
+        ([2.0, 1.0], [2.0, 1.0], ["0"], {}),
+        ([np.nan, np.nan], [2.0, 1.0], ["0", "1"], {}),
+        ([2.0, 1.0], [2.0, np.inf], ["0", "1"], {}),
+        ([2.0, 1.0], [2.0, 1.0], ["0", "1"], {"skip_first_percent_loss": 1.0}),
+    ],
+)
+def test_validate_convergence_rejects_invalid_inputs(current, golden, steps, config):
+    result = evaluate.validate_convergence(
+        np.array(current), np.array(golden), steps, logging.getLogger(__name__), config=config
+    )
+
+    assert result["passed"] is False
+    assert result["failed_metrics"] == ["input_data"]
+    assert result["summary"].startswith("Invalid convergence input:")
+
+
+def test_validate_convergence_accepts_matching_finite_curves():
+    values = np.array([3.0, 2.0, 1.0])
+    result = evaluate.validate_convergence(values, values.copy(), ["0", "1", "2"], logging.getLogger(__name__))
+
+    assert result["passed"] is True
+    assert result["metrics"]["total_points"] == 3
 
 
 def test_downsample_noop_when_under_cap():
