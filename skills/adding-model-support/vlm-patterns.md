@@ -1,6 +1,7 @@
 # VLM Bridge Patterns
 
 Reference implementations:
+- **Builder-backed config and conversion:** Muse Glimmer (`src/megatron/bridge/models/muse_glimmer/`)
 - **Megatron vision encoder:** Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
 - **HF vision encoder:** Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`)
 
@@ -12,9 +13,27 @@ encoder merely to follow that example. Select the language builder requested by
 the task (including HybridModel); the GPT provider snippets below illustrate
 older integration patterns and do not require GPTModel.
 
-## Provider Pattern
+## Model Config and Builder Pattern
 
-Subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of standard LLM fields.
+New multimodal bridges describe the model with a builder-backed `ModelConfig`, as Muse Glimmer
+does:
+
+- `<model>_config.py` — a Bridge `TransformerConfig` subclass for extra decoder fields, and a
+  `ModelConfig` subclass (`ModelConfigOverrideMixin` plus Megatron Core's `GPTModelConfig` or
+  `HybridModelConfig`) that declares the vision config, token IDs and freeze options, and names its
+  builder and `transformer_config_class`.
+- `<model>_builder.py` — a `GPTModelBuilder` or `HybridModelBuilder` subclass whose `build_model()`
+  combines the vision encoder, projector and language model.
+- `<model>_bridge.py` — sets `MODEL_CONFIG_CLASS` and `USE_MODEL_CONFIG_FOR_CONVERSION = True`, and
+  overrides `hf_config_to_model_config()` (reading `text_config`, `vision_config` and the top-level
+  fields listed below) and `megatron_to_hf_config()`.
+
+Recipes then use `AutoBridge.from_hf_pretrained(...).get_model_config()`.
+
+## Provider Pattern (legacy)
+
+Existing VLM families subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of
+standard LLM fields.
 
 ```python
 @dataclass
@@ -53,7 +72,7 @@ class MyVLModelProvider(GPTModelProvider):
             raise ValueError(f"TP ({self.tensor_model_parallel_size}) must be <= num_query_groups ({self.num_query_groups})")
 ```
 
-### Key provider fields by source
+### Key config fields by source
 
 Read these from the correct config level:
 
@@ -67,7 +86,7 @@ Read these from the correct config level:
 | `vision_config` | **top-level** `hf_config` | Vision encoder config |
 | `image_token_id`, `video_token_id` | **top-level** `hf_config` | Special token IDs |
 
-## Bridge Pattern
+## Bridge Pattern (legacy provider)
 
 ```python
 @MegatronModelBridge.register_bridge(
