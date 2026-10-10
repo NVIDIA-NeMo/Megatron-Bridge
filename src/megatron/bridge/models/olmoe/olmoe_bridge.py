@@ -13,10 +13,11 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import OlmoeForCausalLM
+from transformers import OlmoeForCausalLM, PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -25,8 +26,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
 
 
@@ -45,56 +44,55 @@ class OlMoEBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
-        """Convert HuggingFace OlMoE config to Megatron GPTModelProvider.
+    USE_MODEL_CONFIG_FOR_CONVERSION = True
 
-        Uses base class implementation for common conversion, then sets
-        OlMoE-specific config. OlMoE uses QK layernorm and mixture of experts.
+    def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert a Hugging Face OlMoE config to builder config kwargs.
 
-        Args:
-            hf_pretrained: HuggingFace PreTrainedCausalLM containing the OlMoE config
-
-        Returns:
-            GPTModelProvider configured for OlMoE architecture
+        OlMoE uses QK layernorm and mixture of experts.
         """
-        provider = super().provider_bridge(hf_pretrained)
-        hf_config = hf_pretrained.config
-
-        # OlMoE uses custom layer spec with OLMoESelfAttention for QK layernorm
-        provider.transformer_layer_spec = olmoe_layer_spec
-
-        # Set kv_channels (head_dim) - OLMoE HF config doesn't have head_dim, so calculate it
-        provider.kv_channels = getattr(hf_config, "head_dim", None) or (
-            hf_config.hidden_size // hf_config.num_attention_heads
-        )
-
-        # OlMoE-specific architecture settings
-        provider.normalization = "RMSNorm"
-        provider.gated_linear_unit = True
-        provider.add_bias_linear = False
-        provider.hidden_dropout = 0.0
-        provider.share_embeddings_and_output_weights = False
-        provider.qk_layernorm = True
-        provider.persist_layer_norm = True
-        provider.autocast_dtype = torch.bfloat16
-
-        # MoE-specific settings
-        provider.moe_ffn_hidden_size = hf_config.intermediate_size
-        provider.moe_aux_loss_coeff = hf_config.router_aux_loss_coef
-        provider.moe_token_dispatcher_type = "alltoall"
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
-        provider.moe_router_pre_softmax = True
-        provider.moe_grouped_gemm = True
         if hasattr(hf_config, "scoring_func") and hf_config.scoring_func != "softmax":
             raise ValueError(f"OlMoE only supports scoring_func='softmax', got {hf_config.scoring_func!r}")
-        provider.moe_router_score_function = "softmax"
-        provider.moe_permute_fusion = True
-        provider.moe_router_dtype = "fp32"
 
-        return provider
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            # OlMoE uses custom layer spec with OLMoESelfAttention for QK layernorm
+            transformer_layer_spec=olmoe_layer_spec,
+            # OLMoE HF config doesn't have head_dim, so calculate it
+            kv_channels=getattr(hf_config, "head_dim", None)
+            or (hf_config.hidden_size // hf_config.num_attention_heads),
+            # OlMoE-specific architecture settings
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            persist_layer_norm=True,
+            autocast_dtype=torch.bfloat16,
+            masked_softmax_fusion=True,
+            rope_scaling=False,
+            rope_scaling_factor=1.0,
+            # MoE-specific settings
+            moe_ffn_hidden_size=hf_config.intermediate_size,
+            moe_aux_loss_coeff=hf_config.router_aux_loss_coef,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_pre_softmax=True,
+            moe_grouped_gemm=True,
+            moe_router_score_function="softmax",
+            moe_permute_fusion=True,
+            moe_router_dtype="fp32",
+        )
+        config_kwargs.setdefault("position_embedding_type", "rope")
+        return config_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Adapt the canonical builder mapping to the deprecated provider path."""
+        return self.hf_config_to_model_config_kwargs(hf_config)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []
