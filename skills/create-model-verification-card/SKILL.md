@@ -85,6 +85,16 @@ item; agents can derive valid comparisons from the standalone commands,
 resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
 save/load unless a separate functional item records that evidence.
 
+Add `pretrain_performance_hsdp` as an optional hardware-scoped item when a
+tuned Hybrid FSDP (HSDP) performance recipe exists for the exact model
+variant. Use it instead of `pretrain_fsdp` when the recipe shards dense and
+expert parameters under different strategies, which the single
+`enabled_features.megatron_fsdp` scalar cannot express. Record the result
+under `pretrain_performance_hsdp.<hardware>` and mirror it in
+`verification_index.performance_hsdp`. Keep it separate from
+`pretrain_performance`: an HSDP recipe usually runs a different convergence
+contract, so the two are not commensurable.
+
 When the same hardware has multiple first-class FSDP runs with different
 precisions or convergence contracts, use one aggregate hardware container and
 key its standalone leaves by precision:

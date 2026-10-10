@@ -32,7 +32,6 @@ _GB300_NCCLEP_RECIPES = (
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_nvfp4_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config"),
-    ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config"),
     ("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config"),
     ("gpt_oss.gb300.gpt_oss", "gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config"),
     ("kimi.gb300.kimi_k2", "kimi_k2_pretrain_256gpu_gb300_fp8mx_config"),
@@ -106,6 +105,17 @@ def test_gb300_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, f
     # The plugin runs in hierarchical-topology pull mode, and nothing reads the HybridEP tuning anymore.
     assert {name: cfg.env_vars[name] for name in _NCCL_EP_ENV} == _NCCL_EP_ENV
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
+
+
+def test_gb300_deepseek_hsdp_uses_hybridep() -> None:
+    cfg = _build("deepseek.gb300.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config")
+
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_use_grouped_tensor is True
+    assert cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == cfg.model.expert_model_parallel_size == 64
+    assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
 
 
 @pytest.mark.parametrize(("module_name", "factory_name"), _VR200_ALIASES, ids=lambda value: value)

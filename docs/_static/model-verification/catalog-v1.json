@@ -691,6 +691,39 @@
           "status": "verified",
           "variant": null,
           "workflow": "pretrain_performance"
+        },
+        {
+          "bridge_commit": "797a3141d3ccc4ec20a45cc653a4b69f9af0cdbf",
+          "command_topologies": [
+            {
+              "gpus_per_node": "4",
+              "nodes": "64",
+              "recipe": "deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config",
+              "sequence_length": "4096",
+              "total_gpus": 256
+            }
+          ],
+          "commands": [
+            "./scripts/training/train.sh --wait --nodes 64 --gpus-per-node 4 --recipe deepseek_v3_pretrain_256gpu_gb300_fp8mx_hsdp_config --mode pretrain --max_steps 50 --seq_length 4096 logger.save_config_filepath=work/model-verification/deepseek-v3/gb300-hsdp-performance/ConfigContainer.yaml"
+          ],
+          "dimensions": {},
+          "enabled_features": {},
+          "entry_id": "deepseek-v3-pretrain-performance-hsdp-gb300",
+          "expected_result": "On exactly 256 GB300 GPUs, the 50-step mock-data MXFP8 Megatron Hybrid FSDP recipe completed at TP1/PP1/VP1/CP1/EP64/ETP1 and GBS/MBS 1024/1. Dense parameters use ZeRO-2 optim_grads sharding while expert parameters use optim_grads_params across four distributed optimizer instances, with full-iteration CUDA graphs and MoE paged stashing enabled. All 50 keyed rows had finite loss and throughput with zero skipped or NaN iterations. Steps 41-50 averaged 3,197.040 ms and 1,332.420 model TFLOP/s/GPU. Do not compare this item against pretrain_performance.GB300: that recipe runs a different convergence contract at GBS 4096 with PP2/VP8/EP32, so step time and per-GPU throughput are not commensurable. Mock data, forced expert balancing, and reduced-precision optimizer moments make this benchmark-only evidence, not convergence evidence.\n",
+          "hardware": "GB300",
+          "last_verified": "2026-10-09",
+          "metrics": {
+            "final_loss": 5.146079,
+            "initial_loss": 11.89824,
+            "last_10_steps_model_tflops_per_gpu_avg": 1332.42,
+            "last_10_steps_step_time_ms_avg": 3197.04,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 5124.74
+          },
+          "precision": "fp8_mx",
+          "source_pointer": "items.pretrain_performance_hsdp.GB300",
+          "status": "verified",
+          "variant": null,
+          "workflow": "pretrain_performance_hsdp"
         }
       ],
       "hf_id": "deepseek-ai/DeepSeek-V3",
@@ -698,7 +731,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "deepseek-v3",
       "source_card": "examples/model_verification_cards/deepseek-v3/card.yaml",
-      "summary": "Distributed H100 GPU import, BF16 export, and deterministic inference are verified against the pinned blockwise-FP8 checkpoint. The canonical pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified. A distributed CPU export of the same pinned checkpoint is also verified. Timing and throughput metrics from future functional training items remain sanity checks rather than optimized performance results. CPU import, forward correlation, functional training, fine-tuning, and checkpoint-resume verification remain deferred.\n",
+      "summary": "Distributed H100 GPU import, BF16 export, and deterministic inference are verified against the pinned blockwise-FP8 checkpoint. The canonical pretrain_performance.H100 1024-GPU BF16, pretrain_performance.GB200 256-GPU MXFP8, and pretrain_performance.GB300 256-GPU MXFP8 recipes are also verified, as is the pretrain_performance_hsdp.GB300 256-GPU MXFP8 Hybrid FSDP recipe. A distributed CPU export of the same pinned checkpoint is also verified. Timing and throughput metrics from future functional training items remain sanity checks rather than optimized performance results. CPU import, forward correlation, functional training, fine-tuning, and checkpoint-resume verification remain deferred.\n",
       "title": "deepseek_v3"
     },
     {

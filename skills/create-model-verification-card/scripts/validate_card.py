@@ -52,7 +52,12 @@ REQUIRED_ITEM_NAMES = (
     "peft",
     "checkpoint_resume",
 )
-OPTIONAL_ITEM_NAMES = ("pretrain_performance", "pretrain_fsdp", "pretrain_weak_scaling")
+OPTIONAL_ITEM_NAMES = (
+    "pretrain_performance",
+    "pretrain_performance_hsdp",
+    "pretrain_fsdp",
+    "pretrain_weak_scaling",
+)
 ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 MODEL_LEVEL_INDEX_SCOPE = (
     "hf_to_megatron_cpu",
@@ -78,6 +83,7 @@ TRAINING_ITEMS = frozenset(
         "peft",
         "checkpoint_resume",
         "pretrain_performance",
+        "pretrain_performance_hsdp",
         "pretrain_fsdp",
         "pretrain_weak_scaling",
     }
@@ -137,7 +143,9 @@ PERFORMANCE_DISCLAIMERS = (
 )
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "verification_index", "items"})
-VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance", "fsdp", "weak_scaling"})
+VERIFICATION_INDEX_KEYS = frozenset(
+    {"model_level", "training", "performance", "performance_hsdp", "fsdp", "weak_scaling"}
+)
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
 ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
@@ -525,6 +533,7 @@ def _validate_verification_index(
 
     for index_name, item_name in (
         ("performance", "pretrain_performance"),
+        ("performance_hsdp", "pretrain_performance_hsdp"),
         ("fsdp", "pretrain_fsdp"),
         ("weak_scaling", "pretrain_weak_scaling"),
     ):
