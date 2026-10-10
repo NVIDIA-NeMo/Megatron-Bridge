@@ -15,6 +15,7 @@
 """Focused coverage for declarative Energon config and runtime construction."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -205,7 +206,7 @@ def test_custom_config_requires_construction_hook():
         build_energon_task_encoder(_qwen_config(task_encoder=EnergonTaskEncoderConfig()))
 
 
-@pytest.mark.parametrize("reserved_key", ["batch_size", "task_encoder", "split_part", "worker_config"])
+@pytest.mark.parametrize("reserved_key", ["batch_size", "cache_pool", "task_encoder", "split_part", "worker_config"])
 def test_config_rejects_builder_owned_dataset_kwargs(reserved_key: str):
     config = _qwen_config(dataset_kwargs={reserved_key: 1})
 
@@ -597,3 +598,62 @@ def test_builder_skips_unrequested_validation(monkeypatch: pytest.MonkeyPatch):
     assert validation is None
     assert test is None
     datamodule.val_dataloader.assert_not_called()
+
+
+def _capture_datamodule(monkeypatch: pytest.MonkeyPatch):
+    """Install a MagicMock datamodule and return its class mock for call inspection."""
+    datamodule = MagicMock()
+    datamodule.train_dataloader.return_value = ["train"]
+    datamodule.val_dataloader.return_value = ["validation"]
+    datamodule_cls = MagicMock(return_value=datamodule)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.build_energon_task_encoder", lambda _: object())
+    monkeypatch.setattr(base_energon_datamodule, "EnergonMultiModalDataModule", datamodule_cls)
+    return datamodule_cls
+
+
+def test_builder_passes_no_cache_pool_while_cache_disabled(monkeypatch: pytest.MonkeyPatch):
+    from megatron.energon import NoCachePool
+
+    datamodule_cls = _capture_datamodule(monkeypatch)
+    config = _qwen_config()
+
+    EnergonDatasetBuilder(config).build(DatasetBuildContext(train_samples=1, valid_samples=1, test_samples=0))
+
+    assert isinstance(datamodule_cls.call_args.kwargs["cache_pool"], NoCachePool)
+
+
+def test_builder_builds_file_store_cache_pool_from_config(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    created = []
+    sentinel_pool = object()
+
+    def _fake_file_store_pool(*, parent_cache_dir, num_workers, max_cache_size_gbytes):
+        created.append((parent_cache_dir, num_workers, max_cache_size_gbytes))
+        return sentinel_pool
+
+    datamodule_cls = _capture_datamodule(monkeypatch)
+    monkeypatch.setattr("megatron.energon.FileStoreCachePool", _fake_file_store_pool)
+    config = _qwen_config(cache_dir=str(tmp_path), cache_num_workers=3, max_cache_size_gbytes=7.0)
+
+    EnergonDatasetBuilder(config).build(DatasetBuildContext(train_samples=1, valid_samples=1, test_samples=0))
+
+    assert created == [(Path(str(tmp_path)), 3, 7.0)]
+    assert datamodule_cls.call_args.kwargs["cache_pool"] is sentinel_pool
+
+
+@pytest.mark.parametrize(
+    ("overrides", "match"),
+    [
+        ({"cache_dir": "  "}, "cache_dir must be a non-empty string"),
+        ({"cache_dir": "/tmp/cache", "cache_num_workers": 0}, "cache_num_workers must be greater than 0"),
+        ({"cache_dir": "/tmp/cache", "max_cache_size_gbytes": 0}, "max_cache_size_gbytes must be greater than 0"),
+    ],
+)
+def test_cache_config_rejects_invalid_settings(overrides, match):
+    config = _qwen_config(**overrides)
+    with pytest.raises(ValueError, match=match):
+        config.validate()
+
+
+def test_cache_knobs_not_validated_while_cache_disabled():
+    config = _qwen_config(cache_num_workers=0, max_cache_size_gbytes=0)
+    config.validate()
