@@ -30,8 +30,12 @@ from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction
 
 pytestmark = pytest.mark.unit
 
-# GB300 perf recipes dispatch through NCCL EP (no HybridEP topology in their environment).
-_NCCLEP_RECIPES = {qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config}
+# The 256-GPU GB200 and GB300 perf recipes dispatch through NCCL EP (no HybridEP topology in their
+# environment); the 64-GPU full-iteration variants keep HybridEP.
+_NCCLEP_RECIPES = {
+    qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config,
+    qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
+}
 
 
 @pytest.fixture(autouse=True)

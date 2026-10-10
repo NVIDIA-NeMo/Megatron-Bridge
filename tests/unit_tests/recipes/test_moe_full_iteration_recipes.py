@@ -48,7 +48,7 @@ def _assert_full_iteration_hybridep(cfg: ConfigContainer) -> None:
     assert cfg.ddp.check_for_nan_in_grad is False
     assert cfg.rerun_state_machine.check_for_nan_in_loss is False
 
-    # GB300 recipes default to the NCCL EP dispatch stack; every other GPU keeps HybridEP.
+    # GB200 and GB300 recipes default to the NCCL EP dispatch stack; every other GPU keeps HybridEP.
     if cfg.model.moe_flex_dispatcher_backend == "ncclep":
         assert cfg.model.moe_use_grouped_tensor is True
         assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1

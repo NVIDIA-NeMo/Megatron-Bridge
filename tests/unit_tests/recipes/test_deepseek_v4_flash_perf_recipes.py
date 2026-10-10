@@ -26,6 +26,7 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
     deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config,
 )
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -55,7 +56,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.train.micro_batch_size == 1
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.moe_use_grouped_tensor is True
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
@@ -115,9 +117,8 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
 
 def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
@@ -130,6 +131,8 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.train.global_batch_size == 2048
     assert cfg.train.micro_batch_size == 2
     assert cfg.model.recompute_modules == ["mla_up_proj"]
+    # GB300 builds on the shared HybridEP base, not on the NCCL EP GB200 recipe.
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)

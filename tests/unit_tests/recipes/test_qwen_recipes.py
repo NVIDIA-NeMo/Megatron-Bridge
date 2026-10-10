@@ -27,6 +27,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -799,16 +800,25 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     assert perf_cfg.model.sequence_parallel == main_cfg.model.sequence_parallel
     assert perf_cfg.train.global_batch_size == main_cfg.train.global_batch_size
     assert perf_cfg.train.micro_batch_size == main_cfg.train.micro_batch_size
-    assert perf_cfg.model.moe_flex_dispatcher_backend == main_cfg.model.moe_flex_dispatcher_backend
     assert perf_cfg.model.moe_token_dispatcher_type == main_cfg.model.moe_token_dispatcher_type
     assert perf_cfg.model.moe_a2a_overlap == main_cfg.model.moe_a2a_overlap
     assert perf_cfg.comm_overlap == main_cfg.comm_overlap
-    assert perf_cfg.env_vars == main_cfg.env_vars
     assert perf_cfg.model.offload_modules == main_cfg.model.offload_modules == []
 
     # Benchmark-only policy remains outside the main recipe.
     assert main_cfg.model.moe_router_force_load_balancing is False
     assert perf_cfg.model.moe_router_force_load_balancing is True
+    # The benchmark dispatches through NCCL EP; the main recipe keeps HybridEP. Apart from the
+    # dispatcher topology settings, both declare the same process environment.
+    assert main_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert perf_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert perf_cfg.model.moe_use_grouped_tensor is True
+    assert main_cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert perf_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    dispatcher_env_names = HYBRID_EP_ENV_NAMES | {"NCCL_EP_HT_EM_PULL_PUSH"}
+    assert {name: value for name, value in perf_cfg.env_vars.items() if name not in dispatcher_env_names} == {
+        name: value for name, value in main_cfg.env_vars.items() if name not in dispatcher_env_names
+    }
     assert main_cfg.train.train_iters == 100
     assert perf_cfg.train.train_iters == 50
     assert main_cfg.train.global_batch_size == 512

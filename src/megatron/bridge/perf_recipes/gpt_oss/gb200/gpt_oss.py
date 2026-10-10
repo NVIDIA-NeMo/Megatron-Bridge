@@ -180,7 +180,7 @@ def gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× GB200, BF16, GBS=1280."""
+    """GPT-OSS 120B pretrain: 64× GB200, BF16, GBS=1280, NCCL EP."""
     cfg = gpt_oss_120b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.moe_router_fusion = True
@@ -201,6 +201,10 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
     _benchmark_common(cfg)
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -212,6 +216,8 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
+        # NCCL EP dispatcher mode.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,

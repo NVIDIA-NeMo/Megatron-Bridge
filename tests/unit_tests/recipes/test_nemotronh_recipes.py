@@ -26,6 +26,7 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.perf_recipes.environment import HYBRID_EP_ENV_NAMES
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -251,7 +252,6 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
         "context_parallel_size",
         "expert_tensor_parallel_size",
         "expert_model_parallel_size",
-        "moe_flex_dispatcher_backend",
         "moe_hybridep_num_sms",
         "moe_token_dispatcher_type",
         "moe_shared_expert_overlap",
@@ -270,7 +270,18 @@ def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration()
 
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
-    assert training_cfg.env_vars == benchmark_cfg.env_vars
+
+    # The GB200 benchmark dispatches through NCCL EP; the training recipe keeps HybridEP. Apart from the
+    # dispatcher topology settings, both declare the same process environment.
+    assert training_cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert benchmark_cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert benchmark_cfg.model.moe_use_grouped_tensor is True
+    assert training_cfg.env_vars.keys() >= HYBRID_EP_ENV_NAMES
+    assert benchmark_cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
+    dispatcher_env_names = HYBRID_EP_ENV_NAMES | {"NCCL_EP_HT_EM_PULL_PUSH"}
+    assert {name: value for name, value in training_cfg.env_vars.items() if name not in dispatcher_env_names} == {
+        name: value for name, value in benchmark_cfg.env_vars.items() if name not in dispatcher_env_names
+    }
 
     assert training_cfg.model.moe_router_force_load_balancing is False
     assert benchmark_cfg.model.moe_router_force_load_balancing is True
