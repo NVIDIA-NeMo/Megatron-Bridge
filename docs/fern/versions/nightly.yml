@@ -179,6 +179,10 @@ navigation:
       path: ./nightly/pages/models/sarvam/sarvam.mdx
     section: Sarvam
   - contents:
+    - page: Shensi
+      path: ./nightly/pages/models/shensi/shensi.mdx
+    section: Shensi
+  - contents:
     - page: Step-3.5-Flash
       path: ./nightly/pages/models/stepfun/step35.mdx
     section: StepFun
