@@ -46,9 +46,14 @@ items:
     status: unverified
     precision: bf16
     expected_result: >
-      A standalone forward comparison with HF has not been run. The pretrain
-      item separately checks real-data training forward execution; this does
-      not establish HF logit parity.
+      Full-checkpoint BF16 text-only forwards were compared across HF,
+      Bridge (TP4/EP4), and native vLLM, capturing all 48 layers and full-vocabulary
+      logits. The 64-token prompt passed last-position cosine >=0.99 with
+      matching argmax for all three pairs. The 128-token prompt containing
+      EOS failed that cosine gate for every pair despite matching final argmax:
+      HF/Bridge 0.986387, HF/vLLM 0.985372, Bridge/vLLM 0.985446.
+      Component isolation is ongoing; these results do not establish parity.
+      The pretrain item separately checks loaded-weight training health.
 
   inference:
     status: unverified
