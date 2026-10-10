@@ -77,8 +77,8 @@ the base mapping.
 YaRN needs no custom config. The `yarn_*` fields are declared on Bridge `TransformerConfig`, and the
 base mapping sets `position_embedding_type="yarn"` and the `yarn_*` fields from a `rope_scaling`
 dict whose type is `"yarn"`. Hugging Face YaRN configs often omit `beta_fast`, `beta_slow` and
-`truncate`; fill Hugging Face's defaults (32, 1 and `True`) when the mapping leaves them unset, as
-Qwen3 does.
+`truncate`; check that the mapped config carries Hugging Face's defaults (32, 1 and `True`) for
+them. Megatron Core passes `None` through to its YaRN embedding and fails at model construction.
 
 ### When you need a custom config class
 
