@@ -150,6 +150,7 @@ def _nemotron_labs_diffusion_common(
     eval_interval: int = 500,
     save_interval: int = 500,
     load_hf_checkpoint: str | None = None,
+    trust_remote_code: bool = False,
     # Precision recipe
     precision_config: MixedPrecisionConfig | str | None = "bf16_mixed",
     comm_overlap_config: CommOverlapConfig | None = None,
@@ -189,6 +190,10 @@ def _nemotron_labs_diffusion_common(
         lr_warmup_fraction (Optional[float]): Fraction of train_iters for warmup (WSD only).
         lr_wsd_decay_iters (Optional[int]): Number of decay iterations for WSD scheduler.
         tokenizer_model (Optional[str]): HuggingFace tokenizer model ID. If None, uses NullTokenizer.
+        trust_remote_code (bool): Allow executing the checkpoint's custom modeling code from the HF
+            repo when loading ``hf_path``. Required for the Nemotron Labs diffusion checkpoint's
+            NemotronLabsDiffusionForCausalLM, but must be enabled explicitly by the caller;
+            defaults to False for security.
         precision_config (Optional[Union[MixedPrecisionConfig, str]]): Precision configuration for the model.
         comm_overlap_config (Optional[CommOverlapConfig]): Communication overlap configuration.
 
@@ -204,7 +209,12 @@ def _nemotron_labs_diffusion_common(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
     if hf_path is not None:
-        hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
+        # The Nemotron Labs diffusion checkpoint uses custom modeling code
+        # (NemotronLabsDiffusionForCausalLM) not shipped with transformers, so loading it
+        # requires trust_remote_code=True, which executes code from the HF repo. For
+        # security this is NOT hardcoded -- the caller must opt in explicitly by passing
+        # trust_remote_code=True (defaults to False).
+        hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
         bridge = NemotronLabsDiffusionBridge()
         model_cfg = bridge.provider_bridge(hf_pretrained)
         model_cfg.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head
