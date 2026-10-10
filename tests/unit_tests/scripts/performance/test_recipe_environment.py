@@ -1586,3 +1586,73 @@ def test_bootstrap_exports_model_recipe_environment_before_exec(monkeypatch):
     assert calls[0] == ("environment", effective_recipe)
     assert calls[1][0] == "exec"
     assert calls[1][2][1].endswith("run_recipe.py")
+
+
+def test_complete_library_recipe_name_is_not_suffixed(monkeypatch):
+    """CI can select a hardware-specific library recipe without renaming it."""
+    from megatron.bridge.recipes.common import _sft_common
+
+    recipe = _sft_common()
+    name = "qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config"
+    module = SimpleNamespace(**{name: lambda: recipe})
+    monkeypatch.setattr(utils.importlib, "import_module", lambda _: module)
+    result = utils.build_recipe_config("qwen", name, "sft", "ci-test")
+    assert result is recipe
+    assert result.logger.wandb_exp_name == "ci-test"
+
+
+@pytest.mark.parametrize("dataset_kind", ["text", "energon"])
+def test_recipe_data_keeps_native_packing_tokenizer_and_schedule(dataset_kind):
+    """A 100-step CI run must not replace SFT inputs or compress the LR schedule."""
+    from argument_parser import parse_cli_args
+
+    from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
+    from megatron.bridge.recipes.common import _sft_common
+    from megatron.bridge.recipes.utils.dataset_utils import default_coderforge_config
+
+    args = parse_cli_args().parse_args(
+        [
+            "--model_family_name",
+            "qwen",
+            "--model_recipe_name",
+            "test_config",
+            "--num_gpus",
+            "16",
+            "--gpu",
+            "gb200",
+            "--task",
+            "sft",
+            "--use_recipes",
+            "--data",
+            "recipe",
+            "--max_steps",
+            "100",
+            "--warmup_iters",
+            "200",
+        ]
+    )
+    cfg = _sft_common()
+    cfg.dataset = (
+        EnergonDatasetConfig(
+            seq_length=131072,
+            micro_batch_size=1,
+            packing_buffer_size=64,
+            task_encoder=QwenVLEnergonTaskEncoderConfig(hf_processor_path="test-model"),
+        )
+        if dataset_kind == "energon"
+        else default_coderforge_config(seq_length=131072, enable_offline_packing=True)
+    )
+    dataset, tokenizer = cfg.dataset, cfg.tokenizer
+    cfg.scheduler.lr_decay_iters = 300000
+    cfg.validation.eval_interval = 50
+    cfg.validation.eval_iters = 8
+    result = run_recipe._apply_training_argparse_overrides(cfg, args)
+    assert result.dataset is dataset
+    assert result.tokenizer is tokenizer
+    assert result.train.train_iters == 100
+    assert result.scheduler.lr_warmup_iters == 200
+    assert result.scheduler.lr_decay_iters == 300000
+    assert result.validation.eval_interval == 50
+    assert result.validation.eval_iters == 8
+    assert result.train.eval_iters is None
+    assert result.train.eval_interval is None

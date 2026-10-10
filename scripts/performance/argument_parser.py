@@ -330,8 +330,8 @@ def parse_cli_args():
         "--data",
         type=str,
         default="mock",
-        choices=["mock", "rp2", "squad", "squad_packed", "c4"],
-        help="Dataset type to use",
+        choices=["mock", "rp2", "squad", "squad_packed", "c4", "recipe"],
+        help="Dataset type to use; recipe preserves the library recipe dataset",
     )
     data_args.add_argument(
         "--c4_root",

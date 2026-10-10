@@ -890,7 +890,9 @@ def build_recipe_config(model_family_name: str, model_recipe_name: str, train_ta
     family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
 
-    if model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":
+    if model_recipe_name.endswith("_config"):
+        pass  # Complete exported recipe names already identify task, hardware, and precision.
+    elif model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":
         model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
     elif train_task == "peft":
         model_recipe_name = f"{model_recipe_name}_peft_config"

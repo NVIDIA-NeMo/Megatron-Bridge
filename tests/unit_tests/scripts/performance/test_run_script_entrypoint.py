@@ -286,3 +286,23 @@ def test_run_recipe_defers_training_framework_imports():
 
     assert "torch" not in top_level_imports
     assert not any(module.startswith("megatron.bridge") for module in top_level_imports)
+
+
+@pytest.mark.parametrize("domain", ["llm", "vlm"])
+def test_library_sft_dispatches_the_selected_domain(monkeypatch, domain):
+    """VL CI recipes must reach the image-aware training step."""
+    import importlib
+
+    from megatron.bridge.training.gpt_step import forward_step as gpt_step
+    from megatron.bridge.training.vlm_step import forward_step as vlm_step
+
+    cfg = object()
+    calls = []
+    monkeypatch.setattr(run_recipe, "_prepare_recipe", lambda *_args, **_kwargs: cfg)
+    common = importlib.import_module("megatron.bridge.utils.common_utils")
+    finetune_module = importlib.import_module("megatron.bridge.training.finetune")
+    monkeypatch.setattr(common, "get_rank_safe", lambda: 1)
+    monkeypatch.setattr(finetune_module, "finetune", lambda **kwargs: calls.append(kwargs))
+    args = SimpleNamespace(dryrun=False, task="sft", model_family_name="qwen_vl", domain=domain)
+    run_recipe._run_training(args, [])
+    assert calls == [{"config": cfg, "forward_step_func": vlm_step if domain == "vlm" else gpt_step}]

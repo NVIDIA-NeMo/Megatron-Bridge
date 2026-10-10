@@ -69,7 +69,7 @@ def _apply_training_argparse_overrides(config, args):
         config.optimizer.min_lr = args.min_lr
 
     # Scheduler configuration
-    if args.warmup_iters:
+    if args.warmup_iters is not None:
         config.scheduler.lr_warmup_iters = args.warmup_iters
 
     # Checkpoint configuration
@@ -95,7 +95,9 @@ def _apply_training_argparse_overrides(config, args):
         pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
 
         # Create dataset configuration based on type
-        if args.data == "mock":
+        if args.data == "recipe":
+            pass  # Preserve dataset type, native packing, and pinned source metadata.
+        elif args.data == "mock":
             config.dataset = create_mock_dataset_config(seq_length=args.seq_length or 8192)
         elif args.data == "rp2":
             if not args.dataset_paths or not args.index_mapping_dir:
@@ -196,6 +198,8 @@ def _apply_training_argparse_overrides(config, args):
         config.checkpoint.save_interval = args.save_interval or 1000
 
     # Validation configuration for convergence
+    if args.data == "recipe":
+        return config  # Keep the recipe validation cadence and LR horizon.
     if args.max_steps <= 100:
         config.train.eval_interval = args.max_steps
         config.train.eval_iters = 0  # Disable evaluation for short convergence runs
@@ -312,6 +316,8 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
         if args.model_family_name in DIFFUSION_FAMILIES:
             forward_step = _get_diffusion_step(args.model_family_name)
+        elif args.domain == "vlm":
+            from megatron.bridge.training.vlm_step import forward_step
         else:
             from megatron.bridge.training.gpt_step import forward_step
 
@@ -322,6 +328,8 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
         if args.model_family_name in DIFFUSION_FAMILIES:
             forward_step = _get_diffusion_step(args.model_family_name)
+        elif args.domain == "vlm":
+            from megatron.bridge.training.vlm_step import forward_step
         else:
             from megatron.bridge.training.gpt_step import forward_step
 
