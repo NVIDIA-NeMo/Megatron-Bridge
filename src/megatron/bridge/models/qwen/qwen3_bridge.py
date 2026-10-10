@@ -59,14 +59,8 @@ class Qwen3Bridge(MegatronModelBridge):
             rope_scaling=False,
             rope_scaling_factor=1.0,
         )
-        # The shared mapping already selects "yarn" for YaRN-scaled checkpoints.
+        # The shared mapping already selects "yarn" and its Hugging Face defaults for YaRN-scaled checkpoints.
         config_kwargs.setdefault("position_embedding_type", "rope")
-        if config_kwargs["position_embedding_type"] == "yarn":
-            # Qwen3 YaRN configs usually omit these keys; apply the Hugging Face defaults
-            # instead of passing None to Megatron Core.
-            config_kwargs.setdefault("yarn_beta_fast", 32.0)
-            config_kwargs.setdefault("yarn_beta_slow", 1.0)
-            config_kwargs.setdefault("yarn_correction_range_round_to_int", True)
         return config_kwargs
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
