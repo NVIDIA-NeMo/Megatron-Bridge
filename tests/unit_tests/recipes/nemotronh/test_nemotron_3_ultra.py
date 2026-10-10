@@ -26,7 +26,9 @@ from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
+    _split_hybrid_layer_pattern,
     nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config,
+    nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_TOKENIZER_NAME,
@@ -37,11 +39,18 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
+# Nemotron 3 Ultra's 108-layer decoder pattern from the Hugging Face config.
+ULTRA_HYBRID_LAYER_PATTERN = (
+    "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+)
+
+
 class _FakeUltraProvider:
     """Fake model provider for testing recipe field overrides without HF Hub I/O."""
 
     def __init__(self) -> None:
         self.vocab_size = 256
+        self.hybrid_layer_pattern = ULTRA_HYBRID_LAYER_PATTERN
 
     def finalize(self) -> None:
         return None
@@ -216,12 +225,25 @@ def test_vr200_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
 
 
 @pytest.mark.unit
-def test_openmath_sft_uses_initial_parallelism_values() -> None:
+def test_openmath_sft_recipe_name_matches_its_384gpu_layout() -> None:
+    assert recipes.nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config is (
+        nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config
+    )
+    assert nemotron_3_ultra_sft_openmathinstruct2_packed_config is (
+        nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config
+    )
+    assert not hasattr(recipes, "nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config")
+
+
+@pytest.mark.unit
+def test_openmath_sft_uses_48_node_layout() -> None:
     cfg = nemotron_3_ultra_sft_openmathinstruct2_packed_config()
 
     assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 6
-    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.pipeline_model_parallel_size == 12
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.sequence_parallel is True
@@ -229,7 +251,52 @@ def test_openmath_sft_uses_initial_parallelism_values() -> None:
     assert cfg.model.recompute_granularity == "selective"
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
-    assert cfg.model.recompute_modules == ["moe", "layernorm", "core_attn", "moe_act"]
+    assert cfg.model.recompute_modules == ["moe", "core_attn", "moe_act"]
+    stages = cfg.model.hybrid_layer_pattern.split("|")
+    assert [len(stage) for stage in stages] == [9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 11, 5]
+    assert "".join(stages) == ULTRA_HYBRID_LAYER_PATTERN
+    # A recomputed TE norm as a stage's first backward op fails on TE >= 2.18 (invalid device context).
+    assert "layernorm" not in cfg.model.recompute_modules
+    assert cfg.dist.distributed_timeout_minutes == 90
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
+    # cuDNN norms avoid TE's NVRTC norm path and its first-backward "invalid device context" failure.
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+
+    # 48 nodes x 8 GPUs: dense DP 16 keeps 8 microbatches per step, and expert DP 2 shards expert optimizer state.
+    world_size = 384
+    model = cfg.model
+    data_parallel_size = world_size // (
+        model.tensor_model_parallel_size * model.pipeline_model_parallel_size * model.context_parallel_size
+    )
+    expert_data_parallel_size = world_size // (
+        model.pipeline_model_parallel_size * model.expert_model_parallel_size * model.expert_tensor_parallel_size
+    )
+    assert data_parallel_size == 16
+    assert expert_data_parallel_size == 2
+    assert cfg.train.global_batch_size % (cfg.train.micro_batch_size * data_parallel_size) == 0
+
+
+@pytest.mark.unit
+def test_openmath_sft_layout_change_keeps_training_contract() -> None:
+    cfg = nemotron_3_ultra_sft_openmathinstruct2_packed_config()
+
+    assert cfg.train.global_batch_size == 128
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.seq_length == 4096
+    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.optimizer.lr == 5e-6
+    assert cfg.optimizer.min_lr == 5e-7
+    assert cfg.optimizer.adam_beta1 == 0.9
+    assert cfg.optimizer.adam_beta2 == 0.98
+    assert cfg.optimizer.adam_eps == 1e-8
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.scheduler.lr_decay_style == "cosine"
+    assert cfg.scheduler.lr_warmup_iters == 250
+    assert cfg.scheduler.lr_decay_iters == 1000
+    assert cfg.rng.seed == 5678
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.use_distributed_optimizer is True
 
     assert cfg.train.train_iters == 1000
     assert cfg.train.global_batch_size == 128
@@ -284,4 +351,16 @@ def test_openmath_sft_recompute_modules_are_not_shared() -> None:
     cfg.model.recompute_modules.append("sentinel")
 
     fresh_cfg = nemotron_3_ultra_sft_openmathinstruct2_packed_config()
-    assert fresh_cfg.model.recompute_modules == ["moe", "layernorm", "core_attn", "moe_act"]
+    assert fresh_cfg.model.recompute_modules == ["moe", "core_attn", "moe_act"]
+
+
+@pytest.mark.unit
+def test_split_hybrid_layer_pattern_keeps_mtp_suffix() -> None:
+    assert _split_hybrid_layer_pattern("MEM*E/*E", (2, 3)) == "ME|M*E/*E"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("pattern", "layers_per_stage"), [("MEM*E", (2, 2)), ("ME|M*E", (2, 3)), ("MEM*E", (5, 0))])
+def test_split_hybrid_layer_pattern_rejects_mismatched_stages(pattern: str, layers_per_stage: tuple[int, ...]) -> None:
+    with pytest.raises(ValueError, match="Cannot split"):
+        _split_hybrid_layer_pattern(pattern, layers_per_stage)

@@ -91,13 +91,14 @@ if [ -z "$PAD_SEQ_TO_MULT" ]; then
     fi
 fi
 
-RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-full}
-RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-uniform}
+# Leave these empty to use the recipe's selective recompute; set them to override it.
+RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-}
+RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-}
 if [ -z "${RECOMPUTE_MODULES+x}" ]; then
     RECOMPUTE_MODULES=""
 fi
-RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS:-1}
-RECOMPUTE_TAG=${RECOMPUTE_TAG:-recompute_full_uniform1}
+RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS:-}
+RECOMPUTE_TAG=${RECOMPUTE_TAG:-recompute_${RECOMPUTE_GRANULARITY:-recipe}}
 
 WANDB_ENTITY=${WANDB_ENTITY:-nvidia-nemo-fw-public}
 WANDB_PROJECT=${WANDB_PROJECT:-megatron-bridge-nemotron-ultra}
@@ -171,9 +172,11 @@ CLI_OVERRIDES="\
     dataset.seq_length=${SEQ_LENGTH} \
     dataset.offline_packing_specs.packed_sequence_size=${SEQ_LENGTH} \
     dataset.offline_packing_specs.pad_seq_to_mult=${PAD_SEQ_TO_MULT} \
-    model.recompute_granularity=${RECOMPUTE_GRANULARITY} \
     dist.distributed_timeout_minutes=90"
 
+if [ -n "$RECOMPUTE_GRANULARITY" ]; then
+    CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_granularity=${RECOMPUTE_GRANULARITY}"
+fi
 if [ -n "$RECOMPUTE_METHOD" ]; then
     CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_method=${RECOMPUTE_METHOD}"
 fi
@@ -205,7 +208,7 @@ echo "GPUs/node: ${GPUS_PER_NODE}"
 echo "Recipe: ${RECIPE_NAME}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
 echo "Packed pad_seq_to_mult: ${PAD_SEQ_TO_MULT}"
-echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
+echo "Recompute: ${RECOMPUTE_GRANULARITY:-recipe default} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"
 echo "======================================"
