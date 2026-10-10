@@ -54,7 +54,8 @@ def test_container_startup_cannot_override_gcp_test_environment(
         "python3 - <<'PROBE'\n"
         "import json, os\n"
         "from pathlib import Path\n"
-        "names = ('NCCL_ENV_PLUGIN', 'NCCL_NET_PLUGIN', 'NCCL_PROFILER_PLUGIN', 'NCCL_NET', 'STARTUP_WAS_RUN')\n"
+        "names = ('NCCL_ENV_PLUGIN', 'NCCL_NET_PLUGIN', 'NCCL_PROFILER_PLUGIN', 'NCCL_NET', 'STARTUP_WAS_RUN', "
+        "'NVTE_FLASH_ATTN_V2', 'NVTE_FLASH_ATTN_V3', 'NVTE_FLASH_ATTN_V4')\n"
         "Path('observed.json').write_text(json.dumps({key: os.environ.get(key) for key in names}))\n"
         "PROBE\n"
         f"exit {test_exit_code}\n"
@@ -65,6 +66,9 @@ def test_container_startup_cannot_override_gcp_test_environment(
         "BASH_ENV": str(startup),
         "GITHUB_OUTPUT": str(tmp_path / "github-output"),
         "NCCL_NET": "inherited-network",
+        "NVTE_FLASH_ATTN_V2": "0",
+        "NVTE_FLASH_ATTN_V3": "1",
+        "NVTE_FLASH_ATTN_V4": "1",
     }
     subprocess.run(["bash", "-c", create], cwd=tmp_path, env=env, check=True, capture_output=True, text=True)
     result = subprocess.run(["bash", "job.sh"], cwd=tmp_path, env=env, capture_output=True, text=True)
@@ -77,4 +81,7 @@ def test_container_startup_cannot_override_gcp_test_environment(
         "NCCL_PROFILER_PLUGIN": plugin,
         "NCCL_NET": "Socket" if "gcp" in runner else "inherited-network",
         "STARTUP_WAS_RUN": "yes",
+        "NVTE_FLASH_ATTN_V2": "1",
+        "NVTE_FLASH_ATTN_V3": "0",
+        "NVTE_FLASH_ATTN_V4": "0",
     }
