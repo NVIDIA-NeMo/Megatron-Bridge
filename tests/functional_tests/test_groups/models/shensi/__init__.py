@@ -1,0 +1,105 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Shensi provider / conversion tests shared fixtures.
+
+The tiny geometry below keeps every structural feature on (indexed and linear attention, dense
+and latent-MoE layers, hyper-connections, attention-residual blocks) while staying small enough
+for CPU-side conversion tests.
+"""
+
+import torch
+from transformers import ShensiConfig
+
+
+TINY_SHENSI_CONFIG = {
+    "architectures": ["ShensiForCausalLM"],
+    "attention_bias": False,
+    "attention_dropout": 0.0,
+    "attn_res_block_size": 2,
+    "attn_res_block_summary_rank": 16,
+    "attn_res_rank": 8,
+    "bos_token_id": 0,
+    "deepemb_kv_rank": 8,
+    "deepemb_rank": 4,
+    "eos_token_id": 1,
+    "erc_loss_alpha": 0.5,
+    "erc_loss_coef": 1.0,
+    "first_k_dense_replace": 2,
+    "hc_active_streams": 2,
+    "hc_adapter_rank": 4,
+    "hc_conv_kernels": [4, 8, 12],
+    "hc_eps": 1e-06,
+    "hc_fixed_streams": 1,
+    "hc_mult": 4,
+    "hc_stream_rank": 16,
+    "head_dim": 32,
+    "hidden_act": "silu",
+    "hidden_size": 64,
+    "index_block_size": 4,
+    "index_block_topk": 2,
+    "index_head_dim": 16,
+    "index_k_size": 4,
+    "index_n_heads": 2,
+    "index_topk_tokens": 8,
+    "initializer_range": 0.02,
+    "latent_size": 16,
+    "linear_conv_kernel_dim": 4,
+    "linear_head_dim": 8,
+    "linear_lower_bound": -5.0,
+    "linear_num_heads": 4,
+    "max_position_embeddings": 64,
+    "mlp_bias": False,
+    "mlp_layer_types": ["dense", "dense", "sparse", "sparse"],
+    "moe_intermediate_size": 16,
+    "n_routed_experts": 4,
+    "norm_topk_prob": True,
+    "num_attention_heads": 4,
+    "num_experts_per_tok": 2,
+    "num_hidden_layers": 4,
+    "num_key_value_heads": 1,
+    "output_router_logits": False,
+    "q_lora_rank": 32,
+    "qk_nope_head_dim": 32,
+    "qk_rope_head_dim": 0,
+    "rms_norm_eps": 1e-06,
+    "rosa_embed_dim": 64,
+    "rosa_layer_ids": [],
+    "routed_scaling_factor": 1.5,
+    "router_aux_loss_coef": 0.001,
+    "scoring_func": "sqrtsoftplus",
+    "swiglu_limit": 10.0,
+    "tie_word_embeddings": True,
+    "v_head_dim": 32,
+    "vocab_size": 128,
+}
+
+
+def make_tiny_config() -> ShensiConfig:
+    """Shensi config for the tiny geometry (float32 keeps CPU-side tests fast)."""
+    return ShensiConfig(**TINY_SHENSI_CONFIG)
+
+
+def make_tiny_hf_model(mtp_layers: int = 0):
+    """Build a randomly initialised tiny HF model to convert from."""
+    from transformers import ShensiForCausalLM
+
+    cfg_dict = dict(TINY_SHENSI_CONFIG)
+    cfg_dict["num_mtp_layers"] = mtp_layers
+    model = ShensiForCausalLM(ShensiConfig(**cfg_dict))
+    torch.manual_seed(0)
+    with torch.no_grad():
+        for param in model.parameters():
+            param.normal_(0.0, 0.02)
+    return model
