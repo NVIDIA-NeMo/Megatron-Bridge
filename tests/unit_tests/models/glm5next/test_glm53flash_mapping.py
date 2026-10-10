@@ -102,7 +102,7 @@ def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
     assert provider.layernorm_epsilon == 1e-5
     assert provider.mla_proj_disable_quantization
     assert provider.dsa_indexer_k_norm_epsilon == 1e-6
-    assert provider.dsa_indexer_qk_proj_disable_quantization
+    assert not provider.dsa_indexer_qk_proj_use_quantization
     assert provider.dsa_indexer_kpool_use_quantization
     assert not provider.dsa_indexer_weights_proj_use_quantization
     assert provider.dsa_indexer_weights_proj_output_dtype == "fp32"
