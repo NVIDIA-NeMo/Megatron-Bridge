@@ -30,6 +30,7 @@ from megatron.core.utils import get_pg_rank, unwrap_model
 from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
+    MambaInProjMapping,
     ReplicatedMapping,
     RowParallelMapping,
     _split_gdn_grouped_to_separate,
@@ -741,6 +742,10 @@ class MegatronPeftBridge:
             if base_linear_is_parallel:
                 linear_in_mapping_cls = RowParallelMapping if input_is_parallel else ColumnParallelMapping
                 linear_out_mapping_cls = ColumnParallelMapping
+                base_mapping = mapping_registry.megatron_to_hf_lookup(f"{global_base_prefix}{base_suffix}")
+                if isinstance(base_mapping, MambaInProjMapping):
+                    # linear_out rows share the base's per-rank z|x|B|C|dt layout; gather per component.
+                    linear_out_mapping_cls = MambaInProjMapping
             else:
                 linear_in_mapping_cls = ReplicatedMapping
                 linear_out_mapping_cls = ReplicatedMapping

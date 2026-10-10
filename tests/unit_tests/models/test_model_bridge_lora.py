@@ -31,6 +31,8 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
+    MambaInProjMapping,
+    MegatronParamMapping,
     RowParallelMapping,
     _fuse_gdn_separate_to_grouped,
     merge_gdn_linear_weights,
@@ -908,6 +910,61 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     assert task.adapter_key is None
     assert task.linear_in_task.param_weight.shape == torch.Size([2, 2])
     assert task.linear_out_task.param_weight.shape == torch.Size([2, 2])
+
+
+def test_mamba_in_proj_adapter_linear_out_is_gathered_per_component(monkeypatch):
+    """lora_B of a TP-sharded Mamba in_proj must follow the base's z|x|B|C|dt layout."""
+    bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
+
+    adapters_info = [
+        (
+            "decoder.layers.0.mixer.in_proj.adapter",
+            "decoder.layers.0.mixer.in_proj",
+            False,
+            True,
+            False,
+            4,
+            8,
+            0,
+            0,
+        )
+    ]
+    # d_inner=4, d_ssm=2, nheads=4 -> 16 rows; per TP rank (TP=2): z2 x2 B1 C1 dt2 = 8 rows.
+    config = SimpleNamespace(mamba_num_heads=4, mamba_head_dim=1, mamba_state_dim=1, mamba_num_groups=2)
+    local_linear_out = torch.arange(8, dtype=torch.float32).unsqueeze(1).repeat(1, 2)
+    adapter = SimpleNamespace(
+        linear_in=SimpleNamespace(weight=torch.ones(2, 3)),
+        linear_out=SimpleNamespace(weight=local_linear_out, config=config),
+    )
+
+    monkeypatch.setattr(bridge, "_megatron_global_adapters_info_all_pp_ranks", lambda *_: adapters_info)
+    monkeypatch.setattr(bridge, "_get_adapter_wrap_module", lambda *_: (adapter, None))
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.parallel_state.get_pipeline_model_parallel_rank",
+        lambda: 0,
+    )
+    registry = MegatronMappingRegistry(
+        MambaInProjMapping(
+            megatron_param="decoder.layers.*.mixer.in_proj.weight",
+            hf_param="backbone.layers.*.mixer.in_proj.weight",
+        )
+    )
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: registry)
+
+    # Fake TP=2: rank 1 holds the same local layout as rank 0, offset by 100.
+    monkeypatch.setattr(MegatronParamMapping, "tp_size", property(lambda self: 2))
+    monkeypatch.setattr(MegatronParamMapping, "broadcast_from_pp_rank", lambda self, tensor, cache_key=None: tensor)
+    monkeypatch.setattr(MegatronParamMapping, "broadcast_obj_from_pp_rank", lambda self, obj, cache_key=None: obj)
+    monkeypatch.setattr(MegatronParamMapping, "gather_from_tp_ranks", lambda self, tensor: [tensor, tensor + 100])
+
+    tasks = bridge.build_adapter_conversion_tasks([Mock()])["decoder.layers.0.mixer.in_proj"]
+    linear_out = bridge.materialize_adapter_weights(tasks)[0].linear_out_weight.weight
+
+    rank0_components = torch.split(local_linear_out, [2, 2, 1, 1, 2], dim=0)
+    expected = torch.cat([torch.cat([c, c + 100], dim=0) for c in rank0_components], dim=0)
+    torch.testing.assert_close(linear_out, expected)
 
 
 def test_build_adapter_conversion_tasks_excludes_base_prefix_before_mapping(monkeypatch):
