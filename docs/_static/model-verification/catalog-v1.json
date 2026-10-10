@@ -4818,7 +4818,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "44f3031a2e77ff455eb128efbaa19322ad6397a6",
+          "bridge_commit": "ffeb5a7ae817a5a6ccfa3850d7dee937faad7f0b",
           "command_topologies": [
             {
               "gpus_per_node": "8",
@@ -4837,15 +4837,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-super-120b-a12b-sft-long-context-h100",
-          "expected_result": "On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly ten packed 32K SFT steps with pad-4 alignment, full recompute, and full optimizer CPU offload. Loss is finite from 1.168852 to 1.008992 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, the resolved configuration is persisted, and the final model-only checkpoint saves successfully.\n",
+          "expected_result": "On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly ten packed 32K SFT steps with pad-4 alignment, full recompute, and full optimizer CPU offload. Loss is finite from 1.168852 to 1.011637 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, the resolved configuration is persisted, and the final model-only checkpoint saves successfully.\n",
           "hardware": "H100",
-          "last_verified": "2026-07-24",
+          "last_verified": "2026-10-08",
           "metrics": {
-            "final_loss": 1.008992,
+            "final_loss": 1.011637,
             "initial_loss": 1.168852,
-            "last_10_steps_model_tflops_per_gpu_avg": 5.58,
-            "last_10_steps_step_time_ms_avg": 132859.58,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 30.83
+            "last_10_steps_model_tflops_per_gpu_avg": 6.89,
+            "last_10_steps_step_time_ms_avg": 123114.4,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 33.27
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",
