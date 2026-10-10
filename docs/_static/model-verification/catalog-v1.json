@@ -1927,28 +1927,31 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "bd56432512613a88ceae9ecb05654b63955f6dcb",
+          "bridge_commit": "766f7106e6502f71f799706a1dd874644eadb9ef",
           "command_topologies": [
             {
               "expert_parallel": "16",
               "expert_tensor_parallel": "1",
+              "gpus_per_node": "8",
+              "nodes": "6",
               "pipeline_parallel": "3",
-              "tensor_parallel": "1"
+              "tensor_parallel": "1",
+              "total_gpus": 48
             }
           ],
           "commands": [
-            "uv run python scripts/inference/text_generation.py --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000 --prompt \"\ub300\ud55c\ubbfc\uad6d\uc758 \uc218\ub3c4\ub294\" --max_new_tokens 16 --temperature 0 --top_k 1 --termination-id -1 --tp 1 --pp 3 --ep 16 --etp 1 --dtype bf16 --max_seq_length 128 --max_batch_size 1 --use-coordinator --inference-moe-token-dispatcher-type nccl --distributed-timeout-minutes 180"
+            "./scripts/inference/infer.sh --nodes 6 --gpus-per-node 8 --task text-generation --hf-model-path LGAI-EXAONE/K-EXAONE-2.0-750B-A37B --megatron-model-path work/model-verification/k-exaone-2/imported-megatron/iter_0000000 --prompt \"\ub300\ud55c\ubbfc\uad6d\uc758 \uc218\ub3c4\ub294\" --max_new_tokens 16 --temperature 0 --top_k 1 --termination-id -1 --tp 1 --pp 3 --ep 16 --etp 1 --dtype bf16 --max_seq_length 128 --max_batch_size 1 --use-coordinator --inference-moe-token-dispatcher-type nccl --distributed-timeout-minutes 180"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "k-exaone-2-inference",
-          "expected_result": "Generates an exact 16-token result. Literal completion: '?\n\nAnswer: Seoul\n\nWhat is the most pop song in the world?\n\nAnswer: \"'",
+          "expected_result": "The command is a pending 6-node, 8-GPU-per-node verification candidate\nusing the card's default Bridge revision and the imported checkpoint.\nThis layout matches the documented 48-H100 import allocation; it does\nnot claim to recover the historical inference launcher. Validate the\ncomplete model, deterministic completion, and reachable source provenance\nbefore recording a new verification commit and date.\nHistorical evidence from 2026-07-31 at Bridge\nbd56432512613a88ceae9ecb05654b63955f6dcb reported exactly 16 new tokens.\nThat revision could not be retrieved from the public upstream repository,\nand the recorded worker command omitted its launcher, so the old result\ndoes not verify the candidate.\nHistorical result: generates an exact 16-token result. Literal completion: '?\n\nAnswer: Seoul\n\nWhat is the most pop song in the world?\n\nAnswer: \"'",
           "hardware": null,
-          "last_verified": "2026-07-31",
+          "last_verified": null,
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.inference",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "inference"
         },
@@ -2092,7 +2095,7 @@
       "min_transformers_version": "5.9.0",
       "slug": "k-exaone-2",
       "source_card": "examples/model_verification_cards/k-exaone-2/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining, full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export, training, export-after-SFT, long-context SFT, and checkpoint resume remain unverified. A complete 750B GPU import from a clean commit persisted and reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A 2-GPU structural MoE/MTP proxy also completed three finite optimizer steps and saved checkpoints, but does not substitute for a full-model training item. A memory-bounded reference forward processed all 78 Hugging Face decoder layers for a Korean prompt; Megatron matched its next token with 0.999993 cosine similarity. Complete-model deterministic inference generated and independently confirmed exactly 16 new tokens. The implementation fixes are committed; GPU export remains unverified pending its own clean-commit rerun and exact audit.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. K-EXAONE 2.0 750B-A37B has public H100 recipes for pretraining, full SFT, and PEFT in this Bridge revision. CPU conversion, GPU export, training, export-after-SFT, long-context SFT, and checkpoint resume remain unverified. A complete 750B GPU import from a clean commit persisted and reloaded successfully, and a full 59,396-tensor audit is bitwise exact. A 2-GPU structural MoE/MTP proxy also completed three finite optimizer steps and saved checkpoints, but does not substitute for a full-model training item. A memory-bounded reference forward processed all 78 Hugging Face decoder layers for a Korean prompt; Megatron matched its next token with 0.999993 cosine similarity. Historical complete-model deterministic inference generated and independently confirmed exactly 16 new tokens, but the portable inference launcher still requires verification. The implementation fixes are committed; GPU export remains unverified pending its own clean-commit rerun and exact audit.\n",
       "title": "k_exaone_2_750b_a37b"
     },
     {
@@ -2786,10 +2789,10 @@
     {
       "architecture": "KimiK3ForConditionalGeneration",
       "base_container": "nvcr.io/nvidia/nemo:26.06",
-      "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+      "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
       "entries": [
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2835,7 +2838,7 @@
           "workflow": "hf_to_megatron_gpu"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2852,7 +2855,7 @@
           "workflow": "megatron_to_hf_cpu"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2869,7 +2872,7 @@
           "workflow": "megatron_to_hf_gpu"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2886,33 +2889,36 @@
           "workflow": "manual_forward_pass"
         },
         {
-          "bridge_commit": "eb91f8be86e5f88771bfa020b33cd74dd3de80ad",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [
             {
               "expert_parallel": "8",
               "expert_tensor_parallel": "1",
+              "gpus_per_node": "3",
+              "nodes": "8",
               "pipeline_parallel": "3",
-              "tensor_parallel": "1"
+              "tensor_parallel": "1",
+              "total_gpus": 24
             }
           ],
           "commands": [
-            "uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path moonshotai/Kimi-K3 --trust-remote-code --apply-chat-template --thinking-mode disabled --prompt \"What is 15% of 240? Answer in one short sentence.\" --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1"
+            "./scripts/inference/infer.sh --nodes 8 --gpus-per-node 3 --task legacy-full-prefix-generation --legacy-full-prefix --hf_model_path moonshotai/Kimi-K3 --trust-remote-code --hf-revision 9f62e4e9fffbd0a83ddd60e1c209d828994b3569 --apply-chat-template --thinking-mode disabled --prompt \"What is 15% of 240? Answer in one short sentence.\" --max_new_tokens 32 --tp 1 --pp 3 --ep 8 --etp 1"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "kimi-k3-inference",
-          "expected_result": "On 24x GB300, the pinned complete language backbone imports directly into Megatron at TP1/PP3/EP8/ETP1. The command exits successfully in 22:59 after exactly 32 new greedy tokens and prints this completion, represented with JSON Unicode escapes for the model control-token brackets: \"15% of 240 = 0.15 \u00d7 240 = 36.\\u003c|close|\\u003ethink\\u003c|sep|\\u003e\\u003c|open|\\u003eresponse\\u003c|sep|\\u003e15% of 240 is 36.\".",
+          "expected_result": "The command is a pending 8-node, 3-GPU-per-node verification candidate using the card's default Bridge revision. It explicitly selects slow full-prefix decoding; the historical run used a static inference context. Validate the complete pinned language backbone and deterministic completion before recording a new verification commit and date. Historical evidence from 2026-07-27 at Bridge eb91f8be86e5f88771bfa020b33cd74dd3de80ad used 24 GB300 GPUs across eight nodes at TP1/PP3/EP8/ETP1, completed in 22:59, and generated exactly 32 new greedy tokens. Its worker command omitted the launcher, so that result does not verify the candidate above. Historical completion, represented with JSON Unicode escapes for the model control-token brackets: \"15% of 240 = 0.15 \u00d7 240 = 36.\\u003c|close|\\u003ethink\\u003c|sep|\\u003e\\u003c|open|\\u003eresponse\\u003c|sep|\\u003e15% of 240 is 36.\".",
           "hardware": null,
-          "last_verified": "2026-07-27",
+          "last_verified": null,
           "metrics": {},
           "precision": "bf16",
           "source_pointer": "items.inference",
-          "status": "verified",
+          "status": "unverified",
           "variant": null,
           "workflow": "inference"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2935,7 +2941,7 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2958,7 +2964,7 @@
           "workflow": "sft"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2975,7 +2981,7 @@
           "workflow": "sft_export_inference"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -2998,7 +3004,7 @@
           "workflow": "sft_long_context"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -3021,7 +3027,7 @@
           "workflow": "peft"
         },
         {
-          "bridge_commit": "ae77a6703c61669f15936a12ddf542c2cf5cbc3b",
+          "bridge_commit": "13beeed42020d09d8591718d7d5fd62b0f9aa68b",
           "command_topologies": [],
           "commands": [],
           "dimensions": {},
@@ -3049,7 +3055,7 @@
       "min_transformers_version": "4.56.2",
       "slug": "kimi-k3",
       "source_card": "examples/model_verification_cards/kimi-k3/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. This card covers the Kimi K3 language backbone in the published multimodal checkpoint. It does not claim support for the vision tower or multimodal inputs. Full-checkpoint GPU import and deterministic Megatron greedy text generation are verified. CPU conversion, GPU export, full-model Hugging Face/Megatron forward correlation, and every training workflow remain unverified.\n",
+      "summary": "Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results. This card covers the Kimi K3 language backbone in the published multimodal checkpoint. It does not claim support for the vision tower or multimodal inputs. Full-checkpoint GPU import is verified. The historical deterministic Megatron generation result is preserved below, but the portable inference launcher still requires verification. CPU conversion, GPU export, full-model Hugging Face/Megatron forward correlation, and every training workflow remain unverified.\n",
       "title": "kimi_k3"
     },
     {
