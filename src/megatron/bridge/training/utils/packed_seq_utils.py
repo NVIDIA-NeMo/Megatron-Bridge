@@ -15,11 +15,13 @@
 from __future__ import annotations
 
 import inspect
+import math
 
 import megatron.core
 import torch
-from megatron.core import parallel_state
+from megatron.core import mpu, parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.utils import get_batch_on_this_cp_rank
 from packaging.version import Version as PkgVersion
 
@@ -366,3 +368,105 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
                 else {}
             ),
         )
+
+
+def preprocess_packed_seqs(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    pre_process: bool = True,
+    pg_collection: ProcessGroupCollection | None = None,
+    use_fp8_padding: bool = False,
+) -> tuple[torch.Tensor, PackedSeqParams]:
+    """Preprocess packed sequences into THD layout.
+
+    CP splits sequence into CP*2 chunks, and each GPU gets 2 chunks (GPU0 gets
+    first and last chunks, GPU1 gets second and second last chunks, and so on),
+    for load balancing with causal masking.
+    See https://github.com/NVIDIA/TransformerEngine/issues/1368
+    """
+    batch_size = input_ids.shape[0]
+
+    # Ensure boolean dtype for correct advanced indexing (bool → mask select,
+    # int → fancy index which silently corrupts data when values are 0/1).
+    if attention_mask.dtype != torch.bool:
+        attention_mask = attention_mask.bool()
+
+    seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+    if pg_collection is not None:
+        tp_size = pg_collection.tp.size()
+        cp_size = pg_collection.cp.size()
+        cp_rank = pg_collection.cp.rank()
+    else:
+        tp_size = mpu.get_tensor_model_parallel_world_size()
+        cp_size = mpu.get_context_parallel_world_size()
+        cp_rank = mpu.get_context_parallel_rank()
+    align_size = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+    if use_fp8_padding:
+        total_align = align_size * 128
+        align_size = math.lcm(16, align_size)
+
+    pad_size = (align_size - seqlens_in_batch % align_size) % align_size
+    seqlens_in_batch_padded = seqlens_in_batch + pad_size
+
+    cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=input_ids.device)
+    cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
+    cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=input_ids.device)
+    cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
+
+    if use_fp8_padding:
+        pad_size_last = (total_align - cu_seqlens_padded[-1] % total_align) % total_align
+        cu_seqlens_padded[-1] += pad_size_last
+        seqlens_in_batch_padded[-1] += pad_size_last
+
+    # Move the index information needed in the subsequent loop to the CPU at once,
+    # to avoid frequent .item() calls in the loop that cause D2H synchronization.
+    seqlens_in_batch_cpu: list[int] = seqlens_in_batch.tolist()
+    seqlens_in_batch_padded_cpu: list[int] = seqlens_in_batch_padded.tolist()
+    cu_seqlens_padded_cpu: list[int] = cu_seqlens_padded.tolist()
+
+    max_seqlen_in_batch = max(seqlens_in_batch_padded_cpu)
+
+    shape = list(input_ids.shape[1:])
+    shape[0] = sum(seqlens_in_batch_padded_cpu) // cp_size
+    if pre_process:
+        input_ids_rmpad = torch.zeros(shape, dtype=input_ids.dtype, device=input_ids.device)
+        for i in range(batch_size):
+            if cp_size <= 1:
+                seqlen = seqlens_in_batch_cpu[i]
+                start_idx = cu_seqlens_padded_cpu[i]
+                input_ids_rmpad[start_idx : start_idx + seqlen] = input_ids[i, attention_mask[i]]
+                continue
+
+            seqlen_padded_i = seqlens_in_batch_padded_cpu[i]
+            seqlen = seqlen_padded_i // cp_size
+            half_seqlen = seqlen // 2
+            start_idx = cu_seqlens_padded_cpu[i] // cp_size
+            d = input_ids[i, attention_mask[i]]
+            first_start = half_seqlen * cp_rank
+            first_end = min(half_seqlen * (cp_rank + 1), d.shape[0])
+            first_len = max(first_end - first_start, 0)
+            if first_len > 0:
+                input_ids_rmpad[start_idx : start_idx + first_len] = d[first_start:first_end]
+
+            remain_start = seqlen_padded_i - half_seqlen * (cp_rank + 1)
+            remain_end = min(seqlen_padded_i - half_seqlen * cp_rank, d.shape[0])
+            remain_len = max(remain_end - remain_start, 0)
+            if remain_len > 0:
+                input_ids_rmpad[start_idx + half_seqlen : start_idx + half_seqlen + remain_len] = d[
+                    remain_start:remain_end
+                ]
+
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens_padded,
+        max_seqlen_q=max_seqlen_in_batch,
+        cu_seqlens_kv=cu_seqlens_padded,
+        max_seqlen_kv=max_seqlen_in_batch,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+    )
+
+    if pre_process:
+        return input_ids_rmpad.unsqueeze(0), packed_seq_params
+    else:
+        return input_ids, packed_seq_params
