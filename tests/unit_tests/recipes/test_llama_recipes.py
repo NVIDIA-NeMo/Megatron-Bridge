@@ -27,7 +27,7 @@ _llama_module = importlib.import_module("megatron.bridge.recipes.llama")
 _LLAMA_RECIPE_FUNCS = [
     getattr(_llama_module, name)
     for name in getattr(_llama_module, "__all__", [])
-    if callable(getattr(_llama_module, name, None)) and not name.startswith("llama2")
+    if callable(getattr(_llama_module, name, None))
 ]
 _ALL_LLAMA_RECIPE_FUNCS = [
     getattr(_llama_module, name)

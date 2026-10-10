@@ -58,7 +58,7 @@ def build_megatron_mimo_data_loaders(
         >>> provider = MockMegatronMIMOProvider(
         ...     seq_length=2048,
         ...     processor_paths={"vision": "openai/clip-vit-large-patch14"},
-        ...     tokenizer_path="meta-llama/Llama-2-7b-hf",
+        ...     tokenizer_path="meta-llama/Meta-Llama-3-8B",
         ...     special_token_ids={"vision": 32000},
         ...     modality_configs={"vision": {"type": "image", "width": 224, "height": 224}},
         ... )

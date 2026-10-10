@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.core.activations import squared_relu
-
 from megatron.bridge.models import ColumnParallelMapping, RowParallelMapping
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -25,8 +23,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 def _is_legacy_v2_omni_config(hf_config) -> bool:
@@ -41,14 +37,11 @@ def _is_legacy_v2_omni_config(hf_config) -> bool:
     )
 
 
-@MegatronModelBridge.register_bridge(
-    source="NemotronH_Nano_VL_V2",
-    target=NemotronVLModel,
-    provider=NemotronVLModelProvider,
-    model_type="nemotron_vl",
-)
 class NemotronVLBridge(MegatronModelBridge):
-    """Conversion utilities between HF Nemotron-VL and Megatron-Core format."""
+    """Shared Omni mappings and compatibility for historical MoE checkpoint labels.
+
+    Dense Nemotron Nano v2 checkpoints are no longer supported.
+    """
 
     # Extend CONFIG_MAPPING with Nemotron-VL specific fields
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
@@ -72,13 +65,11 @@ class NemotronVLBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):  # type: ignore[override]
         hf_config = hf_pretrained.config
-        llm_config = hf_config.llm_config
 
         if _is_legacy_v2_omni_config(hf_config):
             # Some Nano Omni checkpoints were exported before the dedicated
             # architecture name existed. Route only the MoE-shaped V2 configs
-            # to the canonical expanded-sequence model; dense V2 checkpoints
-            # continue to use the historical NemotronVLModel/LLaVAModel path.
+            # to the canonical expanded-sequence model. Dense V2 is retired.
             bridge = self._canonical_omni_bridge()
             bridge.hf_pretrained = hf_pretrained
             bridge.hf_config = hf_config
@@ -91,28 +82,11 @@ class NemotronVLBridge(MegatronModelBridge):
             provider.img_end_token_id = getattr(hf_config, "img_end_token_id", None) or 20
             return provider
 
-        # Use base class helper for common config mapping
-        provider_kwargs = self.hf_config_to_provider_kwargs(llm_config)
-
-        # Remove num_layers from provider as it is derived from hybrid_layer_pattern
-        provider_kwargs["num_layers"] = None
-
-        # Handle vocab size divisibility
-        provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
-
-        provider = NemotronVLModelProvider(**provider_kwargs)
-
-        # Nemotron VL-specific settings
-        # Note: Most defaults come from the provider class hierarchy (NemotronVLModelProvider)
-        provider.scatter_embedding_sequence_parallel = False
-        provider.attention_softmax_in_fp32 = True
-
-        # Override fields that should use NemotronH provider's specialized defaults
-        # instead of HF config values
-        provider.activation_func = squared_relu  # Nemotron uses squared_relu, not HF's hidden_act
-        provider.autocast_dtype = None  # Not set in original code
-
-        return provider
+        raise ValueError(
+            "Support for dense Nemotron Nano v2 VL was removed in Megatron Bridge 0.7.0. "
+            "Use Megatron Bridge 0.6.x for this model. "
+            "Only Nemotron Omni MoE checkpoints retain compatibility with the legacy V2 architecture label."
+        )
 
     # ------------------------------------------------------------------
     # Parameter mapping

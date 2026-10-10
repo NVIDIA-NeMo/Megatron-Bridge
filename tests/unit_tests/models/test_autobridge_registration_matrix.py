@@ -31,6 +31,7 @@ REGISTRATION_CHECK_SCRIPT = Path(__file__).with_name("autobridge_registration_ch
 
 
 EXPECTED_REGISTRATIONS = {
+    "MistralForCausalLM": "megatron.bridge.models.mistral.mistral_bridge.MistralBridge",
     "BailingMoeV2ForCausalLM": "megatron.bridge.models.bailing.bailing_moe2_bridge.BailingMoeV2Bridge",
     "DeepseekV3ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v3_bridge.DeepSeekV3Bridge",
     "DeepseekV4ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v4_bridge.DeepSeekV4Bridge",
@@ -135,13 +136,11 @@ STRING_REGISTRATIONS = {
     "Step3p7ForConditionalGeneration",
 }
 
-DEPRECATED_REGISTRATIONS = {
+REMOVED_REGISTRATIONS = {
     "DeciLMForCausalLM",
     "DeepseekV2ForCausalLM",
     "Gemma2ForCausalLM",
     "GemmaForCausalLM",
-    "MistralForCausalLM",
-    "NemotronH_Nano_VL_V2",
     "NemotronForCausalLM",
 }
 
@@ -154,7 +153,7 @@ def test_public_autobridge_import_registers_every_supported_model() -> None:
             str(REGISTRATION_CHECK_SCRIPT),
             json.dumps(EXPECTED_REGISTRATIONS, sort_keys=True),
             json.dumps(sorted(STRING_REGISTRATIONS)),
-            json.dumps(sorted(DEPRECATED_REGISTRATIONS)),
+            json.dumps(sorted(REMOVED_REGISTRATIONS)),
         ],
         capture_output=True,
         text=True,

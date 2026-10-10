@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-from unittest.mock import Mock
 
 import torch
 import torch.nn as nn
 
-from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin, extend_instance
+from megatron.bridge.models.gemma.modules import extend_instance
 
 
 class TestExtendInstance:
@@ -148,32 +146,3 @@ class TestExtendInstance:
 
         # Should be doubled
         assert torch.allclose(new_output, original_output * 2)
-
-
-class TestEmbeddingScalingMixin:
-    """Test suite for the EmbeddingScalingMixin class."""
-
-    def test_embedding_scaling_mixin(self):
-        """Test basic functionality of EmbeddingScalingMixin."""
-
-        # Create a mock embedding class
-        class MockEmbedding(nn.Module):
-            def __init__(self, hidden_size):
-                super().__init__()
-                self.config = Mock()
-                self.config.hidden_size = hidden_size
-
-            def forward(self, **kwargs):
-                # Return a simple tensor for testing
-                return torch.ones(2, 3, self.config.hidden_size)
-
-        # Create an embedding and extend it
-        embedding = MockEmbedding(hidden_size=64)
-        extend_instance(embedding, EmbeddingScalingMixin)
-
-        # Test forward pass
-        result = embedding.forward()
-        expected_scale = math.sqrt(64)
-        expected_result = torch.ones(2, 3, 64) * expected_scale
-
-        assert torch.allclose(result, expected_result)

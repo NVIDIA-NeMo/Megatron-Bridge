@@ -42,7 +42,6 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
-from megatron.bridge.models._deprecation import warn_if_deprecated_model, warn_if_legacy_nemotron_path
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -83,6 +82,16 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
     "ForTokenClassification",
 )
+
+# Error-message metadata only: shared architectures used by supported successors
+# must not appear here. Consult this only after normal bridge lookup fails.
+_REMOVED_HF_ARCHITECTURES = {
+    "DeepseekV2ForCausalLM": "DeepSeek V2",
+    "DeciLMForCausalLM": "Llama Nemotron",
+    "GemmaForCausalLM": "Gemma 1",
+    "Gemma2ForCausalLM": "Gemma 2",
+    "NemotronForCausalLM": "Nemotron-4",
+}
 
 # hf_pretrained wrapper types that carry both a config and (optionally) loaded weights.
 # Used for isinstance checks that should accept any such wrapper, regardless of which
@@ -374,18 +383,6 @@ class AutoBridge(Generic[MegatronModelT]):
         self.hf_pretrained: (
             PreTrainedCausalLM | PreTrainedMaskedLM | PreTrainedTokenClassification | PretrainedConfig
         ) = hf_pretrained
-        if isinstance(hf_pretrained, PretrainedConfig):
-            hf_config = hf_pretrained
-            model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
-        else:
-            # Pretrained wrappers load their config lazily. A deprecation
-            # warning must not turn construction into an HF Hub request.
-            wrapper_state = vars(hf_pretrained)
-            hf_config = wrapper_state.get("_config")
-            model_name_or_path = wrapper_state.get("_model_name_or_path")
-        if hf_config is not None:
-            warn_if_deprecated_model(hf_config, model_name_or_path)
-
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.text_only = getattr(hf_pretrained, "_text_only", False) is True
@@ -462,7 +459,6 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
-        warn_if_legacy_nemotron_path(hf_model_id)
 
         from transformers import AutoConfig
 
@@ -615,7 +611,6 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> # Works with local paths too
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
-        warn_if_legacy_nemotron_path(path)
 
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
@@ -2391,7 +2386,7 @@ class AutoBridge(Generic[MegatronModelT]):
         Behavior:
         - If the model can be imported from transformers directly, return the actual transformers class object.
         - Otherwise, if the model uses HuggingFace auto_map, return the architecture's class name as a string (e.g.,
-        "DeepseekV2ForCausalLM").
+        "DeepseekV3ForCausalLM").
 
         Returns:
             str | type: The Transformers model class, or its class name for
@@ -2494,6 +2489,13 @@ class AutoBridge(Generic[MegatronModelT]):
                     has_implementation = (arch_key in registry) or (getattr(arch_key, "__name__", None) in registry)
 
                 if not has_implementation:
+                    if architecture in _REMOVED_HF_ARCHITECTURES:
+                        raise ValueError(
+                            f"Support for {_REMOVED_HF_ARCHITECTURES[architecture]} "
+                            f"(architecture '{architecture}') was removed in Megatron Bridge 0.7.0. "
+                            "Use Megatron Bridge 0.6.x for this model."
+                        )
+
                     # Get list of supported models
                     supported_models = cls.list_supported_models()
 

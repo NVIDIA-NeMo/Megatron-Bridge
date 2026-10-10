@@ -63,7 +63,7 @@ from megatron.bridge import AutoBridge
 
 # Load with specific settings
 bridge = AutoBridge.from_hf_pretrained(
-    "meta-llama/Llama-2-7b-hf",
+    "meta-llama/Meta-Llama-3-8B",
     torch_dtype=torch.float16,
     device_map="auto",
     trust_remote_code=True,

@@ -38,7 +38,7 @@ from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 # Type-safe loading with lazy evaluation
 llama = PreTrainedCausalLM.from_pretrained(
-    "meta-llama/Llama-2-7b-hf",
+    "meta-llama/Meta-Llama-3-8B",
     torch_dtype=torch.float16,
     device="cuda"
 )

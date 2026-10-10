@@ -40,7 +40,7 @@ class MistralBridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Mistral-7B-Instruct")
+        >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Ministral-8B-Instruct-2410")
         >>> provider = bridge.to_megatron_provider()
     """
 

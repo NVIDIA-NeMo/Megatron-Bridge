@@ -246,7 +246,7 @@ class NemotronHBridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
 

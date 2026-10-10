@@ -100,7 +100,7 @@ class MockModelConfig:
     gated_linear_unit: bool = True
     activation_func: object = field(default=None)
     attention_output_gate: bool = False
-    # MLA (Multi-Latent Attention) settings — DeepSeek-V2/V3 style
+    # MLA (Multi-Latent Attention) settings — DeepSeek-V3 style
     q_lora_rank: int | None = None
     kv_lora_rank: int = 0
     qk_head_dim: int = 64
@@ -2268,7 +2268,7 @@ class TestDynamicSeqLenFlops:
 class TestMLAFlops:
     """Tests for Multi-Latent Attention (MLA) FLOPs in transformer_flops path.
 
-    MLA is the attention variant used in DeepSeek-V2/V3. Q and KV projections
+    MLA is the attention variant used in DeepSeek-V3. Q and KV projections
     are low-rank-factored to compress the KV cache. Per-layer FLOPs follow
     the closed form in flop_utils.py (lines 343-398):
 
