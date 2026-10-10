@@ -302,3 +302,34 @@ def slice_batch_for_megatron_mimo(
             sliced[key] = value
 
     return sliced
+
+
+def real_token_lengths(input_ids: torch.Tensor, *, attention_mask: "torch.Tensor | None") -> torch.Tensor:
+    """Per-sample real (non-pad) token length for a ``[B, S]`` batch.
+
+    The length comes only from ``attention_mask`` (1 = real, 0 = pad), the padding mask the
+    tokenizer ships with the batch. Comparing ``input_ids`` against ``pad_token_id`` is not used:
+    tokenizers without a dedicated pad token alias ``pad_token = eos_token``, so a value-based
+    check would also drop genuine EOS tokens. ``loss_mask`` is not used either: it is a
+    supervision mask (prompt tokens are zero) and would under-count the real length.
+
+    Args:
+        input_ids: Padded token ids ``[B, S]``.
+        attention_mask: ``[B, S]`` padding mask matching ``input_ids``.
+
+    Returns:
+        An ``int64`` tensor of shape ``[B]`` with each sample's real length.
+
+    Raises:
+        ValueError: If ``attention_mask`` is missing or does not match ``input_ids``.
+    """
+    if not (
+        isinstance(attention_mask, torch.Tensor)
+        and attention_mask.dim() == 2
+        and attention_mask.shape == input_ids.shape
+    ):
+        raise ValueError(
+            "real_token_lengths requires a [B, S] attention_mask matching input_ids; "
+            f"got {None if attention_mask is None else tuple(attention_mask.shape)} for input_ids {tuple(input_ids.shape)}."
+        )
+    return attention_mask.to(torch.bool).sum(dim=1).to(torch.long)

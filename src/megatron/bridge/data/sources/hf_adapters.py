@@ -47,18 +47,22 @@ def _prompt_completion_example(
 
 
 def _native_conversation_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> dict[str, Any]:
-    messages_column = str(kwargs.get("messages_column", "messages"))
-    conversation_column = str(kwargs.get("conversation_column", "conversation"))
-    conversations_column = str(kwargs.get("conversations_column", "conversations"))
-    schema_columns = {messages_column, conversation_column, conversations_column}
-    extra = {key: value for key, value in example.items() if key not in schema_columns}
-    if example.get(messages_column) is not None:
-        return {"messages": example[messages_column], **extra}
-    if example.get(conversation_column) is not None:
-        return {"conversation": example[conversation_column], **extra}
-    if example.get(conversations_column) is not None:
-        return {"conversations": example[conversations_column], **extra}
-    return dict(example)
+    columns = {key: str(kwargs.get(f"{key}_column", key)) for key in ("messages", "conversation", "conversations")}
+    schema_columns = set(columns.values())
+    adapted = {key: value for key, value in example.items() if key not in schema_columns}
+    # Preserve every schema field so preprocessing can distinguish selected text
+    # columns from ambiguous chat rows. Renaming must not overwrite another field.
+    seen_columns: set[str] = set()
+    for key, source_column in columns.items():
+        if source_column not in example or source_column in seen_columns:
+            continue
+        seen_columns.add(source_column)
+        value = example[source_column]
+        if value is not None and adapted.get(key) is not None:
+            raise ValueError(f"Native HF adaptation would overwrite populated conversation column {key!r}.")
+        if value is not None or key not in adapted:
+            adapted[key] = value
+    return adapted
 
 
 def _coderforge_json_list(example: Mapping[str, Any], field_name: str) -> list[dict[str, Any]]:

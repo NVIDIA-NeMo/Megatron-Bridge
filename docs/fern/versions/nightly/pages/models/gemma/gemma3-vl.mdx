@@ -79,10 +79,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">Precision not specified</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="gemma-3-4b-it-sft-h100" aria-controls="gemma-3-4b-it-sft-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="gemma-3-4b-it-sft-h100" aria-controls="gemma-3-4b-it-sft-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H100</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -249,35 +249,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="gemma-3-4b-it-sft-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-sft-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · H100</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-09</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.16385</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.143927</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>5,461.010 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>22.450 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>3,000.178 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -288,12 +288,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs=&#123;revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;&#125;&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 &#x27;dataset.source.load_kwargs=&#123;revision:&quot;7f0115a4b758a71d6473b8d085751692da2fef98&quot;&#125;&#x27; validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Pending exact-revision CORD-v2 full-SFT verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final full-model checkpoint.</p>
+        <p>On 8 H100s, the TP1/PP1 recipe completes exactly ten exact-revision CORD-v2 full-SFT steps at global batch size 32 and sequence length 4096. Loss is finite from 1.163850 to 0.143927 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, and the final iteration-10 checkpoint saves successfully.</p>
       </section>
     </article>
     <article id="gemma-3-4b-it-sft-long-context-h100" class="verification-model-detail" data-entry-detail="gemma-3-4b-it-sft-long-context-h100" tabindex="-1">

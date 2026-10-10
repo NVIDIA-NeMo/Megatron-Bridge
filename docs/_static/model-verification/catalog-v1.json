@@ -1347,35 +1347,35 @@
           "workflow": "pretrain"
         },
         {
-          "bridge_commit": "330f87c0a391eb2770cbf2306352cc807211d7ba",
+          "bridge_commit": "b2ebece6a78fbee6a734655cc6993c13a08b60a4",
           "command_topologies": [
             {
-              "gpus_per_node": "1",
+              "gpus_per_node": "8",
               "nodes": "1",
               "recipe": "gemma3_vl_4b_sft_config",
               "sequence_length": "4096",
-              "total_gpus": 1
+              "total_gpus": 8
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 1 --gpus-per-node 1 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 'dataset.source.load_kwargs={revision:\"7f0115a4b758a71d6473b8d085751692da2fef98\"}' validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true"
+            "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2 --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000 --max_steps 10 --seq_length 4096 'dataset.source.load_kwargs={revision:\"7f0115a4b758a71d6473b8d085751692da2fef98\"}' validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints --save_interval 10 logger.log_interval=1 logger.log_throughput=true"
           ],
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "gemma-3-4b-it-sft-h100",
-          "expected_result": "Pending exact-revision CORD-v2 full-SFT verification with the public Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer steps with finite loss, no skipped or NaN iterations, all five metrics, and a reloadable final full-model checkpoint.\n",
+          "expected_result": "On 8 H100s, the TP1/PP1 recipe completes exactly ten exact-revision CORD-v2 full-SFT steps at global batch size 32 and sequence length 4096. Loss is finite from 1.163850 to 0.143927 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, and the final iteration-10 checkpoint saves successfully.\n",
           "hardware": "H100",
-          "last_verified": null,
+          "last_verified": "2026-10-09",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.143927,
+            "initial_loss": 1.16385,
+            "last_10_steps_model_tflops_per_gpu_avg": 22.45,
+            "last_10_steps_step_time_ms_avg": 5461.01,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 3000.178
           },
           "precision": "bf16",
           "source_pointer": "items.sft.H100",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft"
         },
@@ -1481,7 +1481,7 @@
       "min_transformers_version": "5.8.0",
       "slug": "gemma-3-4b-it",
       "source_card": "examples/model_verification_cards/gemma-3-4b-it/card.yaml",
-      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import, CPU and TP2/PP2 GPU export, manual multimodal forward parity, and deterministic TP2/PP2 inference are verified. SFT, post-SFT export/inference, and PEFT remain pending. Pretraining and checkpoint resume are unsupported because there is no public exact-model pretraining recipe. Long-context SFT is unsupported because the required dense local/global attention biases currently exclude context parallelism and in-batch THD packing. Existing toy-model tests are not used as exact-model evidence.\n",
+      "summary": "Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import, CPU and TP2/PP2 GPU export, manual multimodal forward parity, deterministic TP2/PP2 inference, and 8-GPU H100 full SFT are verified. Post-SFT export/inference and PEFT remain pending. Pretraining and checkpoint resume are unsupported because there is no public exact-model pretraining recipe. Long-context SFT is unsupported because the required dense local/global attention biases currently exclude context parallelism and in-batch THD packing. Existing toy-model tests are not used as exact-model evidence.\n",
       "title": "gemma_3_4b_it"
     },
     {
