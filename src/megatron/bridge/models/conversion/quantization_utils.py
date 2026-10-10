@@ -319,35 +319,71 @@ def dequantize_mxfp4_e2m1_packed(
     scale: torch.Tensor,
     *,
     dtype: torch.dtype = torch.bfloat16,
+    device: str | torch.device | None = None,
+    rows_per_chunk: int = 32768 * 1024,
 ) -> torch.Tensor:
     """Dequantize MXFP4 E2M1 weights packed two values per byte.
 
     ``scale`` is expected to be one scale per row and per K tile. ``uint8``
     E8M0 tensors use exponent bias 127 and are decoded to powers of two.
+
+    By default this dequantizes on whatever device ``weight_packed`` is
+    already on. Pass ``device`` to move the (compact) packed input there
+    first and dequantize on that device instead, e.g. the current CUDA
+    device when running under a distributed GPU backend; callers decide
+    when that's appropriate, this function does not infer it from
+    ``torch.distributed`` state.
+
+    Processes ``rows_per_chunk`` rows at a time so peak memory stays
+    bounded regardless of tensor size: unpacking to indices, the LUT
+    gather, and the scale multiply otherwise each materialize a
+    full-size fp32 tensor at once (on top of the bf16 output), which for
+    a single large expert weight can multiply into a large transient
+    footprint.
     """
-    w_u8 = weight_packed.view(torch.uint8)
-    lo = (w_u8 & 0xF).to(torch.int64)
-    hi = (w_u8 >> 4).to(torch.int64)
+    target_device = weight_packed.device if device is None else torch.device(device)
+    weight_packed = weight_packed.to(target_device)
+    scale = scale.to(target_device)
 
-    table = torch.tensor(_FP4_E2M1_TABLE_VALUES, dtype=torch.float32, device=weight_packed.device)
-    logical = torch.stack([table[lo], table[hi]], dim=-1).reshape(weight_packed.shape[0], -1)
-
-    if scale.dtype == torch.uint8:
-        scale_f32 = torch.ldexp(
-            torch.ones_like(scale, dtype=torch.float32),
-            scale.to(torch.int32) - 127,
-        )
-    else:
-        scale_f32 = scale.to(torch.float32)
-    if scale_f32.dim() != 2 or scale_f32.shape[0] != logical.shape[0] or logical.shape[1] % scale_f32.shape[1] != 0:
+    rows_total, packed_cols = weight_packed.shape
+    logical_cols = packed_cols * 2
+    if scale.dim() != 2 or scale.shape[0] != rows_total or logical_cols % scale.shape[1] != 0:
         raise RuntimeError(
             f"Unsupported MXFP4 scale geometry: "
-            f"weight={tuple(weight_packed.shape)} logical={tuple(logical.shape)} scale={tuple(scale.shape)}"
+            f"weight={tuple(weight_packed.shape)} logical={(rows_total, logical_cols)} scale={tuple(scale.shape)}"
         )
-    block_size = logical.shape[1] // scale_f32.shape[1]
-    scale_exp = scale_f32.repeat_interleave(block_size, dim=1)
+    block_size = logical_cols // scale.shape[1]
 
-    return (logical * scale_exp).to(dtype)
+    table = torch.tensor(_FP4_E2M1_TABLE_VALUES, dtype=torch.float32, device=target_device)
+    out = torch.empty(rows_total, logical_cols, dtype=dtype, device=target_device)
+
+    for r0 in range(0, rows_total, rows_per_chunk):
+        r1 = min(r0 + rows_per_chunk, rows_total)
+
+        w_u8 = weight_packed[r0:r1].view(torch.uint8)
+        idx_lo = (w_u8 & 0xF).to(torch.int64)
+        idx_hi = (w_u8 >> 4).to(torch.int64)
+
+        logical_chunk = torch.empty(r1 - r0, logical_cols, dtype=torch.float32, device=target_device)
+        logical_chunk[:, 0::2] = table[idx_lo]
+        logical_chunk[:, 1::2] = table[idx_hi]
+        del idx_lo, idx_hi, w_u8
+
+        scale_slice = scale[r0:r1]
+        if scale_slice.dtype == torch.uint8:
+            scale_chunk = torch.ldexp(
+                torch.ones_like(scale_slice, dtype=torch.float32),
+                scale_slice.to(torch.int32) - 127,
+            )
+        else:
+            scale_chunk = scale_slice.to(torch.float32)
+        scale_exp = scale_chunk.repeat_interleave(block_size, dim=1)
+
+        logical_chunk.mul_(scale_exp)
+        out[r0:r1] = logical_chunk.to(dtype)
+        del logical_chunk, scale_chunk, scale_exp
+
+    return out
 
 
 def is_mxfp4_e2m1_scale_geometry(
