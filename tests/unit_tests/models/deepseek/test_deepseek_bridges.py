@@ -34,6 +34,15 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 class TestDeepSeekV3Bridge:
     """Test cases for DeepSeekV3Bridge."""
 
+    def test_generate_pipeline_layout_balances_uneven_decoder_layers(self):
+        layout = DeepSeekV3Bridge.generate_pipeline_layout(num_layers=7, pp=3, mtp_layers=2)
+
+        assert layout == [
+            ["embedding", "decoder", "decoder", "decoder"],
+            ["decoder", "decoder"],
+            ["decoder", "decoder", "mtp", "mtp", "loss"],
+        ]
+
     @pytest.fixture
     def ds_v3_config(self):
         return {
@@ -330,6 +339,46 @@ class TestDeepSeekV3MaybeModifyLoadedHFWeight:
         assert torch.all(result["gate"] == 2.0)
         # Non-FP8 entries pass through unchanged.
         assert result["up"] is w2
+
+
+class TestDeepSeekV3MaybeModifyConvertedHFWeight:
+    """Unit tests for DeepSeek V3 source-specific export aliases."""
+
+    @pytest.mark.parametrize(
+        ("global_name", "source_key", "alias_key"),
+        [
+            (
+                "embedding.word_embeddings.weight",
+                "model.embed_tokens.weight",
+                "model.layers.61.embed_tokens.weight",
+            ),
+            (
+                "output_layer.weight",
+                "lm_head.weight",
+                "model.layers.61.shared_head.head.weight",
+            ),
+        ],
+    )
+    def test_restores_shared_mtp_alias(self, global_name, source_key, alias_key):
+        bridge = DeepSeekV3Bridge()
+        bridge.hf_config = SimpleNamespace(num_hidden_layers=61)
+        task = SimpleNamespace(global_param_name=global_name)
+        weight = torch.randn(4, 4)
+
+        result = bridge.maybe_modify_converted_hf_weight(task, {source_key: weight}, {alias_key: torch.empty(0)})
+
+        assert result[alias_key] is weight
+
+    def test_does_not_add_mtp_alias_when_source_does_not_expect_it(self):
+        bridge = DeepSeekV3Bridge()
+        bridge.hf_config = SimpleNamespace(num_hidden_layers=61)
+        task = SimpleNamespace(global_param_name="embedding.word_embeddings.weight")
+        converted = {"model.embed_tokens.weight": torch.randn(4, 4)}
+
+        result = bridge.maybe_modify_converted_hf_weight(task, converted, {})
+
+        assert result is converted
+        assert set(result) == {"model.embed_tokens.weight"}
 
 
 class TestCommonMappingExpertBias:

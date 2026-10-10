@@ -127,6 +127,7 @@ class TestDatasetPresets:
             "energon",
             "squad",
             "tulu3",
+            "coderforge",
             "openmathinstruct2",
             "openmathinstruct2-thinking",
             "gsm8k",
@@ -256,6 +257,7 @@ class TestDatasetPresets:
         [
             ("squad", "squad"),
             ("tulu3", "tulu3"),
+            ("coderforge", "coderforge"),
             ("openmathinstruct2", "openmathinstruct2"),
             ("openmathinstruct2-thinking", "openmathinstruct2_thinking"),
             ("gsm8k", "gsm8k"),

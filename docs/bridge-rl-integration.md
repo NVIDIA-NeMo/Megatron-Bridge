@@ -352,7 +352,28 @@ for name, weight in bridge.export_hf_weights(megatron_model, cpu=True, show_prog
 
 Point your inference engine (e.g., vLLM) to `"/path/to/hf_export"`.
 
-### B) Zero-copy streaming via ZMQ (fast refit, colocated)
+### B) Pipeline-stage-local streaming for RL weight synchronization
+
+When inference workers collectively receive shards from every training pipeline stage, avoid replicating the full
+HF stream across PP ranks:
+
+```python
+for name, weight in bridge.export_hf_weights(
+    megatron_model,
+    show_progress=False,
+    current_pp_stage_only=True,
+):
+    send_to_inference_workers(name, weight)
+```
+
+- `current_pp_stage_only` changes ownership only across the PP axis.
+- TP/EP ranks in the owning stage still gather shards and perform normal HF layout conversion.
+- Combining one representative stream from every PP stage reconstructs the normal complete export.
+- Source-only HF passthrough tensors are assigned to PP stage 0; duplicate Megatron parameters use the lowest PP owner.
+
+This mode is opt-in. Omitting the flag preserves the complete stream on every rank.
+
+### C) Zero-copy streaming via ZMQ (fast refit, colocated)
 
 Stream tensors from the training side to your inference runtime without writing to disk. The transport is ZMQ peer-to-peer with async send/recv and ping‑pong buffers for overlap; Ray is used only for lightweight coordination. This replaces the earlier ad‑hoc per‑tensor IPC handle passing and aligns with the refactor in [NVIDIA-NeMo/RL#1267](https://github.com/NVIDIA-NeMo/RL/pull/1267).
 
@@ -363,6 +384,14 @@ Stream tensors from the training side to your inference runtime without writing 
 - **Memory-aware chunking:** Use your free GPU memory budget (e.g., `NRL_REFIT_BUFFER_MEMORY_RATIO`) to decide how many parameters to include in the next chunk (the set of `keys`). The worker exposes `prepare_weights_for_ipc()` which returns `(param_info, total_available_bytes)` and resets the conversion cursor; then the controller repeatedly selects `keys` whose cumulative byte size ≤ budget and streams them to the consumer over ZMQ.
 - **Device routing:** Handles are returned under a `device_uuid` key (NVML UUID of the CUDA device). The inference side should map handles on the same device (or coordinate via your communicator). For collective updates, the worker can also broadcast tensors directly (`broadcast_weights_for_collective`).
 - **Parallelism nuances:** With TP/EP, exported HF tensors are reassembled from shards; with CP/sequence packing, shapes/dtypes are already consistent at export time. FP8 or mixed precision can affect size estimates; the worker accounts for dtype scaling when estimating bytes.
+
+**Local-view API and model/transport boundary:**
+
+`WeightConversionTask.local_hf_param_specs()` is a per-parameter optimization hint. A non-empty tuple describes canonical HF-compatible views of that one local logical Megatron tensor that may be transferred without first running Bridge collectives or layout conversion. It does not certify whole-model HF conversion or M-to-N refit support. An empty tuple means that parameter must use the normal Bridge conversion/packed-broadcast path, not that the model is unsupported.
+
+Mappings that require transpose, permutation, interleaving, or grouped-export transforms return no specs unless they provide an explicit safe override. A transport must validate support across all parameters and separately qualify the destination backend and source/destination topology before selecting an M-to-N path.
+
+This contract is not BF16-only. For MXFP8 refit, a transport may materialize canonical logical views from quantized training storage and requantize persistent MXFP8 inference destinations in place. Direct transfer of packed MXFP8 data and scales is a different optimization and is valid only when the source and destination storage layouts, quantization backends, and topology are explicitly compatible.
 
 ```python
 import os

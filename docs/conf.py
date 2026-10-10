@@ -57,8 +57,12 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
+    # Keep these guides in GitHub, but omit them from the published HTML.
+    "models/nemotron/nemotron3.5-super-vl.md",
+    "models/nemotron/nemotron3.5-super-vl-text-only.md",
     "skills/linting-and-formatting/SKILL.md",
     "skills/parity-testing/SKILL.md",
+    "skills/pr-review/SKILL.md",
     "skills/**/BENCHMARK.md",
     "skills/**/skill-card.md",
 ]
@@ -133,6 +137,9 @@ html_theme_options = {
     },
 }
 html_extra_path = ["project.json", "versions1.json"]
+html_static_path = ["_static"]
+html_css_files = ["model-verification-catalog.css"]
+html_js_files = ["model-verification-catalog.js"]
 
 # Github links are now getting rate limited from the Github Actions
 linkcheck_ignore = [

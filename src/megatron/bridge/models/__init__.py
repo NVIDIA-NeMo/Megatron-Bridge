@@ -13,8 +13,23 @@
 # limitations under the License.
 
 # Import model providers for easy access
+import importlib.util
+
+
+_BAGEL_EXPORTS = []
+if (
+    importlib.util.find_spec("megatron.core.models.bagel") is not None
+    and importlib.util.find_spec("megatron.core.models.bagel.bagel_mimo") is not None
+):
+    from megatron.bridge.models.bagel import BagelBridge, BagelConfig, BagelModelProvider
+
+    _BAGEL_EXPORTS = ["BagelBridge", "BagelConfig", "BagelModelProvider"]
+
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
+)
+from megatron.bridge.models.bert import (
+    BertModelProvider,
 )
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -31,6 +46,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
+)
+from megatron.bridge.models.diffusion_gemma import (
+    DiffusionGemmaBridge,
+    DiffusionGemmaModel,
+    DiffusionGemmaModelProvider,
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
@@ -131,10 +151,17 @@ from megatron.bridge.models.ministral3 import (
 from megatron.bridge.models.mistral import (
     MistralModelProvider,
 )
+from megatron.bridge.models.muse_glimmer import (
+    MuseGlimmerBridge,
+    MuseGlimmerModel,
+    MuseGlimmerModelBuilder,
+    MuseGlimmerModelConfig,
+)
 from megatron.bridge.models.nemotron import (
     NemotronBridge,
 )
 from megatron.bridge.models.nemotron_omni import (
+    Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniModel,
 )
@@ -212,6 +239,7 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "BailingMoeV2Bridge",
+    "BertModelProvider",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
@@ -257,6 +285,11 @@ __all__ = [
     "MiniMaxM3Bridge",
     "MiniMaxM3VLModel",
     "MiniMaxM3VLModelProvider",
+    # Muse Glimmer
+    "MuseGlimmerBridge",
+    "MuseGlimmerModel",
+    "MuseGlimmerModelBuilder",
+    "MuseGlimmerModelConfig",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",
@@ -293,11 +326,15 @@ __all__ = [
     "Gemma4VLBridge",
     "Gemma4VLModel",
     "Gemma4VLModelProvider",
+    "DiffusionGemmaBridge",
+    "DiffusionGemmaModel",
+    "DiffusionGemmaModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronVLModelProvider",
     "NemotronOmniBridge",
     "NemotronOmniModel",
+    "Nemotron35SuperVLBridge",
     # ASR Models
     "Qwen3ASRBridge",
     "Qwen3ASRModel",
@@ -322,4 +359,4 @@ __all__ = [
     "Exaone45ModelProvider",
     "ExaoneMoeBridge",
     "ExaoneMoeModelProvider",
-]
+] + _BAGEL_EXPORTS

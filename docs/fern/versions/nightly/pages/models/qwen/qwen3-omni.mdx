@@ -37,7 +37,7 @@ Qwen3-Omni examples are maintained here:
 ## Related Docs
 
 - Related VLM: [Qwen3-VL](qwen3-vl.md)
-- Related VLM: [Qwen 3.5](qwen35-vl.md)
+- Related model: [Qwen 3.6](qwen3.6-35b-a3b.md)
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)

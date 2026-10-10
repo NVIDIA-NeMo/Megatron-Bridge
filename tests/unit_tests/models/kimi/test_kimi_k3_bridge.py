@@ -17,8 +17,12 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_layer import TransformerLayer, TransformerLayerSubmodules
 
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -26,7 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
-from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3MoELayer, KimiK3TransformerLayer
+from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3Attention, KimiK3MoELayer, KimiK3TransformerLayer
 from megatron.bridge.models.kimi.kimi_k3_pipeline import (
     bank_num_rows,
     pack_stage_boundary,
@@ -235,6 +239,51 @@ def test_export_preserves_unconverted_multimodal_weights(monkeypatch: pytest.Mon
     torch.testing.assert_close(result[2].weight, projector, rtol=0, atol=0)
 
 
+def test_export_with_megatron_names_marks_passthrough_weights_sourceless(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The flag reaches the language-model export; HF-only multimodal tensors carry zero sources."""
+    language = torch.tensor([1.0])
+    vision = torch.tensor([2.0])
+    tensors = {"vision_tower.encoder.weight": vision, "unrelated.weight": torch.tensor([4.0])}
+
+    class _Source:
+        @staticmethod
+        def get_all_keys() -> list[str]:
+            return list(tensors)
+
+    class _State:
+        source = _Source()
+
+        def __getitem__(self, name: str) -> torch.Tensor:
+            return tensors[name]
+
+    seen_kwargs: dict = {}
+
+    def fake_stream(*_args, **kwargs):
+        seen_kwargs.update(kwargs)
+        yield HFSourcedWeightTuple("language_model.weight", language, ("decoder.weight",))
+
+    monkeypatch.setattr(MegatronModelBridge, "stream_weights_megatron_to_hf", fake_stream)
+    monkeypatch.setattr(KimiK3Bridge, "_should_emit_hf_passthrough", lambda *_args, **_kwargs: True)
+
+    result = list(
+        KimiK3Bridge().stream_weights_megatron_to_hf(
+            [],
+            SimpleNamespace(state=_State()),
+            with_megatron_names=True,
+            current_pp_stage_only=True,
+        )
+    )
+
+    assert seen_kwargs["with_megatron_names"] is True
+    assert seen_kwargs["current_pp_stage_only"] is True
+    assert [type(item) for item in result] == [HFSourcedWeightTuple, HFSourcedWeightTuple]
+    assert result[0].megatron_param_names == ("decoder.weight",)
+    assert result[1].param_name == "vision_tower.encoder.weight"
+    assert result[1].megatron_param_names == ()
+    assert result[1].megatron_param_name is None
+    torch.testing.assert_close(result[1].weight, vision, rtol=0, atol=0)
+
+
 def test_stage_boundary_pack_unpack_and_bank_schedule() -> None:
     """AttnRes state survives pipeline packing without mixing rows."""
     prefix_sum = torch.randn(5, 2, 16, dtype=torch.bfloat16)
@@ -311,3 +360,22 @@ def test_transformer_layer_does_not_forward_input_ids_to_upstream_moe(
     )
 
     assert mlp.call_args.kwargs == {"padding_mask": padding_mask}
+
+
+@pytest.mark.parametrize("layer_number, is_kda", [(1, True), (2, False)])
+def test_attention_builds_through_mcore_transformer_layer(
+    monkeypatch: pytest.MonkeyPatch, layer_number: int, is_kda: bool
+) -> None:
+    """MCore TransformerLayer can build KimiK3Attention with the kwargs it passes to self-attention."""
+    monkeypatch.setattr(KimiK3Attention, "_init_kda", lambda self, config: None)
+    monkeypatch.setattr(KimiK3Attention, "_init_mla", lambda self, config: None)
+    config = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2, hidden_dropout=0.0)
+    config.kimi_kda_layers = [1]
+    group = SimpleNamespace(size=lambda: 1, rank=lambda: 0)
+    pg_collection = ProcessGroupCollection(tp=group, cp=group)
+    submodules = TransformerLayerSubmodules(self_attention=ModuleSpec(module=KimiK3Attention))
+
+    layer = TransformerLayer(config, submodules, layer_number=layer_number, pg_collection=pg_collection)
+
+    assert isinstance(layer.self_attention, KimiK3Attention)
+    assert layer.self_attention.is_kda is is_kda

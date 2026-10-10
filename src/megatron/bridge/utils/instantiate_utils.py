@@ -87,23 +87,28 @@ _DISALLOWED_TARGETS: set[str] = {
     "torch.ops.load_library",
     "torch.utils.cpp_extension.load",
     "torch.utils.cpp_extension.load_inline",
-    "transformers.AutoConfig.from_pretrained",
-    "transformers.AutoModel.from_pretrained",
-    "transformers.AutoModelForCausalLM.from_pretrained",
-    "transformers.AutoProcessor.from_pretrained",
-    "transformers.AutoTokenizer.from_pretrained",
-    "transformers.models.auto.configuration_auto.AutoConfig.from_pretrained",
-    "transformers.models.auto.modeling_auto.AutoModel.from_pretrained",
-    "transformers.models.auto.modeling_auto.AutoModelForCausalLM.from_pretrained",
-    "transformers.models.auto.processing_auto.AutoProcessor.from_pretrained",
-    "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
-    "transformers.utils.import_utils.direct_transformers_import",
+    "transformers.pipeline",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
     *{
         f"megatron.training.config.instantiate_utils.target_allowlist.{method}"
         for method in _TARGET_ALLOWLIST_MUTATORS
     },
 }
+
+# Resolve aliases before enforcing these entries. For example,
+# ``numpy.lib.npyio.load`` is the same callable as ``numpy.load`` and
+# ``torch.serialization.load`` is the same callable as ``torch.load``.
+_DISALLOWED_CANONICAL_TARGETS: set[str] = {
+    "numpy.load",
+    "torch.serialization.load",
+}
+
+_DISALLOWED_TRANSFORMERS_PREFIXES: tuple[str, ...] = (
+    "transformers.dynamic_module_utils.",
+    "transformers.utils.import_utils.",
+    "transformers.pipelines.",
+)
+_DISALLOWED_TRANSFORMERS_METHODS: frozenset[str] = frozenset({"from_pretrained", "from_config"})
 
 _DISALLOWED_CALLABLE_FIELD_NAMES: set[str] = {
     "collate_impl",
@@ -145,19 +150,28 @@ def register_allowed_target_prefix(prefix: str) -> None:
     target_allowlist.add_prefix(_as_module_prefix(prefix))
 
 
-def _validate_target_prefix(*, target: str, full_key: str | int) -> None:
-    """Validate that a _target_ string is permitted by Bridge hardening rules."""
+def _reject_unsafe_target_name(*, target: str, full_key: str | int) -> None:
+    """Reject known unsafe target names without importing their modules."""
     field_name = full_key.rsplit(".", 1)[-1] if isinstance(full_key, str) else ""
     if field_name in _DISALLOWED_CALLABLE_FIELD_NAMES:
         raise InstantiationException(
             f"Instantiation of '{target}' is not allowed for callable config field '{full_key}'. "
             "Use a registered symbolic option or pass a Python callable from trusted application code."
         )
-    if target in _DISALLOWED_TARGETS:
+    if (
+        target in _DISALLOWED_TARGETS
+        or target.startswith(_DISALLOWED_TRANSFORMERS_PREFIXES)
+        or (target.startswith("transformers.") and target.rsplit(".", 1)[-1] in _DISALLOWED_TRANSFORMERS_METHODS)
+    ):
         raise InstantiationException(
             f"Instantiation of '{target}' is not allowed because it can bypass target validation."
             + (f"\nfull_key: {full_key}" if full_key else "")
         )
+
+
+def _validate_target_prefix(*, target: str, full_key: str | int) -> None:
+    """Validate that a _target_ string is permitted by Bridge hardening rules."""
+    _reject_unsafe_target_name(target=target, full_key=full_key)
     private_segments = [segment for segment in target.split(".") if segment.startswith("_")]
     if private_segments and target not in _ALLOWED_PRIVATE_TARGETS:
         raise InstantiationException(
@@ -182,7 +196,19 @@ def _resolve_target(
     """Resolve target string, type, or callable after Bridge validation."""
     if isinstance(target, str):
         _validate_target_prefix(target=target, full_key=full_key)
-    return _mcore_resolve_target(target, full_key, check_callable)
+    resolved_target = _mcore_resolve_target(target, full_key, check_callable)
+    if isinstance(target, str):
+        module = getattr(resolved_target, "__module__", None)
+        qualname = getattr(resolved_target, "__qualname__", None)
+        canonical_target = f"{module}.{qualname}" if isinstance(module, str) and isinstance(qualname, str) else None
+        if canonical_target in _DISALLOWED_CANONICAL_TARGETS:
+            raise InstantiationException(
+                f"Instantiation of '{target}' is not allowed because it resolves to the unsafe target "
+                f"'{canonical_target}'." + (f"\nfull_key: {full_key}" if full_key else "")
+            )
+        if canonical_target is not None:
+            _validate_target_prefix(target=canonical_target, full_key=full_key)
+    return resolved_target
 
 
 _mcore_instantiate_utils._resolve_target = _resolve_target

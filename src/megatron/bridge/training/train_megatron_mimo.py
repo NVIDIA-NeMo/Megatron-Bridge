@@ -44,6 +44,7 @@ from megatron.bridge.training.profiling import (
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import checkpoint_and_decide_exit, maybe_run_manual_gc, save_checkpoint_and_time
 from megatron.bridge.training.utils.train_utils import (
+    accumulate_zero_token_step,
     prepare_forward_step_func,
     training_log,
 )
@@ -137,6 +138,7 @@ def train_step_megatron_mimo(
         skipped_iter = 1
 
     loss_dict = {}
+    zero_token_step = None
     if losses_reduced:
         is_last_stage = False
         # Access role from unwrapped model (handles Float16Module wrapper)
@@ -148,17 +150,24 @@ def train_step_megatron_mimo(
 
         if is_last_stage:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY) if infra.pg_collections else None
+            # Tracks whether any key saw an empty token count this step; read at
+            # log_interval so the step itself never synchronizes with the host.
             for key in losses_reduced[0].keys():
                 val = [x[key].view(-1) for x in losses_reduced]
                 if val[0].numel() == 2:
                     val = torch.vstack(val).sum(dim=0)
                     if llm_pg is not None and llm_pg.dp_cp is not None:
                         torch.distributed.all_reduce(val, group=llm_pg.dp_cp)
-                    loss_dict[key] = val[0] / val[1]
+                    is_empty = val[1] == 0
+                    zero_token_step = is_empty if zero_token_step is None else zero_token_step | is_empty
+                    loss_dict[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
                 elif val[0].numel() == 1:
                     loss_dict[key] = torch.cat(val).mean()
                 else:
                     raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+
+            if zero_token_step is not None:
+                accumulate_zero_token_step(global_state, zero_token_step)
 
     # Broadcast loss_dict to all ranks (the last rank is the logging rank for
     # W&B/TensorBoard). Use broadcast_object_list from the source rank so every
@@ -174,13 +183,17 @@ def train_step_megatron_mimo(
 
     # Only broadcast if the source and logging rank differ and a valid source exists.
     if source_rank >= 0 and source_rank != last_rank:
-        obj = [loss_dict if my_rank == source_rank else None]
+        obj = [loss_dict, zero_token_step] if my_rank == source_rank else [None, None]
         torch.distributed.broadcast_object_list(obj, src=source_rank)
         if my_rank == last_rank:
             received = obj[0] or {}
             # Tensors inside the received dict carry the source rank's CUDA device;
             # move them to this rank's device so training_log arithmetic works.
             loss_dict = {k: v.cuda() if isinstance(v, torch.Tensor) else v for k, v in received.items()}
+            # The logging rank may own an encoder, so it has no local loss counter.
+            # Carry the source's flag with its loss and count it exactly once here.
+            if obj[1] is not None:
+                accumulate_zero_token_step(global_state, obj[1].cuda())
 
     return loss_dict, skipped_iter, grad_norm, num_zeros_in_grad
 
@@ -386,19 +399,13 @@ def train_megatron_mimo(
                 pg_collection=local_pg_collection,
             )
 
-            # Log iteration-time directly for MegatronMIMO models.
-            # training_log only logs this inside a hasattr(config.model, "kv_channels")
-            # block which MegatronMIMO models don't satisfy, so we log it here as a workaround.
-            if cfg.logger.log_timers_to_tensorboard and train_state.step % cfg.logger.log_interval == 0:
-                writer = global_state.tensorboard_logger
-                if writer:
-                    writer.add_scalar("iteration-time", iteration_time, train_state.step)
-                wandb_writer = global_state.wandb_logger
-                if wandb_writer:
-                    wandb_writer.log({"iteration-time": iteration_time}, train_state.step)
-
         # Evaluation at specified intervals
-        if eval_interval and train_state.step % eval_interval == 0 and valid_data_iterator is not None:
+        if (
+            eval_interval
+            and (cfg.validation.start_eval_at_iter is None or train_state.step >= cfg.validation.start_eval_at_iter)
+            and train_state.step % eval_interval == 0
+            and valid_data_iterator is not None
+        ):
             if train_config.manual_gc and train_config.manual_gc_eval:
                 gc.collect()
             evaluate_and_print_results(

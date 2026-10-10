@@ -33,7 +33,7 @@ _glm_module = importlib.import_module("megatron.bridge.recipes.glm")
 _GLM45_RECIPE_FUNCS = [
     getattr(_glm_module, name)
     for name in getattr(_glm_module, "__all__", [])
-    if callable(getattr(_glm_module, name, None))
+    if name.startswith("glm45_") and callable(getattr(_glm_module, name, None))
 ]
 
 

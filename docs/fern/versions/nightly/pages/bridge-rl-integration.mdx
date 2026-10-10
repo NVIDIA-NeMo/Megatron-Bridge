@@ -356,6 +356,14 @@ Stream tensors from the training side to your inference runtime without writing 
 - **Device routing:** Handles are returned under a `device_uuid` key (NVML UUID of the CUDA device). The inference side should map handles on the same device (or coordinate via your communicator). For collective updates, the worker can also broadcast tensors directly (`broadcast_weights_for_collective`).
 - **Parallelism nuances:** With TP/EP, exported HF tensors are reassembled from shards; with CP/sequence packing, shapes/dtypes are already consistent at export time. FP8 or mixed precision can affect size estimates; the worker accounts for dtype scaling when estimating bytes.
 
+**Local-view API and model/transport boundary:**
+
+`WeightConversionTask.local_hf_param_specs()` is a per-parameter optimization hint. A non-empty tuple describes canonical HF-compatible views of that one local logical Megatron tensor that may be transferred without first running Bridge collectives or layout conversion. It does not certify whole-model HF conversion or M-to-N refit support. An empty tuple means that parameter must use the normal Bridge conversion/packed-broadcast path, not that the model is unsupported.
+
+Mappings that require transpose, permutation, interleaving, or grouped-export transforms return no specs unless they provide an explicit safe override. A transport must validate support across all parameters and separately qualify the destination backend and source/destination topology before selecting an M-to-N path.
+
+This contract is not BF16-only. For MXFP8 refit, a transport may materialize canonical logical views from quantized training storage and requantize persistent MXFP8 inference destinations in place. Direct transfer of packed MXFP8 data and scales is a different optimization and is valid only when the source and destination storage layouts, quantization backends, and topology are explicitly compatible.
+
 ```python
 import os
 import torch

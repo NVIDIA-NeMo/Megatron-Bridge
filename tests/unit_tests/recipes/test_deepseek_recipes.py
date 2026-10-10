@@ -25,7 +25,7 @@ import importlib
 from typing import Callable
 
 import pytest
-from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.enums import AttnBackend, LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -46,6 +46,7 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
     {
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
+        "deepseek_v4_flash_peft_openmath_thinking_packed_config",
         "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",
@@ -143,6 +144,9 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     cfg = recipe_func()
 
     _assert_basic_config(cfg)
+
+    if recipe_func.__name__.startswith("deepseek_v3_"):
+        assert cfg.model.attention_backend is AttnBackend.auto
 
     # Ensure tokenizer is properly configured
     # DeepSeek pretrain recipes use either NullTokenizer or HuggingFaceTokenizer
@@ -385,6 +389,15 @@ def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
     return getattr(mod, name)()
 
 
+def test_deepseek_v4_portable_peft_recipe_disables_recompute(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_peft_openmath_thinking_packed_config", monkeypatch)
+
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+
+
 def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_pretrain_mxfp8_config", monkeypatch)
 
@@ -402,7 +415,7 @@ def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeyp
     assert cfg.ddp.overlap_param_gather is True
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.apply_rope_fusion is True
@@ -432,7 +445,7 @@ def test_deepseek_v4_muon_bf16_recipe_uses_validated_optimizer_defaults(monkeypa
     assert cfg.ddp.use_distributed_optimizer is False
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.apply_rope_fusion is True
@@ -449,7 +462,7 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is True
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
@@ -482,7 +495,7 @@ def test_deepseek_v4_recipes_keep_hardware_qualified_dispatcher(
     if expected_dispatcher == "flex":
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 16
-        assert cfg.model.moe_hybridep_num_sms is None
+        assert getattr(cfg.model, "moe_hybridep_num_sms", None) is None
 
 
 @pytest.mark.parametrize(
@@ -504,7 +517,7 @@ def test_deepseek_v4_recipes_disable_blackwell_only_fusions_when_unavailable(
 
     cfg = getattr(mod, recipe_name)()
 
-    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.dsa_kernel_backend == "none"
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is False
 

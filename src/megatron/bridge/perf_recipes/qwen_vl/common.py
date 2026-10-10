@@ -14,9 +14,10 @@
 # ruff: noqa: F401
 """Common helpers for qwen_vl performance recipes."""
 
+from typing import Literal
+
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
-    _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
 )
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import (
@@ -30,7 +31,7 @@ from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
 )
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, set_cuda_graph_modules
 
 
 def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
@@ -82,17 +83,74 @@ def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     cfg.optimizer.overlap_param_gather = False
 
 
-def _qwen35_vl_post_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3.5/Qwen3.6-VL post-overrides and optimizer-step overlap."""
-    _qwen35_vl_post(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
+def _enable_partial_cuda_graphs(cfg: ConfigContainer) -> None:
+    """Re-enable partial (per-layer) CUDA graphs on the language stack, with ``attn``.
+
+    MUST be called AFTER :func:`_qwen35_vl_post`, which sets
+    ``cuda_graph_impl="none"`` and clears the module list for the variable-shape
+    real-data path. These benchmarks run on MOCK data with a fixed
+    ``seq_length`` (4096) and ``moe_router_force_load_balancing=True``, so the
+    variable-length concern that motivates disabling graphs does not apply here.
+
+    ``attn`` is the module that matters: on 397B/64x GB300 under forced load
+    balancing, adding the attention graph moved the step from 390.5 to 580.2
+    TFLOP/s/GPU with GPU kernel time unchanged (+0.5%) and identical per-kernel
+    instance counts -- the entire gain is per-launch CPU overhead that graph
+    replay removes.
+
+    ``set_cuda_graph_modules`` writes ``cuda_graph_modules`` and nulls
+    ``cuda_graph_scope``, so the two never end up set at once (MCore asserts).
+    """
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
+    # The RNG trackers must be re-enabled here, not left to an earlier caller.
+    # ``_benchmark_common`` derives them from whatever ``cuda_graph_impl`` held at
+    # ITS call time (_common.py:88-92: ``cfg.rng.te_rng_tracker =
+    # cfg.model.use_te_rng_tracker = graphs_active``), and by then
+    # ``_qwen35_vl_post`` has not yet run -- so with the graphs disabled the flags
+    # land on False. Flipping ``cuda_graph_impl`` back on afterwards without them
+    # trips MCore's "cuda_graph_impl != none requires use_te_rng_tracker" assertion
+    # at model build. The h100 library recipe sets both for the same reason.
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
 
 
-def _qwen35_vl_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3.5/Qwen3.6-VL post-overrides, clear graph scope, and enable overlap."""
+def _select_gdn_kernel_backend(cfg: ConfigContainer, backend: Literal["transformer_engine", "fla"]) -> None:
+    """Select the kernel for the GatedDeltaNet (GDN) layers when Megatron-Core exposes the choice.
+
+    ``"transformer_engine"`` runs GDN through Transformer Engine's GatedDeltaNetAttention on cuDNN frontend
+    kernels; ``"fla"`` is Megatron-Core's default FLA Triton kernel. Qwen3.5-VL runs 3 of every 4 language
+    layers as GDN (30 of 40 at 35B-A3B, 45 of 60 at 397B-A17B), so with 16 microbatches per step the GB300
+    35B and 397B recipes run 480 and 720 GDN forward+backward passes per rank per step.
+
+    On GB300 at these recipes' shapes (35B: MBS 4 x 4096 tokens x 32 heads x 128; 397B: MBS 1 x 4096 x 64 x 128),
+    cuDNN frontend 1.29 takes 54% (35B) and 39% (397B) less time than FLA for the GDN layer forward+backward. End to
+    end with MXFP8, one run per arm on launch configurations close to (not exactly) these recipes, throughput rises
+    by 9.6% at 397B-A17B on 64 GPUs (EP 32, forced load balancing) and by 12.0% to 19.4% at 35B-A3B on 16 GPUs
+    (EP 4, real routing, two images).
+
+    The cuDNN path needs a Megatron-Core with ``TransformerConfig.gdn_kernel_backend`` (NVIDIA/Megatron-LM#6645,
+    re-landing as NVIDIA/Megatron-LM#7583); transformer-engine >= 2.19; nvidia-cudnn-frontend >= 1.29.0 (older GDN
+    kernels can return NaN); and nvidia-cutlass-dsl >= 4.7.0. With an older CuTe DSL, cuDNN silently runs GDN on its
+    cuTile engine, which takes 86% longer than FLA at the 35B shape. Transformer Engine 2.19 also raises under the FP8
+    autocast that the FP8-CS and MXFP8 recipes enable unless Megatron-Core turns it off around the GDN call, which
+    #7583 does not; 2.20.2 and later ignore FP8 autocast in GDN. ``ConfigContainer.validate`` warns about missing or
+    too-old packages, and about Transformer Engine 2.19 with FP8 or FP4, instead of this helper switching backends, so
+    a recipe builds the same config in every environment. Compare against FLA with ``model.gdn_kernel_backend=fla``.
+
+    Assigning an unknown field on the model config does not raise: on a Megatron-Core without the field it would
+    create an unused attribute and leave the recipe looking enabled while running FLA, so the assignment is
+    guarded, as in ``_enable_gdn_conv_fusion`` (``recipes/qwen_vl/h100/qwen35_vl.py``).
+    """
+    model = cfg.model
+    if hasattr(type(model), "gdn_kernel_backend") or hasattr(model, "gdn_kernel_backend"):
+        model.gdn_kernel_backend = backend
+
+
+def _qwen35_vl_post_clear_scope(cfg: ConfigContainer) -> None:
+    """Apply Qwen3.5/Qwen3.6-VL post-overrides and clear graph scope."""
     _qwen35_vl_post(cfg)
     cfg.model.cuda_graph_scope = []
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
 
 
 def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
@@ -113,21 +171,9 @@ def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_grad_reduce = False
 
 
-def _finalize_qwen3_vl_with_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3-VL perf defaults with optimizer-step param-gather overlap."""
-    _finalize_qwen3_vl(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)
-
-
 def _finalize_qwen3_vl_with_moe_a2a_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults with MoE A2A overlap enabled."""
     _finalize_qwen3_vl(cfg)
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     cfg.comm_overlap.delay_wgrad_compute = True
     cfg.model.moe_shared_expert_overlap = False
-
-
-def _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg: ConfigContainer) -> None:
-    """Apply Qwen3-VL perf defaults with MoE A2A and optimizer-step overlap."""
-    _finalize_qwen3_vl_with_moe_a2a_overlap(cfg)
-    _enable_overlap_param_gather_with_optimizer_step(cfg)

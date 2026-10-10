@@ -28,6 +28,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+README = REPO_ROOT / "README.md"
+DOCS_MODELS = REPO_ROOT / "docs" / "models"
+SUPPORTED_MODELS_HEADING = "## Supported Models"
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
 PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
@@ -58,20 +61,26 @@ DATA_PREPARATION_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
 )
 QWEN3_VL_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+MEGATRON_BERT_README = REPO_ROOT / "examples" / "models" / "bert" / "megatron-bert" / "README.md"
 QWEN25_VL_DOCS = (
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
 )
-QWEN3_DOCS = (
-    REPO_ROOT / "docs" / "models" / "qwen" / "qwen.md",
-    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen.mdx",
+QWEN3_DOC_PAIRS = tuple(
+    (
+        REPO_ROOT / "docs" / "models" / "qwen" / f"{name}.md",
+        REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / f"{name}.mdx",
+    )
+    for name in (
+        "qwen3-235b-a22b",
+        "qwen3-30b-a3b",
+        "qwen3-8b",
+        "qwen3-moe",
+        "qwen3-next",
+        "qwen3.6-35b-a3b",
+        "qwen3.8-27b",
+    )
 )
-QWEN3_ALIASES = RECIPES_DIR / "qwen" / "qwen3.py"
-QWEN3_H100_RECIPES = RECIPES_DIR / "qwen" / "h100" / "qwen3.py"
-QWEN3_MOE_ALIASES = RECIPES_DIR / "qwen" / "qwen3_moe.py"
-QWEN3_MOE_H100_RECIPES = RECIPES_DIR / "qwen" / "h100" / "qwen3_moe.py"
-QWEN3_NEXT_ALIASES = RECIPES_DIR / "qwen" / "qwen3_next.py"
-QWEN3_NEXT_H100_RECIPES = RECIPES_DIR / "qwen" / "h100" / "qwen3_next.py"
 VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-preparation.md"
 SPHINX_TUTORIAL_LINK_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
@@ -193,6 +202,17 @@ def test_shell_conversion_launcher_is_not_run_through_python():
                 offenders.append(str(path.relative_to(REPO_ROOT)))
 
     assert not offenders, f"convert.sh is invoked through Python or torchrun: {offenders}"
+
+
+def test_model_example_scripts_reference_existing_conversion_scripts():
+    """Every examples/conversion/*.py path in a model example shell script exists in the repo."""
+    offenders: list[str] = []
+    for path in sorted((REPO_ROOT / "examples" / "models").rglob("*.sh")):
+        for ref in sorted(set(re.findall(r"examples/conversion/[\w./-]+\.py", _read(path)))):
+            if not (REPO_ROOT / ref).is_file():
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {ref}")
+
+    assert not offenders, f"model example scripts reference missing conversion scripts: {offenders}"
 
 
 def test_llama_readme_gptdataset_field_name():
@@ -407,11 +427,11 @@ def test_model_examples_use_current_run_recipe_arguments():
 def test_nemotron_and_qwen2_audio_finetune_launchers_use_exported_recipes():
     """SFT and PEFT example recipes must match their launcher-visible aliases."""
     launcher_expectations = {
-        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_sft.sh": (
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3_nano" / "slurm_sft.sh": (
             "${MODEL_NAME}_sft_config",
             "nemotron_3_nano_finetune_config",
         ),
-        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_peft.sh": (
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3_nano" / "slurm_peft.sh": (
             "${MODEL_NAME}_peft_config",
             "nemotron_3_nano_finetune_config",
         ),
@@ -550,284 +570,129 @@ def test_gemma3_recipe_examples_match_source_signatures():
     assert not unsupported_by_recipe, f"Gemma 3 docs use unsupported recipe keywords: {unsupported_by_recipe}"
 
 
-def test_qwen3_recipe_examples_use_current_factory_api():
-    """Qwen3 recipe examples must call factories with their supported keywords."""
-    assert _read(QWEN3_DOCS[0]) == _read(QWEN3_DOCS[1])
-    expected_keywords = {
-        "qwen3_8b_pretrain_config": set(),
-        "qwen3_8b_sft_config": set(),
-        "qwen3_8b_peft_config": {"peft_scheme"},
-    }
-    for path in QWEN3_DOCS:
-        qwen3_docs = _read(path).split("\n## Qwen3\n", 1)[1].split("## Qwen2 / Qwen2.5", 1)[0]
-        examples = qwen3_docs.split("#### Pre-training Example", 1)[1].split("### Hugging Face Model Cards", 1)[0]
-        calls: dict[str, list[set[str | None]]] = {name: [] for name in expected_keywords}
-        for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
-            tree = ast.parse(code, filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
-                    calls[node.func.id].append({keyword.arg for keyword in node.keywords})
-
-        for name, allowed_keywords in expected_keywords.items():
-            assert calls[name] == [allowed_keywords], (
-                f"{path.relative_to(REPO_ROOT)} calls {name} with unsupported keywords: {calls[name]}"
-            )
-
-        assert examples.count("config.optimizer.lr =") == 2
-        assert examples.count("config.scheduler.lr_decay_iters = 1000") == 2
-        assert "config.scheduler.max_lr" not in examples
-
-
-def test_qwen3_moe_recipe_examples_match_source_signatures():
-    """Qwen3-MoE examples must pass only keywords accepted by public recipes."""
-    recipe_names = {
-        "qwen3_30b_a3b_peft_config",
-        "qwen3_30b_a3b_pretrain_config",
-        "qwen3_30b_a3b_sft_config",
-        "qwen3_235b_a22b_pretrain_config",
-    }
-    alias_targets: dict[str, str] = {}
-    for node in ast.parse(_read(QWEN3_MOE_ALIASES), filename=str(QWEN3_MOE_ALIASES)).body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        for imported_name in node.names:
-            if imported_name.asname in recipe_names:
-                alias_targets[imported_name.asname] = imported_name.name
-    assert set(alias_targets) == recipe_names
-
-    accepted_keywords: dict[str, set[str]] = {}
-    for node in ast.parse(_read(QWEN3_MOE_H100_RECIPES), filename=str(QWEN3_MOE_H100_RECIPES)).body:
-        if not isinstance(node, ast.FunctionDef) or node.name not in alias_targets.values():
-            continue
-        assert node.args.kwarg is None
-        accepted_keywords[node.name] = {
-            argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
-        }
-    assert set(accepted_keywords) == set(alias_targets.values())
-
-    for path in QWEN3_DOCS:
-        qwen3_moe_docs = _read(path).split("\n## Qwen3 MoE\n", 1)[1].split("\n## Qwen3\n", 1)[0]
-        examples = qwen3_moe_docs.split("#### Pre-training Examples", 1)[1].split("### Hugging Face Model Cards", 1)[0]
-        calls: dict[str, list[set[str | None]]] = {name: [] for name in recipe_names}
-        for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
-            tree = ast.parse(code, filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
-                    calls[node.func.id].append({keyword.arg for keyword in node.keywords})
-
-        for recipe_name in recipe_names:
-            assert len(calls[recipe_name]) == 1, (
-                f"{path.relative_to(REPO_ROOT)} should call {recipe_name} exactly once: {calls[recipe_name]}"
-            )
-            unsupported = calls[recipe_name][0] - accepted_keywords[alias_targets[recipe_name]]
-            assert not unsupported, (
-                f"{path.relative_to(REPO_ROOT)} calls {recipe_name} with unsupported keywords: {sorted(unsupported)}"
-            )
-
-
-def test_qwen3_next_recipe_examples_match_source_contracts():
-    """Qwen3-Next examples must match factory signatures, config ownership, and topology."""
-    assert _read(QWEN3_DOCS[0]) == _read(QWEN3_DOCS[1])
-    recipe_names = {
-        "qwen3_next_80b_a3b_pretrain_config",
-        "qwen3_next_80b_a3b_sft_config",
-    }
-    alias_targets: dict[str, str] = {}
-    for node in ast.parse(_read(QWEN3_NEXT_ALIASES), filename=str(QWEN3_NEXT_ALIASES)).body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        for imported_name in node.names:
-            if imported_name.asname in recipe_names:
-                alias_targets[imported_name.asname] = imported_name.name
-    assert set(alias_targets) == recipe_names
-
-    accepted_keywords: dict[str, set[str]] = {}
-    for node in ast.parse(_read(QWEN3_NEXT_H100_RECIPES), filename=str(QWEN3_NEXT_H100_RECIPES)).body:
-        if not isinstance(node, ast.FunctionDef) or node.name not in alias_targets.values():
-            continue
-        assert node.args.kwarg is None
-        accepted_keywords[node.name] = {
-            argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
-        }
-    assert set(accepted_keywords) == set(alias_targets.values())
-
-    assignments_by_recipe: dict[str, dict[str, object]] = {}
-    for path in QWEN3_DOCS:
-        section = _read(path).split("\n## Qwen3-Next\n", 1)[1].split("\n## Qwen3 MoE\n", 1)[0]
-        examples = section.split("#### Pre-training Example", 1)[1].split("### Hugging Face Model Cards", 1)[0]
-        calls: dict[str, list[ast.Call]] = {name: [] for name in recipe_names}
-        for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
-            tree = ast.parse(code, filename=str(path))
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in calls:
-                    calls[node.func.id].append(node)
-
-            recipe_name = next(
-                (
-                    node.value.func.id
-                    for node in tree.body
-                    if isinstance(node, ast.Assign)
-                    and isinstance(node.value, ast.Call)
-                    and isinstance(node.value.func, ast.Name)
-                    and node.value.func.id in recipe_names
-                ),
-                None,
-            )
-            if path == QWEN3_DOCS[0] and recipe_name is not None:
-                assignments_by_recipe[recipe_name] = {
-                    ast.unparse(node.targets[0]): ast.literal_eval(node.value)
-                    for node in tree.body
-                    if isinstance(node, ast.Assign)
-                    and len(node.targets) == 1
-                    and ast.unparse(node.targets[0]).startswith("config.")
-                }
-
-        for recipe_name in recipe_names:
-            assert len(calls[recipe_name]) == 1
-            documented_keywords = {keyword.arg for keyword in calls[recipe_name][0].keywords}
-            unsupported = documented_keywords - accepted_keywords[alias_targets[recipe_name]]
-            assert not unsupported, (
-                f"{path.relative_to(REPO_ROOT)} calls {recipe_name} with unsupported keywords: {sorted(unsupported)}"
-            )
-
-    expected_owners = {
-        "qwen3_next_80b_a3b_pretrain_config": {
-            "config.dataset.data_path",
-            "config.checkpoint.save",
-            "config.logger.tensorboard_dir",
-            "config.train.train_iters",
-            "config.train.global_batch_size",
-            "config.scheduler.lr_decay_iters",
-            "config.model.seq_length",
-            "config.dataset.seq_length",
-        },
-        "qwen3_next_80b_a3b_sft_config": {
-            "config.checkpoint.pretrained_checkpoint",
-            "config.train.train_iters",
-            "config.train.global_batch_size",
-            "config.scheduler.lr_decay_iters",
-            "config.optimizer.lr",
-        },
-    }
-    assert set(assignments_by_recipe) == recipe_names
-    for recipe_name, expected_fields in expected_owners.items():
-        assignments = assignments_by_recipe[recipe_name]
-        assert set(assignments) == expected_fields
-        assert assignments["config.scheduler.lr_decay_iters"] == assignments["config.train.train_iters"]
-
-    docs_lines = set(_read(QWEN3_DOCS[0]).splitlines())
-    assert {
-        "| **Qwen3-Next-80B** | Pretrain | 1 | 4 | 8 | 32 | Pre-training (4 nodes) |",
-        "| **Qwen3-Next-80B** | Full SFT | 1 | 2 | 8 | 16 | Full supervised finetuning (2 nodes) |",
-    } <= docs_lines
-
-
-def test_qwen3_recipe_examples_match_source_signatures_and_nested_owners():
-    """Qwen3 examples must follow source signatures and nested config ownership."""
-    recipe_names = {
-        "qwen3_8b_pretrain_config",
-        "qwen3_8b_sft_config",
-        "qwen3_8b_peft_config",
-    }
-    alias_targets: dict[str, str] = {}
-    for node in ast.parse(_read(QWEN3_ALIASES), filename=str(QWEN3_ALIASES)).body:
-        if not isinstance(node, ast.ImportFrom):
-            continue
-        for imported_name in node.names:
-            if imported_name.asname in recipe_names:
-                alias_targets[imported_name.asname] = imported_name.name
-    assert set(alias_targets) == recipe_names
-
-    accepted_keywords: dict[str, set[str]] = {}
-    for node in ast.parse(_read(QWEN3_H100_RECIPES), filename=str(QWEN3_H100_RECIPES)).body:
-        if not isinstance(node, ast.FunctionDef) or node.name not in alias_targets.values():
-            continue
-        assert node.args.kwarg is None
-        accepted_keywords[node.name] = {
-            argument.arg for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
-        }
-    assert set(accepted_keywords) == set(alias_targets.values())
-
-    qwen3_docs = _read(QWEN3_DOCS[0]).split("\n## Qwen3\n", 1)[1].split("## Qwen2 / Qwen2.5", 1)[0]
-    examples = qwen3_docs.split("#### Pre-training Example", 1)[1].split("### Hugging Face Model Cards", 1)[0]
-    assignments_by_recipe: dict[str, dict[str, object]] = {}
-    for code in re.findall(r"```python\n(.*?)```", examples, re.DOTALL):
-        tree = ast.parse(code, filename=str(QWEN3_DOCS[0]))
-        recipe_name = next(
-            (
-                node.value.func.id
-                for node in tree.body
-                if isinstance(node, ast.Assign)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Name)
-                and node.value.func.id in recipe_names
-            ),
-            None,
+def _normalize_model_guide_format(text: str) -> str:
+    """Normalize only the catalog's intentional Sphinx/Fern rendering differences."""
+    for boundary in ("BEGIN", "END"):
+        text = text.replace(
+            f"{{/* {boundary} GENERATED VERIFIED CONFIGURATIONS */}}",
+            f"<!-- {boundary} GENERATED VERIFIED CONFIGURATIONS -->",
         )
-        if recipe_name is None:
+    text = re.sub(r"<p>(.*?)</p>", lambda match: "<p>" + " ".join(match[1].split()) + "</p>", text, flags=re.DOTALL)
+    return re.sub(
+        r'(<code class="language-bash">)(.*?)(</code>)',
+        lambda match: match[1] + match[2].replace("&#123;", "{").replace("&#125;", "}") + match[3],
+        text,
+        flags=re.DOTALL,
+    )
+
+
+def test_model_guide_format_normalization_preserves_content() -> None:
+    """Format parity must still detect changed prose, commands, and code spacing."""
+    sphinx = (
+        "<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->\n"
+        "<p>Expected result\n</p>\n"
+        '<code class="language-bash">echo ${MODEL}\n  --flag</code>\n'
+        "<!-- END GENERATED VERIFIED CONFIGURATIONS -->\n"
+    )
+    fern = (
+        "{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}\n"
+        "<p>Expected result</p>\n"
+        '<code class="language-bash">echo $&#123;MODEL&#125;\n  --flag</code>\n'
+        "{/* END GENERATED VERIFIED CONFIGURATIONS */}\n"
+    )
+    expected = _normalize_model_guide_format(sphinx)
+    assert expected == _normalize_model_guide_format(fern)
+    for old, new in (("Expected result", "Different result"), ("MODEL", "OTHER"), ("  --flag", " --flag")):
+        assert expected != _normalize_model_guide_format(fern.replace(old, new))
+    assert _normalize_model_guide_format("Prose &#123;value&#125;") == "Prose &#123;value&#125;"
+
+
+def test_qwen3_model_guides_match_fern_and_reference_exported_recipes():
+    """Split Qwen3 guides must match Fern and reference exported recipes."""
+    defined_recipes = _defined_recipe_names()
+    for sphinx_path, fern_path in QWEN3_DOC_PAIRS:
+        sphinx_text = _read(sphinx_path)
+        assert _normalize_model_guide_format(sphinx_text) == _normalize_model_guide_format(_read(fern_path))
+
+        documented_recipes = set(re.findall(r"(qwen[0-9A-Za-z_]+_config)", sphinx_text))
+        assert documented_recipes, f"{sphinx_path.relative_to(REPO_ROOT)} documents no Qwen recipes"
+        missing = sorted(documented_recipes - defined_recipes)
+        assert not missing, f"{sphinx_path.relative_to(REPO_ROOT)} references unknown recipes: {missing}"
+
+
+def _normalize(text: str) -> str:
+    """Lowercase and drop every non-alphanumeric character, so separators and case do not matter."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _supported_models_rows() -> list[tuple[str, str]]:
+    """`(family_cell, variants_cell)` for every data row of the README Supported Models table."""
+    text = _read(README)
+    assert SUPPORTED_MODELS_HEADING in text, f"README.md has no {SUPPORTED_MODELS_HEADING!r} section"
+    body = text.split(SUPPORTED_MODELS_HEADING, 1)[1]
+    following = re.search(r"^## ", body, flags=re.MULTILINE)
+    table = body[: following.start()] if following else body
+
+    rows: list[tuple[str, str]] = []
+    for line in table.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "---" in line or line.count("|") < 3:
             continue
-        factory_call = next(
-            node.value
-            for node in tree.body
-            if isinstance(node, ast.Assign)
-            and isinstance(node.value, ast.Call)
-            and isinstance(node.value.func, ast.Name)
-            and node.value.func.id == recipe_name
-        )
-        assert {keyword.arg for keyword in factory_call.keywords} <= accepted_keywords[alias_targets[recipe_name]]
-        assignments_by_recipe[recipe_name] = {
-            ast.unparse(node.targets[0]): ast.literal_eval(node.value)
-            for node in tree.body
-            if isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and ast.unparse(node.targets[0]).startswith("config.")
-        }
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if not cells[0].lower().startswith("family"):
+            rows.append((cells[0], cells[1] if len(cells) > 1 else ""))
+    return rows
 
-    expected_owners = {
-        "qwen3_8b_pretrain_config": {
-            "config.dataset.data_path",
-            "config.checkpoint.save",
-            "config.logger.tensorboard_dir",
-            "config.train.train_iters",
-            "config.train.global_batch_size",
-            "config.scheduler.lr_decay_iters",
-            "config.model.seq_length",
-            "config.dataset.seq_length",
-        },
-        "qwen3_8b_sft_config": {
-            "config.checkpoint.pretrained_checkpoint",
-            "config.train.train_iters",
-            "config.train.global_batch_size",
-            "config.scheduler.lr_decay_iters",
-            "config.optimizer.lr",
-        },
-        "qwen3_8b_peft_config": {
-            "config.checkpoint.pretrained_checkpoint",
-            "config.train.train_iters",
-            "config.train.global_batch_size",
-            "config.scheduler.lr_decay_iters",
-            "config.optimizer.lr",
-        },
-    }
-    assert set(assignments_by_recipe) == recipe_names
-    for recipe_name, expected_fields in expected_owners.items():
-        assignments = assignments_by_recipe[recipe_name]
-        assert set(assignments) == expected_fields
-        assert assignments["config.scheduler.lr_decay_iters"] == assignments["config.train.train_iters"]
 
-    expected_topologies = {
-        "| **Qwen3 0.6B-1.7B** | Pretrain / Full SFT / LoRA / DoRA | 1 | 1 | 1 | Single-GPU training |",
-        "| **Qwen3 4B** | Pretrain / Full SFT | 2 | 1 | 2 | Two-GPU training |",
-        "| **Qwen3 4B** | LoRA / DoRA | 1 | 1 | 1 | Single-GPU PEFT |",
-        "| **Qwen3 8B** | Pretrain | 1 | 1 | 16 | Convergence recipe with DP=16 |",
-        "| **Qwen3 8B** | Full SFT | 4 | 1 | 4 | Four-GPU full finetuning |",
-        "| **Qwen3 8B** | LoRA / DoRA | 1 | 1 | 1 | Single-GPU PEFT |",
-        "| **Qwen3 14B** | Pretrain / Full SFT | 8 | 1 | 8 | Single-node training |",
-        "| **Qwen3 14B** | LoRA / DoRA | 1 | 1 | 1 | Single-GPU PEFT |",
-        "| **Qwen3 32B** | Pretrain / Full SFT | 8 | 2 | 16 | Two-node training |",
-        "| **Qwen3 32B** | LoRA / DoRA | 1 | 1 | 1 | Single-GPU PEFT |",
-    }
-    assert expected_topologies <= set(qwen3_docs.splitlines())
+def _row_for_family(rows: list[tuple[str, str]], family: str) -> tuple[str, str] | None:
+    """The row claiming `family`, matched by its docs link or by name, or None."""
+    for cell, variants in rows:
+        if f"docs/models/{family}/" in cell:
+            return cell, variants
+    for cell, variants in rows:
+        if _normalize(family) in _normalize(cell):
+            return cell, variants
+    return None
+
+
+def test_readme_supported_models_table_lists_every_shipped_model_family():
+    """Every documented model family with code in the tree has a Supported Models row."""
+    rows = _supported_models_rows()
+    assert len(rows) >= 15, f"only {len(rows)} Supported Models rows parsed — the table layout has changed"
+
+    missing = []
+    for family_dir in sorted(path for path in DOCS_MODELS.iterdir() if path.is_dir()):
+        name = family_dir.name
+        shipped = (REPO_ROOT / "examples" / "models" / name).is_dir() or (
+            REPO_ROOT / "src" / "megatron" / "bridge" / "models" / name
+        ).is_dir()
+        if shipped and _row_for_family(rows, name) is None:
+            missing.append(f"docs/models/{name}/")
+    assert not missing, f"documented, shipped model families have no Supported Models row: {missing}"
+
+
+def test_readme_supported_models_rows_name_every_shipped_model_variant():
+    """Every documented variant page with runnable examples is named in its family's row."""
+    rows = _supported_models_rows()
+    checked, missing = [], []
+    for page in sorted(DOCS_MODELS.glob("*/*.md")):
+        if page.name == "index.md":
+            continue
+        examples = re.findall(r"(examples/[A-Za-z0-9_./-]+)", _read(page))
+        if not any((REPO_ROOT / path.rstrip("/.")).exists() for path in examples):
+            continue  # nothing runnable behind this page yet, so the table cannot be expected to name it
+        row = _row_for_family(rows, page.parent.name)
+        if row is None:
+            continue  # already reported at family granularity
+        checked.append(page.name)
+        named = _normalize(" ".join(row))
+        tokens = [token for token in re.split(r"[-_]", page.stem) if token]
+        if _normalize(page.stem) in named or all(_normalize(token) in named for token in tokens):
+            continue
+        missing.append(f"docs/models/{page.parent.name}/{page.name}")
+
+    assert checked, "no documented variant page cleared the shipped gate — the docs layout has changed"
+    assert not missing, f"documented, shipped model variants are not named in their README row: {missing}"
 
 
 def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
@@ -835,6 +700,17 @@ def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
     for path in SPHINX_TUTORIAL_LINK_DOCS:
         relative_tutorial_links = re.findall(r"\]\((?:\.\./)+tutorials/[^)]+\)", _read(path))
         assert not relative_tutorial_links, f"{path} has out-of-tree Sphinx links: {relative_tutorial_links}"
+
+
+def test_megatron_bert_readme_saves_a_bert_tokenizer():
+    """The Megatron BERT README must load the Hub tokenizer through a BERT tokenizer class."""
+    loaders = re.findall(
+        r"(\w+)\.from_pretrained\(\s*[\"']nvidia/megatron-bert-uncased-345m[\"']", _read(MEGATRON_BERT_README)
+    )
+    assert loaders, f"{MEGATRON_BERT_README} no longer loads the nvidia/megatron-bert-uncased-345m tokenizer"
+    assert all(re.fullmatch(r"BertTokenizer(Fast)?", name) for name in loaders), (
+        f"non-BERT tokenizer loaders: {loaders}"
+    )
 
 
 if __name__ == "__main__":

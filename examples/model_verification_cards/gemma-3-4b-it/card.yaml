@@ -6,10 +6,9 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import,
-  TP2/PP2 GPU export, manual multimodal forward parity, and deterministic
-  TP2/PP2 inference are verified. CPU export remains unverified because its
-  vision namespace gate does not pass; SFT, post-SFT export/inference, and
-  PEFT remain pending. Pretraining and checkpoint resume are unsupported
+  CPU and TP2/PP2 GPU export, manual multimodal forward parity,
+  deterministic TP2/PP2 inference, and 8-GPU H100 full SFT are verified.
+  Post-SFT export/inference and PEFT remain pending. Pretraining and checkpoint resume are unsupported
   because there is no public exact-model pretraining recipe. Long-context SFT
   is unsupported because the required dense local/global attention biases
   currently exclude context parallelism and in-batch THD packing. Existing
@@ -19,14 +18,14 @@ verification_index:
     verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
-    unverified:
-      - megatron_to_hf_cpu
   training:
     H100:
-      unverified: [sft, sft_export_inference, peft]
+      verified: [sft]
+      unverified: [sft_export_inference, peft]
       unsupported: [pretrain, checkpoint_resume, sft_long_context]
 model:
   hf_id: google/gemma-3-4b-it
@@ -74,7 +73,8 @@ items:
       FusedAttention and matched all 883 mapped tensors exactly.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
+    bridge_commit: 60442bb9adb5435b47db22c6c20aacdf772fbddc  # pragma: allowlist secret
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
@@ -83,15 +83,15 @@ items:
       --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron/iter_0000000
       --hf-path work/model-verification/gemma-3-4b-it/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-08-26
     expected_result: >
-      A fresh exact-revision CPU import and export from Bridge commit
-      2d0175b116af6cb785bb8efab7ee053435496266 completed on 2026-07-24, but
-      the source/export key gate reported 437 missing legacy
-      vision_tower.vision_model.* keys and 437 extra flat vision_tower.* keys.
-      This leaf remains unverified pending a source-namespace-preserving design;
-      changing the general config-only export path would regress pruned and
-      custom checkpoint exports.
+      The exact-revision CPU export exits successfully and writes all 883
+      tensors, 4,300,079,472 values, and 8,600,158,944 tensor-payload bytes.
+      Keys, shapes, dtypes, and values are bitwise identical to the pinned BF16
+      source with no dtype conversions, including all 437 legacy
+      vision_tower.vision_model.* tensors. Transformers strictly reloads the
+      output natively as Gemma3ForConditionalGeneration with all 884 state
+      entries and no loading discrepancies.
 
   megatron_to_hf_gpu:
     status: verified
@@ -110,9 +110,11 @@ items:
       TP2/PP2 distributed export completed without a missing PP owner. Source
       and export contained the same 883 keys with exact shapes, dtypes, and
       torch.equal values, including all 437 legacy
-      vision_tower.vision_model.* tensors. Native
-      Gemma3ForConditionalGeneration strict reload reported no missing,
-      unexpected, mismatched, or errored tensors.
+      vision_tower.vision_model.* tensors. Transformers exposes 884 logical
+      state entries after reload because tied lm_head.weight aliases the single
+      stored language_model.model.embed_tokens.weight tensor; no extra tensor
+      is serialized. Native Gemma3ForConditionalGeneration strict reload
+      reported no missing, unexpected, mismatched, or errored tensors.
 
   manual_forward_pass:
     status: verified
@@ -180,11 +182,12 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: b2ebece6a78fbee6a734655cc6993c13a08b60a4  # pragma: allowlist secret
       enabled_features: {}
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 1
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2
         --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
         --max_steps 10 --seq_length 4096
@@ -192,18 +195,20 @@ items:
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
-      last_verified: null
+      last_verified: 2026-10-09
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.163850
+        final_loss: 0.143927
+        last_10_steps_step_time_ms_avg: 5461.010
+        last_10_steps_model_tflops_per_gpu_avg: 22.450
+        last_10_steps_tokens_per_second_per_gpu_avg: 3000.178
       expected_result: >
-        Pending exact-revision CORD-v2 full-SFT verification with the public
-        Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer
-        steps with finite loss, no skipped or NaN iterations, all five metrics,
-        and a reloadable final full-model checkpoint.
+        On 8 H100s, the TP1/PP1 recipe completes exactly ten exact-revision
+        CORD-v2 full-SFT steps at global batch size 32 and sequence length
+        4096. Loss is finite from 1.163850 to 0.143927 with no skipped or NaN
+        iterations. The ten-step metric window includes the first-step
+        cold-start cost by policy, and the final iteration-10 checkpoint saves
+        successfully.
 
   sft_export_inference:
     H100:

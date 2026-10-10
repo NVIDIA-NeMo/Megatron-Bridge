@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Callable, List, Optional, Union
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 
+from megatron.bridge.models.deepseek.attention import get_deepseek_decoder_block_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import MLATransformerConfig
 
@@ -156,7 +157,7 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     """Sarvam 105B model provider."""
 
     transformer_layer_spec: Union["ModuleSpec", Callable[["GPTModelProvider"], "ModuleSpec"]] = partial(
-        get_gpt_decoder_block_spec,
+        get_deepseek_decoder_block_spec,
         use_transformer_engine=HAVE_TE,
         normalization="RMSNorm",
         vp_stage=None,

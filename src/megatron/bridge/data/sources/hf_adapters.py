@@ -47,18 +47,45 @@ def _prompt_completion_example(
 
 
 def _native_conversation_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> dict[str, Any]:
-    messages_column = str(kwargs.get("messages_column", "messages"))
-    conversation_column = str(kwargs.get("conversation_column", "conversation"))
-    conversations_column = str(kwargs.get("conversations_column", "conversations"))
-    schema_columns = {messages_column, conversation_column, conversations_column}
-    extra = {key: value for key, value in example.items() if key not in schema_columns}
-    if example.get(messages_column) is not None:
-        return {"messages": example[messages_column], **extra}
-    if example.get(conversation_column) is not None:
-        return {"conversation": example[conversation_column], **extra}
-    if example.get(conversations_column) is not None:
-        return {"conversations": example[conversations_column], **extra}
-    return dict(example)
+    columns = {key: str(kwargs.get(f"{key}_column", key)) for key in ("messages", "conversation", "conversations")}
+    schema_columns = set(columns.values())
+    adapted = {key: value for key, value in example.items() if key not in schema_columns}
+    # Preserve every schema field so preprocessing can distinguish selected text
+    # columns from ambiguous chat rows. Renaming must not overwrite another field.
+    seen_columns: set[str] = set()
+    for key, source_column in columns.items():
+        if source_column not in example or source_column in seen_columns:
+            continue
+        seen_columns.add(source_column)
+        value = example[source_column]
+        if value is not None and adapted.get(key) is not None:
+            raise ValueError(f"Native HF adaptation would overwrite populated conversation column {key!r}.")
+        if value is not None or key not in adapted:
+            adapted[key] = value
+    return adapted
+
+
+def _coderforge_json_list(example: Mapping[str, Any], field_name: str) -> list[dict[str, Any]]:
+    value = example.get(field_name)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"CoderForge {field_name} must contain valid JSON.") from error
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        raise ValueError(f"CoderForge {field_name} must decode to a list of dictionaries.")
+    return [dict(item) for item in value]
+
+
+def _coderforge_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
+    messages = _coderforge_json_list(example, "messages")
+    tools = _coderforge_json_list(example, "tools")
+    metadata = {key: value for key, value in example.items() if key not in {"messages", "tools", "image"}}
+    if example.get("image") is not None:
+        # CoderForge's image column names the trajectory's execution image; it
+        # is metadata, not visual input for a multimodal processor.
+        metadata["environment_image"] = example["image"]
+    return {"messages": messages, "tools": tools, **metadata}
 
 
 def _squad_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
@@ -368,6 +395,7 @@ def prepare_hf_dataset_for_adapter(
 
 
 _ADAPTERS: dict[str, HFDatasetAdapter] = {
+    "coderforge": _coderforge_adapter,
     "squad": _squad_adapter,
     "gsm8k": _gsm8k_adapter,
     "openmathinstruct2": _openmathinstruct2_adapter,

@@ -8,6 +8,7 @@ import torch.distributed as dist
 from megatron.bridge.data.megatron_mimo.dp_utils import (
     get_megatron_mimo_dp_info,
     get_megatron_mimo_sampling_info,
+    real_token_lengths,
     slice_batch_for_megatron_mimo,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
@@ -155,6 +156,50 @@ def test_get_megatron_mimo_sampling_info_llm_intermediate_pp(monkeypatch):
     assert sampler_dp_rank == 0
     assert sampler_dp_size == 1
     assert needs_data is True
+
+
+def test_get_megatron_mimo_sampling_info_scalable_dp_uses_configured_dp(monkeypatch):
+    """Scalable sampling uses the configured sample-DP group when ETP is one."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    monkeypatch.setattr(dist, "get_rank", lambda: 5)
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=3),
+    }
+
+    sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(
+        megatron_mimo_cfg, grids, scalable_dp=True
+    )
+
+    assert (sampler_dp_rank, sampler_dp_size, needs_data) == (1, 4, True)
+
+
+def test_get_megatron_mimo_sampling_info_scalable_dp_rejects_etp(monkeypatch):
+    """ETP ranks must not be mistaken for independent sample-DP replicas."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    megatron_mimo_cfg.module_parallelisms["vision"].expert_tensor_parallel_size = 2
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+    }
+
+    with pytest.raises(NotImplementedError, match="expert_tensor_parallel_size=1"):
+        get_megatron_mimo_sampling_info(megatron_mimo_cfg, grids, scalable_dp=True)
+
+
+def test_get_megatron_mimo_sampling_info_scalable_dp_rejects_grid_mismatch(monkeypatch):
+    """A grid DP group that disagrees with the configured DP size must not shard reads silently."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    monkeypatch.setattr(dist, "get_rank", lambda: 5)
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        # language is configured with data_parallel_size=4 but its grid group reports 2
+        "language": FakeGrid(4, 4, dp_rank=1, dp_size=2, pp_rank=0, pp_size=1),
+    }
+
+    with pytest.raises(RuntimeError, match="data-parallel size"):
+        get_megatron_mimo_sampling_info(megatron_mimo_cfg, grids, scalable_dp=True)
 
 
 def test_get_megatron_mimo_dp_info_non_participating_rank(monkeypatch):
@@ -381,3 +426,22 @@ class TestPatchPackedVisualSlice:
         sliced = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
         enc = sliced["modality_inputs"]["images"]["vision_encoder"]
         assert enc["encoder_meta"] == "fixed-string"
+
+
+class TestRealTokenLengths:
+    def test_counts_mask_ones_per_sample(self):
+        input_ids = torch.tensor([[5, 6, 0, 0], [5, 6, 7, 8]])
+        mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 1]])
+        assert real_token_lengths(input_ids, attention_mask=mask).tolist() == [2, 4]
+
+    def test_pad_valued_real_token_still_counts(self):
+        # pad_token == eos_token tokenizers: a real token equal to the pad id must not be dropped.
+        input_ids = torch.tensor([[5, 0, 0, 0]])
+        mask = torch.tensor([[1, 1, 0, 0]])
+        assert real_token_lengths(input_ids, attention_mask=mask).tolist() == [2]
+
+    @pytest.mark.parametrize("mask", [None, torch.ones(3, 4), torch.ones(4), torch.ones(2, 3)])
+    def test_rejects_missing_or_mismatched_mask(self, mask):
+        input_ids = torch.zeros(2, 4, dtype=torch.int64)
+        with pytest.raises(ValueError, match="attention_mask"):
+            real_token_lengths(input_ids, attention_mask=mask)

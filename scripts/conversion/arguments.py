@@ -15,6 +15,17 @@
 
 import argparse
 import os
+import sys
+from pathlib import Path
+
+
+COMMON_SCRIPT_DIR = Path(__file__).resolve().parents[1] / "common"
+if str(COMMON_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(COMMON_SCRIPT_DIR))
+
+from container_runtime import add_container_runtime_args  # noqa: E402
+from slurm_parameters import add_slurm_parameter_args  # noqa: E402
+from slurm_wait import MIN_POLL_INTERVAL, slurm_poll_interval  # noqa: E402
 
 
 DTYPE_CHOICES = ("bfloat16", "float16", "float32")
@@ -23,6 +34,14 @@ DTYPE_CHOICES = ("bfloat16", "float16", "float32")
 def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device: str = "cpu") -> None:
     """Add NeMo Run execution arguments to a conversion subcommand."""
     execution = parser.add_argument_group("Execution")
+    add_container_runtime_args(execution)
+    add_slurm_parameter_args(execution)
+    execution.add_argument(
+        "--poll-interval",
+        type=slurm_poll_interval,
+        default=MIN_POLL_INTERVAL,
+        help="Seconds between Slurm status checks when waiting (minimum/default: 60).",
+    )
     execution.add_argument(
         "--executor",
         choices=("local", "slurm"),
@@ -42,6 +61,20 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         type=int,
         dest="gpus_per_node",
         help="GPUs per node; required for the GPU backend and optional as a CPU-backend runtime resource.",
+    )
+    execution.add_argument(
+        "--cpu-processes-per-node",
+        type=int,
+        default=1,
+        help=(
+            "CPU conversion processes per node (default: 1). Values above 1 enable distributed CPU import "
+            "and export and require model parallelism compatible with nodes*cpu-processes-per-node."
+        ),
+    )
+    execution.add_argument(
+        "--cpus-per-task",
+        type=int,
+        help="Slurm CPU cores per conversion process.",
     )
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
@@ -104,7 +137,7 @@ def _add_parallelism_arguments(
     include_distributed_timeout: bool,
 ) -> None:
     """Add distributed model-parallel arguments."""
-    parallelism = parser.add_argument_group("Distributed GPU parallelism")
+    parallelism = parser.add_argument_group("Distributed parallelism")
     parallelism.add_argument(
         "-tp",
         "--tp",
@@ -158,6 +191,11 @@ def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include
 
     conversion = parser.add_argument_group("Conversion")
     conversion.add_argument("--hf-model", required=True, help="Hugging Face model ID or local path.")
+    conversion.add_argument(
+        "--text-only",
+        action="store_true",
+        help="Convert only the language component of a supported multimodal checkpoint.",
+    )
     conversion.add_argument(
         "--hf-revision",
         help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
@@ -275,7 +313,10 @@ Examples:
         "--distributed-save",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="Let GPU ranks save assigned Hugging Face shards independently (default: enabled for GPU).",
+        help=(
+            "Let distributed ranks save assigned Hugging Face shards independently "
+            "(default: enabled for GPU and distributed CPU export)."
+        ),
     )
     export_parser.add_argument(
         "--save-every-n-ranks",
@@ -357,6 +398,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         worker_args.append("--trust-remote-code")
     if args.overwrite:
         worker_args.append("--overwrite")
+    if args.text_only:
+        worker_args.append("--text-only")
     if args.distributed_timeout_minutes is not None:
         worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
 
@@ -369,7 +412,10 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
             worker_args.append("--no-progress")
         if args.not_strict:
             worker_args.append("--not-strict")
-        distributed_save = args.distributed_save if args.distributed_save is not None else args.device == "gpu"
+        distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
+        distributed_save = (
+            args.distributed_save if args.distributed_save is not None else (args.device == "gpu" or distributed_cpu)
+        )
         worker_args.append("--distributed-save" if distributed_save else "--no-distributed-save")
         worker_args.extend(["--save-every-n-ranks", str(args.save_every_n_ranks)])
         if args.export_weight_dtype is not None:

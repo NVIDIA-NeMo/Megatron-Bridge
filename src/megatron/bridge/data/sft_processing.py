@@ -195,13 +195,19 @@ def normalize_sft_example(
     canonical_pair = _canonical_prompt_completion_values(row)
     conversation_keys = set(_CONVERSATION_KEYS)
     if isinstance(preprocessing, PromptCompletionSFTPreprocessingConfig):
-        conversation_keys -= {preprocessing.prompt_column, preprocessing.completion_column}
+        conversation_keys -= {
+            key
+            for key in (preprocessing.prompt_column, preprocessing.completion_column)
+            if isinstance(row.get(key), str)
+        }
     has_conversation = any(row.get(key) is not None for key in conversation_keys)
 
     if canonical_pair is not None and has_conversation:
         raise ValueError("SFT rows must select exactly one schema: structured chat or prompt-completion.")
 
     if isinstance(preprocessing, ChatSFTPreprocessingConfig):
+        if sum(row.get(key) is not None for key in _CONVERSATION_KEYS) > 1:
+            raise ValueError("Chat rows must not contain multiple populated conversation columns.")
         if canonical_pair is not None:
             prompt, completion = canonical_pair
             metadata = {
@@ -475,6 +481,8 @@ def tokenize_prompt_completion_example(
         loss_mask = torch.ones(input_ids.numel(), dtype=torch.bool)
     if skipped_tokens is not None and skipped_tokens.numel() > 0:
         loss_mask &= ~torch.isin(input_ids, skipped_tokens.to(device=input_ids.device, dtype=torch.long))
+    if preprocessing.loss_mode == "completion" and completion_value and not loss_mask[1:].any():
+        raise ValueError("Prompt-completion preprocessing must retain a supervised token for a non-empty completion.")
     return TokenizedPromptCompletion(
         input_ids=input_ids,
         loss_mask=loss_mask,

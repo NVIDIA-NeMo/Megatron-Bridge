@@ -110,6 +110,41 @@ def test_target_topology_removes_disabled_hybridep_values():
     assert not config.env_vars
 
 
+@pytest.mark.parametrize("dispatcher_backend", [None, "deepep"])
+def test_target_topology_keeps_chunk_tuning_outside_ncclep(dispatcher_backend):
+    """Only the derived topology is target-dependent, so other tuning survives every backend."""
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend=dispatcher_backend, expert_model_parallel_size=8),
+    )
+
+    utils.apply_target_topology_environment(config, gpu="h100")
+
+    assert config.env_vars == {"NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128}
+
+
+def test_target_topology_removes_every_hybridep_value_for_ncclep():
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+            "MODEL_SPECIFIC": 1,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep", expert_model_parallel_size=8),
+    )
+
+    utils.apply_target_topology_environment(config, gpu="h100")
+
+    assert config.env_vars == {"MODEL_SPECIFIC": 1}
+
+
 def test_target_topology_rejects_nonpositive_ep_size():
     config = SimpleNamespace(
         env_vars={},
@@ -335,6 +370,69 @@ def test_exact_gpu_recipe_takes_precedence_over_canonical_fallback(monkeypatch):
     assert result is exact_recipe
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("gpu", ["gb200", "gb300", "vr200"])
+@pytest.mark.parametrize("precision", ["fp8_mx", "nvfp4"])
+@pytest.mark.parametrize("override", [None, 4, 8])
+def test_ultra_weak_scaling_resolves_hsdp_before_user_overrides(monkeypatch, gpu, precision, override):
+    """A 512-GPU fallback uses eight instances unless the user explicitly selects another count."""
+    suffix = "fp8mx" if precision == "fp8_mx" else precision
+    canonical_name = f"nemotron_3_ultra_pretrain_256gpu_{gpu}_{suffix}_config"
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_ultra",
+        task="pretrain",
+        num_gpus=512,
+        gpu=gpu,
+        compute_dtype=precision,
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    # Exercise the actual HSDP helper without importing GPU-only recipe dependencies.
+    path = utils._PERF_RECIPES_ROOT / "nemotronh" / "common.py"
+    tree = ast.parse(path.read_text())
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_apply_nemotron_3_ultra_fsdp_hsdp"
+    )
+    namespace = {
+        "ConfigContainer": object,
+        "_GB300_NVLINK_DOMAIN_GPUS": 64,
+        "torch": SimpleNamespace(bfloat16="bf16", float32="fp32"),
+    }
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), "exec"), namespace)
+
+    def build_recipe(*, num_gpus=256):
+        recipe = SimpleNamespace(ddp=SimpleNamespace(), model=SimpleNamespace(), checkpoint=SimpleNamespace())
+        namespace[helper.name](recipe, num_gpus)
+        return recipe
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 512-GPU recipe")
+
+    def apply_override(recipe, cli_overrides, _args):
+        assert recipe.ddp.num_distributed_optimizer_instances == 8
+        assert recipe.ddp.outer_dp_sharding_strategy == "optim"
+        if cli_overrides:
+            recipe.ddp.num_distributed_optimizer_instances = int(cli_overrides[0].split("=", 1)[1])
+        return recipe
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(utils, "flat_perf_recipe_names", lambda: (canonical_name,))
+    monkeypatch.setattr(utils, "find_perf_recipe", lambda _name: build_recipe)
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_override)
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_post_overrides = lambda recipe, **_kwargs: recipe
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+
+    cli_overrides = [] if override is None else [f"ddp.num_distributed_optimizer_instances={override}"]
+    result = run_script._prepare_perf_recipe(args, cli_overrides)
+
+    assert result.ddp.num_distributed_optimizer_instances == (8 if override is None else override)
+
+
 def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
     args = SimpleNamespace(
         model_family_name="test",
@@ -481,6 +579,66 @@ def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
 
     assert result is effective_recipe
     assert calls == [("overrides", base_recipe, cli_overrides, args)]
+
+
+def test_flat_hydra_ep_override_updates_hybridep_topology_environment(monkeypatch):
+    """A model EP override must update the environment consumed by HybridEP."""
+    recipe = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        },
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=1,
+            expert_model_parallel_size=32,
+            moe_flex_dispatcher_backend="hybridep",
+        ),
+        comm_overlap=None,
+    )
+    args = SimpleNamespace(
+        gpu="vr200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="qwen",
+        model_recipe_name="qwen3_235b_a22b",
+        task="pretrain",
+    )
+
+    def apply_hydra(config, overrides):
+        assert overrides == ["model.expert_model_parallel_size=64"]
+        config.model.expert_model_parallel_size = 64
+        return config
+
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_cli_overrides = apply_hydra
+    override_utils.set_user_overrides = lambda config, _args: config
+    override_utils._apply_flat_cli_environment_compatibility = lambda config, *_args, **_kwargs: config
+    override_utils.apply_one_gpu_per_rank_device_mapping = lambda config: config
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+    environment_module = types.ModuleType("megatron.bridge.perf_recipes.environment")
+    environment_module.HYBRID_EP_ENV_NAMES = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes", types.ModuleType("megatron.bridge.perf_recipes"))
+    monkeypatch.setitem(sys.modules, "megatron.bridge.perf_recipes.environment", environment_module)
+
+    result = run_script._apply_perf_recipe_overrides(
+        recipe,
+        ["model.expert_model_parallel_size=64"],
+        args,
+    )
+
+    assert result.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
 
 
 def test_flat_deterministic_environment_reaches_training_exec(monkeypatch):
@@ -667,6 +825,93 @@ def test_flat_default_args_leave_inline_recipe_environment_unchanged():
         recipe,
         args,
         base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == original_env
+
+
+def test_flat_ncclep_override_removes_hybridep_environment():
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+            "MODEL_SPECIFIC": 1,
+        },
+        model=SimpleNamespace(
+            moe_flex_dispatcher_backend="ncclep",
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == {"MODEL_SPECIFIC": 1}
+
+
+@pytest.mark.parametrize("dispatcher_backend", [None, "deepep"])
+def test_flat_non_ncclep_backends_keep_hybridep_environment(dispatcher_backend):
+    """Switching to NCCL EP must not change the environment of any other benchmark."""
+    from utils.overrides import _apply_flat_cli_environment_compatibility
+
+    original_env = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "MODEL_SPECIFIC": 1,
+    }
+    recipe = SimpleNamespace(
+        env_vars=dict(original_env),
+        model=SimpleNamespace(
+            moe_flex_dispatcher_backend=dispatcher_backend,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_nano",
+        task="pretrain",
+    )
+
+    _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=dispatcher_backend,
         base_moe_a2a_overlap=False,
     )
 
@@ -883,6 +1128,68 @@ def test_runner_applies_env_relevant_argparse_overrides():
     assert effective_recipe.model.moe_token_dispatcher_type == "flex"
     assert effective_recipe.model.moe_flex_dispatcher_backend == "hybridep"
     assert effective_recipe.model.moe_shared_expert_overlap is False
+
+
+def test_runner_accepts_ncclep_dispatcher_override():
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=1.5,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend="ncclep",
+    )
+
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
+
+    assert effective_recipe.model.moe_token_dispatcher_type == "flex"
+    assert effective_recipe.model.moe_flex_dispatcher_backend == "ncclep"
+    assert effective_recipe.model.moe_shared_expert_overlap is False
+
+
+def test_runner_accepts_ncclep_without_capacity_factor():
+    """An unset capacity factor selects NCCL EP eager mode and must not be rejected."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=True,
+            moe_expert_rank_capacity_factor=None,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend="ncclep",
+    )
+
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
+
+    assert effective_recipe.model.moe_token_dispatcher_type == "flex"
+    assert effective_recipe.model.moe_flex_dispatcher_backend == "ncclep"
+    assert effective_recipe.model.moe_expert_rank_capacity_factor is None
+
+
+def test_performance_parser_accepts_ncclep_dispatcher():
+    from argument_parser import parse_cli_args
+
+    parser = parse_cli_args()
+    action = next(action for action in parser._actions if action.dest == "moe_flex_dispatcher_backend")
+
+    assert "ncclep" in action.choices
 
 
 def test_runner_applies_determinism_before_environment_export():

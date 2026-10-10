@@ -20,12 +20,14 @@ from types import SimpleNamespace
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.transformer.multi_token_prediction import roll_tensor
+from megatron.core.transformer.multi_token_prediction import process_mtp_loss, roll_tensor
 
+from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
     Qwen3VLGPTModel,
     _get_mtp_packed_seq_params,
 )
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
 
 class _DummyDecoder:
@@ -186,6 +188,106 @@ def test_mtp_uses_padded_boundaries_for_packed_token_rolling():
     assert mtp_packed_seq_params.cu_seqlens_q is cu_seqlens_padded
     assert packed_seq_params.cu_seqlens_q is cu_seqlens
     assert rolled_tokens.tolist() == [[2, 3, 0, 0, 5, 6, 0, 0]]
+
+
+def test_process_mtp_loss_with_native_packing_metadata():
+    """MCore's MTP loss consumes native-packing THD metadata without cross-sequence leakage.
+
+    This reproduces the exact runtime wiring for Energon native packing with MTP
+    (issue #5954): the packed row is built by ``build_mcore_thd_sequence_batch_from_rows``
+    (called by the Qwen-VL native packing collate path), converted to
+    ``PackedSeqParams`` by ``vlm_step``'s ``get_packed_seq_params``, and routed
+    through ``_get_mtp_packed_seq_params`` to MCore's ``process_mtp_loss``. Depth-1
+    MTP targets must be the token two positions ahead *within the same logical
+    sequence* and boundary positions must stay masked, so no sample supervises
+    another sample's tokens.
+    """
+
+    def prepared_row(tokens: torch.Tensor) -> dict[str, torch.Tensor]:
+        length = tokens.numel()
+        return {
+            "input_ids": tokens,
+            "attention_mask": torch.ones(length, dtype=torch.long),
+            "position_ids": torch.arange(length, dtype=torch.long),
+            "labels": torch.cat([tokens[1:], torch.tensor([-100])]),
+            "loss_mask": torch.cat([torch.ones(length - 1), torch.zeros(1)]),
+        }
+
+    row_a = prepared_row(torch.arange(1, 6, dtype=torch.long))  # tokens 1..5
+    row_b = prepared_row(torch.arange(11, 15, dtype=torch.long))  # tokens 11..14
+    packed = build_mcore_thd_sequence_batch_from_rows(
+        [row_a, row_b],
+        sequence_length=12,
+        pad_token_id=0,
+        pad_to_multiple_of=4,
+        pad_to_max_length=True,
+    )
+    input_ids = packed["input_ids"]
+    labels = packed["labels"]
+    loss_mask = packed["loss_mask"]
+
+    # Physical layout: [1 2 3 4 5 0 0 0 | 11 12 13 14], alignment gap between rows.
+    assert input_ids.tolist() == [[1, 2, 3, 4, 5, 0, 0, 0, 11, 12, 13, 14]]
+    assert packed["cu_seqlens_q"].tolist() == [0, 5, 9]
+    assert packed["cu_seqlens_q_padded"].tolist() == [0, 8, 12]
+
+    # vlm_step packs this metadata; Qwen3VLGPTModel swaps in physical boundaries for MTP.
+    packed_seq_params = get_packed_seq_params(packed)
+    mtp_packed_seq_params = _get_mtp_packed_seq_params(packed_seq_params)
+    assert mtp_packed_seq_params.cu_seqlens_q.tolist() == [0, 8, 12]
+
+    total_tokens = input_ids.size(1)
+    hidden_states = torch.arange(total_tokens * 2, dtype=torch.float32).reshape(2 * total_tokens, 1, 1)
+    hidden_states.requires_grad_(True)
+    seen_labels = []
+
+    def fake_language_loss(mtp_labels, logits):  # noqa: ARG001
+        seen_labels.append(mtp_labels.clone())
+        return torch.zeros(mtp_labels.shape, requires_grad=True)
+
+    def fake_output_layer(hidden, weight=None, runtime_gather_output=None):  # noqa: ARG001
+        return hidden, None
+
+    config = SimpleNamespace(
+        mtp_num_layers=1,
+        mtp_detach_heads=False,
+        mtp_loss_scaling_factor=1.0,
+        calculate_per_token_loss=True,
+        use_mup=False,
+    )
+    output = process_mtp_loss(
+        hidden_states=hidden_states,
+        labels=labels,
+        loss_mask=loss_mask,
+        output_layer=fake_output_layer,
+        output_weight=None,
+        runtime_gather_output=None,
+        is_training=False,
+        compute_language_model_loss=fake_language_loss,
+        config=config,
+        cp_group=None,
+        tp_group=None,
+        packed_seq_params=mtp_packed_seq_params,
+    )
+
+    # Main-loss chunk is returned unchanged in shape and keeps the autograd graph
+    # that carries the MTP loss contribution via MTPLossAutoScaler.
+    assert output.shape == (total_tokens, 1, 1)
+    assert output.grad_fn is not None
+    assert len(seen_labels) == 1
+
+    # Depth-1 MTP target for position i is input_ids[i + 2] inside each logical
+    # sequence; targets that cross a physical boundary are dropped (zeroed) and
+    # never adopt the next packed sequence's first token.
+    mtp_labels = seen_labels[0]
+    assert mtp_labels.tolist() == [[3, 4, 5, -100, -100, -100, -100, 0, 13, 14, -100, 0]]
+    assert mtp_labels[0, 7].item() == 0  # boundary of sequence A: must not be 12/13 from sequence B
+    assert mtp_labels[0, 11].item() == 0  # boundary of sequence B
+
+    # Boundary positions are masked out of the MTP loss by the rolled loss mask.
+    rolled_loss_mask, num_tokens = roll_tensor(loss_mask, packed_seq_params=mtp_packed_seq_params)
+    assert rolled_loss_mask.tolist() == [[1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 0]]
+    assert num_tokens.item() == 5
 
 
 def test_mtp_postprocess_receives_padded_boundaries():

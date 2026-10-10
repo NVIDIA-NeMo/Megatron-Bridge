@@ -34,6 +34,11 @@ from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.global_batch_packing import (
+    global_batch_packing_enabled,
+    wrap_data_iterator_for_global_batch_packing,
+)
+from megatron.bridge.training.gtp import get_data_distribution_group
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
@@ -64,6 +69,7 @@ def evaluate(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
+    empty_loss_keys: Optional[set[str]] = None,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -85,6 +91,9 @@ def evaluate(
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
+        empty_loss_keys (Optional[set[str]], optional): If provided, the keys whose evaluation
+            token count was zero are added to this set. Their reported value is a substituted
+            0.0, not a measured loss. Defaults to None.
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -141,7 +150,11 @@ def evaluate(
     eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
     # MegatronMIMO has heterogeneous per-module DP groups and intentionally owns
     # global-batch accounting through the container-level DP size.
-    eval_data_parallel_size = state.cfg.data_parallel_size if is_multimodule else pg_collection.dp.size()
+    eval_data_parallel_size = (
+        state.cfg.data_parallel_size
+        if is_multimodule
+        else get_data_distribution_group(pg_collection, state.cfg.model).size()
+    )
     eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * eval_data_parallel_size)
 
     if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
@@ -207,7 +220,16 @@ def evaluate(
             seq_length = default_seq_length  # Default for pretraining
             eval_data_iterator = data_iterator  # Default for pretraining
 
-            if state.cfg.dataset.dataloader_type == "batch":
+            scheduled_eval_num_microbatches = eval_num_microbatches
+            if global_batch_packing_enabled(model_config):
+                # The validation split is sized for every eval step at dataloader construction
+                # (loaders.py), so the scheduler never runs out of samples mid-collective.
+                eval_data_iterator, scheduled_eval_num_microbatches, _, _ = (
+                    wrap_data_iterator_for_global_batch_packing(
+                        data_iterator, model_config, eval_num_microbatches, pg_collection
+                    )
+                )
+            elif state.cfg.dataset.dataloader_type == "batch":
                 # Finetuning path: prepare batch and extract dynamic seq_length
                 eval_data_iterator, seq_length = prepare_finetuning_batch(
                     data_iterator=data_iterator,
@@ -216,7 +238,7 @@ def evaluate(
                     seq_key="tokens",
                 )
 
-            if len(model) > 1:
+            if len(model) > 1 and not global_batch_packing_enabled(model_config):
                 # Convert to list of iterators for virtual pipeline parallelism
                 # With virtual PP, each model chunk needs independent access to the same microbatch
                 eval_data_iterator = make_data_iterator_list(
@@ -247,7 +269,7 @@ def evaluate(
                 forward_step_func=wrapped_forward_step,
                 data_iterator=eval_data_iterator,
                 model=model,
-                num_microbatches=eval_num_microbatches,
+                num_microbatches=scheduled_eval_num_microbatches,
                 seq_length=seq_length,
                 micro_batch_size=eval_micro_batch_size,
                 forward_only=True,
@@ -290,7 +312,9 @@ def evaluate(
                 if is_multimodule:
                     dp_cp_group = pg_collection.get_language_model_collection().dp_cp
                 else:
-                    dp_cp_group = pg_collection.dp_cp
+                    dp_cp_group = get_data_distribution_group(
+                        pg_collection, state.cfg.model, with_context_parallel=True
+                    )
 
                 for key in loss_dicts[0].keys():
                     if key not in total_loss_dict:
@@ -318,14 +342,17 @@ def evaluate(
                 torch.distributed.all_reduce(done_cuda, op=torch.distributed.ReduceOp.MAX)
                 done = done_cuda.item()
                 if done:
+                    timers("evaluate").stop()
                     rerun_state_machine.set_mode(rerun_mode)
+                    for model_module in model:
+                        model_module.train()
                     print_rank_0("Exiting during evaluation, timelimit reached")
                     return None, None, True
 
         collected_non_loss_data = None
         if non_loss_data_func is not None:
             collected_non_loss_data = non_loss_data_func(model)
-        elif process_non_loss_data_func is not None and is_last_rank():
+        elif process_non_loss_data_func is not None:
             # Handle finetuning vs pretraining for non-loss data collection
             non_loss_data_iterator = data_iterator
             non_loss_seq_length = default_seq_length
@@ -363,7 +390,18 @@ def evaluate(
 
     for key in total_loss_dict:
         numerator, denominator = total_loss_dict[key]
-        total_loss_dict[key] = numerator / denominator
+        # An all-masked evaluation set leaves the token count at zero. Report a finite
+        # zero rather than NaN, matching the training-side reduction in train_step().
+        # Evaluation is not on the hot path, so the warning's host sync costs nothing,
+        # and without it a substituted zero reads as a real validation loss.
+        if denominator.item() == 0:
+            print_rank_last(
+                f"WARNING: no unmasked tokens in the evaluation set for '{key}'. "
+                "Reporting 0.0; check the dataset's loss mask."
+            )
+            if empty_loss_keys is not None:
+                empty_loss_keys.add(key)
+        total_loss_dict[key] = torch.where(denominator > 0, numerator / denominator, torch.zeros_like(numerator))
 
     timers("evaluate").stop()
     timers.log(["evaluate"])
@@ -438,6 +476,7 @@ def evaluate_and_print_results(
     mlflow_writer = state.mlflow_logger
     comet_logger = state.comet_logger
 
+    empty_loss_keys: set[str] = set()
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
         state,
         forward_step_func,
@@ -451,6 +490,7 @@ def evaluate_and_print_results(
         pg_collection=pg_collection,
         callback_manager=callback_manager,
         is_test=is_test,
+        empty_loss_keys=empty_loss_keys,
     )
 
     # Timelimit hit during evaluation
@@ -464,6 +504,11 @@ def evaluate_and_print_results(
         string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
         ppl = math.exp(min(20, total_loss_dict[key].item()))
         string += "{} PPL: {:.6E} | ".format(key, ppl)
+        # An empty evaluation set reports a substituted 0.0 loss (perplexity 1.0), which
+        # would plot as a perfect model. Leave a gap in the metric writers instead; the
+        # console line and the returned value are unchanged.
+        if key in empty_loss_keys:
+            continue
         if writer:
             writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
             writer.add_scalar(
