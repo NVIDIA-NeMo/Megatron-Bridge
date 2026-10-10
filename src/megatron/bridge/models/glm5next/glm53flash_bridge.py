@@ -568,7 +568,7 @@ class GLM53FlashBridge(MegatronModelBridge):
         provider.dsa_indexer_loss_coeff = 0.0
         provider.dsa_indexer_use_sparse_loss = False
         provider.dsa_indexer_rotate_activation = False
-        provider.dsa_indexer_qk_proj_disable_quantization = True
+        provider.dsa_indexer_qk_proj_use_quantization = False
         provider.dsa_indexer_kpool_use_quantization = True
         provider.dsa_indexer_k_norm_fp32 = True
         # vLLM computes this projection in FP32 because BF16 rounding can change
