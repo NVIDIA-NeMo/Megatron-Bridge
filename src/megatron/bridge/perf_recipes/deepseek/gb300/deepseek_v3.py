@@ -211,6 +211,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigCont
         # ---- Determinism (same values as apply_determinism_overrides) ----
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
+        "NCCL_EP_HT_EM_AG_SCAN_MODE": "1",
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
         "MAMBA_DETERMINISTIC": "1",
         "CAUSAL_CONV1D_DETERMINISTIC": "1",
