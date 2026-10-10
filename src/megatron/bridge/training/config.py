@@ -18,6 +18,7 @@ import os
 import warnings
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
@@ -41,6 +42,7 @@ from megatron.training.config import RNGConfig, ValidationConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.determinism import apply_determinism_to_args
 
 from megatron.bridge.data.base import (
     DataloaderConfig,
@@ -1072,18 +1074,15 @@ class ConfigContainer(Container):
         if not getattr(self.model, "deterministic_mode", False):
             return
 
-        # Disallow cross-entropy loss fusion as it is not deterministic
-        assert not getattr(self.model, "cross_entropy_loss_fusion", False), (
-            "Cross Entropy Fusion is currently not deterministic."
+        # Megatron-Core's --deterministic-mode setup, so both frameworks enforce the same rules.
+        apply_determinism_to_args(
+            SimpleNamespace(
+                cross_entropy_loss_fusion=getattr(self.model, "cross_entropy_loss_fusion", False),
+                tp_comm_overlap=self.comm_overlap.tp_comm_overlap if self.comm_overlap is not None else False,
+                moe_router_fusion=getattr(self.model, "moe_router_fusion", False),
+                moe_router_aux_loss_fusion=getattr(self.model, "moe_router_aux_loss_fusion", None),
+            )
         )
-
-        all_reduce_choices = ("Tree", "Ring", "CollnetDirect", "CollnetChain", "^NVLS")
-        assert os.getenv("NCCL_ALGO", -1) != -1 and os.getenv("NCCL_ALGO") in all_reduce_choices, (
-            f"NCCL_ALGO must be one of {all_reduce_choices}."
-        )
-
-        # Enable deterministic algorithms in torch
-        torch.use_deterministic_algorithms(True)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """Validate and apply configuration required by the selected Megatron-FSDP version."""
