@@ -20,6 +20,7 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -94,6 +95,94 @@ try:
         )
 finally:
     sys.path.remove(_compare_dir)
+
+
+def _comparison_result_worker(rank: int, rendezvous_path: str) -> None:
+    """Exercise verdict propagation with real CPU collectives."""
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous_path}",
+        rank=rank,
+        world_size=2,
+        timeout=timedelta(seconds=30),
+    )
+    try:
+        compare._check_comparison_result(True, torch.device("cpu"))
+        for failing_rank in (0, 1):
+            with pytest.raises(ValueError, match="HF/Megatron comparison failed"):
+                compare._check_comparison_result(rank != failing_rank, torch.device("cpu"))
+    finally:
+        torch.distributed.destroy_process_group()
+
+
+@pytest.mark.unit
+class TestComparisonFailureHandling:
+    def test_failure_mode_is_opt_in(self):
+        arguments = ["--hf_model_path", "org/model", "--prompt", "hello"]
+        assert compare.build_parser().parse_args(arguments).fail_on_mismatch is False
+        assert compare.build_parser().parse_args([*arguments, "--fail-on-mismatch"]).fail_on_mismatch is True
+
+    @pytest.mark.parametrize("passed", [True, False])
+    def test_single_process_verdict(self, passed):
+        with patch.object(torch.distributed, "is_initialized", return_value=False):
+            if passed:
+                compare._check_comparison_result(True, torch.device("cpu"))
+            else:
+                with pytest.raises(ValueError, match="HF/Megatron comparison failed"):
+                    compare._check_comparison_result(False, torch.device("cpu"))
+
+    @pytest.mark.skipif(not torch.distributed.is_gloo_available(), reason="Gloo is not available")
+    def test_failure_on_either_rank_reaches_every_rank(self, tmp_path):
+        torch.multiprocessing.spawn(
+            _comparison_result_worker,
+            args=(str(tmp_path / "comparison-rendezvous"),),
+            nprocs=2,
+        )
+
+    @pytest.mark.parametrize("fail_on_mismatch", [False, True])
+    @pytest.mark.parametrize(
+        "hf_values, megatron_values, passes",
+        [
+            ([0, 0, 0, 0, 1], [0, 0, 0, 0, 1], True),
+            # High cosine similarity alone must not hide a different next token.
+            ([100, 100, 100, 100, 100.01], [100, 100, 100, 100.01, 100], False),
+            # A matching next token alone must not hide poor correlation.
+            ([0, 0, 0, 0, 1], [-5, -5, -5, -5, 1], False),
+            ([0, 0, 0, 0, 1], [0, 0, 0, 0, float("nan")], False),
+            # Padded Megatron vocabulary entries do not participate in the gate.
+            ([0, 0, 0, 0, 1], [0, 0, 0, 0, 1, 1000], True),
+        ],
+    )
+    def test_forward_comparison_verdict(self, monkeypatch, fail_on_mismatch, hf_values, megatron_values, passes):
+        args = compare.build_parser().parse_args(["--hf_model_path", "org/model", "--prompt", "hello"])
+        args.fail_on_mismatch = fail_on_mismatch
+        input_ids = torch.tensor([[1, 2]])
+        hf_logits = torch.tensor(hf_values, dtype=torch.float32)
+        megatron_output = torch.tensor(megatron_values, dtype=torch.float32).view(1, 1, -1)
+        tokenizer = SimpleNamespace(decode=lambda ids: str(ids))
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+        monkeypatch.setattr(torch.Tensor, "cuda", lambda tensor: tensor)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: False)
+        monkeypatch.setattr(compare, "is_vision_language_model", lambda *args: False)
+        monkeypatch.setattr(compare.AutoConfig, "from_pretrained", lambda *args, **kwargs: SimpleNamespace())
+        monkeypatch.setattr(compare, "_load_megatron_model", lambda args: ([MagicMock()], MagicMock()))
+        monkeypatch.setattr(compare, "_load_hf_model", lambda *args: MagicMock())
+        monkeypatch.setattr(compare, "_setup_tokenizer_and_processor", lambda *args: (tokenizer, None))
+        monkeypatch.setattr(compare, "process_inputs", lambda *args: (input_ids, None, None, None, None))
+        monkeypatch.setattr(
+            compare,
+            "_run_hf_inference",
+            lambda *args, **kwargs: (hf_logits, hf_logits.argmax(), {}, [], (1, 2, len(hf_values))),
+        )
+        monkeypatch.setattr(compare, "_run_megatron_forward", lambda *args, **kwargs: megatron_output)
+
+        if fail_on_mismatch and not passes:
+            with pytest.raises(ValueError, match="HF/Megatron comparison failed"):
+                compare.compare_models_one_step(args)
+        else:
+            compare.compare_models_one_step(args)
 
 
 @pytest.mark.unit
