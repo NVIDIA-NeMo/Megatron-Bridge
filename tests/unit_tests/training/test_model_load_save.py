@@ -383,6 +383,32 @@ class TestGetOrInitializePgCollection:
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_model_config_migrates_legacy_mcore_gpt_targets(self, mock_from_dict, mock_read, tmp_path):
+        """Verify checkpoints saved with pre-facade MCore GPT targets remain loadable."""
+        config_path = tmp_path / "run_config.yaml"
+        config_path.touch()
+        mock_read.return_value = {
+            "model": {
+                "_target_": "megatron.training.models.gpt.GPTModelConfig",
+                "_builder_": "megatron.training.models.gpt.GPTModelBuilder",
+            }
+        }
+        restored = Mock()
+        mock_from_dict.return_value = restored
+
+        result, mlm_args = load_model_config(str(tmp_path))
+
+        assert result is restored
+        assert mlm_args is None
+        mock_from_dict.assert_called_once_with(
+            {
+                "_target_": "megatron.bridge.compat.mcore_gpt.GPTModelConfig",
+                "_builder_": "megatron.bridge.compat.mcore_gpt.GPTModelBuilder",
+            }
+        )
+
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_dense_gtp_preserves_dense_topology_with_default_expert_tp(self, load_config, build_model):
