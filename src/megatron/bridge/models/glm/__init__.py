@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.glm.glm5_next_bridge import Glm5NextBridge
+from megatron.bridge.models.glm.glm5_next_provider import Glm5NextModelProvider
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
 from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge
 
@@ -19,4 +21,6 @@ from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge
 __all__ = [
     "GLM45Bridge",
     "GLM47FlashBridge",
+    "Glm5NextBridge",
+    "Glm5NextModelProvider",
 ]
