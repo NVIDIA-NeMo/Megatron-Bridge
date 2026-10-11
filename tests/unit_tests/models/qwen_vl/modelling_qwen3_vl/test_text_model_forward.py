@@ -263,7 +263,6 @@ def test_process_mtp_loss_with_native_packing_metadata():
         loss_mask=loss_mask,
         output_layer=fake_output_layer,
         output_weight=None,
-        runtime_gather_output=None,
         is_training=False,
         compute_language_model_loss=fake_language_loss,
         config=config,
