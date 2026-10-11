@@ -85,11 +85,18 @@ class TokenizerConfig(MTrainTokenizerConfig):
         # Don't pad vocab size since MBridge does it's own padding
         self.pad_vocab_size = False
 
-        # HuggingFace tokenizer kwargs
-        self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
-        self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs.get("include_special_tokens", True)
-        self.trust_remote_code = self.hf_tokenizer_kwargs.get("trust_remote_code", False)
+        # HuggingFace tokenizer kwargs. Only a key the deprecated dict actually
+        # carries overrides the field that replaced it, the way
+        # _resolve_hf_tokenizer_revision does it. Reading the dict unconditionally
+        # reset all three fields to their fallbacks on every construction, which is
+        # the opposite of what the warning below asks for.
         if self.hf_tokenizer_kwargs:
+            if "use_fast" in self.hf_tokenizer_kwargs:
+                self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs["use_fast"]
+            if "include_special_tokens" in self.hf_tokenizer_kwargs:
+                self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs["include_special_tokens"]
+            if "trust_remote_code" in self.hf_tokenizer_kwargs:
+                self.trust_remote_code = self.hf_tokenizer_kwargs["trust_remote_code"]
             warn_rank_0(
                 "`hf_tokenizer_kwargs` is deprecated and will be removed soon. "
                 "Please, use `tokenizer_hf_no_use_fast` / `tokenizer_hf_no_include_special_tokens` / "
