@@ -100,7 +100,7 @@ def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
     )
     provider = GLM53FlashBridge().provider_bridge(SimpleNamespace(config=config))
     assert provider.layernorm_epsilon == 1e-5
-    assert provider.mla_proj_disable_quantization
+    assert not provider.mla_proj_use_quantization
     assert provider.dsa_indexer_k_norm_epsilon == 1e-6
     assert not provider.dsa_indexer_qk_proj_use_quantization
     assert provider.dsa_indexer_kpool_use_quantization
