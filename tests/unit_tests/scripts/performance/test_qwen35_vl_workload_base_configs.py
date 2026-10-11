@@ -14,6 +14,8 @@
 
 """Tests for Qwen3.5-VL performance workload presets."""
 
+import dataclasses
+import importlib
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -23,6 +25,7 @@ import pytest
 import torch
 from megatron.core.transformer.transformer_block import get_num_layers_to_build
 
+from megatron.bridge.perf_recipes.qwen_vl.common import _select_gdn_kernel_backend
 from megatron.bridge.perf_recipes.qwen_vl.gb200.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config,
     qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config,
@@ -44,12 +47,20 @@ from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
 )
 from megatron.bridge.perf_recipes.qwen_vl.vr200.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
+from tests.unit_tests.recipes.recipe_test_utils import (
+    _OfflineModelProvider,
+    discover_recipe_factories,
+    patch_recipe_construction_dependencies,
+    recipe_factory_id,
+)
 
 
 pytestmark = pytest.mark.unit
@@ -373,3 +384,145 @@ def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
 
     assert config.model.moe_flex_dispatcher_backend == "hybridep"
     assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == config.model.expert_model_parallel_size
+
+
+# GB300 recipes that run GatedDeltaNet on cuDNN once Megatron-Core exposes gdn_kernel_backend.
+_GB300_CUDNN_GDN_RECIPES = (
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
+)
+# VR200 aliases built from those recipes; they keep FLA until cuDNN GDN is measured on VR200.
+_VR200_CUDNN_GDN_ALIASES = (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+)
+_QWEN35_VL_PERF_RECIPES = tuple(
+    factory
+    for factory in discover_recipe_factories(importlib.import_module("megatron.bridge.perf_recipes.qwen_vl"))
+    if factory.__name__.startswith("qwen35_vl_")
+)
+
+
+@pytest.fixture
+def megatron_core_with_gdn_kernel_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give the offline provider the field NVIDIA/Megatron-LM#6645 adds, with Megatron-Core's default."""
+    monkeypatch.setattr(_OfflineModelProvider, "gdn_kernel_backend", "fla", raising=False)
+
+
+@pytest.mark.usefixtures("megatron_core_with_gdn_kernel_backend")
+@pytest.mark.parametrize("recipe_fn", _GB300_CUDNN_GDN_RECIPES, ids=recipe_factory_id)
+def test_qwen35_vl_gb300_runs_gdn_on_cudnn(recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The GB300 35B/397B benchmarks run GatedDeltaNet on Transformer Engine's cuDNN kernel.
+
+    Asserted on the FINAL config: the FP8-CS and MXFP8 recipes switch precision after building the BF16 base,
+    and the backend must survive that.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert config.model.gdn_kernel_backend == "transformer_engine"
+
+
+@pytest.mark.usefixtures("megatron_core_with_gdn_kernel_backend")
+@pytest.mark.parametrize("recipe_fn", _QWEN35_VL_PERF_RECIPES, ids=recipe_factory_id)
+def test_qwen35_vl_cudnn_gdn_is_limited_to_gb300_35b_397b(
+    recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the measured GB300 35B/397B recipes leave FLA.
+
+    122B, B200, B300, GB200 and VR200 were not measured (the VR200 aliases inherit the GB300 model config and reset
+    to FLA), and H100 is SM90, outside cuDNN's fast GDN engine.
+    """
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    expected = "transformer_engine" if recipe_fn in _GB300_CUDNN_GDN_RECIPES else "fla"
+    assert config.model.gdn_kernel_backend == expected
+
+
+@pytest.mark.parametrize("recipe_fn", _GB300_CUDNN_GDN_RECIPES + _VR200_CUDNN_GDN_ALIASES, ids=recipe_factory_id)
+def test_qwen35_vl_gdn_kernel_backend_not_invented_on_older_core(
+    recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the Megatron-Core field the recipes must not create it: it would be silently unused."""
+    patch_recipe_construction_dependencies(monkeypatch)
+
+    config = recipe_fn()
+
+    assert not hasattr(config.model, "gdn_kernel_backend")
+
+
+def test_select_gdn_kernel_backend_assigns_only_declared_fields() -> None:
+    """The guard on a dataclass, as on a real provider: assign a declared field, never invent one."""
+
+    @dataclasses.dataclass
+    class WithField:
+        gdn_kernel_backend: str = "fla"
+
+    @dataclasses.dataclass
+    class WithFactoryField:  # no class attribute, only an instance one
+        gdn_kernel_backend: str = dataclasses.field(default_factory=lambda: "fla")
+
+    @dataclasses.dataclass
+    class WithoutField:
+        pass
+
+    for model in (WithField(), WithFactoryField()):
+        cfg = SimpleNamespace(model=model)
+        _select_gdn_kernel_backend(cfg, "transformer_engine")
+        assert cfg.model.gdn_kernel_backend == "transformer_engine"
+
+    without_field = SimpleNamespace(model=WithoutField())
+    _select_gdn_kernel_backend(without_field, "transformer_engine")
+    assert not hasattr(without_field.model, "gdn_kernel_backend")
+
+
+def test_megatron_core_gdn_kernel_backend_contract() -> None:
+    """Megatron-Core's ``TransformerConfig.gdn_kernel_backend`` accepts ``"transformer_engine"``.
+
+    ``_select_gdn_kernel_backend`` relies on that field (NVIDIA/Megatron-LM#6645, re-land NVIDIA/Megatron-LM#7583),
+    and its guard turns a missing field into a no-op, so an upstream rename would leave the recipes on FLA without
+    any error. Fail when Megatron-Core ships Transformer Engine GDN support without the field, and pin the default
+    that ``megatron_core_with_gdn_kernel_backend`` gives the offline provider.
+    """
+    from megatron.core.transformer.transformer_config import TransformerConfig
+
+    if "gdn_kernel_backend" not in {field.name for field in dataclasses.fields(TransformerConfig)}:
+        try:
+            from megatron.core.extensions import transformer_engine as mcore_te
+        except ImportError:
+            mcore_te = None
+        assert not (hasattr(mcore_te, "TEGatedDeltaNetAttention") or hasattr(mcore_te, "HAVE_TE_GDN")), (
+            "Megatron-Core has Transformer Engine GDN but no TransformerConfig.gdn_kernel_backend; "
+            "update _select_gdn_kernel_backend"
+        )
+        pytest.skip("Megatron-Core predates TransformerConfig.gdn_kernel_backend (NVIDIA/Megatron-LM#6645)")
+
+    defaults = {field.name: field.default for field in dataclasses.fields(TransformerConfig)}
+    assert defaults["gdn_kernel_backend"] == "fla", (
+        "megatron_core_with_gdn_kernel_backend simulates the 'fla' default; update it, and pin 'fla' in the recipes "
+        "that must keep FLA"
+    )
+    config = TransformerConfig(
+        num_layers=1, hidden_size=128, num_attention_heads=2, gdn_kernel_backend="transformer_engine"
+    )
+    assert config.gdn_kernel_backend == "transformer_engine"
+
+
+def test_qwen35_vl_perf_recipe_discovery_covers_the_cudnn_gdn_recipes() -> None:
+    """The recipe matrix above must keep finding every recipe the cuDNN GDN tests reason about."""
+    discovered = set(_QWEN35_VL_PERF_RECIPES)
+    assert set(_GB300_CUDNN_GDN_RECIPES + _VR200_CUDNN_GDN_ALIASES) <= discovered
+    platforms = {factory.__module__.split(".")[-2] for factory in discovered}
+    assert {"b200", "b300", "gb200", "gb300", "h100", "vr200"} <= platforms
+    assert any("122b" in factory.__name__ for factory in discovered)

@@ -1,253 +1,287 @@
 # Agent-readable model verification card.
-# status: unverified | verified | unsupported | not_applicable
-
 title: glm5
-summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. Model-level verification covers deterministic HybridEP inference,
-  exact distributed GPU import/export, and exact distributed CPU export of the
-  pinned GLM-5 Hugging Face checkpoint's 78-layer inference graph. The
-  checkpoint's appended MTP auxiliary layer is intentionally disabled and
-  excluded from those claims. CPU import, Hugging Face/Megatron forward parity,
-  training, checkpoint resume, and post-SFT export/reload verification are
-  deferred.
+summary: 'Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing
+  and throughput metrics are functional verification observations, not standalone optimized performance results.
+  Hybrid model-level checks retain their historical NeMo 26.08.rc3 records. GB200 peft, pretrain, checkpoint_resume,
+  sft, sft_export_inference, sft_long_context are verified with the exact clean Bridge commit on each training leaf.'
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, megatron_to_hf_cpu, megatron_to_hf_gpu, inference]
-    unverified:
-      - hf_to_megatron_cpu
-      - manual_forward_pass
+    verified:
+    - hf_to_megatron_cpu
+    - hf_to_megatron_gpu
+    - megatron_to_hf_cpu
+    - megatron_to_hf_gpu
+    - manual_forward_pass
+    - inference
   training:
-    H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+    GB200:
+      verified:
+      - peft
+      - pretrain
+      - checkpoint_resume
+      - sft
+      - sft_export_inference
+      - sft_long_context
 model:
   hf_id: zai-org/GLM-5
   hf_revision: 4e6698ba8e85059d749020e3c4d2123719f23926  # pragma: allowlist secret
   architecture: GlmMoeDsaForCausalLM
-  min_transformers_version: "5.12.1"
+  min_transformers_version: 5.12.1
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc3
-  bridge_commit: 5db9c262411cf4561d44cdf76a134b423fdaacc2  # pragma: allowlist secret
-
+  bridge_commit: fc668edc894255bc1d20043af179a09646046289  # pragma: allowlist secret
 items:
   hf_to_megatron_cpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
-    expected_result: >
-      A CPU import of the pinned Hugging Face revision must complete every
-      mapping and create a reloadable Megatron checkpoint. This workflow is
-      deferred by this card.
-
+    command: ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 4 --cpu-processes-per-node
+      8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
+      --megatron-path work/model-verification/glm5/hybrid/cpu-megatron --torch-dtype bfloat16 --tp 1 --pp 2 --ep
+      8 --etp 2 --distributed-timeout-minutes 240
+    last_verified: 2026-09-22
+    expected_result: Distributed CPU HF-to-Hybrid import with 32 Gloo processes on the host memory of 4 GB200 nodes
+      maps all 6201 pinned source tensors through GLM5Bridge and saves a 1.4 TB torch_dist checkpoint (iter_0000000
+      with run_config.yaml) in about 13 minutes. The checkpoint is strictly reloadable, as exercised by a distributed
+      CPU export of it whose 59079 tensors match the pinned source keys, shapes, dtypes and values exactly (the
+      791 tensors of the appended MTP layer, model.layers.78.*, are excluded because MTP is disabled by default).
+      Weights stay on CPU, but Megatron-Core's CUDA RNG tracker still requires a visible CUDA device on each node
+      during model-parallel initialization, so the run cannot execute on GPU-less nodes. Attention, dense and shared-expert
+      weights are replicated across the 16 expert ranks of each pipeline stage, so peak host memory reached about
+      930 GB of the 952 GB per node (up to 177 GB for a single process); a single-process CPU import would need
+      more than 1.5 TB on one host.
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
-    command: >
-      ./scripts/conversion/convert.sh import --executor slurm --device gpu
-      --nodes 4 --gpus-per-node 8 --hf-model zai-org/GLM-5
-      --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
-      --megatron-path work/model-verification/glm5/gpu-megatron
-      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2
-      --distributed-timeout-minutes 60 --low-memory-save
-    last_verified: 2026-08-10
-    expected_result: >
-      The pinned 32-H100 import exits successfully at TP1/PP2/EP8/ETP2,
-      completes all 6,201 distributed mapping tasks, and persists a reloadable
-      iter_0000000 checkpoint. Reload plus exact export projection covers all
-      59,079 tensors and 1,487,822,475,264 tensor-payload bytes in the 78-layer
-      inference graph with matching keys, shapes, dtypes, and values. The 791
-      source tensors under model.layers.78 belong only to the intentionally
-      disabled appended MTP auxiliary layer and are outside this item.
+    command: './scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model
+      zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/hybrid/gpu-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 1 --distributed-timeout-minutes 60 --low-memory-save
 
+      '
+    last_verified: 2026-09-19
+    expected_result: Distributed HF-to-Hybrid import on 16 GB200 GPUs maps all 6201 pinned source tensors through
+      GLM5Bridge and saves a 1.4 TB distributed checkpoint (iter_0000000 with run_config.yaml) in about 10 minutes.
+      The checkpoint is strictly reloadable, as exercised by the verified GPU export. The appended MTP layer stays
+      disabled by default.
   megatron_to_hf_cpu:
     status: verified
     precision: bf16
-    bridge_commit: c94d0bdb1c863f99c6227bb36fbc7f3ebc565243  # pragma: allowlist secret
-    command: >
-      ./scripts/conversion/convert.sh export --executor slurm --device cpu
-      --nodes 4 --cpu-processes-per-node 8 --cpus-per-task 16 --mem 0
-      --exclusive --hf-model zai-org/GLM-5
-      --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
-      --megatron-path work/model-verification/glm5/gpu-megatron/iter_0000000
-      --hf-path work/model-verification/glm5/cpu-hf-export
-      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2
-      --distributed-timeout-minutes 240 --distributed-save
-      --save-every-n-ranks 1 --no-progress
-    last_verified: 2026-08-26
-    expected_result: >
-      The 32-process distributed CPU export exits successfully and writes 280
-      safetensors shards. The exhaustive projection audit covers all 59,079
-      tensors and 1,487,822,475,264 tensor-payload bytes in the 78-layer
-      inference graph with zero missing, unexpected, shape, dtype, or value
-      mismatches. The 791 tensors under model.layers.78 belong only to the
-      intentionally disabled appended MTP auxiliary layer and remain outside
-      this item. Transformers 5.12.1 strictly reloads the output as
-      GlmMoeDsaForCausalLM with 1,629 state tensors, 743,911,199,232 parameters,
-      and no loading discrepancies.
+    command: './scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 4 --cpu-processes-per-node
+      8 --cpus-per-task 16 --mem 0 --exclusive --hf-model zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
+      --megatron-path work/model-verification/glm5/hybrid/gpu-megatron/iter_0000000 --hf-path work/model-verification/glm5/hybrid/cpu-hf-export
+      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks
+      1 --no-progress
 
+      '
+    last_verified: 2026-09-19
+    expected_result: Distributed CPU Hybrid-to-HF export with 32 Gloo processes on the host memory of 4 GB200 nodes
+      strictly reloads the imported checkpoint and writes 280 safetensors shards plus model.safetensors.index.json
+      in about 28 minutes. All 59079 exported tensors match the pinned source keys, shapes, dtypes and values exactly;
+      the 791 tensors of the appended MTP layer (model.layers.78.*) are excluded because MTP is disabled by default.
+      Weights stay on CPU, but Megatron-Core's CUDA RNG tracker still requires a visible CUDA device on each node
+      during model-parallel initialization, so the run cannot execute on GPU-less nodes. generation_config.json
+      is preserved from the source because Transformers strict validation rejects re-saving it.
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
-    bridge_commit: 7e2181dcc5d09a1a859dfb0c655c9a1cd486e0ac  # pragma: allowlist secret
-    command: >
-      ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 4 --gpus-per-node 8 --hf-model zai-org/GLM-5
-      --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
-      --megatron-path work/model-verification/glm5/gpu-megatron/iter_0000000
-      --hf-path work/model-verification/glm5/gpu-hf-export
-      --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp 2
-      --distributed-timeout-minutes 60 --distributed-save
-      --save-every-n-ranks 1
-    last_verified: 2026-08-10
-    expected_result: >
-      The 32-H100 distributed export exits successfully after all 6,201
-      mapping tasks and writes 280 safetensors shards. Of those, 278 are
-      byte-for-byte identical to the pinned source shards; the two shards that
-      also contain excluded MTP keys match all 63 common tensors exactly. The
-      composite audit covers all 59,079 inference-graph tensors and
-      1,487,822,475,264 tensor-payload bytes with zero key, shape, dtype, or
-      value mismatch. Transformers 5.12.1 strictly reloads the output as
-      GlmMoeDsaForCausalLM with 1,629 state tensors, 743,911,199,232
-      parameters, and no loading discrepancies.
+    command: './scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 4 --gpus-per-node 4 --hf-model
+      zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --megatron-path work/model-verification/glm5/hybrid/gpu-megatron/iter_0000000
+      --hf-path work/model-verification/glm5/hybrid/gpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 2 --ep 8 --etp
+      1 --distributed-timeout-minutes 60 --distributed-save --save-every-n-ranks 1
 
+      '
+    last_verified: 2026-09-19
+    expected_result: Distributed Hybrid-to-HF export on 16 GB200 GPUs strictly reloads the imported checkpoint and
+      writes 280 safetensors shards plus model.safetensors.index.json in about 10 minutes. All 59079 exported tensors
+      match the pinned source keys, shapes, dtypes and values exactly; the 791 tensors of the appended MTP layer
+      (model.layers.78.*) are excluded because MTP is disabled by default. generation_config.json is preserved from
+      the source because Transformers strict validation rejects re-saving it.
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
-    expected_result: >
-      A pinned first-token Hugging Face versus Megatron comparison must match
-      the argmax token and meet the card's logit-correlation threshold. The
-      full Hugging Face reference pass is deferred by this card.
-
+    bridge_commit: 6887e0393b07640feec3e891753d245bb52e6482  # pragma: allowlist secret
+    command: ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task model-comparison --hf_model_path zai-org/GLM-5
+      --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --hf-logits-path work/model-verification/glm5/hybrid/manual-forward/hf_logits_france.pt
+      --megatron_model_path work/model-verification/glm5/hybrid/gpu-megatron/iter_0000000 --prompt "The capital
+      of France is" --legacy-full-prefix --tp 1 --pp 2 --ep 8 --etp 1
+    last_verified: 2026-10-08
+    expected_result: The public model-comparison launcher completed the 16-GB200 TP1/PP2/EP8/ETP1 Hybrid
+      forward within one NVLink domain. The pinned HF and Hybrid next-token predictions match at token 12089
+      (`Paris`). The HF side is a memory-bounded BF16 SDPA reference forward of the immutable revision, stored
+      as input_ids plus last-token logits and checked against the same prompt. Cosine similarity is 0.995756,
+      maximum absolute logit difference is 1.171875, and mean absolute logit difference is 0.207517. The
+      Hybrid DSA layers use AbsorbedMLA, which rejects inference contexts, so the comparison uses
+      --legacy-full-prefix.
   inference:
     status: verified
     precision: bf16
-    bridge_commit: b58afee863f40b64304373830ae79f3f61a1af19  # pragma: allowlist secret
-    command: >
-      ./scripts/inference/infer.sh --nodes 8 --gpus-per-node 8
-      --task legacy-full-prefix-generation
-      --hf_model_path zai-org/GLM-5
-      --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
-      --prompt "What is artificial intelligence?" --max_new_tokens 20
-      --legacy-full-prefix --tp 1 --pp 2 --ep 32 --etp 1
-    last_verified: 2026-08-10
-    expected_result: |-
-      One deterministic BF16 run loads the pinned Hugging Face model directly
-      into Megatron across 64 H100 ranks at TP1/PP2/EP32/ETP1 and uses the
-      flex HybridEP dispatcher. The inference graph intentionally excludes the
-      checkpoint's appended MTP auxiliary layer. It exits successfully after
-      exactly 20 new greedy tokens. The literal completion, including its
-      leading space, was:
-      " How is artificial intelligence going to change our lives?"
+    command: './scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task legacy-full-prefix-generation --hf_model_path
+      zai-org/GLM-5 --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926 --prompt "What is artificial intelligence?"
+      --max_new_tokens 20 --legacy-full-prefix --tp 1 --pp 2 --ep 8 --etp 1
 
+      '
+    last_verified: 2026-09-19
+    expected_result: Hybrid deterministic greedy inference on 16 GB200 GPUs generates exactly 20 tokens (the max_new_tokens
+      bound; no eos_token_id is emitted). The decoded completion is " How is artificial intelligence going to change
+      our lives?" including the leading space; it spans 10 visible tokens, and the remaining 10 generated tokens
+      are special tokens removed by skip_special_tokens decoding. DSA full-prefix compatibility inference is not
+      an optimized decode benchmark.
   pretrain:
-    H100:
-      status: unverified
+    GB200:
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      command: >-  # pragma: allowlist secret
+        ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_pretrain_192gpu_gb200_bf16_config
+        --mode pretrain --max_steps 100 --save_dir work/model-verification/glm5/hybrid/pretrain-gb200-glm-remaining-20261007-175000/checkpoints
+        --save_interval 50 checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true logger.log_interval=1
+        logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/pretrain-gb200-glm-remaining-20261007-175000/launch-config.yaml
+        dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5/hybrid/hf-4e6698ba8e85059d749020e3c4d2123719f23926
+        --dataset megatron-indexed --seq_length 4096 --lr 3e-6 --min_lr 3e-7 --warmup_iters 40 'dataset.blend=[["work/data/wikitext103-glm5-glm-remaining-20261007-175000/wikitext103_glm5_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5/wikitext-glm-remaining-20261007-175000 dataset.random_seed=1234 dataset.num_workers=8
+        tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false
+      last_verified: 2026-10-07
+      expected_result: Completed 100 BF16 Hybrid warm-start steps on 192 GB200 GPUs with WikiText-103 raw train
+        tokenized by the pinned GLM-5 tokenizer, 4K sequences, GBS/MBS 1024/1, MTP1 and natural routing. All LM/MTP
+        losses and gradients were finite with zero skipped or NaN iterations. Saved complete step-50 and step-100
+        checkpoints with optimizer, scheduler, RNG state and post-setup configuration.
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      expected_result: >
-        A public GLM-5 H100 recipe must complete a bounded 100-step run with
-        finite loss, no skipped or NaN iterations, all five metrics, and a
-        reloadable final checkpoint. Training is deferred by this card.
-
+        initial_loss: 0.989893
+        final_loss: 0.7442691
+        last_10_steps_step_time_ms_avg: 33684.14
+        last_10_steps_model_tflops_per_gpu_avg: 204.37
+        last_10_steps_tokens_per_second_per_gpu_avg: 648.534691
+      enabled_features: {}
+      bridge_commit: 0b59ee513ff26c259461c87c085f491a8fa3ef4d  # pragma: allowlist secret
   sft:
-    H100:
-      status: unverified
+    GB200:
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      command: ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_sft_192gpu_gb200_bf16_config
+        --mode sft --max_steps 100 --save_dir work/model-verification/glm5/hybrid/sft-gb200-glm-remaining-20261007-175000/checkpoints
+        --save_interval 100 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false logger.log_interval=1
+        logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/sft-gb200-glm-remaining-20261007-175000/launch-config.yaml
+        dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5/hybrid/hf-4e6698ba8e85059d749020e3c4d2123719f23926
+        dataset.hf_output_root=work/data/glm5/sft-glm-remaining-20261007-175000
+      last_verified: 2026-10-07
+      expected_result: Completed 100 BF16 Hybrid full-SFT steps with pinned Tulu 3 train[:10000], 8K packing, GBS/MBS
+        8/1 and CP4 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape
+        causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients
+        were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup
+        configuration. Strictly reloaded the step-100 checkpoint with raise_all and completed a further training
+        step. Metrics cover the original 100 steps only.
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      expected_result: >
-        A pinned-data 100-step full-SFT run must finish with finite loss, no
-        skipped or NaN iterations, all five metrics, and a reloadable final
-        checkpoint. Training is deferred by this card.
-
+        initial_loss: 1.456939
+        final_loss: 0.3063886
+        last_10_steps_step_time_ms_avg: 6468.4
+        last_10_steps_model_tflops_per_gpu_avg: 14.18
+        last_10_steps_tokens_per_second_per_gpu_avg: 52.769361
+      enabled_features:
+        sequence_packing: offline
+      bridge_commit: 49c103c714f3d62d7609f27a46e42dc14e95afa6  # pragma: allowlist secret
   sft_export_inference:
-    H100:
-      status: unverified
+    GB200:
+      status: verified
       precision: bf16
       depends_on: sft
-      commands: null
-      last_verified: null
-      expected_result: >
-        A verified SFT checkpoint must export to Hugging Face, strictly reload,
-        and produce deterministic checkpoint-backed inference. Training and
-        post-SFT export verification are deferred by this card.
-
+      last_verified: 2026-10-07
+      expected_result: 'Exported the verified corrected packed-CP SFT step-100 checkpoint to BF16 Hugging Face format
+        on 48 GB200 GPUs, including all 59870 tensors and the 791 MTP tensors. All 16 native Transformers TP ranks
+        strictly reloaded the export on 16 GB200 GPUs without CPU or disk offload. Greedy inference generated 16
+        tokens with a maximum of 16; completion: "Deterministic tests are important because they provide consistent
+        and reliable results, allowing for easier"'
+      commands:
+      - ./scripts/conversion/convert.sh export --executor slurm --nodes 12 --gpus-per-node 4 --device gpu --hf-model
+        zai-org/GLM-5 --megatron-path work/model-verification/glm5/hybrid/sft-gb200-glm-remaining-20261007-175000/checkpoints/iter_0000100
+        --hf-path work/model-verification/glm5/hybrid/sft-hf-export-glm-remaining-20261007-175000 --tp 1 --pp 6
+        --ep 8 --etp 1 --torch-dtype bfloat16 --distributed-timeout-minutes 60 --distributed-save --save-every-n-ranks
+        1 --no-progress --hf-revision 4e6698ba8e85059d749020e3c4d2123719f23926
+      - ./scripts/inference/infer.sh --nodes 4 --gpus-per-node 4 --task hf-inference --hf-model work/model-verification/glm5/hybrid/sft-hf-export-glm-remaining-20261007-175000
+        --prompt 'Write one concise sentence explaining why deterministic tests matter:' --chat-template --disable-thinking
+        --max-new-tokens 16 --dtype bfloat16 --tp-plan auto --require-gpu-only
+      bridge_commit: 49c103c714f3d62d7609f27a46e42dc14e95afa6  # pragma: allowlist secret
   sft_long_context:
-    H100:
-      status: unverified
+    GB200:
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      command: ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_sft_192gpu_gb200_bf16_128k_config
+        --mode sft --max_steps 20 --save_dir work/model-verification/glm5/hybrid/long-gb200-glm-remaining-20261007-175000/checkpoints
+        --save_interval 20 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false logger.log_interval=1
+        logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/long-gb200-glm-remaining-20261007-175000/launch-config.yaml
+        dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5/hybrid/hf-4e6698ba8e85059d749020e3c4d2123719f23926
+        dataset.dataset_root=work/data/glm5/long-glm-remaining-20261007-175000
+      last_verified: 2026-10-07
+      expected_result: Completed 20 BF16 Hybrid full-SFT steps with 128K synthetic packed sequences, GBS/MBS 56/1
+        and CP32 on 192 GB200 GPUs, with MTP1, HybridEP and natural routing. The exact runtime passed full-shape
+        causal top-k reference checks with explicit cuDNN query offsets before training. All LM/MTP losses and gradients
+        were finite with zero skipped or NaN iterations. Saved the complete final model checkpoint and post-setup
+        configuration.
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      expected_result: >
-        A dedicated packed long-context SFT run must complete a bounded run
-        with finite loss, no skipped or NaN iterations, all five metrics, and
-        a reloadable checkpoint. Training is deferred by this card.
-
+        initial_loss: 3.555943
+        final_loss: 3.37788
+        last_10_steps_step_time_ms_avg: 149688.47
+        last_10_steps_model_tflops_per_gpu_avg: 96.15
+        last_10_steps_tokens_per_second_per_gpu_avg: 255.392639
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 32
+      bridge_commit: 49c103c714f3d62d7609f27a46e42dc14e95afa6  # pragma: allowlist secret
   peft:
-    H100:
-      status: unverified
+    GB200:
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      command: ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_peft_192gpu_gb200_bf16_config
+        --mode lora --max_steps 100 --save_dir work/model-verification/glm5/hybrid/peft-fixedwidth-gb200-glm-remaining-20261007-175000/checkpoints
+        --save_interval 100 checkpoint.load=null checkpoint.save_optim=true checkpoint.save_rng=true logger.log_interval=1
+        logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/peft-fixedwidth-gb200-glm-remaining-20261007-175000/launch-config.yaml
+        dist.distributed_timeout_minutes=60 --pretrained_checkpoint work/model-verification/glm5/hybrid/hf-4e6698ba8e85059d749020e3c4d2123719f23926
+        dataset.hf_output_root=work/data/glm5/peft-fixedwidth-glm-remaining-20261007-175000
+      last_verified: 2026-10-07
+      expected_result: Completed 100 BF16 Hybrid LoRA steps on 192 GB200 GPUs with pinned Tulu 3 train[:10000],
+        2K offline packing, GBS/MBS 32/1, MTP1 and natural routing. All LM/MTP losses and gradients were finite
+        with zero skipped or NaN iterations. Saved adapter, optimizer, scheduler and RNG state, strictly reloaded
+        the step-100 adapters with raise_all, and completed step 101 at zero LR. All 790 saved adapter tensors matched
+        the reloaded checkpoint exactly; only the five configured MLA projection targets were adapted. Metrics cover
+        training steps 1-100 only.
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
-      expected_result: >
-        A GLM-5 PEFT recipe with an audited adapter target set must complete a
-        bounded run with finite loss, all five metrics, and a reloadable
-        adapter checkpoint. Training is deferred by this card.
-
+        initial_loss: 1.544981
+        final_loss: 0.941183
+        last_10_steps_step_time_ms_avg: 7883.89
+        last_10_steps_model_tflops_per_gpu_avg: 11.71
+        last_10_steps_tokens_per_second_per_gpu_avg: 43.29504
+      enabled_features:
+        sequence_packing: offline
+      bridge_commit: a860b62ff21c9bdceb7f285d97d41acc790fe4d8  # pragma: allowlist secret
   checkpoint_resume:
-    H100:
-      status: unverified
+    GB200:
+      status: verified
       precision: bf16
       depends_on: pretrain
-      command: null
-      last_verified: null
+      command: >-  # pragma: allowlist secret
+        ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4 --recipe glm5_pretrain_192gpu_gb200_bf16_config
+        --mode pretrain --max_steps 100 --save_dir work/model-verification/glm5/hybrid/resume-gb200-glm-remaining-20261007-175000/checkpoints
+        --save_interval 50 checkpoint.save_optim=true checkpoint.save_rng=true logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/glm5/hybrid/resume-gb200-glm-remaining-20261007-175000/launch-config.yaml
+        dist.distributed_timeout_minutes=60 --load_dir work/model-verification/glm5/hybrid/pretrain-gb200-glm-remaining-20261007-175000/checkpoints
+        checkpoint.ckpt_step=50 checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.finetune=false --dataset
+        megatron-indexed --seq_length 4096 --lr 3e-6 --min_lr 3e-7 --warmup_iters 40 'dataset.blend=[["work/data/wikitext103-glm5-glm-remaining-20261007-175000/wikitext103_glm5_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5/wikitext-glm-remaining-20261007-175000 dataset.random_seed=1234 dataset.num_workers=8
+        tokenizer.use_tokenizer_vocab_size=false rng.seed=1234 scheduler.lr_decay_iters=100 model.moe_router_force_load_balancing=false
+      last_verified: 2026-10-07
+      expected_result: Reloaded the matching Hybrid WikiText-103 step-50 checkpoint with optimizer, scheduler, RNG
+        and data order, completed steps 51-100 on 192 GB200 GPUs and saved the resumed step-100 checkpoint. Every
+        resumed LM and MTP loss matched the uninterrupted reference within 1e-6 absolute plus 1% relative tolerance,
+        including sentinels 51 and 100. All losses and gradients were finite with zero skipped or NaN iterations.
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.8085468
+        final_loss: 0.7443568
+        last_10_steps_step_time_ms_avg: 33566.73
+        last_10_steps_model_tflops_per_gpu_avg: 205.04
+        last_10_steps_tokens_per_second_per_gpu_avg: 650.803141
       resume_comparison:
         reference_item: pretrain
-        sentinel_steps: [51, 100]
-        loss_relative_tolerance: 1.0e-2
-        loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
-      expected_result: >
-        A direct continuation must restore model, optimizer, scheduler,
-        data-order, and RNG state, match declared sentinel losses, and save a
-        reloadable checkpoint to a distinct output root. Training is deferred
-        by this card.
+        sentinel_steps:
+        - 51
+        - 100
+        loss_relative_tolerance: 0.01
+        loss_absolute_tolerance: 1.0e-06
+        sentinels_match: true
+      bridge_commit: 0b59ee513ff26c259461c87c085f491a8fa3ef4d  # pragma: allowlist secret

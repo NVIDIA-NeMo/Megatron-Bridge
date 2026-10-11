@@ -70,7 +70,7 @@ def test_catalog_discovers_every_card_without_a_model_list(catalog: dict[str, ob
         ("bagel", "bagel_7b_pretrain_32gpu_h100_bf16_config"),
         (
             "glm5-2",
-            "glm52_pretrain_416gpu_h100_bf16_config",
+            "glm52_pretrain_192gpu_gb200_bf16_config",
         ),
         (
             "qwen3.8-27b",
@@ -178,7 +178,7 @@ items:
 def test_catalog_is_a_simple_model_directory(generator: ModuleType, catalog: dict[str, object]) -> None:
     page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=False)
 
-    assert page.count('class="verification-model-link"') == len(catalog["models"])
+    assert page.count('class="verification-model-link"') == len(catalog["models"]) - 2
     assert "never combined into synthetic commands" in page
     assert 'href="deepseek/deepseek-v3.html#verified-deepseek-v3"' in page
     assert "NVIDIA-Nemotron-3-Super-120B-A12B-BF16</strong> <!-- pragma: allowlist secret -->" in page
@@ -295,16 +295,49 @@ def test_model_page_merge_preserves_intro_and_replaces_old_sections(generator: M
     assert generator._merge_model_page(original, section, title="New title").startswith("# New title\n\n")
 
 
-def test_nemotron_text_only_guide_is_in_both_navigation_trees() -> None:
-    guide = "nemotron3.5-super-vl-text-only"
+@pytest.mark.parametrize("guide", ["nemotron3.5-super-vl", "nemotron3.5-super-vl-text-only"])
+def test_unpublished_nemotron_guides_remain_in_sources_without_public_links(
+    generator: ModuleType, catalog: dict[str, object], guide: str
+) -> None:
     index = (REPO_ROOT / "docs/models/nemotron/index.md").read_text(encoding="utf-8")
     fern_index = (REPO_ROOT / "docs/fern/versions/nightly/pages/models/nemotron/index.mdx").read_text(encoding="utf-8")
     nav = (REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8")
 
-    assert f"\n{guide}.md\n" in index
-    assert f"]({guide}.md)" in index
-    assert f"]({guide}.md)" in fern_index
-    assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" in nav
+    assert guide not in index
+    assert guide not in fern_index
+    assert f"path: ./nightly/pages/models/nemotron/{guide}.mdx" not in nav
+    assert (REPO_ROOT / f"docs/models/nemotron/{guide}.md").is_file()
+    assert (REPO_ROOT / f"docs/fern/versions/nightly/pages/models/nemotron/{guide}.mdx").is_file()
+    for fern in (False, True):
+        page = generator.render_supported_models_page(catalog, REPO_ROOT, fern=fern)
+        assert guide not in page
+        assert "nemotron3-super" in page
+        assert "nemotron3-ultra" in page
+        assert f"**{len(catalog['models']) - 2} model cards**" in page
+
+
+def test_unpublished_nemotron_redirects_target_the_nightly_catalog() -> None:
+    config = yaml.safe_load((REPO_ROOT / "docs/fern/docs.yml").read_text(encoding="utf-8"))
+    redirects = {redirect["source"]: redirect["destination"] for redirect in config["redirects"]}
+    paths = (
+        "supported-models/nemotron/nemotron-3-5-super-vl",
+        "supported-models/nemotron/nemotron-3-5-super-text-only",
+        "models/nemotron/nemotron3.5-super-vl.html",
+        "models/nemotron/nemotron3.5-super-vl-text-only.html",
+    )
+    for version in ("", "nightly/"):
+        for path in paths:
+            assert (
+                redirects[f"/nemo/megatron-bridge/{version}{path}"]
+                == "/nemo/megatron-bridge/nightly/supported-models/supported-models"
+            )
+    # The frozen default version lacks this landing page; nightly contains it.
+    nav = yaml.safe_load((REPO_ROOT / "docs/fern/versions/nightly.yml").read_text(encoding="utf-8"))
+    section = next(item for item in nav["navigation"] if item.get("section") == "Supported Models")
+    assert any(
+        item.get("page") == "Supported Models" and item.get("path") == "./nightly/pages/models/README.mdx"
+        for item in section["contents"]
+    )
 
 
 def test_generated_outputs_and_navigation_are_current(generator: ModuleType, catalog: dict[str, object]) -> None:

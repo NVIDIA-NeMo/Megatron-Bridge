@@ -626,3 +626,53 @@ def test_direct_hf_sft_config_resolves_canonical_builder(monkeypatch):
     assert seen["config"] is config
     assert seen["context"].train_samples == 12
     assert seen["context"].tokenizer is tokenizer
+
+
+def _mimo_reorder_config(**overrides):
+    kwargs = dict(
+        seq_length=128,
+        source=HFDatasetSourceConfig(path_or_dataset="json"),
+        dataloader_type="single",
+        megatron_mimo_scalable_dp=True,
+        megatron_mimo_intra_microbatch_reorder=True,
+    )
+    kwargs.update(overrides)
+    config = DirectHFSFTDatasetConfig(**kwargs)
+    config.drop_last = True
+    return config
+
+
+def test_mimo_reorder_requires_scalable_dp():
+    config = _mimo_reorder_config(megatron_mimo_scalable_dp=False)
+    with pytest.raises(ValueError, match="requires megatron_mimo_scalable_dp=True"):
+        config.validate()
+
+
+def test_mimo_reorder_rejects_zero_cost():
+    config = _mimo_reorder_config(
+        megatron_mimo_reorder_encoder_cost_weight=0.0, megatron_mimo_reorder_language_cost_weight=0.0
+    )
+    with pytest.raises(ValueError, match="encoder_cost_weight > 0"):
+        config.validate()
+
+
+def test_mimo_reorder_rejects_negative_cost_weight():
+    config = _mimo_reorder_config(megatron_mimo_reorder_language_cost_weight=-1.0)
+    with pytest.raises(ValueError, match="cost_weight must be >= 0"):
+        config.validate()
+
+
+def test_mimo_reorder_rejects_window_below_one():
+    config = _mimo_reorder_config(megatron_mimo_reorder_window_size=0)
+    with pytest.raises(ValueError, match="window_size must be >= 1"):
+        config.validate()
+
+
+def test_mimo_reorder_defaults_validate():
+    _mimo_reorder_config().validate()
+    assert (
+        DirectHFSFTDatasetConfig(
+            seq_length=128, source=HFDatasetSourceConfig(path_or_dataset="json")
+        ).megatron_mimo_intra_microbatch_reorder
+        is False
+    )

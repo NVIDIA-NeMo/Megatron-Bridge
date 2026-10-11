@@ -94,6 +94,12 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
     megatron_mimo_scalable_dp: bool = False
+    megatron_mimo_intra_microbatch_reorder: bool = False
+    # Reorder cost = encoder_weight * image patches + language_weight * real tokens; only the ratio matters.
+    megatron_mimo_reorder_encoder_cost_weight: float = 1.0
+    megatron_mimo_reorder_language_cost_weight: float = 0.0
+    megatron_mimo_reorder_overlap: bool = True
+    megatron_mimo_reorder_window_size: int = 1
 
     def validate(self) -> None:
         """Validate declarative source and dataset settings."""
@@ -125,6 +131,27 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
                     "megatron_mimo_scalable_dp requires drop_last=True; a partial final micro-batch "
                     "gives modules unequal shares and misaligns the modality routing."
                 )
+        if self.megatron_mimo_intra_microbatch_reorder:
+            if not self.megatron_mimo_scalable_dp:
+                raise ValueError(
+                    "megatron_mimo_intra_microbatch_reorder requires megatron_mimo_scalable_dp=True; the "
+                    "per-sample exchange rebalances canonical-grid shards."
+                )
+            if (
+                self.megatron_mimo_reorder_encoder_cost_weight < 0
+                or self.megatron_mimo_reorder_language_cost_weight < 0
+            ):
+                raise ValueError("megatron_mimo_reorder_*_cost_weight must be >= 0.")
+            if (
+                self.megatron_mimo_reorder_encoder_cost_weight == 0
+                and self.megatron_mimo_reorder_language_cost_weight == 0
+            ):
+                raise ValueError(
+                    "megatron_mimo_intra_microbatch_reorder requires megatron_mimo_reorder_encoder_cost_weight > 0 "
+                    "or megatron_mimo_reorder_language_cost_weight > 0; a zero cost has nothing to balance."
+                )
+            if self.megatron_mimo_reorder_window_size < 1:
+                raise ValueError("megatron_mimo_reorder_window_size must be >= 1.")
         validate_declarative_mapping(self.hf_processor_kwargs, field_name="hf_processor_kwargs")
         if self.hf_processor_kwargs is not None and "trust_remote_code" in self.hf_processor_kwargs:
             raise ValueError(

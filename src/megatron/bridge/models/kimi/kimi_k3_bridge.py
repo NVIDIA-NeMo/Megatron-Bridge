@@ -377,6 +377,7 @@ class KimiK3Bridge(MegatronModelBridge):
         merge_adapter_weights: bool = True,
         weight_dtype: torch.dtype | None = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
         """Export the language model and preserve unchanged multimodal weights."""
         yield from super().stream_weights_megatron_to_hf(
@@ -388,7 +389,10 @@ class KimiK3Bridge(MegatronModelBridge):
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
             with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
         )
+        if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
+            return
         # Passthrough tensors are copied straight from the HF checkpoint and have no
         # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
         passthrough_sources = () if with_megatron_names else None

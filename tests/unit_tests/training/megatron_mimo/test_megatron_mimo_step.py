@@ -293,6 +293,43 @@ class TestForwardStep:
     @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
     @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_nulls_attention_mask_before_model(self, mock_unwrap, mock_get_batch, mock_dp_info):
+        """The tokenizer padding mask is a data-path length source only; the model must get None."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_state.cfg.dataset = SimpleNamespace(
+            enable_in_batch_packing=False,
+            defer_in_batch_packing_to_step=False,
+            megatron_mimo_scalable_dp=True,
+        )
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = True
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+        mock_dp_info.return_value = (0, 1)
+
+        mock_get_batch.return_value = {
+            "input_ids": torch.arange(16).reshape(4, 4),
+            "position_ids": torch.arange(4).repeat(4, 1),
+            "attention_mask": torch.ones(4, 4, dtype=torch.long),
+            "labels": None,
+            "loss_mask": None,
+            "modality_inputs": None,
+        }
+
+        forward_step(mock_state, iter([]), mock_model)
+
+        assert mock_model.call_args.kwargs["attention_mask"] is None
+
+    @patch("megatron.bridge.training.megatron_mimo_step._get_module_dp_info")
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
     def test_forward_step_scalable_dp_skips_batch_slicing(self, mock_unwrap, mock_get_batch, mock_dp_info):
         """megatron_mimo_scalable_dp: the sampler already delivered this rank's shard, so the
         batch must reach the model unsliced."""
@@ -497,7 +534,8 @@ class TestResolveStepPacking:
     "local, remote, expected",
     [([0.0, 0.0], [0.0, 0.0], 0.0), ([0.0, 0.0], [12.0, 3.0], 4.0), ([6.0, 2.0], [9.0, 1.0], 5.0)],
 )
-def test_mimo_train_step_token_weighted_loss(local, remote, expected):
+@pytest.mark.parametrize("world_size", [1, 2])
+def test_mimo_train_step_token_weighted_loss(local, remote, expected, world_size):
     import megatron.bridge.training.train_megatron_mimo as training
 
     dp_cp = object()
@@ -513,6 +551,7 @@ def test_mimo_train_step_token_weighted_loss(local, remote, expected):
 
     optimizer = MagicMock()
     optimizer.step.return_value = (True, 1.0, 0)
+    state = SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1))
     with (
         patch.object(training, "zero_grad_buffer_for_multimodule"),
         patch.object(
@@ -521,9 +560,10 @@ def test_mimo_train_step_token_weighted_loss(local, remote, expected):
             return_value=[{"lm loss": real_tensor(local)}],
         ),
         patch.object(training, "unwrap_megatron_mimo_model", return_value=SimpleNamespace(role=None)),
-        patch.object(training.dist, "get_world_size", return_value=1),
+        patch.object(training.dist, "get_world_size", return_value=world_size),
         patch.object(training.dist, "get_rank", return_value=0),
         patch.object(training.dist, "all_reduce", side_effect=reduce) as reduction,
+        patch.object(training.dist, "broadcast_object_list") as broadcast,
         patch.object(training.torch, "tensor", side_effect=cpu_tensor),
     ):
         result = training.train_step_megatron_mimo(
@@ -532,7 +572,7 @@ def test_mimo_train_step_token_weighted_loss(local, remote, expected):
             MagicMock(),
             optimizer,
             {},
-            SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1)),
+            state,
             None,
             None,
             SimpleNamespace(pg_collections={"language": SimpleNamespace(dp_cp=dp_cp)}),
@@ -543,3 +583,67 @@ def test_mimo_train_step_token_weighted_loss(local, remote, expected):
         )
     assert result[0]["lm loss"].item() == pytest.approx(expected)
     assert reduction.call_args_list[0].kwargs["group"] is dp_cp
+
+    assert state._zero_token_iters.item() == int(local[1] + remote[1] == 0)
+    if world_size == 1:
+        broadcast.assert_not_called()
+    else:
+        broadcast.assert_called_once()
+        assert broadcast.call_args.kwargs["src"] == 0
+        payload = broadcast.call_args.args[0]
+        assert payload[0] is result[0]
+        assert payload[1].item() == (local[1] + remote[1] == 0)
+
+
+@pytest.mark.parametrize("zero_token", [True, False, None])
+def test_mimo_logging_rank_receives_source_zero_token_flag(zero_token):
+    import megatron.bridge.training.train_megatron_mimo as training
+
+    real_tensor = torch.tensor
+
+    def cpu_tensor(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_tensor(*args, **kwargs)
+
+    def receive(payload, *, src):
+        assert src == 0
+        payload[:] = [
+            {"lm loss": real_tensor(0.0 if zero_token else 3.0)},
+            real_tensor(zero_token) if zero_token is not None else None,
+        ]
+
+    optimizer = MagicMock()
+    optimizer.step.return_value = (True, 1.0, 0)
+    state = SimpleNamespace(timers=MagicMock(), cfg=SimpleNamespace(data_parallel_size=1))
+    with (
+        patch.object(training, "zero_grad_buffer_for_multimodule"),
+        patch.object(training, "forward_backward_pipelining_without_interleaving", return_value=[]),
+        patch.object(training.dist, "get_world_size", return_value=2),
+        patch.object(training.dist, "get_rank", return_value=1),
+        patch.object(training.dist, "all_reduce", side_effect=lambda value, **kwargs: value.fill_(0)),
+        patch.object(training.dist, "broadcast_object_list", side_effect=receive) as broadcast,
+        patch.object(training.torch, "tensor", side_effect=cpu_tensor),
+        patch.object(torch.Tensor, "cuda", lambda tensor: tensor),
+    ):
+        result = training.train_step_megatron_mimo(
+            MagicMock(),
+            iter([]),
+            MagicMock(),
+            optimizer,
+            {},
+            state,
+            None,
+            None,
+            SimpleNamespace(pg_collections={"language": None}),
+            [],
+            1,
+            8,
+            1,
+        )
+
+    broadcast.assert_called_once()
+    assert result[0]["lm loss"].item() == (0.0 if zero_token else 3.0)
+    if zero_token is None:
+        assert not hasattr(state, "_zero_token_iters")
+    else:
+        assert state._zero_token_iters.item() == int(zero_token)

@@ -220,15 +220,18 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
+def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
     """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB200, MXFP8, Megatron-FSDP (HSDP).
 
     TP2 + SP (due to smaller GB200 HBM) / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
     precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective recompute +
     fine-grained activation offload of the expert MLP, MTP=2.
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
     """
 
-    num_gpus = 256
     expert_model_parallel_size = 64
     global_batch_size = 256
     hybrid_ep_ranks_per_nvlink_domain = 64
@@ -307,15 +310,18 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
+def nemotron_3_ultra_pretrain_256gpu_gb200_nvfp4_config(*, num_gpus: int = 256) -> ConfigContainer:
     """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB200, NVFP4, Megatron-FSDP (HSDP).
 
     TP2 + SP (due to smaller GB200 HBM) / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + NVFP4 mixed
     precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective recompute +
     fine-grained activation offload of the expert MLP, MTP=2.
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
     """
 
-    num_gpus = 256
     expert_model_parallel_size = 64
     global_batch_size = 256
     hybrid_ep_ranks_per_nvlink_domain = 64

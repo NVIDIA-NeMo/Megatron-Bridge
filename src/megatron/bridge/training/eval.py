@@ -69,6 +69,7 @@ def evaluate(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
+    empty_loss_keys: Optional[set[str]] = None,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -90,6 +91,9 @@ def evaluate(
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
+        empty_loss_keys (Optional[set[str]], optional): If provided, the keys whose evaluation
+            token count was zero are added to this set. Their reported value is a substituted
+            0.0, not a measured loss. Defaults to None.
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -386,7 +390,18 @@ def evaluate(
 
     for key in total_loss_dict:
         numerator, denominator = total_loss_dict[key]
-        total_loss_dict[key] = numerator / denominator
+        # An all-masked evaluation set leaves the token count at zero. Report a finite
+        # zero rather than NaN, matching the training-side reduction in train_step().
+        # Evaluation is not on the hot path, so the warning's host sync costs nothing,
+        # and without it a substituted zero reads as a real validation loss.
+        if denominator.item() == 0:
+            print_rank_last(
+                f"WARNING: no unmasked tokens in the evaluation set for '{key}'. "
+                "Reporting 0.0; check the dataset's loss mask."
+            )
+            if empty_loss_keys is not None:
+                empty_loss_keys.add(key)
+        total_loss_dict[key] = torch.where(denominator > 0, numerator / denominator, torch.zeros_like(numerator))
 
     timers("evaluate").stop()
     timers.log(["evaluate"])
@@ -461,6 +476,7 @@ def evaluate_and_print_results(
     mlflow_writer = state.mlflow_logger
     comet_logger = state.comet_logger
 
+    empty_loss_keys: set[str] = set()
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
         state,
         forward_step_func,
@@ -474,6 +490,7 @@ def evaluate_and_print_results(
         pg_collection=pg_collection,
         callback_manager=callback_manager,
         is_test=is_test,
+        empty_loss_keys=empty_loss_keys,
     )
 
     # Timelimit hit during evaluation
@@ -487,6 +504,11 @@ def evaluate_and_print_results(
         string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
         ppl = math.exp(min(20, total_loss_dict[key].item()))
         string += "{} PPL: {:.6E} | ".format(key, ppl)
+        # An empty evaluation set reports a substituted 0.0 loss (perplexity 1.0), which
+        # would plot as a perfect model. Leave a gap in the metric writers instead; the
+        # console line and the returned value are unchanged.
+        if key in empty_loss_keys:
+            continue
         if writer:
             writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
             writer.add_scalar(

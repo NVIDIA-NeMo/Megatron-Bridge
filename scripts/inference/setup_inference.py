@@ -215,8 +215,10 @@ def _validate_task_args(task_name: str, inference_args: list[str]) -> None:
     uses_legacy_full_prefix = "--legacy-full-prefix" in inference_args
     if task_name == "legacy-full-prefix-generation" and not uses_legacy_full_prefix:
         raise ValueError("--task legacy-full-prefix-generation requires --legacy-full-prefix.")
-    if task_name != "legacy-full-prefix-generation" and uses_legacy_full_prefix:
-        raise ValueError("--legacy-full-prefix requires --task legacy-full-prefix-generation.")
+    if uses_legacy_full_prefix and task_name not in {"legacy-full-prefix-generation", "model-comparison"}:
+        raise ValueError(
+            "--legacy-full-prefix requires --task legacy-full-prefix-generation or --task model-comparison."
+        )
 
 
 def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
