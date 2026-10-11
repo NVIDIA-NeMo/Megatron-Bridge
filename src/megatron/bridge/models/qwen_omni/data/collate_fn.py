@@ -52,12 +52,10 @@ def qwen3_omni_collate_fn(
 
     Media resolution is delegated to the Hugging Face processor's chat-template
     path so local paths and URLs follow the processor's native conversation
-    schema. Qwen3-Omni training currently uses dense right-padded batches; its
-    model step rejects in-batch packing.
+    schema. When enabled, in-batch packing is owned by the shared sequence
+    collator and emits MCore THD metadata for the model step.
     """
     del visual_keys, min_pixels, max_pixels
-    if enable_in_batch_packing:
-        raise ValueError("Qwen3-Omni does not support in-batch packing.")
 
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = assistant_mask_boundary_config_from_markers(
@@ -127,9 +125,10 @@ def qwen3_omni_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        enable_in_batch_packing=False,
+        enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         pad_token_id=pad_token_id,
         ignore_index=IGNORE_INDEX,
+        emit_packed_padding_mask=True,
     )
     return batch
