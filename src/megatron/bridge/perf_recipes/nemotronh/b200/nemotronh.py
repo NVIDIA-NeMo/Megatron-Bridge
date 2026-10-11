@@ -481,7 +481,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
 
 def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 256× B200, BF16 (same layout as FP8-CS)."""
-    cfg = nemotronh_56b_pretrain_64gpu_b200_fp8cs_config()
+    cfg = _with_global_batch_size(nemotronh_56b_pretrain_64gpu_b200_fp8cs_config(), 768)
     cfg.mixed_precision = _perf_precision("bf16")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
