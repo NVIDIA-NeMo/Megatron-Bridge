@@ -15,9 +15,11 @@
 import json
 import re
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Callable, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, Union, cast
 
 import torch
 import torch.distributed
@@ -32,6 +34,7 @@ from megatron.core.utils import (
 )
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion.gtp import _get_mapping_shape, _is_gtp_param
 from megatron.bridge.models.conversion.utils import (
     get_module_and_param_from_name,
     is_modelopt_dynamic_module,
@@ -48,6 +51,13 @@ import logging
 
 
 logger = logging.getLogger(__name__)
+
+
+# Export policy is scoped to one conversion operation rather than stored on a
+# mapping instance. Some mappings (notably AutoMapping) create their concrete
+# delegate lazily while ``megatron_to_hf`` is running, so an instance property
+# would not reliably reach the object that performs the PP broadcast.
+_SKIP_PP_BROADCAST: ContextVar[bool] = ContextVar("megatron_bridge_skip_pp_broadcast", default=False)
 
 
 @dataclass(frozen=True)
@@ -262,6 +272,26 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # `build_conversion_tasks`, which raises otherwise.
         self.allow_hf_name_mismatch = False
 
+    @classmethod
+    @contextmanager
+    def skip_pp_broadcast(cls) -> Iterator[None]:
+        """Disable PP replication for the duration of one HF export.
+
+        In this mode ``broadcast_from_pp_rank`` and
+        ``broadcast_obj_from_pp_rank`` return the value local to the current
+        rank. TP/EP collectives remain enabled, so mappings still perform all
+        required shard reconstruction and HF layout conversion on the owning
+        pipeline stage.
+
+        The policy is held in a :class:`ContextVar` so it also applies to
+        mappings created lazily by wrappers such as :class:`AutoMapping`.
+        """
+        token = _SKIP_PP_BROADCAST.set(True)
+        try:
+            yield
+        finally:
+            _SKIP_PP_BROADCAST.reset(token)
+
     def local_hf_param_specs(self, global_param_name: Optional[str] = None) -> tuple[LocalHFParamSpec, ...]:
         """Describe canonical local HF views for one mapped parameter.
 
@@ -360,6 +390,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             )
         if isinstance(weight, DTensor) or _module_uses_fsdp(megatron_module):
             raise ValueError(f"{global_param_name}: local HF parameter iteration does not support DTensor/FSDP")
+        if _is_gtp_param(weight):
+            raise ValueError(
+                f"{global_param_name}: local HF parameter views cannot represent GTP sharding; "
+                "use the gathered HF weight export instead"
+            )
 
         specs = self.local_hf_param_specs(global_param_name)
         if not specs:
@@ -622,6 +657,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 in the calling code).
         """
 
+        # PP-local export deliberately leaves non-owning stages with ``None``.
+        # The caller filters those tasks, while the owning stage continues into
+        # the normal TP/EP gathering and layout-conversion code below.
+        if _SKIP_PP_BROADCAST.get():
+            return tensor
+
         # Fast-path when we are not using pipeline parallelism.
         if self.pp_size == 1:
             return tensor
@@ -709,7 +750,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         Raises:
             ValueError: If object does not exist on any rank.
         """
+        if _SKIP_PP_BROADCAST.get():
+            return obj
+
         if self.pp_size == 1:
+            if obj is None:
+                raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
             return obj
 
         # Check if we already have a cached result (only if cache_key is provided)
@@ -735,7 +781,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 break
 
         if src_rank is None:
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(f"{self.megatron_param}: Object must exist on at least one PP rank")
 
         # ------------------------------------------------------------------
         # 3. Broadcast the object from the source rank to all ranks
@@ -1297,13 +1343,15 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             actual_dim0_size = hf_weights.shape[0]
             # DTensor.shape is already the global shape across TP ranks, while
             # a regular Megatron parameter stores only its local TP shard.
-            expect_dim0_size = target_param.shape[0]
+            expect_dim0_size = _get_mapping_shape(target_param)[0]
             if not isinstance(target_param, DTensor):
                 expect_dim0_size *= self.tp_size
             if actual_dim0_size != expect_dim0_size:
-                assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
-                    f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
-                )
+                assert self.megatron_param in {
+                    "embedding.word_embeddings.weight",
+                    "output_layer.weight",
+                    "output_layer.bias",
+                }, f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
                 hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
 
             # For bias (1D), we still split along dim 0
@@ -1319,7 +1367,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -1483,13 +1531,14 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         # HF fused expert weights (e.g. down_proj) may be stored in [in, out]
         # layout while Megatron expects [out, in]. Detect via the unsharded dim:
-        # for RowParallel, dim 0 is never split, so hf_weights.shape[0] must
-        # equal target_param.shape[0].
+        # RowParallel TP does not split dim 0. GTP may split it further in storage,
+        # so compare against the logical TP-local shape.
+        target_shape = _get_mapping_shape(target_param)
         if (
             hf_weights is not None
             and hf_weights.ndim == 2
-            and hf_weights.shape[0] != target_param.shape[0]
-            and hf_weights.shape[1] == target_param.shape[0]
+            and hf_weights.shape[0] != target_shape[0]
+            and hf_weights.shape[1] == target_shape[0]
         ):
             hf_weights = hf_weights.t().contiguous()
 
@@ -1520,7 +1569,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter to all ranks. Each rank gets its sharded shape from its module.
         return self.scatter_to_tp_ranks(
             splits,
@@ -1964,27 +2013,30 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Need to determine type even if module is None (different PP rank)
         assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
 
-        if self._mapping is None:
+        mapping = self._mapping
+        if mapping is None:
             if megatron_module is not None:
-                self._detected_type = self._detect_parallelism_type(megatron_module)
+                detected_type = self._detect_parallelism_type(megatron_module)
                 # Broadcast to other ranks
-                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
+                detected_type = self.broadcast_obj_from_pp_rank(detected_type, "detected_type")
             else:
                 # Receive from owning rank
-                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
-                if self._detected_type is None:
-                    # PP group likely has 1 member - skipping.
-                    return {}
+                detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
 
-            # If no PP rank detected a type (e.g. Megatron parameter without an
-            # HF counterpart, such as MoE modules on dense layers created by
-            # moe_layer_freq), skip export gracefully.
-            if self._detected_type is None:
+            # A stage-local export has nothing to receive for a non-local task.
+            # Full export must instead reject missing owners in the broadcast helper.
+            if _SKIP_PP_BROADCAST.get() and detected_type is None:
                 return {}
 
-            self._mapping = self._get_or_create_mapping(self._detected_type)
+            mapping = self._get_or_create_mapping(detected_type)
+            # A PP-local export skips this task on non-owning stages. Do not
+            # cache the lazy delegate only on the owner, or a later full export
+            # could enter different PP collectives on different ranks.
+            if not _SKIP_PP_BROADCAST.get():
+                self._detected_type = detected_type
+                self._mapping = mapping
 
-        result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
+        result = mapping.megatron_to_hf(megatron_weights, megatron_module)
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
@@ -3174,7 +3226,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         if isinstance(target_param, DTensor):
             output_shape = target_param.orig_param.shape
         else:
-            output_shape = target_param.shape
+            output_shape = _get_mapping_shape(target_param)
         # Scatter the concatenated shards to each rank
         return self.scatter_to_tp_ranks(
             splits,
@@ -3579,7 +3631,7 @@ class FusedGatedExpertMapping(AutoMapping):
 
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        target_shape = target_param.shape
+        target_shape = _get_mapping_shape(target_param)
 
         if target_shape[0] % 2 != 0:
             raise ValueError(f"Expected even fused dim for {self.megatron_param}, got {target_shape}.")
@@ -3694,12 +3746,12 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(config, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3707,6 +3759,7 @@ def split_qkv_biases(config: TransformerConfig, qkv: torch.Tensor) -> Tuple[torc
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -3880,12 +3933,12 @@ def split_qkv_weights(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3893,6 +3946,7 @@ def split_qkv_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -3962,12 +4016,12 @@ def _split_qkv_weights_scale_by_row(
     # Extract Q, K, V from interleaved pattern
     q_slice = torch.cat(
         [
-            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkv.device)
             for i in range(num_query_groups)
         ]
     )
-    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
-    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group, device=qkv.device)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group, device=qkv.device)
 
     if getattr(provider, "attention_output_gate", False):
         z_slice = torch.cat(
@@ -3975,6 +4029,7 @@ def _split_qkv_weights_scale_by_row(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkv.device,
                 )
                 for i in range(num_query_groups)
             ]
@@ -4023,7 +4078,9 @@ def split_qkvg_weights(
 
         q_slice = torch.cat(
             [
-                torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+                torch.arange(
+                    total_heads_per_group * i, total_heads_per_group * i + heads_per_group, device=qkvg.device
+                )
                 for i in range(num_query_groups)
             ]
         )
@@ -4032,12 +4089,13 @@ def split_qkvg_weights(
                 torch.arange(
                     total_heads_per_group * i + heads_per_group,
                     total_heads_per_group * i + heads_per_group * 2,
+                    device=qkvg.device,
                 )
                 for i in range(num_query_groups)
             ]
         )
-        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group)
-        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group)
+        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
+        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group, device=qkvg.device)
 
         q = qkvg_reshaped[q_slice].reshape(-1, hidden_size)
         k = qkvg_reshaped[k_slice].reshape(-1, hidden_size)
@@ -4298,8 +4356,8 @@ def split_kv_biases(config: TransformerConfig, kv: torch.Tensor) -> Tuple[torch.
 
     kv_reshaped = kv.view(kv_total_dim, head_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1)
     v = kv_reshaped[v_slice].reshape(-1)
@@ -4333,8 +4391,8 @@ def split_kv_weights(provider: TransformerConfig, kv: torch.Tensor) -> Tuple[tor
 
     kv_reshaped = kv.view(kv_total_dim, head_size, hidden_size)
 
-    k_slice = torch.arange(0, kv_total_dim, 2)
-    v_slice = torch.arange(1, kv_total_dim, 2)
+    k_slice = torch.arange(0, kv_total_dim, 2, device=kv.device)
+    v_slice = torch.arange(1, kv_total_dim, 2, device=kv.device)
 
     k = kv_reshaped[k_slice].reshape(-1, hidden_size)
     v = kv_reshaped[v_slice].reshape(-1, hidden_size)

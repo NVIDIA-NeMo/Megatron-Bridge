@@ -11,12 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""GB200 recipes for GLM-5.2."""
+"""GB200 recipes for GLM-5 and GLM-5.2."""
 
 from __future__ import annotations
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig
+from megatron.bridge.models.glm_moe_dsa.glm5_provider import split_glm_pattern
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config, default_tulu3_config
@@ -26,21 +27,30 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
+_GLM5_MODEL_ID = "zai-org/GLM-5"
+_GLM5_MODEL_REVISION = "4e6698ba8e85059d749020e3c4d2123719f23926"  # pragma: allowlist secret
 _GLM52_MODEL_ID = "zai-org/GLM-5.2"
 _GLM52_MODEL_REVISION = "4d67f66cc64d3219133b767c253b2ad1425c6c88"  # pragma: allowlist secret
 _TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
-_GLM52_PP6_128K_LAYOUT = "|".join(("E" + "t" * 14, "t" * 16, "t" * 12, "t" * 12, "t" * 12, "t" * 12 + "mL"))
 
 
 def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded pretraining on 192 GB200 GPUs."""
+    return _glm_pretrain_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION)
+
+
+def glm5_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
+    """GLM-5 bounded pretraining on 192 GB200 GPUs."""
+    return _glm_pretrain_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION)
+
+
+def _glm_pretrain_config(*, model_id: str, revision: str) -> ConfigContainer:
+    """Build bounded pretraining with the selected variant's native model config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
-    cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = model_id
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
@@ -50,7 +60,7 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     # layer and both loss heads, and 16 decoder layers there leave no room for
     # NCCL buffers when training resumes with loaded optimizer state. Every stage
     # after the first starts on a DSA top-k computing layer.
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP6_128K_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
@@ -109,20 +119,29 @@ def glm52_pretrain_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.checkpoint.save_interval = 50
     cfg.checkpoint.load = None
+    block_counts = [14, 16, 12, 12, 12, 12]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
-
     return cfg
 
 
 def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 bounded full SFT on 192 GB200 GPUs."""
+    return _glm_sft_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
+
+
+def glm5_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
+    """GLM-5 bounded full SFT on 192 GB200 GPUs."""
+    return _glm_sft_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5")
+
+
+def _glm_sft_config(*, model_id: str, revision: str, data_slug: str) -> ConfigContainer:
+    """Build bounded full SFT with the selected variant's native model config."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
-    cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = model_id
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
     cfg.model.seq_length = 8192
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
@@ -132,8 +151,8 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = 6
@@ -180,7 +199,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     )
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
-    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-full-sft-gb200-8k-v5"
+    cfg.dataset.hf_output_root = f"work/data/{data_slug}/tulu3-full-sft-gb200-8k-v5"
     cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
     cfg.dataset.max_train_samples = 10000
@@ -204,6 +223,8 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.checkpoint.save_optim = False
     cfg.checkpoint.save_rng = False
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -222,18 +243,26 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
 
 def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     """GLM-5.2 128K packed SFT with context parallelism on 192 GB200 GPUs."""
+    return _glm_sft_128k_config(model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2")
+
+
+def glm5_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
+    """GLM-5 128K packed SFT with context parallelism on 192 GB200 GPUs."""
+    return _glm_sft_128k_config(model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5")
+
+
+def _glm_sft_128k_config(*, model_id: str, revision: str, data_slug: str) -> ConfigContainer:
+    """Build 128K packed SFT with context parallelism with the selected variant's native model config."""
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
-    cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = model_id
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
     cfg.model.seq_length = 131072
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.pipeline_model_parallel_layout = _GLM52_PP6_128K_LAYOUT
+    cfg.model.pipeline_model_parallel_layout = None
     cfg.model.context_parallel_size = 32
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
@@ -286,7 +315,7 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
         pad_seq_to_mult=64,
     )
     cfg.dataset.hf_dataset = None
-    cfg.dataset.dataset_root = "work/data/glm5-2/synthetic-long-sft-128k"
+    cfg.dataset.dataset_root = f"work/data/{data_slug}/synthetic-long-sft-128k"
     cfg.dataset.hf_output_root = None
     cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
@@ -308,6 +337,8 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_iters = 20
     cfg.checkpoint.save = None
     cfg.checkpoint.load = None
+    block_counts = [14, 16, 12, 12, 12, 12]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -326,13 +357,29 @@ def glm52_sft_192gpu_gb200_bf16_128k_config() -> ConfigContainer:
 
 def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """GLM-5.2 bounded PEFT on 192 GB200 GPUs."""
+    return _glm_peft_config(
+        model_id=_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION, data_slug="glm5-2", peft_scheme=peft_scheme
+    )
+
+
+def glm5_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """GLM-5 bounded PEFT on 192 GB200 GPUs."""
+    cfg = _glm_peft_config(
+        model_id=_GLM5_MODEL_ID, revision=_GLM5_MODEL_REVISION, data_slug="glm5", peft_scheme=peft_scheme
+    )
+    # GLM-5 uses the fully fused cuDNN indexer path, whose sparse-score kernel
+    # requires a 64-aligned top-k width. Keep K=2048 even for underfilled packs.
+    cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
+    return cfg
+
+
+def _glm_peft_config(*, model_id: str, revision: str, data_slug: str, peft_scheme: str | PEFT) -> ConfigContainer:
+    """Build bounded PEFT with the selected variant's native model config."""
     cfg = _peft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(_GLM52_MODEL_ID, revision=_GLM52_MODEL_REVISION).to_megatron_provider(
-        load_weights=False
-    )
-    cfg.tokenizer.tokenizer_model = _GLM52_MODEL_ID
-    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _GLM52_MODEL_REVISION}
+    cfg.model = AutoBridge.from_hf_pretrained(model_id, revision=revision).to_megatron_provider(load_weights=False)
+    cfg.tokenizer.tokenizer_model = model_id
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": revision}
     cfg.model.seq_length = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 6
@@ -342,8 +389,8 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.model.num_layers_in_first_pipeline_stage = 14
-    cfg.model.num_layers_in_last_pipeline_stage = 16
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.microbatch_group_size_per_vp_stage = 6
@@ -400,7 +447,7 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     )
     cfg.dataset.hf_dataset.split = "train[:10000]"
     cfg.dataset.hf_dataset.load_kwargs = {"revision": _TULU3_REVISION}
-    cfg.dataset.hf_output_root = "work/data/glm5-2/tulu3-peft-gb200"
+    cfg.dataset.hf_output_root = f"work/data/{data_slug}/tulu3-peft-gb200"
     cfg.dataset.hf_rewrite = False
     cfg.dataset.hf_validation_proportion = None
     cfg.dataset.max_train_samples = 10000
@@ -419,6 +466,8 @@ def glm52_peft_192gpu_gb200_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.scheduler.lr_decay_iters = 100
     cfg.checkpoint.save_interval = 100
     cfg.checkpoint.load = None
+    block_counts = [14, 12, 12, 12, 12, 16]
+    cfg.model.hybrid_layer_pattern = split_glm_pattern(cfg.model.hybrid_layer_pattern, block_counts)
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
@@ -428,6 +477,10 @@ glm52_gb200_sft_config = glm52_sft_192gpu_gb200_bf16_config
 
 
 __all__ = [
+    "glm5_peft_192gpu_gb200_bf16_config",
+    "glm5_pretrain_192gpu_gb200_bf16_config",
+    "glm5_sft_192gpu_gb200_bf16_128k_config",
+    "glm5_sft_192gpu_gb200_bf16_config",
     "glm52_gb200_sft_config",
     "glm52_peft_192gpu_gb200_bf16_config",
     "glm52_pretrain_192gpu_gb200_bf16_config",

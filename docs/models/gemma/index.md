@@ -10,6 +10,7 @@ gemma2.md
 gemma3.md
 gemma3-vl.md
 gemma4-vl.md
+diffusiongemma.md
 ```
 
 | Variant | Guide |
@@ -19,3 +20,4 @@ gemma4-vl.md
 | Gemma 3 | [gemma3.md](gemma3.md) |
 | Gemma 3 VL | [gemma3-vl.md](gemma3-vl.md) |
 | Gemma 4 VL | [gemma4-vl.md](gemma4-vl.md) |
+| DiffusionGemma | [diffusiongemma.md](diffusiongemma.md) |

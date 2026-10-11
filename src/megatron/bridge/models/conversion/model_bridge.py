@@ -31,6 +31,7 @@ from typing import (
     Generic,
     Iterable,
     List,
+    Literal,
     Mapping,
     NamedTuple,
     Optional,
@@ -58,6 +59,13 @@ from megatron.bridge.models.conversion.fp8_export import (
     FP8ExportLayout,
     detect_fp8_export_layout,
     get_fp8_export_tensors,
+)
+from megatron.bridge.models.conversion.gtp import (
+    _gather_gtp_weight,
+    _get_mapping_shape,
+    _gtp_weight_load_context,
+    _is_gtp_param,
+    _slice_gtp_weight,
 )
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
@@ -1062,7 +1070,7 @@ class MegatronModelBridge(
     ) -> List[str]:
         """Get all parameter names across all pipeline parallel ranks."""
         # Cache the result after first call
-        if hasattr(self, "_cached_param_names"):
+        if hasattr(self, "_cached_param_names") and hasattr(self, "_cached_param_owners"):
             return self._cached_param_names
 
         # Compute the result
@@ -1082,6 +1090,8 @@ class MegatronModelBridge(
                 global_param_name = _megatron_local_name_to_global(
                     models_list, model_config, local_param_name, vp_stage
                 )
+                if self._should_skip_mtp_duplicate_embedding_export(global_param_name, model):
+                    continue
                 if self._is_adapter_param_name(global_param_name):
                     continue
                 global_param_names.append(global_param_name)
@@ -1089,10 +1099,20 @@ class MegatronModelBridge(
         gathered_global_param_names = [None] * pp_group.size()
         torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
 
-        # flatten the list, sort it and remove duplicates
+        # Record the lowest PP rank that physically owns every parameter. Some
+        # models legitimately duplicate a logical parameter across stages
+        # (e.g. MTP/MLA/shared embeddings). Full export already chooses the
+        # lowest owner as its broadcast source; PP-local export uses the same
+        # canonical owner so stage streams remain non-overlapping.
+        param_owners = {}
+        for owner_rank, owner_names in enumerate(gathered_global_param_names):
+            for name in owner_names:
+                param_owners.setdefault(name, owner_rank)
+
+        # Flatten the list, sort it and remove duplicates.
         # the order matters here, casually re-order will cause a hang.
         # e.g. decoder.layers.0.mlp.experts.linear_fc1.weight100
-        flattened_names = list(set(sum(gathered_global_param_names, [])))
+        flattened_names = list(param_owners)
 
         # the order cannot be changed, this sync for all ranks for conversion
         # change this might cause a hang
@@ -1100,6 +1120,7 @@ class MegatronModelBridge(
 
         # Cache the result
         self._cached_param_names = gathered_global_param_names
+        self._cached_param_owners = param_owners
 
         return self._cached_param_names
 
@@ -1248,13 +1269,19 @@ class MegatronModelBridge(
     @staticmethod
     def _is_vocab_export_task(task: WeightConversionTask[Any]) -> bool:
         """Return whether a conversion task emits an HF token embedding or language-model head."""
-        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight")
+        vocab_param_suffixes = ("embedding.word_embeddings.weight", "output_layer.weight", "output_layer.bias")
         global_param_name = task.global_param_name.removesuffix("_scale_inv")
         if not global_param_name.endswith(vocab_param_suffixes):
             return False
 
         hf_param = getattr(task.mapping, "hf_param", None)
-        vocab_hf_param_suffixes = ("embed_tokens.weight", "word_embeddings.weight", "lm_head.weight", "head.weight")
+        vocab_hf_param_suffixes = (
+            "embed_tokens.weight",
+            "word_embeddings.weight",
+            "lm_head.weight",
+            "head.weight",
+            "predictions.bias",
+        )
         return isinstance(hf_param, str) and hf_param.endswith(vocab_hf_param_suffixes)
 
     def _truncate_vocab_padding(
@@ -1544,7 +1571,8 @@ class MegatronModelBridge(
                     continue
 
                 # Check shape compatibility before copying
-                if converted_weights.shape != task.param_weight.shape:
+                expected_shape = _get_mapping_shape(task.param_weight)
+                if converted_weights.shape != expected_shape:
                     # Check whitelist
                     is_whitelisted = False
                     if allowed_mismatched_params:
@@ -1563,11 +1591,12 @@ class MegatronModelBridge(
 
                     raise ValueError(
                         f"Shape mismatch for megatron param {task.mapping.megatron_param}:\n"
-                        f"  Expected shape: {task.param_weight.shape}\n"
+                        f"  Expected shape: {expected_shape}\n"
                         f"  Got shape: {converted_weights.shape}\n"
                         f"  Bridge type: {type(task.mapping).__name__}\n"
                         f"  HF mapping: {task.mapping.hf_param}"
                     )
+                converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
                 if capture_unquantized_state_dict:
                     vp_stage = task.vp_stage if task.vp_stage is not None else 0
                     chunk_key = f"model{vp_stage}"
@@ -1577,7 +1606,7 @@ class MegatronModelBridge(
                 # Float8BlockwiseQTensor) that is a leaf with requires_grad=True.
                 # In-place updates under grad mode will raise:
                 # "a leaf Variable that requires grad is being used in an in-place operation."
-                with torch.no_grad():
+                with torch.no_grad(), _gtp_weight_load_context(task.param_weight, task.megatron_module):
                     task.param_weight.copy_(converted_weights)
         self.finalize_hf_import(megatron_model)
         if use_megatron_fsdp:
@@ -1696,8 +1725,23 @@ class MegatronModelBridge(
             hf_weights = self.maybe_modify_loaded_hf_weight(task.mapping.hf_param, hf_state_dict)
             converted_weights = self._convert_loaded_hf_weight(task, hf_weights)
             if converted_weights is not None:
+                converted_weights = _slice_gtp_weight(converted_weights, task.param_weight)
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
+
+    def _should_emit_hf_passthrough(
+        self,
+        megatron_model: MegatronModel | List[MegatronModel],
+        *,
+        current_pp_stage_only: bool,
+    ) -> bool:
+        """Return whether this rank should emit source-only HF tensors.
+
+        Source-only tensors have no Megatron parameter owner. In PP-local mode
+        assign them to PP rank 0 so every pipeline group emits one deterministic
+        copy while the union of stage streams remains complete.
+        """
+        return not current_pp_stage_only or _get_pp_rank(megatron_model) == 0
 
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
@@ -1710,13 +1754,15 @@ class MegatronModelBridge(
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable["HFWeightTuple | HFSourcedWeightTuple"]:
         """Export Megatron weights to HuggingFace format.
 
         This method orchestrates the conversion of weights from Megatron's distributed
         format back to HuggingFace format. It handles gathering from tensor parallel
         ranks, broadcasting across pipeline parallel ranks, and format conversions.
-        All ranks receive the full tensors.
+        By default all ranks receive the full tensors; pipeline-stage-local mode instead
+        yields only tensors owned by the current pipeline stage.
 
         The export order is determined automatically:
         - First tries safetensors order (if key_to_filename_map is available)
@@ -1743,6 +1789,10 @@ class MegatronModelBridge(
                 directly converted weight, every contributing per-expert task for a grouped-expert
                 export, and no names for HF-only passthrough tensors. Defaults to False, which
                 keeps the two-field :class:`HFWeightTuple` output.
+            current_pp_stage_only (bool, optional): When True, execute only conversion tasks whose
+                Megatron parameter is owned by the current pipeline stage and suppress PP tensor and
+                metadata broadcasts. TP/EP gathering and all HF layout conversions remain enabled.
+                Defaults to False.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) in HF format, or
@@ -1766,7 +1816,8 @@ class MegatronModelBridge(
             ValueError: If input parameters are invalid.
 
         Note:
-            All ranks yield the full tensors after gathering from distributed format.
+            Unless ``current_pp_stage_only`` is enabled, all ranks yield the full tensors after
+            gathering from distributed format.
         """
 
         if not isinstance(megatron_model, list):
@@ -1789,6 +1840,31 @@ class MegatronModelBridge(
                 "omit conversion_tasks so the dtype can be recorded at task-build time."
             )
 
+        if current_pp_stage_only:
+            # Keep the globally deterministic task construction above, but only
+            # execute tasks whose parameter is physically present on this PP
+            # stage. If a logical parameter is duplicated across stages, use
+            # the same lowest-rank canonical owner as full export. The mapping
+            # policy below returns local values instead of entering a cross-PP
+            # broadcast.
+            if not hasattr(self, "_cached_param_owners"):
+                self._megatron_global_param_names_all_pp_ranks(megatron_model)
+            canonical_owners = self._cached_param_owners
+            current_pp_rank = _get_pp_rank(megatron_model)
+
+            def _canonical_owner(task: WeightConversionTask) -> int:
+                global_name = task.global_param_name
+                owner = canonical_owners.get(global_name)
+                if owner is None and global_name.endswith("_scale_inv"):
+                    owner = canonical_owners.get(global_name.removesuffix("_scale_inv"))
+                return current_pp_rank if owner is None else owner
+
+            conversion_tasks = [
+                task
+                for task in conversion_tasks
+                if task.param_weight is not None and _canonical_owner(task) == current_pp_rank
+            ]
+
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
@@ -1807,6 +1883,9 @@ class MegatronModelBridge(
         # Megatron params folded into each packed grouped tensor; only tracked when requested.
         _grouped_sources: Optional[Dict[str, List[str]]] = {} if with_megatron_names else None
 
+        def _mapping_export_context():
+            return MegatronParamMapping.skip_pp_broadcast() if current_pp_stage_only else contextlib.nullcontext()
+
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
@@ -1815,13 +1894,16 @@ class MegatronModelBridge(
 
                 megatron_weights = uneven_dtensor_to_full_tensor(task.param_weight)
             else:
-                megatron_weights = task.param_weight
+                megatron_weights = _gather_gtp_weight(task.param_weight)
             megatron_module = task.megatron_module
-            if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
+            if task.vp_stage is not None and self._should_skip_mtp_duplicate_embedding_export(
+                task.global_param_name, megatron_model[task.vp_stage]
+            ):
                 megatron_weights = None
                 megatron_module = None
 
-            converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
+            with _mapping_export_context():
+                converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
             adapter_tasks = None
             task_global_base_prefix = None
             if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
@@ -1833,7 +1915,8 @@ class MegatronModelBridge(
                 if merge_adapter_weights and adapter_tasks:
                     adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
                     if adapter_weights is None:
-                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                        with _mapping_export_context():
+                            adapter_weights = self.materialize_adapter_weights(adapter_tasks)
                         materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                     converted_weights_dict = self._merge_grouped_export_adapter_weights(
                         task,
@@ -1877,7 +1960,8 @@ class MegatronModelBridge(
             if merge_adapter_weights and adapter_tasks:
                 adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
                 if adapter_weights is None:
-                    adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                    with _mapping_export_context():
+                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
                     materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
@@ -1890,7 +1974,7 @@ class MegatronModelBridge(
                 converted_weights_dict,
                 hf_state_dict,
             )  # dict will be none except for one expert;
-            # All ranks get the full tensor
+            # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
@@ -2113,23 +2197,21 @@ class MegatronModelBridge(
         if refresh_module_caches is not None:
             refresh_module_caches(megatron_model)
 
-    def _should_skip_mtp_duplicate_embedding_export(
-        self,
-        task: WeightConversionTask,
-        megatron_model: List[MegatronModel],
-    ) -> bool:
-        """Treat duplicate MTP embedding copies as PP receivers during export."""
-        if task.vp_stage is None or not 0 <= task.vp_stage < len(megatron_model):
+    @staticmethod
+    def _should_skip_mtp_duplicate_embedding_export(global_param_name: str, model) -> bool:
+        """Return whether ``model`` owns only the MTP copy of the input embedding.
+
+        The MTP stage needs a local input embedding even when the model uses untied
+        output weights. Megatron keeps that tensor synchronized with the canonical
+        pre-process embedding, so it must not become a second HF parameter.
+        """
+        if not global_param_name.endswith("embedding.word_embeddings.weight"):
             return False
 
-        if not task.global_param_name.endswith("embedding.word_embeddings.weight"):
-            return False
-
-        model_chunk = unwrap_model(megatron_model[task.vp_stage])
+        model_chunk = unwrap_model(model)
         model_config = getattr(model_chunk, "config", None)
         if getattr(model_config, "pipeline_model_parallel_size", 1) <= 1:
             return False
-
         if getattr(model_chunk, "pre_process", False):
             return False
 
@@ -2201,10 +2283,13 @@ class MegatronModelBridge(
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         mappings_by_global_name = self._validate_conversion_mappings(
@@ -2357,7 +2442,7 @@ class MegatronModelBridge(
         Returns:
             Dictionary mapping global parameter names to FP8 export layouts.
         """
-        local_fp8_layouts: Dict[str, FP8ExportLayout] = {}
+        local_fp8_layouts: Dict[str, FP8ExportLayout | Literal[-1]] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
 
         for vp_stage, model in enumerate(megatron_model):
@@ -2380,10 +2465,12 @@ class MegatronModelBridge(
                     fp8_scale_inv_attr=fp8_scale_inv_attr,
                 )
                 if layout is not None:
-                    local_fp8_layouts[global_name] = layout
+                    # Reject on every PP rank before creating raw storage views,
+                    # which do not retain the parameter's GTP sharding metadata.
+                    local_fp8_layouts[global_name] = -1 if _is_gtp_param(local_weights) else layout
 
         # Gather across PP ranks to ensure consistent insertion decisions
-        fp8_layouts_list: list[Dict[str, FP8ExportLayout]] = [None] * get_pg_size(pp_group)
+        fp8_layouts_list: list[Dict[str, FP8ExportLayout | Literal[-1]] | None] = [None] * get_pg_size(pp_group)
         torch.distributed.all_gather_object(fp8_layouts_list, local_fp8_layouts, group=pp_group)
         global_fp8_layouts: Dict[str, FP8ExportLayout] = {}
         for layouts in fp8_layouts_list:
@@ -2391,6 +2478,11 @@ class MegatronModelBridge(
                 continue
             # Validate only after every PP rank has completed the collective.
             for global_name, layout in layouts.items():
+                if layout == -1:
+                    raise ValueError(
+                        f"{global_name}: raw FP8 export does not support GTP sharding; "
+                        "use gathered dequantized export or gathered quantized export instead"
+                    )
                 try:
                     layout.validate()
                 except ValueError as error:
@@ -2425,10 +2517,13 @@ class MegatronModelBridge(
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         mappings_by_global_name = self._validate_conversion_mappings(
@@ -2465,6 +2560,8 @@ class MegatronModelBridge(
 
                 local_name = self._unwrap_name(local_name)
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
+                if self._should_skip_mtp_duplicate_embedding_export(global_name, model):
+                    continue
                 if global_name not in global_names_index_dict:
                     continue
 
@@ -2627,6 +2724,7 @@ def stream_weights_megatron_to_hf(
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
     merge_adapter_weights: bool = True,
+    current_pp_stage_only: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...
@@ -2698,6 +2796,7 @@ def register_bridge_implementation(
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
@@ -2712,6 +2811,7 @@ def register_bridge_implementation(
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
+            **({"current_pp_stage_only": True} if current_pp_stage_only else {}),
         )
 
     @stream_weights_megatron_to_hf_quant.impl((source, target))

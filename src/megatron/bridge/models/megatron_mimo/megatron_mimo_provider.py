@@ -24,7 +24,7 @@ from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.base_configs import MimoModelConfig
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer.module import MegatronModule
+from megatron.core.transformer.module import MegatronModule, convert_module_to_dtype_except_fp32_marked
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config, set_default_log_ranks
 
@@ -37,7 +37,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 from megatron.bridge.models.megatron_mimo.megatron_mimo_ddp import wrap_megatron_mimo_model_distributed
-from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.model_provider import ModelProviderMixin, _apply_mixed_precision_wrapper
 
 
 if TYPE_CHECKING:
@@ -184,9 +184,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
         self._sync_standard_provider_language_parallelism()
 
-        # MIMO conversion does not import/export MTP routes yet.
-        # TODO: Remove this override once Megatron-LM's MegatronMIMO path supports MTP.
-        if hasattr(standard_provider, "mtp_num_layers"):
+        # MimoModel forwards MTP token metadata to the language model, but only
+        # providers whose ``build_language_model_spec`` actually wires the MTP
+        # block advertise ``mimo_supports_mtp``. Others keep MTP disabled so the
+        # constructed model and the HF export agree on the absence of MTP weights.
+        if hasattr(standard_provider, "mtp_num_layers") and not getattr(standard_provider, "mimo_supports_mtp", False):
             setattr(standard_provider, "mtp_num_layers", None)
 
         if self.language_model_spec is None:
@@ -601,9 +603,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         use_fp16 = fp16 if fp16 is not None else self.fp16
         use_bf16 = bf16 if bf16 is not None else self.bf16
         if use_fp16:
-            model_list = [m.half() for m in model_list]
+            model_list = _cast_model_dtype_except_fp32_marked(model_list, torch.half)
         elif use_bf16:
-            model_list = [m.bfloat16() for m in model_list]
+            model_list = _cast_model_dtype_except_fp32_marked(model_list, torch.bfloat16)
 
         # Ensure frozen parameters are on GPU before DDP wrapping.
         # DDP only manages requires_grad=True params, so frozen ones must be
@@ -733,6 +735,20 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     "Call torch.distributed.init_process_group() first."
                 )
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
+
+
+def _cast_model_dtype_except_fp32_marked(model_list: List[MegatronModule], dtype: torch.dtype) -> List[MegatronModule]:
+    """Cast floating-point parameters/buffers to ``dtype`` like ``Float16Module`` does.
+
+    A blanket ``module.bfloat16()`` would also truncate tensors that MCore keeps
+    in FP32 on purpose (``keep_in_fp32`` marks, MoE router ``expert_bias``),
+    which then round-trips lossily through checkpoint conversion.
+    """
+    return _apply_mixed_precision_wrapper(
+        model_list,
+        None,
+        lambda _config, module: convert_module_to_dtype_except_fp32_marked(module, dtype),
+    )
 
 
 def _build_default_mimo_modality_submodules_spec(standard_provider: object) -> Dict[str, ModuleSpec]:

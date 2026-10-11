@@ -132,6 +132,20 @@ class TestTokenizerConfigFromArgs:
 class TestTransformerConfigFromArgs:
     """Test extracting TransformerConfig from argparse args."""
 
+    @pytest.mark.parametrize("public_shards", [False, True])
+    def test_init_false_gtp_sizes_are_preserved_through_constructor_shards(self, basic_args, public_shards):
+        from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
+
+        basic_args.tensor_model_parallel_size = 2
+        basic_args.expert_tensor_parallel_size = 1
+        basic_args.gtp_weight_remat_size = 2
+        basic_args.expert_gtp_weight_remat_size = 4
+        basic_args.tensor_parallel_num_weight_shards = 8 if public_shards else None
+        basic_args.expert_tensor_parallel_num_weight_shards = 2 if public_shards else None
+        cfg = _transformer_config_from_args(basic_args, BridgeTransformerConfig)
+        assert cfg.tensor_parallel_num_weight_shards == (8 if public_shards else 4)
+        assert cfg.expert_tensor_parallel_num_weight_shards == (2 if public_shards else 4)
+
     @pytest.fixture
     def basic_args(self):
         """Mock basic args namespace for testing."""

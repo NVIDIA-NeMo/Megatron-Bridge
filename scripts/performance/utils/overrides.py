@@ -445,13 +445,17 @@ def set_cli_overrides(recipe: ConfigContainer, cli_overrides: List[str]) -> Conf
     return recipe
 
 
-def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> ConfigContainer:
+def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: Optional[bool] = None) -> ConfigContainer:
     """Set the NCCL UB overrides."""
     if nccl_ub:
         recipe.ddp.nccl_ub = True
         # The current version of NCCL does not support the AVG operation for reductions with symmetric kernels.
         # To enable symmetric kernels, average_in_collective must be disabled.
         recipe.ddp.average_in_collective = False
+    elif nccl_ub is False:
+        recipe.ddp.nccl_ub = False
+        # Manual registration is only valid with NCCL UB.
+        recipe.ddp.fsdp_manual_registration = False
 
     if recipe.ddp.use_megatron_fsdp and recipe.ddp.nccl_ub:
         recipe.ddp.fsdp_manual_registration = True

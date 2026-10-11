@@ -30,7 +30,12 @@ from megatron.core.utils import get_attr_wrapped_model
 
 from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import (
+    ConfigContainer,
+    GPTDatasetConfig,
+    GPTFIMDatasetConfig,
+    MockGPTDatasetConfig,
+)
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -151,6 +156,26 @@ def _accumulator_to_int(value) -> int:
     return 0
 
 
+def requires_global_flops_reduce(dataset_config: object) -> bool:
+    """Return whether dataset batches require exact data-parallel FLOP sums.
+
+    Only the built-in fixed-length pretraining datasets guarantee identical
+    sequence statistics across DP ranks. SFT and custom loaders can vary both
+    sequence lengths and batch sizes, even when their config declares a maximum
+    length. Use the same configuration-based decision on every rank, never a
+    comparison between a local batch length and that maximum.
+
+    Args:
+        dataset_config: The training dataset configuration or custom provider.
+
+    Returns:
+        Whether to sum runtime statistics over the pure data-parallel group.
+    """
+    # Exact types avoid granting custom subclasses a fixed-shape guarantee.
+    fixed_pretraining = type(dataset_config) in (GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig)
+    return not fixed_pretraining or getattr(dataset_config, "dataloader_type", None) == "external"
+
+
 def resolve_global_flops_runtime_stats(
     state,
     *,
@@ -169,12 +194,12 @@ def resolve_global_flops_runtime_stats(
     products) and reduces them to global totals across the
     data-parallel group.
 
-    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
-    differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
-    to get the exact global sum. Dense BSHD training never requests this reduce:
-    every DP rank contributes the same fixed sequence statistics, so
-    extrapolating ``local * data_parallel_size`` is exact and avoids an
-    unnecessary collective.
+    Variable-length dense and THD packed batches can differ across DP ranks,
+    so a single SUM all-reduce over ``dp_group`` gives the exact global sum.
+    The training loop initializes the reduction flag from the dataset contract;
+    packed, vision, and cross-attention collectors may additionally enable it.
+    Built-in fixed-length pretraining keeps the ``local * data_parallel_size``
+    fast path and avoids an unnecessary collective.
 
     Args:
         state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).
@@ -392,7 +417,8 @@ def accumulate_flops_metadata(
       (dense / non-packed) or degenerate, the host-int BSHD fallback
       ``mbs * dense_seq_len²`` is accumulated instead (bit-exact with the
       pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
-      otherwise ``tokens.shape[1]``.
+      otherwise ``tokens.shape[1]`` for unsharded inputs. Dense CP-sharded
+      inputs require an explicit positive ``config_seq_len``.
     - ``_flops_vision_patches``: legacy total patch-count approximation.
     - ``_flops_vision_patch_sum``, ``_flops_vision_patch_sq_sum``, and
       ``_flops_vision_merged_token_sum``: exact additive ViT statistics that
@@ -414,18 +440,19 @@ def accumulate_flops_metadata(
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
 
-    Set ``context_parallel_size`` only when packed ``tokens`` have already been
+    Set ``context_parallel_size`` only when ``tokens`` have already been
     CP-sharded but ``cu_seqlens`` still describes the full sequences, as in
     ``gpt_step``. Callers accumulating before CP slicing, such as VLM steps,
-    must leave it at 1. Only the token-linear count is rescaled; attention
-    statistics are already global within CP and are reduced over pure DP later.
+    must leave it at 1. For packed inputs, only the token-linear count is
+    rescaled; attention statistics are already global within CP and are reduced
+    over pure DP later. For dense inputs, pass the full sequence length explicitly
+    rather than inferring model work from a CP-local tensor.
     """
     if vp_stage not in (None, 0) or tokens is None:
         return
 
     mbs = tokens.shape[0]
     tensor_seq_len = tokens.shape[1]
-    dense_seq_len = config_seq_len if isinstance(config_seq_len, int) and config_seq_len > 0 else tensor_seq_len
 
     # THD attention term Σᵢ sᵢ², computed inline from cu_seqlens. The squared
     # sub-sequence lengths stay on-device (``_scalar_sum_for_accumulator`` returns a
@@ -441,6 +468,12 @@ def accumulate_flops_metadata(
     else:
         # No cu_seqlens (dense / non-packed) or a degenerate pack with no real
         # sub-sequences → BSHD fallback (single pack-length sequence).
+        has_full_seq_len = (
+            isinstance(config_seq_len, int) and not isinstance(config_seq_len, bool) and config_seq_len > 0
+        )
+        if context_parallel_size > 1 and not has_full_seq_len:
+            raise ValueError("Dense CP-sharded FLOP metadata requires a positive full config_seq_len.")
+        dense_seq_len = config_seq_len if has_full_seq_len else tensor_seq_len
         _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
 
@@ -779,13 +812,16 @@ def num_floating_point_operations(
         gqa_groups=8,
         kv_channels=None,
         core_attn_seq_factor=None,
+        attention_output_gate=False,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
         g = gqa_groups
         core_seq = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
+        gate_projection_size = hidden_size * p if attention_output_gate else 0
         return (
             4 * batch_size * seq_len * hidden_size * p * (hidden_size + (hidden_size * (g / num_heads)))
+            + 2 * batch_size * seq_len * hidden_size * gate_projection_size
             + 2 * batch_size * seq_len * hidden_size * p * core_seq
         )
 
@@ -945,6 +981,7 @@ def num_floating_point_operations(
         num_swa_attn_layers=0,
         swa_context=None,
         core_attn_seq_factor=None,
+        attention_output_gate=False,
     ):
         """Calculate total FLOPs for the hybrid model."""
         num_full_attn_layers = num_attn_layers - num_swa_attn_layers
@@ -956,6 +993,7 @@ def num_floating_point_operations(
             gqa_groups,
             kv_channels,
             core_attn_seq_factor=core_attn_seq_factor,
+            attention_output_gate=attention_output_gate,
         )
         swa_attn_flops = 0
         if num_swa_attn_layers > 0:
@@ -969,6 +1007,7 @@ def num_floating_point_operations(
                 gqa_groups,
                 kv_channels,
                 core_attn_seq_factor=2 * swa_context,
+                attention_output_gate=attention_output_gate,
             )
 
         flops_fwd = (
@@ -1671,6 +1710,21 @@ def num_floating_point_operations(
     if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
         return transformer_flops()
 
+    # GLM's split Hybrid graph has the same arithmetic as its paired DSA/MoE
+    # blocks. Reuse the DSA estimator in logical coordinates (including top-k
+    # reuse and MTP) rather than counting D as ordinary multi-head attention.
+    pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+    if pattern and getattr(cfg.model, "experimental_attention_variant", None) == "dsa":
+        import copy
+
+        main = pattern.split("/")[0].replace("|", "")
+        if len(main) % 2 == 0 and all(main[i : i + 2] in ("D-", "DE") for i in range(0, len(main), 2)):
+            cfg = copy.copy(cfg)
+            cfg.model = copy.copy(cfg.model)
+            cfg.model.num_layers = len(main) // 2
+            cfg.model.moe_layer_freq = [int(main[i] == "E") for i in range(1, len(main), 2)]
+            return transformer_flops()
+
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
     # a physical hybrid pattern is sufficient to select hybrid accounting.
     if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):
@@ -1741,6 +1795,7 @@ def num_floating_point_operations(
             num_swa_attn_layers=num_swa_attn_layers,
             swa_context=swa_context,
             core_attn_seq_factor=core_attn_seq_factor,
+            attention_output_gate=getattr(cfg.model, "attention_output_gate", False),
         )
         # Native DSv4 blocks split attention (W/C/H) and MoE (E) into
         # separate physical layers. Generic hybrid accounting above includes

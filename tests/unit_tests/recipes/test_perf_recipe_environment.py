@@ -223,16 +223,7 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 # so these recipes must not pin NVTE_ALLOW_NONDETERMINISTIC_ALGO=0.
                 assert "NVTE_ALLOW_NONDETERMINISTIC_ALGO" not in environment
             else:
-                # These VR200 MXFP8 recipes explicitly opt into this path.
-                expected_nondeterminism = int(
-                    function_name
-                    in {
-                        "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
-                        "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config",
-                        "deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config",
-                    }
-                )
-                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == expected_nondeterminism
+                assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
             if "NCCL_EP_HT_EM_PULL_PUSH" in environment:
                 # NCCL EP recipes drop the HybridEP tuning that nothing reads on that backend.
                 assert not hybrid_ep_names
@@ -283,3 +274,19 @@ def test_representative_recipe_specific_environment_is_visible(relative_path, fu
     environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
 
     assert environment.items() >= expected.items()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name"),
+    [
+        ("deepseek/gb200/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb200_bf16_config"),
+        ("deepseek/gb300/deepseek_v3.py", "deepseek_v3_pretrain_256gpu_gb300_bf16_config"),
+        ("qwen/gb200/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config"),
+        ("qwen/gb300/qwen3_moe.py", "qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config"),
+    ],
+)
+def test_te_layer_graph_pipeline_recipes_keep_only_cpp_errors(relative_path, function_name):
+    """TE layer-graph capture with PP>1 floods stderr with PyTorch 2.14 C++ deprecation warnings."""
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+
+    assert environment["TORCH_CPP_LOG_LEVEL"] == "ERROR"

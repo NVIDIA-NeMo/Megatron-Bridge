@@ -146,7 +146,7 @@ def _model_forward(model, input_ids):
         input_ids: [batch, seq_len] token ids.
 
     Returns:
-        logits: [batch, seq_len, vocab_size]
+        Logits with shape ``[batch, seq_len, vocab_size]``.
     """
     if _TP_GROUP is not None:
         _tp_send_cmd(_CMD_FORWARD)

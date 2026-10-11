@@ -28,6 +28,9 @@ if (
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
+from megatron.bridge.models.bert import (
+    BertModelProvider,
+)
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -43,6 +46,11 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
+)
+from megatron.bridge.models.diffusion_gemma import (
+    DiffusionGemmaBridge,
+    DiffusionGemmaModel,
+    DiffusionGemmaModelProvider,
 )
 from megatron.bridge.models.ernie import (
     Ernie45Bridge,
@@ -231,6 +239,7 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "BailingMoeV2Bridge",
+    "BertModelProvider",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
@@ -317,6 +326,9 @@ __all__ = [
     "Gemma4VLBridge",
     "Gemma4VLModel",
     "Gemma4VLModelProvider",
+    "DiffusionGemmaBridge",
+    "DiffusionGemmaModel",
+    "DiffusionGemmaModelProvider",
     "NemotronVLModel",
     "NemotronVLBridge",
     "NemotronVLModelProvider",

@@ -21,3 +21,23 @@ versions:
 - display-name: nightly
   path: versions/nightly.yml
   slug: nightly
+
+redirects:
+# Unpublished guides remain in GitHub; send bookmarks to Supported Models.
+# The catalog landing page exists in nightly, not in the frozen default version.
+- source: /nemo/megatron-bridge/supported-models/nemotron/nemotron-3-5-super-vl
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/nightly/supported-models/nemotron/nemotron-3-5-super-vl
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/supported-models/nemotron/nemotron-3-5-super-text-only
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/nightly/supported-models/nemotron/nemotron-3-5-super-text-only
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/models/nemotron/nemotron3.5-super-vl.html
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/nightly/models/nemotron/nemotron3.5-super-vl.html
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/models/nemotron/nemotron3.5-super-vl-text-only.html
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models
+- source: /nemo/megatron-bridge/nightly/models/nemotron/nemotron3.5-super-vl-text-only.html
+  destination: /nemo/megatron-bridge/nightly/supported-models/supported-models

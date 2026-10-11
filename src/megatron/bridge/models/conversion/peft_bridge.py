@@ -27,6 +27,7 @@ from megatron.core import parallel_state
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import get_pg_rank, unwrap_model
 
+from megatron.bridge.models.conversion.gtp import _gather_gtp_weight
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -803,12 +804,14 @@ class MegatronPeftBridge:
                 )
             else:
                 linear_in_dict = adapter_task.linear_in_task.mapping.megatron_to_hf(
-                    adapter_task.linear_in_task.param_weight, adapter_task.linear_in_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_in_task.param_weight),
+                    adapter_task.linear_in_task.megatron_module,
                 )
                 linear_in_tensor = next(iter(linear_in_dict.values()))
 
                 linear_out_dict = adapter_task.linear_out_task.mapping.megatron_to_hf(
-                    adapter_task.linear_out_task.param_weight, adapter_task.linear_out_task.megatron_module
+                    _gather_gtp_weight(adapter_task.linear_out_task.param_weight),
+                    adapter_task.linear_out_task.megatron_module,
                 )
                 linear_out_tensor = next(iter(linear_out_dict.values()))
 
@@ -842,7 +845,9 @@ class MegatronPeftBridge:
         """Broadcast and gather grouped-expert adapter weights on their real expert-TP axis."""
 
         mapping = task.mapping
-        tensor = mapping.broadcast_from_pp_rank(task.param_weight, cache_key=task.global_param_name)
+        tensor = mapping.broadcast_from_pp_rank(
+            _gather_gtp_weight(task.param_weight), cache_key=task.global_param_name
+        )
         assert tensor is not None, f"Expected adapter tensor for {task.global_param_name}"
         tensor = mapping.maybe_dequantize(tensor)
         if mapping.tp_size > 1:
