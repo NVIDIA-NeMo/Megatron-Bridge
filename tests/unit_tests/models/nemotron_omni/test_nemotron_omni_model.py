@@ -1261,6 +1261,8 @@ def test_real_radio_image_forward_with_collator_owned_cp1_packing(
     assert torch.isfinite(output).all()
 
 
+# Dump all Python thread stacks before the CI wrapper terminates a stalled backward pass.
+@pytest.mark.timeout(300, method="thread")
 @pytest.mark.run_only_on("GPU")
 def test_real_packed_multimodal_optimizer_step(single_rank_model_parallel):
     del single_rank_model_parallel

@@ -177,6 +177,9 @@ runs:
           set -e
           export GH_TOKEN=${{ inputs.github-token }}
 
+          # Keep the FlashAttention generation policy scoped to CI tests.
+          export NVTE_FLASH_ATTN_V2=1 NVTE_FLASH_ATTN_V3=0 NVTE_FLASH_ATTN_V4=0
+
           if [[ "${{ contains(inputs.runner, 'gcp') }}" == "true" ]]; then
             export NCCL_ENV_PLUGIN=none
             export NCCL_NET_PLUGIN=none
