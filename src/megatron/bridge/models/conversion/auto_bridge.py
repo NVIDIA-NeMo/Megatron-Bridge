@@ -1934,8 +1934,8 @@ class AutoBridge(Generic[MegatronModelT]):
             Serializable model config linked to its model builder.
 
         Raises:
-            ModelConfigNotSupportedError: If the selected model family explicitly
-                disables the builder path.
+            ModelConfigNotSupportedError: If the selected model family has not
+                migrated to builder-backed configs.
         """
         hf_config = (
             self.hf_pretrained.config

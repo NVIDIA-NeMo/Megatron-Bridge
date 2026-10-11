@@ -115,6 +115,12 @@ family's Megatron Core `ModelBuilder`, such as `GPTModelBuilder` or
 while other model families migrate. Calling the legacy provider API for a
 builder-backed family emits a deprecation warning.
 
+The builder path is opt-in per family: a bridge opts in by setting
+`MODEL_CONFIG_CLASS`, which defaults to `None`. For a family that has not
+migrated, `get_model_config()` raises `ModelConfigNotSupportedError` and
+`to_megatron_provider()` remains the supported path, without a deprecation
+warning.
+
 ```python
 from megatron.bridge import AutoBridge
 

@@ -89,7 +89,6 @@ from megatron.bridge.models.conversion.utils import (
     unwrap_model,
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
@@ -529,16 +528,18 @@ class MegatronModelBridge(
     # provider, such as one implementing MLA.
     PROVIDER_CLASS = None
 
-    # Builder-backed construction is rolling out incrementally by model family. Override this
-    # when the standard GPT model config cannot represent the model, and set it to None for
-    # families that have not yet migrated. The selected model config owns its nested
-    # transformer config class.
-    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = BridgeGPTModelConfig
+    # Builder-backed construction is rolling out incrementally by model family, so it is opt-in.
+    # None means the family has not migrated: get_model_config() raises and the provider path
+    # stays the supported one. A family that has mapped its Hugging Face config for the builder
+    # path sets this to BridgeGPTModelConfig, or to a specialized config when the standard GPT
+    # model config cannot represent the model. Subclasses of a migrated bridge inherit the
+    # opt-in. The selected model config owns its nested transformer config class.
+    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = None
 
     # Conversion still uses the provider-backed construction path unless a model family has
     # explicitly migrated its conversion lifecycle to ModelBuilder. Keeping this separate
-    # from MODEL_CONFIG_CLASS preserves get_model_config() for legacy families without
-    # silently changing how their checkpoints are constructed.
+    # from MODEL_CONFIG_CLASS lets a family expose get_model_config() without silently
+    # changing how its checkpoints are constructed. Requires MODEL_CONFIG_CLASS to be set.
     USE_MODEL_CONFIG_FOR_CONVERSION: ClassVar[bool] = False
 
     # Leave unset unless HF export must copy nonstandard files in addition to the usual artifacts,
@@ -814,26 +815,12 @@ class MegatronModelBridge(
         }
         return model_kwargs, transformer_kwargs
 
-    def _has_model_config_mapping(self) -> bool:
-        """Return whether this bridge maps its Hugging Face config to a builder-backed config.
-
-        The base ``hf_config_to_model_config_kwargs()`` maps only the generic
-        ``CONFIG_MAPPING`` fields. Family-specific settings such as position
-        embeddings, normalization, or bias flags stay in ``provider_bridge()``
-        until a family overrides one of the builder-backed hooks.
-        """
-        bridge_class = type(self)
-        return (
-            bridge_class.hf_config_to_model_config_kwargs is not MegatronModelBridge.hf_config_to_model_config_kwargs
-            or bridge_class.hf_config_to_model_config is not MegatronModelBridge.hf_config_to_model_config
-        )
-
     def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> ModelConfig:
         """Convert a Hugging Face config directly to a builder-backed config.
 
-        GPT-style model families use ``BridgeGPTModelConfig`` by default.
-        A bridge may select a specialized config class or explicitly disable
-        this path by setting ``MODEL_CONFIG_CLASS`` to ``None``.
+        This path is opt-in per model family. ``MODEL_CONFIG_CLASS`` defaults to
+        ``None``; a migrated family sets it to ``BridgeGPTModelConfig`` or to a
+        specialized config class.
 
         Args:
             hf_config: Hugging Face architecture configuration.
@@ -842,21 +829,16 @@ class MegatronModelBridge(
             Serializable model configuration linked to its builder.
 
         Raises:
-            ModelConfigNotSupportedError: If the model family explicitly disables this path
-                or has not migrated its config mapping.
+            ModelConfigNotSupportedError: If the model family has not migrated to
+                builder-backed configs (``MODEL_CONFIG_CLASS`` is ``None``).
             ValueError: If mapped fields do not belong to either config dataclass.
         """
         model_config_class = self.MODEL_CONFIG_CLASS
         if model_config_class is None:
             raise ModelConfigNotSupportedError(
                 f"ModelConfig conversion is not implemented for {type(self).__name__}. "
-                "This model family sets MODEL_CONFIG_CLASS to None."
-            )
-        if not self._has_model_config_mapping():
-            raise ModelConfigNotSupportedError(
-                f"ModelConfig conversion is not implemented for {type(self).__name__}. "
-                "This model family has not migrated its Hugging Face config mapping; "
-                "use AutoBridge.to_megatron_provider() instead."
+                "This model family has not migrated to builder-backed configs "
+                "(MODEL_CONFIG_CLASS is None); use AutoBridge.to_megatron_provider() instead."
             )
 
         config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
@@ -912,7 +894,7 @@ class MegatronModelBridge(
         from megatron.bridge.models.gpt_provider import GPTModelProvider
         from megatron.bridge.models.mla_provider import MLAModelProvider
 
-        if self.MODEL_CONFIG_CLASS is not None and self._has_model_config_mapping():
+        if self.MODEL_CONFIG_CLASS is not None:
             warnings.warn(
                 f"{type(self).__name__}.provider_bridge() and AutoBridge.to_megatron_provider() "
                 "are deprecated for builder-backed models. Use AutoBridge.get_model_config() "
