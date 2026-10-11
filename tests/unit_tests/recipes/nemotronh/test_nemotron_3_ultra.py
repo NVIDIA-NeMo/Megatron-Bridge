@@ -36,12 +36,9 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
-
-
-# Nemotron 3 Ultra's 108-layer decoder pattern from the Hugging Face config.
-ULTRA_HYBRID_LAYER_PATTERN = (
-    "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+from tests.unit_tests.recipes.recipe_test_utils import (
+    NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+    patch_recipe_module_global,
 )
 
 
@@ -50,7 +47,7 @@ class _FakeUltraProvider:
 
     def __init__(self) -> None:
         self.vocab_size = 256
-        self.hybrid_layer_pattern = ULTRA_HYBRID_LAYER_PATTERN
+        self.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
 
     def finalize(self) -> None:
         return None
@@ -254,7 +251,7 @@ def test_openmath_sft_uses_48_node_layout() -> None:
     assert cfg.model.recompute_modules == ["moe", "core_attn", "moe_act"]
     stages = cfg.model.hybrid_layer_pattern.split("|")
     assert [len(stage) for stage in stages] == [9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 11, 5]
-    assert "".join(stages) == ULTRA_HYBRID_LAYER_PATTERN
+    assert "".join(stages) == NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
     # A recomputed TE norm as a stage's first backward op fails on TE >= 2.18 (invalid device context).
     assert "layernorm" not in cfg.model.recompute_modules
     assert cfg.dist.distributed_timeout_minutes == 90

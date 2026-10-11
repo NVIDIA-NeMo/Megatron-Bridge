@@ -27,7 +27,10 @@ import pytest
 import torch
 
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.recipes.recipe_test_utils import (
+    NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+    patch_recipe_module_global,
+)
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
@@ -77,10 +80,7 @@ class _FakeUltraModelProvider(_FakeModelProvider):
 
     def __init__(self) -> None:
         super().__init__()
-        self.hybrid_layer_pattern = (
-            "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEME"
-            "MEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
-        )
+        self.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
 
 
 class _FakeUltraAutoBridge(_FakeAutoBridge):
