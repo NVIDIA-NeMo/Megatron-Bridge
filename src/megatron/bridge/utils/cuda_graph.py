@@ -140,16 +140,21 @@ def validate_cuda_graph_configuration(config: Any, *, config_name: str = "model"
 
     graph_modules = cuda_graph_module_names(config)
     inference_scopes = _member_names(getattr(config, "inference_cuda_graph_scope", None))
+    is_local_per_layer_graph = cuda_graph_impl == "local" and bool(graph_modules)
     is_local_inference_graph = (
         cuda_graph_impl == "local" and not graph_modules and bool(inference_scopes & {"layer", "block"})
     )
-    if cuda_graph_impl == "local" and not is_full_iteration_cuda_graph(config) and not is_local_inference_graph:
-        modules_msg = f" with scopes {graph_modules}" if graph_modules else ""
+    if (
+        cuda_graph_impl == "local"
+        and not is_full_iteration_cuda_graph(config)
+        and not is_local_per_layer_graph
+        and not is_local_inference_graph
+    ):
         raise ValueError(
             f'Megatron Bridge supports {config_name}.cuda_graph_impl="local" only for '
-            f"full-iteration CUDA graphs{modules_msg}. Use "
-            f'{config_name}.cuda_graph_impl="transformer_engine" for scoped CUDA graph '
-            'capture such as "attn" or "mlp".'
+            "full-iteration CUDA graphs or per-layer CUDA graphs with explicit "
+            f'{config_name}.cuda_graph_modules such as ["attn", "mamba"]. Whole-layer local '
+            "capture with empty cuda_graph_modules is not supported."
         )
 
 
