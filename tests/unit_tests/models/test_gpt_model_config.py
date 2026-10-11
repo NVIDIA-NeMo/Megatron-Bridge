@@ -178,16 +178,11 @@ def test_model_config_is_opt_in_per_family() -> None:
     assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 
 
-def test_bridge_subclass_inherits_or_disables_model_config_opt_in() -> None:
+def test_bridge_subclass_inherits_model_config_opt_in() -> None:
     class DerivedBridge(LlamaBridge):
         pass
 
-    class UnsupportedBridge(LlamaBridge):
-        MODEL_CONFIG_CLASS = None
-
     assert DerivedBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
-    with pytest.raises(ModelConfigNotSupportedError, match="UnsupportedBridge.*to_megatron_provider"):
-        UnsupportedBridge().hf_config_to_model_config(object())
 
 
 @pytest.mark.parametrize("bridge_class", _all_bridge_classes(), ids=lambda bridge_class: bridge_class.__name__)
@@ -201,6 +196,15 @@ def test_bridge_can_explicitly_disable_model_config(bridge_class: type[MegatronM
     else:
         # Opted-in family: it must map its Hugging Face config for the builder path.
         assert _has_model_config_mapping(bridge_class)
+
+    # A bridge that replaces hf_config_to_model_config() wholesale does not read MODEL_CONFIG_CLASS.
+    if bridge_class.hf_config_to_model_config is MegatronModelBridge.hf_config_to_model_config:
+
+        class UnsupportedBridge(bridge_class):
+            MODEL_CONFIG_CLASS = None
+
+        with pytest.raises(ModelConfigNotSupportedError, match="UnsupportedBridge.*to_megatron_provider"):
+            UnsupportedBridge().hf_config_to_model_config(object())
 
 
 def test_unmigrated_bridge_keeps_provider_without_warning() -> None:
