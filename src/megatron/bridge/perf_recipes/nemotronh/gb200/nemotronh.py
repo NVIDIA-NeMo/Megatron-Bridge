@@ -236,7 +236,6 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
 
     expert_model_parallel_size = 64
     global_batch_size = 256
-    hybrid_ep_ranks_per_nvlink_domain = 64
 
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
