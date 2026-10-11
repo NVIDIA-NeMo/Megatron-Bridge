@@ -547,7 +547,7 @@ class GLM53FlashBridge(MegatronModelBridge):
         provider.qk_head_dim = text_config.qk_head_dim  # 256
         provider.num_attention_heads = text_config.num_attention_heads  # 64
         provider.num_key_value_heads = text_config.num_key_value_heads  # 64
-        provider.mla_proj_disable_quantization = True
+        provider.mla_proj_use_quantization = False
         # HF head_dim=0 is a NoPE sentinel, not a valid attention channel width.
         provider.kv_channels = text_config.v_head_dim  # 256
         provider.rope_type = "yarn"
