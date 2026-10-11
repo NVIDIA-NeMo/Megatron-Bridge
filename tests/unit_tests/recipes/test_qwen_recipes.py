@@ -840,12 +840,11 @@ def test_qwen3_30b_a3b_gb200_fp8mx_perf_recipe_uses_main_recipe(
     assert perf_cfg.model.recompute_granularity is None
     assert perf_cfg.model.recompute_modules == []
 
-    # Full-iteration graphs conflict with the main recipe's loss-NaN check and
-    # therefore remain benchmark-only.
+    # Partial graphs avoid the GB200 full-iteration OOM; the benchmark also captures attention.
     assert main_cfg.model.cuda_graph_impl == "transformer_engine"
     assert main_cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
-    assert perf_cfg.model.cuda_graph_impl == "full_iteration"
-    assert perf_cfg.model.cuda_graph_scope == []
+    assert perf_cfg.model.cuda_graph_impl == "transformer_engine"
+    assert perf_cfg.model.cuda_graph_scope == ["attn", "moe_router", "moe_preprocess"]
 
 
 def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
