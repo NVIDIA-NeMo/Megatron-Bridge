@@ -20,23 +20,43 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import torch
 from megatron.core.activations import squared_relu
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
+from megatron.core.models.vision.multimodal_projector import MultimodalProjector
+from megatron.core.models.vision.radio import RADIOViTModel
 from safetensors.torch import load_file, save_file
 from torch import nn
 from transformers import PretrainedConfig
 
+from megatron.bridge.models import nemotron_omni
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import HFSourcedWeightTuple, HFWeightTuple, get_model_bridge
+from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, StateDict
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.megatron_mimo.conversion import (
+    MegatronMIMOBridge,
+    get_mimo_conversion_spec,
+    validate_route_table,
+)
+from megatron.bridge.models.megatron_mimo.conversion.orchestrator import build_route_local_registry
+from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
+    MegatronMIMOParallelismConfig,
+    ModuleParallelismConfig,
+)
 from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
-from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
+    NemotronOmniMimoRadioEncoder,
+    NemotronOmniModel,
+)
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
     Nemotron35SuperVLBridge,
     NemotronOmniBridge,
     NemotronOmniLlavaBridge,
+    nemotron_omni_mimo_conversion_spec,
 )
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
@@ -978,3 +998,141 @@ def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
     )
 
     assert all(not param.requires_grad for param in model.language_model.parameters())
+
+
+@pytest.mark.unit
+def test_super_vl_mimo_conversion_specs_and_routes(monkeypatch):
+    hf_config = _mock_nemotron_35_super_vl_hf_config()
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+    source_bridge = Nemotron35SuperVLBridge()
+    source_bridge.hf_config = hf_config
+    parallelism_config = MegatronMIMOParallelismConfig(
+        module_parallelisms={
+            "language": ModuleParallelismConfig(tensor_model_parallel_size=1),
+            "images": ModuleParallelismConfig(tensor_model_parallel_size=1),
+        }
+    )
+    assert get_mimo_conversion_spec(NemotronOmniBridge) is nemotron_omni_mimo_conversion_spec
+    assert get_mimo_conversion_spec(Nemotron35SuperVLBridge) is nemotron_omni_mimo_conversion_spec
+    provider, routes = nemotron_omni_mimo_conversion_spec(source_bridge, hf_pretrained, parallelism_config)
+    validate_route_table(
+        routes,
+        parallelism_config=parallelism_config,
+        modality_submodules_spec=provider.modality_submodules_spec,
+    )
+    assert [route.source_prefix for route in routes] == ["language_model.", "vision_model.", "vision_projection."]
+    assert [route.name for route in routes] == ["language", "images", "projector"]
+    assert [route.parallelism_name for route in routes] == ["language", "images", "images"]
+    assert provider.standard_provider.mtp_num_layers == 2
+    assert provider.language_model_spec.module is HybridModel
+    assert provider.language_model_spec.params["hybrid_layer_pattern"] == "ME*E/*E/*E"
+    assert provider.language_model_spec.params["scatter_embedding_sequence_parallel"] is False
+    images_spec = provider.modality_submodules_spec["images"]
+    assert images_spec.module is VisionModalitySubmodules
+    encoder_spec = images_spec.submodules["encoders"]["radio"]
+    assert encoder_spec.module is NemotronOmniMimoRadioEncoder
+    assert nemotron_omni.NemotronOmniMimoRadioEncoder is NemotronOmniMimoRadioEncoder
+    assert "NemotronOmniMimoRadioEncoder" in AutoMapping._MODULE_TYPE_REGISTRY["replicated"]
+    assert encoder_spec.params["transformer_config"].num_layers == 32
+    assert encoder_spec.params["transformer_config"].hybrid_layer_pattern is None
+    assert encoder_spec.params["temporal_patch_dim"] == 2
+    (projection_spec,) = images_spec.submodules["input_projections"]
+    assert projection_spec.module is MultimodalProjector
+    assert projection_spec.params["input_size"] == 1280 * 4
+    assert projection_spec.params["config"].mtp_num_layers is None
+    assert provider.special_token_ids == {"images": 18}
+    source_registry = source_bridge.mapping_registry()
+    for route in routes:
+        assert build_route_local_registry(source_registry, route).mappings
+    unrouted = [
+        mapping.megatron_param
+        for mapping in source_registry.mappings
+        if not any(mapping.megatron_param.startswith(route.source_prefix) for route in routes)
+    ]
+    assert all(name.startswith(("sound_model.", "sound_projection.")) for name in unrouted)
+
+    # Import must disable backward-only fusion in every derived component before
+    # construction, including when TE is available but the Apex extension is not.
+    provider.standard_provider.gradient_accumulation_fusion = True
+    encoder_spec.params["force_eval_mode"] = False
+    bridge = MegatronMIMOBridge(hf_pretrained, parallelism_config=parallelism_config, source_bridge=source_bridge)
+    monkeypatch.setattr(bridge, "to_megatron_mimo_provider", lambda **kwargs: provider)
+    model = Mock()
+
+    def build_model(**kwargs):
+        assert provider.standard_provider.gradient_accumulation_fusion is False
+        assert provider.language_model_spec.params["config"].gradient_accumulation_fusion is False
+        images = provider.modality_submodules_spec["images"].submodules
+        assert images["encoders"]["radio"] is encoder_spec
+        assert images["encoders"]["radio"].params["force_eval_mode"] is False
+        assert images["encoders"]["radio"].params["transformer_config"].gradient_accumulation_fusion is False
+        assert images["input_projections"][0].params["config"].gradient_accumulation_fusion is False
+        return [model]
+
+    monkeypatch.setattr(bridge, "to_megatron_model", build_model)
+    save_model = Mock()
+    monkeypatch.setattr(bridge, "save_megatron_model", save_model)
+    bridge.import_ckpt("/checkpoint", hf_tokenizer_path="hf")
+    save_model.assert_called_once_with(model, "/checkpoint", hf_tokenizer_path="hf", hf_tokenizer_kwargs=None)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("temporal_patch_dim", [1, 2])
+@pytest.mark.parametrize("class_tokens", [0, 1])
+def test_mimo_radio_pixel_shuffle(monkeypatch, temporal_patch_dim, class_tokens):
+    encoder = NemotronOmniMimoRadioEncoder.__new__(NemotronOmniMimoRadioEncoder)
+    torch.nn.Module.__init__(encoder)
+    encoder.register_parameter("weight", torch.nn.Parameter(torch.ones(1)))
+    encoder.patch_dim = 2
+    encoder.temporal_patch_dim = temporal_patch_dim
+    encoder.class_token_len = class_tokens
+    encoder.add_class_token = bool(class_tokens)
+    sizes = torch.tensor([[4, 4], [4, 8]])
+    pixels = torch.zeros(1, 12, 12)
+    frames = torch.tensor([1, 1])
+    token_count = 12 + 2 * class_tokens
+    encoded = torch.arange(token_count * 2, dtype=torch.float32).reshape(1, token_count, 2).requires_grad_()
+
+    def radio_forward(self, x, *, imgs_sizes, packed_seq_params, num_frames):
+        assert x is pixels
+        assert packed_seq_params is not None
+        assert num_frames is frames
+        return (encoded, sizes, frames) if temporal_patch_dim > 1 else encoded
+
+    monkeypatch.setattr(RADIOViTModel, "forward", radio_forward)
+    output = encoder(pixel_values=pixels, imgs_sizes=sizes, num_frames=frames)
+    assert output.shape == (3, 8)
+    patch_indices = (
+        torch.tensor(
+            [
+                [0, 1, 2, 3],
+                [4 + class_tokens, 5 + class_tokens, 8 + class_tokens, 9 + class_tokens],
+                [6 + class_tokens, 7 + class_tokens, 10 + class_tokens, 11 + class_tokens],
+            ]
+        )
+        + class_tokens
+    )
+    expected = encoded[0, patch_indices].reshape(3, 8)
+    assert torch.equal(output, expected)
+
+    # The regular model shares the same rows before its separate projection.
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.vision_model = RADIOViTModel.__new__(RADIOViTModel)
+    nn.Module.__init__(model.vision_model)
+    model.vision_model.register_parameter("weight", nn.Parameter(torch.ones(1)))
+    model.vision_model.temporal_patch_dim = temporal_patch_dim
+    model.vision_model.class_token_len = class_tokens
+    model.vision_model.add_class_token = bool(class_tokens)
+    model.patch_dim = encoder.patch_dim
+    model.vision_dp_over_cp = False
+    model.vision_projection = nn.Identity()
+    regular_output = model._encode_images(pixels, sizes, None, frames)
+    assert torch.equal(regular_output, expected)
+    weights = torch.arange(output.numel(), dtype=output.dtype).reshape_as(output)
+    mimo_grad = torch.autograd.grad((output * weights).sum(), encoded)[0]
+    regular_grad = torch.autograd.grad((regular_output * weights).sum(), encoded)[0]
+    expected_grad = torch.autograd.grad((expected * weights).sum(), encoded)[0]
+    assert torch.equal(mimo_grad, expected_grad)
+    assert torch.equal(regular_grad, expected_grad)

@@ -262,9 +262,9 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.account_for_loss_in_pipeline_split = True
 
     # MoE Token Dispatcher settings
-    # Note: moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
+    # Standard alltoall runs on every supported GPU; select "hybridep" explicitly for tuned flex dispatch.
     cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config

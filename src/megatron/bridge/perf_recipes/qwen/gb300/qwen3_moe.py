@@ -418,6 +418,10 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # PyTorch 2.14 prints a C++ warning on every deprecated CUDAGraph.register_generator_state() call.
+        # TE layer-graph capture with PP>1 makes thousands per rank, and the stderr flood can stall ranks
+        # past the NCCL timeout, so keep only C++ errors.
+        "TORCH_CPP_LOG_LEVEL": "ERROR",
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.

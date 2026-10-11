@@ -67,8 +67,8 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         type=int,
         default=1,
         help=(
-            "CPU conversion processes per node (default: 1). Values above 1 enable distributed CPU export "
-            "and require model parallelism compatible with nodes*cpu-processes-per-node."
+            "CPU conversion processes per node (default: 1). Values above 1 enable distributed CPU import "
+            "and export and require model parallelism compatible with nodes*cpu-processes-per-node."
         ),
     )
     execution.add_argument(

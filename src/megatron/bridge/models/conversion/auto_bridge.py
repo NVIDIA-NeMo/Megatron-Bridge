@@ -78,6 +78,7 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "NemotronH_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
+    "DiffusionGemmaForBlockDiffusion",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
     "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
     "ForTokenClassification",
@@ -293,27 +294,32 @@ def _drop_readonly_config_properties(
     return {key: value for key, value in config_dict.items() if key not in readonly_properties}
 
 
-def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: object) -> None:
-    """Fail up front when a bridge's streaming override cannot accept ``with_megatron_names``.
-
-    Bridges that override the streaming export with an explicit signature (rather than
-    ``*args, **kwargs``) have to forward the keyword themselves; without this check the
-    request would only surface as an opaque ``TypeError`` once the generator is consumed.
-    """
+def _check_streaming_argument_support(stream_fn: Callable[..., Any], owner: object, argument: str) -> None:
+    """Fail early when a streaming override cannot accept an export argument."""
     try:
         parameters = inspect.signature(stream_fn).parameters
     except (TypeError, ValueError):
         # Not introspectable (C callables); let the call itself decide.
         return
-    if "with_megatron_names" in parameters or any(
+    if argument in parameters or any(
         parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
     ):
         return
     raise TypeError(
         f"{type(owner).__name__}.{getattr(stream_fn, '__name__', 'stream_weights')} does not accept "
-        "'with_megatron_names'; a bridge that overrides the streaming export must forward this flag "
-        "before its exported weights can carry source Megatron parameter names."
+        f"'{argument}'; a bridge that overrides the streaming export must forward this flag "
+        "before the requested export mode can be used."
     )
+
+
+def _check_with_megatron_names_support(stream_fn: Callable[..., Any], owner: object) -> None:
+    """Fail up front when a streamer cannot accept ``with_megatron_names``."""
+    _check_streaming_argument_support(stream_fn, owner, "with_megatron_names")
+
+
+def _check_current_pp_stage_only_support(stream_fn: Callable[..., Any], owner: object) -> None:
+    """Fail early when a streamer cannot accept PP-local export."""
+    _check_streaming_argument_support(stream_fn, owner, "current_pp_stage_only")
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -800,13 +806,15 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
 
         This method yields weight tensors in HuggingFace format, handling the
         gathering of distributed tensors and format conversion. It's useful for
-        streaming weight export or custom processing. All ranks get full tensors.
+        streaming weight export or custom processing. By default all ranks get full tensors;
+        set ``current_pp_stage_only=True`` to yield only the current pipeline stage's tensors.
 
         If the model contains LoRA adapters, they will be automatically merged
         into the base weights before export. This ensures the exported model
@@ -831,6 +839,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 a grouped-expert export, and none for HF-only passthrough tensors. Bridges that
                 override ``stream_weights_megatron_to_hf`` must accept the flag; otherwise a
                 ``TypeError`` is raised before any weight is streamed.
+            current_pp_stage_only: Export only parameters owned by the current pipeline stage and
+                suppress cross-stage PP broadcasts. TP/EP gathering and HF layout conversion remain
+                enabled. Defaults to False. Bridges that override the streamer must accept this
+                flag when it is enabled.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor), or HFSourcedWeightTuple
@@ -858,6 +870,8 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = self._model_bridge
         if with_megatron_names:
             _check_with_megatron_names_support(bridge.stream_weights_megatron_to_hf, bridge)
+        if current_pp_stage_only:
+            _check_current_pp_stage_only_support(bridge.stream_weights_megatron_to_hf, bridge)
         return bridge.stream_weights_megatron_to_hf(
             model,
             self.hf_pretrained,
@@ -868,6 +882,7 @@ class AutoBridge(Generic[MegatronModelT]):
             weight_dtype=weight_dtype,
             # Only forward the flag when set so bridges with a custom streamer keep working by default.
             **({"with_megatron_names": True} if with_megatron_names else {}),
+            **({"current_pp_stage_only": True} if current_pp_stage_only else {}),
         )
 
     def export_hf_weights_modelopt(

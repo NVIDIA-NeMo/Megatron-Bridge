@@ -149,7 +149,7 @@ items:
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      examples/models/nemotron/nemotron_3_omni/hf_to_megatron_generate_nemotron_omni.py
+      examples/models/nemotron/nemotron_3_nano_omni/hf_to_megatron_generate_nemotron_omni.py
       --hf_model_path nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16
       --hf-revision 24e67ea000b7c2837fc8f9488aa2008524fac8ba
       --megatron_model_path

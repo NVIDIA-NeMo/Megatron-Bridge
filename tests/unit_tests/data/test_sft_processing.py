@@ -230,6 +230,32 @@ def test_prompt_completion_honors_explicit_chat_named_text_column():
     assert normalize_sft_example(adapted, preprocessing) == row
 
 
+def test_prompt_completion_rejects_structured_chat_named_column_with_canonical_pair():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {
+        "messages": [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}],
+        "prompt": "canonical prompt",
+        "completion": "canonical completion",
+    }
+
+    with pytest.raises(ValueError, match="exactly one schema"):
+        normalize_sft_example(row, preprocessing)
+
+
+def test_prompt_completion_rejects_structured_conversation_in_chat_named_column():
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="messages",
+        completion_column="answer",
+    )
+    row = {"messages": [{"role": "user", "content": "q"}], "answer": "a"}
+
+    with pytest.raises(ValueError, match="structured conversations require"):
+        normalize_sft_example(row, preprocessing)
+
+
 def test_prompt_completion_tokenizes_separately_and_masks_prompt():
     tokenizer = _Tokenizer()
     preprocessing = PromptCompletionSFTPreprocessingConfig(
