@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for NemotronH and Nemotron 3."""
 
+from megatron.bridge.perf_recipes._common import _enable_ncclep
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
