@@ -2096,7 +2096,7 @@ class ConfigContainer(Container):
 def _get_mcore_transformer_parent(model_config: Any) -> type:
     """Determine the correct Mcore TransformerConfig parent class for a model.
 
-    Some models (e.g., DeepSeek v2/v3) inherit from MLATransformerConfig instead of
+    Some models (e.g., DeepSeek v3) inherit from MLATransformerConfig instead of
     the base TransformerConfig. This function checks the inheritance chain to find
     the appropriate Mcore class to use as the baseline for comparison.
 

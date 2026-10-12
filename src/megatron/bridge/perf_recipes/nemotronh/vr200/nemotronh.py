@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for NemotronH and Nemotron 3."""
+"""VR200 performance recipes for Nemotron 3 and 3.5."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (

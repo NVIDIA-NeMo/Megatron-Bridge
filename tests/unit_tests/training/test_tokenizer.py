@@ -300,7 +300,7 @@ class TestChatTemplatePathOverride:
         template_file.write_text(CHAT_TEMPLATE)
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            tokenizer_model="meta-llama/Llama-3.1-8B-Instruct",
             chat_template_path=str(template_file),
         )
 
