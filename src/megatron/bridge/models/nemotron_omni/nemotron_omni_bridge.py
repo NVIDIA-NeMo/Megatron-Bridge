@@ -86,6 +86,16 @@ def _copy_mapping_with_prefixes(mapping, *, megatron_prefix: str, hf_prefix: str
 
 
 @MegatronModelBridge.register_bridge(
+    source="NemotronH_Nano_VL_V2",
+    target=NemotronOmniModel,
+    provider=NemotronOmniModelProvider,
+    model_type="nemotron_vl",
+)
+class _LegacyNemotronOmniBridge(NemotronVLBridge):
+    """Load MoE Nano Omni checkpoints carrying the historical V2 label."""
+
+
+@MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_Omni_Reasoning_V3",
     target=NemotronOmniModel,
     provider=NemotronOmniModelProvider,

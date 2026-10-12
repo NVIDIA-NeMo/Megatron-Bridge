@@ -27,6 +27,34 @@ NEMOTRON_3_ULTRA_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
 NEMOTRON_3_ULTRA_TOKENIZER_NAME = "nvidia--NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
 NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH = 8192
 NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH = 4096
+# Decoder layers on each of the 12 pipeline stages of the 384-GPU SFT recipe. The last stage also
+# holds the output layer and the two-depth MTP block, so it takes 5 layers and stages 8-10 take
+# the extra ones.
+NEMOTRON_3_ULTRA_SFT_LAYERS_PER_STAGE = (9, 9, 9, 9, 9, 9, 9, 9, 10, 10, 11, 5)
+
+
+def _split_hybrid_layer_pattern(pattern: str, layers_per_stage: tuple[int, ...]) -> str:
+    """Insert pipeline stage separators into a hybrid layer pattern.
+
+    Args:
+        pattern: Hybrid layer pattern without stage separators, optionally followed by an MTP suffix after "/".
+        layers_per_stage: Number of decoder layers on each pipeline stage, in order.
+
+    Returns:
+        The decoder pattern with "|" between stages, followed by the unchanged MTP suffix.
+
+    Raises:
+        ValueError: If the pattern already has stage separators or the stage sizes do not cover it exactly.
+    """
+    main, separator, mtp = pattern.partition("/")
+    if "|" in main or any(count < 1 for count in layers_per_stage) or sum(layers_per_stage) != len(main):
+        raise ValueError(f"Cannot split a {len(main)}-layer hybrid pattern into stages of {layers_per_stage}.")
+    stages = []
+    start = 0
+    for count in layers_per_stage:
+        stages.append(main[start : start + count])
+        start += count
+    return "|".join(stages) + separator + mtp
 
 
 def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
@@ -234,8 +262,11 @@ def nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> ConfigContainer:
-    """Return a packed OpenMathInstruct-2 full SFT config for Nemotron 3 Ultra.
+def nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config() -> ConfigContainer:
+    """Return a packed OpenMathInstruct-2 full SFT config for Nemotron 3 Ultra on 384 H100 GPUs.
+
+    The layout matches the H100 full-SFT starting point documented in the Ultra
+    examples: 48 nodes at TP2/PP12/EP16 with selective activation recompute.
 
     Returns:
         Full-parameter SFT configuration for OpenMathInstruct-2.
@@ -244,14 +275,17 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> C
 
     cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
     cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 6
+    cfg.model.pipeline_model_parallel_size = 12
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 16
     cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.hybrid_layer_pattern = _split_hybrid_layer_pattern(
+        cfg.model.hybrid_layer_pattern, NEMOTRON_3_ULTRA_SFT_LAYERS_PER_STAGE
+    )
     cfg.model.seq_length = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "fused"
@@ -269,10 +303,14 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True
+    # Selective recompute fits the 48-node layout. The standalone pre-MLP norms are not
+    # recomputed: on Transformer Engine 2.18 and later, a recomputed TE norm that is a pipeline
+    # stage's first backward operation fails with "invalid device context" on GPU 0, and most
+    # stages of this layout end with an MoE layer.
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
-    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
+    cfg.model.recompute_modules = ["moe", "core_attn", "moe_act"]
 
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_ULTRA_HF_MODEL_ID
     cfg.dataset = default_openmathinstruct2_config(
@@ -317,9 +355,20 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # The first step pays one-time startup costs (HybridEP setup, kernel compilation)
+    # stage by stage through the twelve-stage pipeline, so stage 0 can wait longer than
+    # the 10-minute default timeout for its first backward.
+    cfg.dist.distributed_timeout_minutes = 90
+
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        # One hardware queue, as Megatron-Core expects for TP>1 with sequence parallelism on Hopper.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # cuDNN normalization kernels bypass TE's NVRTC norm path, which fails with "invalid device
+        # context" when a norm is the first backward operation on GPU 0 (TE 2.18 and later).
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # HybridEP topology for this recipe.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NVLINK_DOMAIN_SIZE": 8,
@@ -440,5 +489,5 @@ __all__ = [
     "nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config",
     "nemotron_3_ultra_pretrain_24gpu_h100_bf16_config",
     "nemotron_3_ultra_pretrain_256gpu_h100_bf16_fsdp_config",
-    "nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config",
+    "nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config",
 ]
