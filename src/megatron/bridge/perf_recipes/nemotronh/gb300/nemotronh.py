@@ -218,7 +218,7 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
 
     """
     Uses TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1,
-    seq 8192, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
+    seq 8192, NCCLEP flex dispatcher, CuteDSL fused grouped MLP, selective
     recompute + activation offload of the expert MLP, MTP=2. The MoE architecture
     (512 experts, latent MoE, MTP, squared-relu, hybrid Mamba/attention pattern,
     ...) is inherited from the base recipe via ``AutoBridge``.
@@ -264,6 +264,11 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
+
     return cfg
 
 
@@ -283,10 +288,6 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
         expert_model_parallel_size=64,
         global_batch_size=256,
     )
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
