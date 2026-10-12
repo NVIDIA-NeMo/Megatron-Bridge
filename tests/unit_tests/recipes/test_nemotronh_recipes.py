@@ -27,7 +27,10 @@ import pytest
 import torch
 
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
-from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+from tests.unit_tests.recipes.recipe_test_utils import (
+    NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN,
+    patch_recipe_module_global,
+)
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
@@ -72,6 +75,21 @@ class _FakeAutoBridge:
         return _FakeModelProvider()
 
 
+class _FakeUltraModelProvider(_FakeModelProvider):
+    """Fake provider with Nemotron 3 Ultra's decoder pattern, which the SFT recipe splits into stages."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
+
+
+class _FakeUltraAutoBridge(_FakeAutoBridge):
+    """Return the Nemotron 3 Ultra fake provider."""
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _FakeUltraModelProvider()
+
+
 @pytest.fixture(autouse=True)
 def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep AutoBridge-backed recipe construction deterministic and offline."""
@@ -81,10 +99,11 @@ def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.h100.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
-        "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
         module = importlib.import_module(module_name)
         patch_recipe_module_global(monkeypatch, module, "AutoBridge", _FakeAutoBridge)
+    ultra_module = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
+    patch_recipe_module_global(monkeypatch, ultra_module, "AutoBridge", _FakeUltraAutoBridge)
 
 
 def _assert_basic_config(cfg):
