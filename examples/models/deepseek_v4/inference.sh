@@ -24,9 +24,11 @@
 #   PROMPT: prompt string (default: "Explain hyper-connections in transformer models.")
 #   NNODES / NODE_RANK / MASTER_ADDR / MASTER_PORT: multi-node launch (defaults 1 / 0 / 127.0.0.1 / 29500).
 #       The PP*EP ranks are spread over NNODES nodes; GPUS_PER_NODE defaults to PP*EP/NNODES.
+#       Run from the repository root (the Python entrypoint below is a root-relative path).
 #       Under Slurm run one task per node, for example:
 #         srun --ntasks-per-node=1 bash -c 'NNODES=$SLURM_JOB_NUM_NODES NODE_RANK=$SLURM_NODEID \
-#           MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1) ./inference.sh'
+#           MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1) \
+#           examples/models/deepseek_v4/inference.sh'
 #   NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN: optional HybridEP topology override
 #   NVLINK_DOMAIN_SIZE: optional physical NVLink-domain size override
 #   USE_MNNVL: optional HybridEP fabric override (0 or 1)
