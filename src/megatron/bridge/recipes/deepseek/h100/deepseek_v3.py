@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models import GPTModelProvider
@@ -181,7 +182,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections (includes MoE-specific kernels)
-    cfg.model.attention_backend = None  # None means auto selection
+    cfg.model.attention_backend = AttnBackend.auto
     cfg.model.moe_router_fusion = False  # MoE-specific: Fuse router computation
     cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations
     cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM for experts
@@ -349,7 +350,7 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
 
     # Kernel selections
-    cfg.model.attention_backend = None
+    cfg.model.attention_backend = AttnBackend.auto
     cfg.model.moe_router_fusion = False
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True

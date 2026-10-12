@@ -116,3 +116,32 @@ def test_peft_setup_hook_does_not_accumulate_across_restart_attempts():
         user_hook.assert_called_once_with(model)
         assert any(parameter.requires_grad for parameter in transformed_model[0].parameters())
         assert peft.params_to_save
+
+
+@pytest.mark.parametrize("chunks", [1, 2])
+def test_mtp_freeze_keeps_backbone_unchanged_after_optimizer_step(chunks):
+    model = []
+    for _ in range(chunks):
+        chunk = nn.Module()
+        chunk.backbone = nn.Linear(4, 4)
+        chunk.backbone.register_buffer("expert_bias", torch.zeros(4))
+        chunk.mtp = nn.Module()
+        chunk.mtp.layers = nn.ModuleList([nn.Linear(4, 4)])
+        chunk.mtp.layers[0].register_buffer("expert_bias", torch.zeros(4))
+        model.append(chunk)
+    before = [{name: param.detach().clone() for name, param in chunk.named_parameters()} for chunk in model]
+    assert training_setup._freeze_base_model_for_mtp(model) is model
+    optimizer = torch.optim.SGD([p for chunk in model for p in chunk.parameters() if p.requires_grad], lr=0.1)
+    for chunk in model:
+        chunk.mtp.layers[0](chunk.backbone(torch.ones(2, 4))).sum().backward()
+    optimizer.step()
+    for chunk, initial in zip(model, before):
+        assert chunk.backbone.frozen_expert_bias is True
+        assert chunk.mtp.layers[0].frozen_expert_bias is False
+        for name, param in chunk.named_parameters():
+            if name.startswith("mtp.layers."):
+                assert param.grad is not None
+            else:
+                assert param.grad is None
+                torch.testing.assert_close(param, initial[name], rtol=0, atol=0)
+        assert not torch.equal(chunk.mtp.layers[0].bias, initial["mtp.layers.0.bias"])

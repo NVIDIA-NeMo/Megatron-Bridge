@@ -17,7 +17,7 @@ their model-specific distributed round-trip workflows. K-EXAONE 2.0 also has a c
 [model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/k-exaone-2/card.yaml)
 that records the current verification status of individual workflows.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -129,8 +129,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No CPU Hugging Face-to-Megatron conversion result is claimed. Future verification must import the complete immutable-revision checkpoint, persist iter_0000000, reload it, and audit all mapped keys, shapes, dtypes, and values.
-</p>
+        <p>No CPU Hugging Face-to-Megatron conversion result is claimed. Future verification must import the complete immutable-revision checkpoint, persist iter_0000000, reload it, and audit all mapped keys, shapes, dtypes, and values.</p>
       </section>
     </article>
     <article id="k-exaone-2-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="k-exaone-2-hf-to-megatron-gpu" tabindex="-1">
@@ -155,8 +154,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned 59,396-tensor BF16 checkpoint imported and persisted iter_0000000 on 48 H100 GPUs, and that artifact subsequently reloaded for a full distributed GPU re-export audit. The audit compared all 59,396 tensors and 1,498,715,010,176 payload bytes with zero missing, unexpected, duplicate, shape, dtype, or value mismatches.
-</p>
+        <p>The pinned 59,396-tensor BF16 checkpoint imported and persisted iter_0000000 on 48 H100 GPUs, and that artifact subsequently reloaded for a full distributed GPU re-export audit. The audit compared all 59,396 tensors and 1,498,715,010,176 payload bytes with zero missing, unexpected, duplicate, shape, dtype, or value mismatches.</p>
       </section>
     </article>
     <article id="k-exaone-2-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="k-exaone-2-megatron-to-hf-cpu" tabindex="-1">
@@ -175,8 +173,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No CPU Megatron-to-Hugging-Face conversion result is claimed. Future verification depends on a complete CPU import and must export, strictly reload, and compare all lossless tensors against the pinned source revision.
-</p>
+        <p>No CPU Megatron-to-Hugging-Face conversion result is claimed. Future verification depends on a complete CPU import and must export, strictly reload, and compare all lossless tensors against the pinned source revision.</p>
       </section>
     </article>
     <article id="k-exaone-2-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="k-exaone-2-megatron-to-hf-gpu" tabindex="-1">
@@ -201,8 +198,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A complete distributed export produced 59,396 indexed keys in 17 safetensors shards. Every exported tensor matches the pinned source bitwise across 1,498,715,008,512 payload bytes, and the corrected config/tokenizer reload successfully. The run exposed and fixed preservation of one physical repeated MTP layer across four speculative steps. The config fix is committed; this item remains unverified until the clean-commit export and exact audit rerun complete.
-</p>
+        <p>A complete distributed export produced 59,396 indexed keys in 17 safetensors shards. Every exported tensor matches the pinned source bitwise across 1,498,715,008,512 payload bytes, and the corrected config/tokenizer reload successfully. The run exposed and fixed preservation of one physical repeated MTP layer across four speculative steps. The config fix is committed; this item remains unverified until the clean-commit export and exact audit rerun complete.</p>
       </section>
     </article>
     <article id="k-exaone-2-pretrain-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-pretrain-h100" tabindex="-1">
@@ -246,8 +242,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The exported 512-GPU H100 recipe must complete a bounded public-data pretraining run at TP4/PP16/EP32 with natural routing, finite loss, no skipped or NaN iterations, all five required metrics, and reloadable middle and final checkpoints.
-</p>
+        <p>The exported 512-GPU H100 recipe must complete a bounded public-data pretraining run at TP4/PP16/EP32 with natural routing, finite loss, no skipped or NaN iterations, all five required metrics, and reloadable middle and final checkpoints.</p>
       </section>
     </article>
     <article id="k-exaone-2-sft-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-sft-h100" tabindex="-1">
@@ -291,8 +286,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The exported 512-GPU H100 full-SFT recipe must load the pinned checkpoint and complete a bounded immutable-dataset run at TP4/PP16/EP32 with finite loss, no skipped or NaN iterations, all four required metrics, and a reloadable final full-model checkpoint.
-</p>
+        <p>The exported 512-GPU H100 full-SFT recipe must load the pinned checkpoint and complete a bounded immutable-dataset run at TP4/PP16/EP32 with finite loss, no skipped or NaN iterations, all four required metrics, and a reloadable final full-model checkpoint.</p>
       </section>
     </article>
     <article id="k-exaone-2-sft-long-context-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-sft-long-context-h100" tabindex="-1">
@@ -336,8 +330,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No long-context SFT result is claimed. Future verification must first resolve a supported long-context topology, then verify sequence packing and context parallelism together with finite loss, no skipped or NaN iterations, and all five required metrics.
-</p>
+        <p>No long-context SFT result is claimed. Future verification must first resolve a supported long-context topology, then verify sequence packing and context parallelism together with finite loss, no skipped or NaN iterations, and all five required metrics.</p>
       </section>
     </article>
     <article id="k-exaone-2-peft-h100" class="verification-model-detail" data-entry-detail="k-exaone-2-peft-h100" tabindex="-1">
@@ -381,11 +374,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The exported 128-GPU H100 PEFT recipe must load the pinned checkpoint, verify that LoRA targets the model-native attention projections, and complete a bounded immutable-dataset run at TP4/PP8/EP16 with finite loss, no skipped or NaN iterations, all five required metrics, and a reloadable adapter checkpoint.
-</p>
+        <p>The exported 128-GPU H100 PEFT recipe must load the pinned checkpoint, verify that LoRA targets the model-native attention projections, and complete a bounded immutable-dataset run at TP4/PP8/EP16 with finite loss, no skipped or NaN iterations, all five required metrics, and a reloadable adapter checkpoint.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

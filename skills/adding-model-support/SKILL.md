@@ -1,10 +1,40 @@
 ---
 name: adding-model-support
 description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples.
-when_to_use: User asks to add, onboard, or integrate a new model family; 'add Qwen4 support', 'onboard Llama 5', 'create a bridge for X', 'write a recipe for Y'.
+metadata:
+  when_to_use: User asks to add, onboard, or integrate a new model family; 'add Qwen4 support', 'onboard Llama 5', 'create a bridge for X', 'write a recipe for Y'.
 ---
 
 # Adding New Model Support in Megatron-Bridge
+
+## Implementation boundaries
+
+- Keep model-support changes in Megatron-Bridge. Do not modify Megatron-Core
+  or its submodule to implement a model. Use existing module specs, builders,
+  conversion hooks, and narrow Bridge subclasses or compositions.
+- Before adding a block, inspect both MCore and existing Bridge implementations.
+  Reuse an existing block when it represents the same computation. Differences
+  in accumulation precision, rounding, fused kernels, or mathematically
+  equivalent LayerNorm/RMSNorm operation ordering alone do not justify a
+  replacement implementation.
+- Add model-specific code under the family's `modeling_<model>/` directory only
+  for genuinely missing computation or composition. For example, normalizing
+  each expert before weighted summation differs mathematically from normalizing
+  the combined result. Compose existing normalization and linear operations
+  wherever possible instead of copying their kernels.
+- Invoke Hugging Face vision/video and audio encoders directly; do not port
+  their internals into Bridge. Bridge owns their construction, checkpoint
+  mapping, modality insertion, placement, freezing, and gradient synchronization.
+  Existing native encoder ports are references for previously supported models,
+  not a requirement for new support. Follow an explicit request for a different
+  encoder implementation when the user provides one.
+- Verify support through the requested model API, not only a shared config.
+  For HybridModel, trace the actual layer specs and expand per-layer schedules
+  to Hybrid positions: `*E` repeated N times has 2N positions. Configure RoPE
+  explicitly, since HybridModel defaults to no positional embedding.
+- Separate weight-independent checks from checkpoint validation. A checkpoint
+  download need not block implementation or small config/block tests; record
+  full conversion, logits, and training validation as pending until they run.
 
 ## Phase 1: Discovery
 
@@ -25,22 +55,23 @@ Read the model's `config.json` from HuggingFace (or from the user-provided file)
 - MoE fields (if present): `num_local_experts`, `num_experts_per_tok`, `moe_intermediate_size`
 - MLA fields (if present): `q_lora_rank`, `kv_lora_rank`, `qk_nope_head_dim`, `qk_rope_head_dim`
 
-If there are config fields you don't recognize from previously supported models (check `CONFIG_MAPPING` in `model_bridge.py` and existing bridges), this likely indicates a **new architectural block** (e.g., a novel attention variant, custom normalization, or a new layer type). Ask the user to provide the HuggingFace `modeling_*.py` implementation of that block so you can understand the computation and create the correct Megatron-side mapping or custom module.
+For unfamiliar config fields, inspect the supplied Hugging Face `modeling_*.py`
+implementation and check existing MCore and Bridge components before concluding
+that a new block is needed. Ask for missing source only when it is not already
+available through the user's supplied artifacts or authorized locations.
 
-### Step 3 — Determine VLM vs LLM
+### Step 3 — Identify supported modalities
 
-**VLM** (Vision-Language Model) if config.json contains:
-- `text_config` AND `vision_config` sub-configs
-- Note: VLMs may or may not have "VL" in the name
+Inspect the config, HF model, and processor for vision/video and audio inputs.
+Perception configs commonly appear as `vision_config` or `audio_config` alongside
+`text_config`, but names and nesting vary. Route models with either type of
+perception encoder through the multimodal wrapper path, including audio-only
+language models. A text-only model has no perception integration; its language
+config may be flat or nested.
 
-**LLM** (Text-only) if:
-- No `text_config` / `vision_config`
-- Single flat config for the language model
-
-This distinction affects:
-- Which files to create (VLMs need a model.py combining vision + language)
-- Where to read config fields from (`text_config` vs top-level for VLMs)
-- Test patterns (VLMs need vision inputs in functional tests)
+This distinction determines where to read language config fields, whether a
+wrapper must combine perception with the language model, and which modality
+inputs the functional checks must exercise.
 
 ### Step 4 — Check for quantized weights (FP8 / FP4)
 
@@ -94,19 +125,20 @@ src/megatron/bridge/models/<model>/
     └── ...
 ```
 
-**VLM** — Reference: Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
+**VLM / audio-language model** — Use HF perception encoders and a Bridge wrapper.
+Reference: Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`).
 
 ```
 src/megatron/bridge/models/<model>/
 ├── __init__.py
 ├── <model>_bridge.py         # Config + weight mappings
 ├── <model>_provider.py       # Only for VLMs that need custom provide()
-└── modeling_<model>/         # If using Megatron vision encoder
+└── modeling_<model>/         # Missing language blocks and modality integration
     ├── __init__.py
     └── model.py              # Combines vision + language
 ```
 
-OR with HF vision encoder (Reference: Gemma3-VL):
+For a small wrapper, an existing single-file layout can also be followed:
 
 ```
 src/megatron/bridge/models/<model>/
@@ -204,9 +236,11 @@ parameter-free implementation until TE exposes matching semantics. Adding an all
 would change state-dict keys, optimizer state, distributed-checkpoint schema, and conversion coverage.
 
 TE and reference framework kernels can differ numerically even when their architecture and weights
-match. Keep exact HF↔Megatron weight round-trip as the conversion gate, then assess forward behavior
-with the correlation criteria in the parity-testing skill rather than reverting to a slower norm only
-to reproduce one framework's operation ordering.
+match. Require exact HF↔Megatron weight round-trip for unchanged parameter representations and pure
+layout transformations. Investigate arithmetic parameter transformations and classify discrepancies
+using the controlled module-swap procedure below. Assess forward behavior with the correlation
+criteria in the parity-testing skill; do not replace reusable norms solely to reproduce one
+framework's operation ordering.
 
 #### Strategy 1: Create a local mapping subclass
 
@@ -416,7 +450,35 @@ Add a model page at `docs/models/<type>/<model>.md` covering:
 
 ## Verification Workflow
 
-After implementing bridge support, prompt the user to run these commands on the cluster:
+Run the authorized checks in the cluster development container. Do not hand
+execution back to the user when cluster access and authorization are available.
+
+### Discrepancy investigation
+
+- Check import, persisted checkpoint reload, export, and roundtrip tensor
+  coverage before interpreting forward differences. Report missing/extra keys,
+  shapes, dtypes, and exact equality separately from forward metrics.
+- Reload in a fresh process as well as within a conversion process. Pass the
+  intended model-parallel overrides explicitly and verify effective TP/PP/EP
+  process-group sizes; existing groups can conceal loader defaults.
+- Exercise every requested modality path using identical processed inputs on
+  both implementations: text-only, image-text, and an appropriate audio-containing
+  case for models that support audio. Preserve input hashes, token IDs, logits,
+  greedy continuations, code revisions, and runtime settings.
+- Isolate each discrepancy to the earliest differing module with the same
+  inputs and weights. Check mapping, layout, masks, positions, routing, and
+  precision rather than assuming a small difference is numerical.
+- Classify a discrepancy as numerical only after a controlled module-swap
+  experiment: replace the suspected module in one execution path with the other
+  implementation, keeping inputs, weights, and other settings fixed. Record
+  baseline and swapped outputs and show that the discrepancy follows the
+  implementation. Use a reverse swap or higher-precision comparison when needed
+  to distinguish incorrect mathematics from floating-point effects. A swap that
+  closes a gap alone does not prove the original computation was correct.
+- Fix confirmed implementation bugs in Bridge and rerun the affected checks.
+  Do not fix confirmed numerical differences by replacing reusable production
+  blocks. Keep diagnostic swaps in validation code, report their measured
+  effects, and leave inconclusive discrepancies unresolved.
 
 ### 1. Smoke test (single GPU)
 
@@ -480,11 +542,10 @@ User wants to add a model
 │
 ├─ Has HF link? ─── No ──→ Ask for link (or config.json if private)
 │
-├─ Has text_config + vision_config? ─── Yes ──→ VLM path
-│   ├─ Has Megatron vision encoder? ──→ Megatron encoder (Qwen3.5 pattern)
-│   └─ No Megatron encoder ──→ HF encoder (Gemma3 pattern)
+├─ Has vision/video or audio perception? ─── Yes ──→ Multimodal wrapper path
+│   └─ Invoke supplied HF perception encoders directly (Gemma3 wrapper pattern)
 │
-└─ No vision config ──→ LLM path (bridge only, no provider file)
+└─ Text-only ──→ Language model path
     ├─ Standard GPT-style? ──→ Bridge with stock mappings
     └─ Custom layers? ──→ Bridge + local mapping subclasses / hook overrides
         ├─ Custom weight layout? ──→ Local mapping subclass in family dir

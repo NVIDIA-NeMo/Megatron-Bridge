@@ -16,6 +16,7 @@ import json
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import torch
@@ -573,3 +574,41 @@ def test_distributed_save_multiple_savers_write_only_assigned_shards_and_build_c
             "model.second": second_shard,
         },
     }
+
+
+def test_resolve_path_forwards_revision_to_snapshot_download(tmp_path) -> None:
+    """A pinned revision must reach the Hub download, not silently resolve to main."""
+    revision = "b5968e9190ef611bbf34a7229255be88a0e937c1"  # pragma: allowlist secret
+    snapshot_dir = tmp_path / "snapshots" / revision
+    snapshot_dir.mkdir(parents=True)
+
+    source = SafeTensorsStateSource("org/model", revision=revision)
+
+    with patch("huggingface_hub.snapshot_download", return_value=str(snapshot_dir)) as snapshot_download:
+        assert source.path == snapshot_dir
+
+    assert snapshot_download.call_args.kwargs["repo_id"] == "org/model"
+    assert snapshot_download.call_args.kwargs["revision"] == revision
+
+
+def test_resolve_path_defaults_revision_to_none(tmp_path) -> None:
+    """Without an explicit revision the Hub default (main) is requested."""
+    snapshot_dir = tmp_path / "snapshots" / "main"
+    snapshot_dir.mkdir(parents=True)
+
+    source = SafeTensorsStateSource("org/model")
+
+    with patch("huggingface_hub.snapshot_download", return_value=str(snapshot_dir)) as snapshot_download:
+        assert source.path == snapshot_dir
+
+    assert snapshot_download.call_args.kwargs["revision"] is None
+
+
+def test_resolve_path_ignores_revision_for_local_directory(tmp_path) -> None:
+    """A local checkpoint directory is used as-is and never hits the Hub."""
+    source = SafeTensorsStateSource(tmp_path, revision="deadbeef")  # pragma: allowlist secret
+
+    with patch("huggingface_hub.snapshot_download") as snapshot_download:
+        assert source.path == tmp_path
+
+    snapshot_download.assert_not_called()

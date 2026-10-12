@@ -506,6 +506,49 @@ def test_interval_evaluation_uses_evaluator_timer_ownership(use_canonical_valida
     mock_evaluate.assert_called_once()
 
 
+def test_interval_evaluation_honors_delayed_start():
+    """Periodic MegatronMIMO evaluation should wait for the configured start iteration."""
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(save_dir=None, train_iters=6)
+    state.cfg.validation.eval_interval = 2
+    state.cfg.validation.start_eval_at_iter = 6
+
+    infra = _make_megatron_mimo_infra()
+
+    with (
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+            return_value=Mock(spec=[]),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+            return_value=({}, 0, 0.0, 0),
+        ),
+        patch("megatron.bridge.training.train_megatron_mimo.evaluate_and_print_results") as mock_evaluate,
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=iter([object()]),
+            valid_data_iterator=iter([object()]),
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=MagicMock(),
+        )
+
+    mock_evaluate.assert_called_once()
+    assert mock_evaluate.call_args.kwargs["prefix"] == "iteration 6"
+
+
 def test_iteration_time_is_logged_once_by_shared_training_logger():
     """MIMO should not overwrite the shared interval-average timing metric."""
     from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo

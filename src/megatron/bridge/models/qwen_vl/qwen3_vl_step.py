@@ -14,7 +14,7 @@
 import logging
 import math
 from functools import partial
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel
@@ -26,6 +26,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
+from megatron.bridge.training.post_training.distillation import create_kd_loss_function
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import (
     accumulate_flops_metadata,
@@ -214,19 +215,21 @@ def _pad_and_pack_qwen3_vl_step(
     return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
 
 
-def forward_step(
+def _forward_step_common(
     state: GlobalState,
     data_iterator: Iterable,
     model: GPTModel,
-    return_schedule_plan: bool = False,
+    return_schedule_plan: bool,
+    loss_function_factory: Callable[..., partial],
 ) -> tuple[torch.Tensor, partial]:
-    """Forward training step.
+    """Shared Qwen3-VL forward step, parameterized by how the loss is built.
 
     Args:
         state: Global state for the run
         data_iterator: Input data iterator
         model: The GPT Model
         return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+        loss_function_factory: Builds the loss from (loss_mask, model, check_for_nan, check_for_spiky)
 
     Returns:
         tuple containing the output tensor and the loss function
@@ -352,7 +355,7 @@ def forward_step(
             schedule_plan = model.build_schedule_plan(
                 tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
             )
-            loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+            loss_function = loss_function_factory(loss_mask, model, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function
         else:
             model_output = model(**forward_args)
@@ -361,6 +364,58 @@ def forward_step(
             else:
                 output_tensor = model_output
 
-    loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+    loss_function = loss_function_factory(loss_mask, model, check_for_nan_in_loss, check_for_spiky_loss)
 
     return output_tensor, loss_function
+
+
+def _masked_next_token_loss_factory(
+    loss_mask: torch.Tensor, model: GPTModel, check_for_nan_in_loss: bool, check_for_spiky_loss: bool
+) -> partial:
+    """Adapter giving the plain loss the same signature as the KD-aware one."""
+    del model  # unused; keeps the two loss factories interchangeable
+    return _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
+
+
+def forward_step(
+    state: GlobalState,
+    data_iterator: Iterable,
+    model: GPTModel,
+    return_schedule_plan: bool = False,
+) -> tuple[torch.Tensor, partial]:
+    """Forward training step.
+
+    Args:
+        state: Global state for the run
+        data_iterator: Input data iterator
+        model: The GPT Model
+        return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+
+    Returns:
+        tuple containing the output tensor and the loss function
+    """
+    return _forward_step_common(state, data_iterator, model, return_schedule_plan, _masked_next_token_loss_factory)
+
+
+def forward_step_modelopt(
+    state: GlobalState,
+    data_iterator: Iterable,
+    model: GPTModel,
+    return_schedule_plan: bool = False,
+) -> tuple[torch.Tensor, partial]:
+    """Forward training step with the ModelOpt knowledge-distillation loss.
+
+    Pass this to ``distill()`` for Qwen3-VL. The GPT step cannot drive this model under context
+    parallelism: it hands the model a CP-sharded batch, and Qwen3VLModel splits the sequence
+    itself, leaving hidden states at ``seq / cp**2``.
+
+    Args:
+        state: Global state for the run
+        data_iterator: Input data iterator
+        model: The GPT Model
+        return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
+
+    Returns:
+        tuple containing the output tensor and the loss function
+    """
+    return _forward_step_common(state, data_iterator, model, return_schedule_plan, create_kd_loss_function)

@@ -19,6 +19,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
@@ -137,6 +139,40 @@ def test_bootstrap_exec_preserves_argv_and_environment(monkeypatch):
     ]
     assert environment == expected_environment
     assert environment is not bootstrap.os.environ
+
+
+@pytest.mark.parametrize(
+    ("visible_before", "local_rank", "expected"),
+    [
+        (None, "2", "2"),  # launcher exposed nothing explicit: local rank is the device index
+        ("0,1,2,3", "3", "3"),  # Slurm per-node list: local rank picks one entry
+        ("4,5,6,7", "1", "5"),  # non-identity list keeps the launcher's device ids
+        ("1", "3", "1"),  # already one device: untouched
+    ],
+)
+def test_bootstrap_one_gpu_per_rank_restricts_visible_devices(monkeypatch, visible_before, local_rank, expected):
+    recipe = SimpleNamespace(model=SimpleNamespace(moe_flex_dispatcher_backend="ncclep"))
+    monkeypatch.delenv("LOCAL_RANK", raising=False)
+    monkeypatch.setenv("SLURM_LOCALID", local_rank)
+    if visible_before is None:
+        monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
+    else:
+        monkeypatch.setenv("CUDA_VISIBLE_DEVICES", visible_before)
+
+    bootstrap._apply_one_gpu_per_rank(recipe)
+
+    assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == expected
+
+
+@pytest.mark.parametrize("backend", ["hybridep", "deepep", None])
+def test_bootstrap_one_gpu_per_rank_only_for_ncclep(monkeypatch, backend):
+    recipe = SimpleNamespace(model=SimpleNamespace(moe_flex_dispatcher_backend=backend))
+    monkeypatch.setenv("LOCAL_RANK", "2")
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,2,3")
+
+    bootstrap._apply_one_gpu_per_rank(recipe)
+
+    assert bootstrap.os.environ["CUDA_VISIBLE_DEVICES"] == "0,1,2,3"
 
 
 def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():

@@ -4,6 +4,14 @@ Reference implementations:
 - **Megatron vision encoder:** Qwen3.5-VL (`src/megatron/bridge/models/qwen_vl/`)
 - **HF vision encoder:** Gemma3-VL (`src/megatron/bridge/models/gemma_vl/`)
 
+For new support, invoke HF vision/video and audio encoders directly. Use the
+HF-encoder pattern below and keep only modality integration and genuinely
+missing language computations in Bridge's `modeling_<model>/` directory.
+The native encoder example documents existing models; do not copy or port an
+encoder merely to follow that example. Select the language builder requested by
+the task (including HybridModel); the GPT provider snippets below illustrate
+older integration patterns and do not require GPTModel.
+
 ## Provider Pattern
 
 Subclass `GPTModelProvider`. VLM providers add vision-specific fields on top of standard LLM fields.

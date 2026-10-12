@@ -32,6 +32,7 @@ from megatron.bridge.training.mixed_precision import (
     nemotron_3_super_bf16_with_nvfp4_mixed,
     nemotron_3_ultra_bf16_with_nvfp4_mixed,
 )
+from megatron.bridge.utils.cuda_graph import set_full_iteration_cuda_graph
 
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
@@ -64,36 +65,6 @@ def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
     cfg.train.global_batch_size = global_batch_size
     return cfg
-
-
-def _enable_ncclep_mxfp8(cfg: ConfigContainer) -> None:
-    """Enable static-shape NCCL EP for an MXFP8 recipe.
-
-    The calling recipe builder still declares its own ``cfg.env_vars`` mapping inline, so the
-    launched environment stays readable next to the recipe instead of being derived here.
-    """
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "ncclep"
-    cfg.model.moe_shared_expert_overlap = False
-    cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = None
-    cfg.model.moe_ncclep_zero_copy = False
-
-    cfg.model.moe_grouped_gemm = True
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.comm_overlap.delay_wgrad_compute = False
-
-    cfg.model.offload_modules = []
-    cfg.model.moe_expert_rank_capacity_factor = 1.05
-    cfg.model.moe_paged_stash = True
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-
-    cfg.model.moe_router_padding_for_quantization = True
 
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
@@ -135,6 +106,55 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.checkpoint.async_save = False
 
     _benchmark_common(cfg)
+
+
+def _enable_nemotron_3_super_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable the HybridEP full-iteration stack for Nemotron 3 Super."""
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_modules = None
+
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = False
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+
+    # Nemotron 3 Super uses two MTP layers. MCore only supports expert-parallel
+    # A2A overlap and delayed wgrad with at most one MTP layer.
+    cfg.comm_overlap = None
+    cfg.model.overlap_moe_expert_parallel_comm = False
+    cfg.model.delay_wgrad_compute = False
+
+
+def _enable_nemotron_3_5_lightning_full_iteration(cfg: ConfigContainer) -> None:
+    """Enable full-iteration capture with static MoE buffers for Lightning."""
+    set_full_iteration_cuda_graph(cfg.model)
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    # Static receive capacity avoids dispatcher CPU synchronization during capture.
+    # The training loop retries capacity overflows without padding.
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.moe_paged_stash = False
+    cfg.model.offload_modules = []
 
 
 def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:

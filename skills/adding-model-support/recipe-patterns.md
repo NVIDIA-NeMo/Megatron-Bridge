@@ -68,6 +68,8 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     return cfg
 ```
 
+Keep each recipe function self-contained: start from the shared `_*_common()` base and set every other option inside the function, repeating lines rather than adding family-private helpers or calling another recipe, since users usually read and copy a single recipe.
+
 ## Common Base Functions
 
 | Function | Use Case |

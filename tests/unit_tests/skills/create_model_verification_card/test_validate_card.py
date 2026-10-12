@@ -3,6 +3,7 @@
 """Focused tests for model-verification-card validation."""
 
 import importlib.util
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -18,6 +19,8 @@ pytestmark = pytest.mark.unit
 # Audited from recipe-owned GBS, the resolved card sequence or pack length, and
 # the public command topology: (sequence_or_pack_length, global_batch_size, GPUs).
 TRAINING_THROUGHPUT_INPUTS = {
+    ("bagel", "pretrain", "H100"): (36864, 8, 8),
+    ("bagel", "pretrain_fsdp", "H100"): (36864, 32, 32),
     ("deepseek-v3", "pretrain_performance", "H100"): (4096, 16384, 1024),
     ("deepseek-v3", "pretrain_performance", "GB200"): (4096, 4096, 256),
     ("deepseek-v3", "pretrain_performance", "GB300"): (4096, 4096, 256),
@@ -28,17 +31,18 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("deepseek-v4-flash", "sft_long_context", "GB200"): (1024, 128, 64),
     ("deepseek-v4-flash", "pretrain_performance", "GB200"): (4096, 2048, 128),
     ("deepseek-v4-flash", "pretrain_performance", "GB300"): (4096, 2048, 128),
+    ("gemma-3-4b-it", "sft", "H100"): (4096, 32, 8),
     ("gemma-4-26b-a4b-it", "sft", "H100"): (4096, 32, 8),
     ("gemma-4-26b-a4b-it", "peft", "H100"): (4096, 32, 4),
-    ("glm5-2", "pretrain", "H100"): (2048, 1024, 352),
+    ("glm5", "pretrain", "GB200"): (4096, 1024, 192),
+    ("glm5", "sft", "GB200"): (8192, 8, 192),
+    ("glm5", "sft_long_context", "GB200"): (131072, 56, 192),
+    ("glm5", "peft", "GB200"): (2048, 32, 192),
+    ("glm5", "checkpoint_resume", "GB200"): (4096, 1024, 192),
     ("glm5-2", "pretrain", "GB200"): (4096, 1024, 192),
-    ("glm5-2", "sft", "H100"): (2048, 32, 416),
     ("glm5-2", "sft", "GB200"): (8192, 8, 192),
-    ("glm5-2", "sft_long_context", "H100"): (200000, 13, 608),
     ("glm5-2", "sft_long_context", "GB200"): (131072, 56, 192),
-    ("glm5-2", "peft", "H100"): (2048, 32, 208),
     ("glm5-2", "peft", "GB200"): (2048, 32, 192),
-    ("glm5-2", "checkpoint_resume", "H100"): (2048, 1024, 352),
     ("glm5-2", "checkpoint_resume", "GB200"): (4096, 1024, 192),
     ("gpt-oss-120b", "pretrain", "H100"): (4096, 512, 64),
     ("gpt-oss-120b", "sft", "H100"): (2048, 128, 32),
@@ -49,7 +53,6 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("gpt-oss-120b", "pretrain_performance", "GB300"): (4096, 1280, 64),
     ("gpt-oss-20b", "pretrain", "H100"): (4096, 512, 16),
     ("gpt-oss-20b", "sft", "H100"): (2048, 128, 8),
-    ("gpt-oss-20b", "sft_long_context", "H100"): (32768, 32, 8),
     ("gpt-oss-20b", "peft", "H100"): (2048, 128, 1),
     ("gpt-oss-20b", "checkpoint_resume", "H100"): (4096, 512, 16),
     ("moonlight-16b-a3b", "pretrain", "H100"): (4096, 1024, 16),
@@ -57,7 +60,7 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("moonlight-16b-a3b", "sft_long_context", "H100"): (8192, 128, 8),
     ("moonlight-16b-a3b", "peft", "H100"): (2048, 32, 4),
     ("moonlight-16b-a3b", "checkpoint_resume", "H100"): (4096, 1024, 16),
-    ("muse-glimmer-30b", "pretrain", "H100"): (4096, 2, 32),
+    ("muse-glimmer-30b", "pretrain", "H100"): (4096, 1024, 32),
     ("muse-glimmer-30b", "sft", "H100"): (4096, 8, 32),
     ("muse-glimmer-30b", "sft_long_context", "H100"): (8192, 8, 32),
     ("muse-glimmer-30b", "peft", "H100"): (8192, 8, 8),
@@ -94,6 +97,16 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("nemotron-3.5-lightning", "checkpoint_resume", "GB200"): (8192, 512, 8),
     ("nemotron-3.5-lightning", "pretrain_performance", "H100"): (8192, 512, 16),
     ("nemotron-3.5-lightning", "pretrain_performance", "GB200"): (8192, 512, 8),
+    ("nemotron-3.5-super-vl-120b-a12b", "pretrain", "H100"): (4096, 1280, 64),
+    ("nemotron-3.5-super-vl-120b-a12b", "sft", "H100"): (4096, 1280, 64),
+    ("nemotron-3.5-super-vl-120b-a12b", "sft", "GB200"): (4096, 1280, 64),
+    ("nemotron-3.5-super-vl-120b-a12b", "peft", "H100"): (4096, 16, 16),
+    ("nemotron-3.5-super-vl-120b-a12b", "peft", "GB200"): (4096, 16, 16),
+    ("nemotron-3.5-super-vl-120b-a12b", "checkpoint_resume", "H100"): (4096, 1280, 64),
+    ("nemotron-3.5-super-vl-120b-a12b-text-only", "sft", "H100"): (2048, 32, 64),
+    ("nemotron-3.5-super-vl-120b-a12b-text-only", "sft", "GB200"): (2048, 32, 64),
+    ("nemotron-3.5-super-vl-120b-a12b-text-only", "peft", "H100"): (2048, 16, 16),
+    ("nemotron-3.5-super-vl-120b-a12b-text-only", "peft", "GB200"): (2048, 16, 16),
     ("qwen3-30b-a3b", "pretrain", "H100"): (4096, 1024, 16),
     ("qwen3-30b-a3b", "pretrain", "GB200"): (4096, 512, 8),
     ("qwen3-30b-a3b", "sft", "H100"): (2048, 32, 16),
@@ -125,7 +138,9 @@ TRAINING_THROUGHPUT_INPUTS = {
     ("qwen3.8-27b", "sft", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "sft_long_context", "GB200"): (8192, 32, 16),
     ("qwen3.8-27b", "peft", "GB200"): (4096, 32, 4),
+    ("qwen3.8-27b", "checkpoint_resume", "GB200"): (4096, 32, 16),
     ("qwen3.8-27b", "pretrain_performance", "GB200"): (4096, 32, 16),
+    ("qwen3.8-27b", "pretrain_performance", "H100"): (4096, 32, 16),
 }
 
 
@@ -467,6 +482,7 @@ def test_weak_scaling_tps_matches_point_workload():
 def test_shipped_training_tps_matches_audited_token_slot_inputs():
     validator = _load_validator()
     verified_leaves = {}
+    published_commands = {}
 
     for card_path in sorted((REPO_ROOT / "examples" / "model_verification_cards").glob("*/card.yaml")):
         card = yaml.safe_load(card_path.read_text())
@@ -478,19 +494,28 @@ def test_shipped_training_tps_matches_audited_token_slot_inputs():
                 if "metrics" in leaf:
                     if leaf.get("status") == "verified":
                         verified_leaves[(slug, item_name, hardware)] = leaf
+                        published_commands[(slug, item_name, hardware)] = leaf["command"]
                     else:
                         assert leaf["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
                 for variant_name, variant in leaf.get("variants", {}).items():
                     if variant.get("status") == "verified":
                         verified_leaves[(slug, item_name, hardware, variant_name)] = variant
+                        published_commands[(slug, item_name, hardware, variant_name)] = variant.get(
+                            "command", leaf.get("command")
+                        )
                     else:
                         assert variant["metrics"]["last_10_steps_tokens_per_second_per_gpu_avg"] is None
                 if leaf.get("status") == "verified":
                     for point in leaf.get("points", []):
                         verified_leaves[(slug, item_name, hardware, point["num_gpus"])] = point
+                        published_commands[(slug, item_name, hardware, point["num_gpus"])] = point["command"]
 
     assert verified_leaves.keys() == TRAINING_THROUGHPUT_INPUTS.keys()
     for leaf_key, (sequence_or_pack_length, global_batch_size, total_gpus) in TRAINING_THROUGHPUT_INPUTS.items():
+        argv = shlex.split(published_commands[leaf_key])
+        published_gpus = int(argv[argv.index("--nodes") + 1]) * int(argv[argv.index("--gpus-per-node") + 1])
+        assert published_gpus == total_gpus, f"{leaf_key}: command requests {published_gpus} GPUs"
+
         metrics = verified_leaves[leaf_key]["metrics"]
         token_slots_per_step = sequence_or_pack_length * global_batch_size
         expected_tps_per_gpu = token_slots_per_step / (metrics["last_10_steps_step_time_ms_avg"] / 1000) / total_gpus

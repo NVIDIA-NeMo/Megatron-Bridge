@@ -184,6 +184,54 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["fp16"] is False
     assert overrides["cache_mla_latents"] is True
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
+    assert overrides["moe_expert_capacity_factor"] is None
+    assert overrides["moe_expert_rank_capacity_factor"] is None
+    assert overrides["moe_paged_stash"] is False
+    assert overrides["moe_ncclep_zero_copy"] is False
+    assert overrides["moe_pad_expert_input_to_capacity"] is False
+    assert overrides["moe_router_force_load_balancing"] is False
+    assert overrides["moe_router_force_biased"] is None
+    assert "moe_token_dispatcher_type" not in overrides
+    assert "moe_flex_dispatcher_backend" not in overrides
+
+
+@pytest.mark.parametrize("backend,zero_copy", [("hybridep", False), ("ncclep", True)])
+@pytest.mark.parametrize("forced_bias", [None, 0.0, 0.5, -0.5])
+def test_provider_inference_disables_dropping_without_changing_dispatcher(
+    text_generation, backend, zero_copy, forced_bias
+):
+    provider = types.SimpleNamespace(
+        moe_token_dispatcher_type="flex",
+        moe_flex_dispatcher_backend=backend,
+        moe_expert_capacity_factor=1.1 if backend == "hybridep" else None,
+        moe_expert_rank_capacity_factor=1.5,
+        moe_paged_stash=True,
+        moe_ncclep_zero_copy=zero_copy,
+        moe_pad_expert_input_to_capacity=backend == "hybridep",
+        moe_router_force_load_balancing=True,
+        moe_router_force_biased=forced_bias,
+    )
+    text_generation._apply_provider_parallelism(
+        provider,
+        tp=1,
+        pp=1,
+        ep=8,
+        etp=1,
+        sequence_parallel=False,
+        dtype=text_generation.torch.bfloat16,
+        attention_backend=None,
+        cache_mla_latents=None,
+        inference_moe_token_dispatcher_type=None,
+    )
+    assert provider.moe_expert_capacity_factor is None
+    assert provider.moe_expert_rank_capacity_factor is None
+    assert provider.moe_paged_stash is False
+    assert provider.moe_ncclep_zero_copy is False
+    assert provider.moe_pad_expert_input_to_capacity is False
+    assert provider.moe_router_force_load_balancing is False
+    assert provider.moe_router_force_biased is None
+    assert provider.moe_token_dispatcher_type == "flex"
+    assert provider.moe_flex_dispatcher_backend == backend
 
 
 def test_build_inference_config_rounds_max_requests_up_to_tp(text_generation):

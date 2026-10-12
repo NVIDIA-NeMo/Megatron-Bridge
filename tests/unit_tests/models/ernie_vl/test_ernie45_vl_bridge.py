@@ -534,7 +534,10 @@ class TestErnie45VLModelProvider:
 class TestErnieMultiTypeMoE:
     """Test ERNIE VL dual-pool MoE construction."""
 
-    def test_accepts_transformer_layer_kwargs(self):
+    @pytest.mark.parametrize(
+        "routing_kwargs", [{}, {"hash_moe_layer_threshold": None}, {"hash_moe_layer_threshold": 0}]
+    )
+    def test_accepts_transformer_layer_kwargs(self, routing_kwargs: dict[str, int | None]) -> None:
         config = SimpleNamespace(moe_intermediate_size=(64, 32), moe_shared_expert_intermediate_size=128)
         submodules = MultiTypeMoeSubmodules(
             text_moe_layer=object(),
@@ -552,6 +555,7 @@ class TestErnieMultiTypeMoE:
                 pg_collection=pg_collection,
                 is_mtp_layer=True,
                 name="decoder.layers.1.mlp",
+                **routing_kwargs,
             )
 
         assert layer.layer_number == 2
@@ -576,3 +580,9 @@ class TestErnieMultiTypeMoE:
         assert shared_call.kwargs["gate"] is False
         assert shared_call.kwargs["name"] == "decoder.layers.1.mlp.shared_experts"
         assert "is_mtp_layer" not in shared_call.kwargs
+
+    @pytest.mark.parametrize("threshold,config_hash_layers", [(1, 0), (None, 1), (0, 1)])
+    def test_rejects_unsupported_hash_routing(self, threshold: int | None, config_hash_layers: int) -> None:
+        config = SimpleNamespace(moe_num_hash_layers=config_hash_layers)
+        with pytest.raises(ValueError, match="does not support hash routing"):
+            ErnieMultiTypeMoE(config=config, hash_moe_layer_threshold=threshold)

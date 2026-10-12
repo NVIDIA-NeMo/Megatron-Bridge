@@ -117,6 +117,8 @@ class ErnieMultiTypeMoE(MegatronModule):
         pg_collection: Process group collection for parallelism.
         is_mtp_layer: Whether this MoE is used inside an MTP layer.
         name: Optional module instance name passed top-down by Megatron-Core.
+        hash_moe_layer_threshold: Compatibility argument from Megatron-Core.
+            ERNIE uses learned modality-specific routing; hash routing is unsupported.
     """
 
     def __init__(
@@ -127,7 +129,13 @@ class ErnieMultiTypeMoE(MegatronModule):
         pg_collection: Optional[ProcessGroupCollection] = None,
         is_mtp_layer: bool = False,
         name: str | None = None,
+        hash_moe_layer_threshold: int | None = None,
     ):
+        # TransformerLayer passes this argument even when hash routing is disabled.
+        # The dual-pool forward does not supply token IDs to the per-pool routers.
+        if (hash_moe_layer_threshold or 0) > 0 or getattr(config, "moe_num_hash_layers", 0) > 0:
+            raise ValueError("ERNIE dual-pool MoE does not support hash routing")
+
         super().__init__(config=config)
         self.layer_number = layer_number
         self.is_mtp_layer = is_mtp_layer

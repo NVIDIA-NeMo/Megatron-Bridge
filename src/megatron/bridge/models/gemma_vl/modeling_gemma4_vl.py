@@ -257,6 +257,7 @@ class Gemma4VLModel(MegatronModule):
         inputs_embeds: Optional[torch.FloatTensor] = None,
         pixel_values: Optional[torch.Tensor] = None,
         image_position_ids: Optional[torch.LongTensor] = None,
+        mm_token_type_ids: Optional[torch.LongTensor] = None,
         input_features: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         runtime_gather_output: Optional[bool] = None,
@@ -269,10 +270,11 @@ class Gemma4VLModel(MegatronModule):
         if self.pre_process:
             if input_ids is not None:
                 multimodal_mask = input_ids == self.config.image_token_id
-                if hasattr(self.config, "audio_token_id"):
+                audio_token_id = getattr(self.config, "audio_token_id", None)
+                if audio_token_id is not None:
                     multimodal_mask = torch.logical_or(
                         multimodal_mask,
-                        input_ids == self.config.audio_token_id,
+                        input_ids == audio_token_id,
                     )
                 if multimodal_mask.any():
                     lm_input_ids = input_ids.clone()
@@ -308,7 +310,11 @@ class Gemma4VLModel(MegatronModule):
 
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [S, B, H]
 
-        attention_mask = self._compute_attention_mask(input_ids) if input_ids is not None else attention_mask
+        attention_mask = (
+            self._compute_attention_mask(input_ids, mm_token_type_ids=mm_token_type_ids)
+            if input_ids is not None
+            else attention_mask
+        )
 
         pg_coll = getattr(self.config, "_pg_collection", None)
         if pg_coll is not None:
@@ -363,10 +369,11 @@ class Gemma4VLModel(MegatronModule):
                 for param in getattr(self, attr).parameters():
                     param.requires_grad = False
 
-    def _compute_attention_mask(self, input_ids: torch.Tensor) -> Optional[torch.Tensor]:
+    def _compute_attention_mask(
+        self, input_ids: torch.Tensor, mm_token_type_ids: Optional[torch.Tensor] = None
+    ) -> Optional[torch.Tensor]:
         """Compute HF-style attention masks for full and sliding Gemma4 layers."""
-        if not self.pre_process:
-            return None
+        # Every pipeline stage receives token IDs and must preserve image attention.
         batch_size, seq_len = input_ids.shape
         causal_mask = torch.tril(
             torch.ones((batch_size, 1, seq_len, seq_len), dtype=torch.bool, device=input_ids.device)
@@ -383,7 +390,11 @@ class Gemma4VLModel(MegatronModule):
                 block_ids.unsqueeze(-1) > 0,
             )
 
-        bidir = _bidirectional_block_mask(input_ids == self.config.image_token_id)
+        if mm_token_type_ids is not None:
+            token_mask = (mm_token_type_ids == 1) | (mm_token_type_ids == 2)
+        else:
+            token_mask = input_ids == self.config.image_token_id
+        bidir = _bidirectional_block_mask(token_mask)
 
         # blocked[b, 0, i, j] = True where attention is prevented:
         # causal blocks j > i; image tokens within the same block override this

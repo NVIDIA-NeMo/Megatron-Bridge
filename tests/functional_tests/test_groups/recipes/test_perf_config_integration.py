@@ -199,14 +199,14 @@ class TestPerfConfigIntegration:
             (
                 "gpt_oss",
                 ("megatron.bridge.perf_recipes.gpt_oss.gb200.gpt_oss:gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"),
-                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_EP_HT_EM_PULL_PUSH": 1},
             ),
             (
                 "kimi",
                 "megatron.bridge.perf_recipes.kimi.gb300.kimi_k2:kimi_k2_pretrain_256gpu_gb300_fp8mx_config",
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-                    "NVLINK_DOMAIN_SIZE": 72,
+                    "NCCL_EP_HT_EM_PULL_PUSH": 1,
                     "NVTE_NORM_FWD_USE_CUDNN": 1,
                 },
             ),

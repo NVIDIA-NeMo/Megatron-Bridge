@@ -57,8 +57,12 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
+    # Keep these guides in GitHub, but omit them from the published HTML.
+    "models/nemotron/nemotron3.5-super-vl.md",
+    "models/nemotron/nemotron3.5-super-vl-text-only.md",
     "skills/linting-and-formatting/SKILL.md",
     "skills/parity-testing/SKILL.md",
+    "skills/pr-review/SKILL.md",
     "skills/**/BENCHMARK.md",
     "skills/**/skill-card.md",
 ]

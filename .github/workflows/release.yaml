@@ -70,8 +70,9 @@ concurrency:
 
 jobs:
   pre-flight:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@cf5acebace78c7c339bc1f804357a991336f1c4d # v1.8.10
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@037094bcc9138c72bc125418e6e3653f9e1c4160 # v1.11.0
     with:
+      workflow_ref: 037094bcc9138c72bc125418e6e3653f9e1c4160 # pragma: allowlist secret
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
@@ -80,7 +81,7 @@ jobs:
     secrets: inherit  # pragma: allowlist secret
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@refs/pull/566/head # exact audited SHA 4f53d6ac1833b0a87b3d73a4f3b2fd4c169118eb
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@4ba12f712f03d20c9fe60ddb959117ceec7fdd74
     needs: [pre-flight]
     if: |
       !cancelled() && !failure()
@@ -107,8 +108,11 @@ jobs:
       docs-target-path: nemo/megatron-bridge
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
-      build-wheel-env: '{"TMS_CUDA_MAJOR":"13"}'
-      extra-no-build-isolation-packages: "grpcio-tools"
+      # The packaging image's NCCL headers do not support TE's optional EP extension.
+      # This wheel-packaging job does not exercise expert-parallel communication.
+      build-wheel-env: '{"TMS_CUDA_MAJOR":"13","NVTE_WITH_NCCL_EP":"0"}'
+      # TE needs the pinned Frontend headers before its non-isolated build starts.
+      extra-no-build-isolation-packages: "grpcio-tools nvidia-cudnn-frontend==1.28.0"
       restrict-to-admins: true
     secrets: inherit  # pragma: allowlist secret
 
