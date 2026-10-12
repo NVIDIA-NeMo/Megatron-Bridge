@@ -79,10 +79,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Pretrain · H100</strong>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -165,7 +165,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-02</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -211,7 +211,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-02</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -232,35 +232,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-pretrain-h100" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Pretrain · H100</h4>
-        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-25</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.368271</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.918807</dd>
+            <dd>None</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>60,028.320 ms</dd>
+            <dd>None ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>114.330 TFLOP/s/GPU</dd>
+            <dd>None TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,364.689 tokens/s/GPU</dd>
+            <dd>None tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -276,7 +276,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 200 finite optimizer steps on 64 H100s with zero skipped or NaN iterations, full checkpoints at steps 100 and 200, and a fresh final-checkpoint native inference reload. DataComp image-caption training warm-started from converted pretrained weights at sequence length 4096, GBS/MBS 1280/1, TP2/PP2/EP32/ETP1, natural HybridEP routing and FP32 optimizer state. Shared MTP uses two prediction depths and loss scale 0.3. Native finalization and update preflights passed for this workload. Rates are padded token slots per GPU, not actual supervised-token counts; production supervised totals were not recorded. This is bounded support verification, not full convergence.
+        <p>The final-checkpoint replay was canceled before completing the recorded 200-step workload. No completed pretraining or final-checkpoint reload is claimed for this revision. Further pretraining/resume verification is deferred; results from the previous checkpoint are not carried forward.
 </p>
       </section>
     </article>
@@ -321,7 +321,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Refreshed DataComp pretraining used 64 GB200 GPUs, pretrained weights, natural HybridEP routing, FP32 optimizer state, TP2/PP1/EP64/ETP1, sequence length 8192, GBS/MBS 512/1 and selective moe_act recompute. The original 500-step schedule reached step 475 before its four-hour limit. A fresh-root continuation from step 250 reached step 500 and saved a complete final checkpoint, whose native model reload passed. This is not an uninterrupted 500-step reference. One of 1125 matched loss observations exceeded the unchanged resume tolerance; independent replay remains pending, so no verified pretrain/resume pair is claimed.
+        <p>Not rerun for this revision: the previous card had no verified command for this item. No final-checkpoint pretraining result is claimed.
 </p>
       </section>
     </article>
@@ -333,30 +333,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-03</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.375419</dd>
+            <dd>3.40958</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.958105</dd>
+            <dd>1.961229</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>42,907.800 ms</dd>
+            <dd>42,475.750 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>159.840 TFLOP/s/GPU</dd>
+            <dd>161.490 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,909.210 tokens/s/GPU</dd>
+            <dd>1,928.630 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -372,7 +372,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 200 finite optimizer steps on 64 H100 GPUs with zero skipped or NaN iterations and a complete final checkpoint. DataComp image-caption training uses sequence length 4096 and GBS/MBS 1280/1, natural HybridEP routing, FP32 optimizer state, and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Native finalization/update preflights passed. Final export and native HF reload are checked separately. Token rates are padded slots, not measured supervised-token totals. This verifies image-caption training, not video training or full convergence.
+        <p>Completed 200 finite optimizer steps on 64 H100 GPUs with zero skipped or NaN iterations and a complete final checkpoint. DataComp image-caption training uses sequence length 4096 and GBS/MBS 1280/1, natural HybridEP routing, FP32 optimizer state, and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Final export and native HF reload are checked separately. Token rates are padded slots, not measured supervised-token totals. This verifies image-caption training, not video training or full convergence.
 </p>
       </section>
     </article>
@@ -384,30 +384,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-04</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.428863</dd>
+            <dd>3.465678</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.934663</dd>
+            <dd>1.936599</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>55,224.620 ms</dd>
+            <dd>55,619.840 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>124.210 TFLOP/s/GPU</dd>
+            <dd>123.330 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,483.396 tokens/s/GPU</dd>
+            <dd>1,472.856 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -423,7 +423,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 200 finite optimizer steps on 64 GB200 GPUs with zero skipped or NaN iterations and a complete final checkpoint. DataComp image-caption training uses sequence length 4096 and GBS/MBS 1280/1, natural HybridEP routing, FP32 optimizer state, and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Native finalization/update preflights passed. Final export and native HF reload are checked separately. Token rates are padded slots, not measured supervised-token totals. This verifies image-caption training, not video training or full convergence.
+        <p>Completed 200 finite optimizer steps on 64 GB200 GPUs with zero skipped or NaN iterations and a complete final checkpoint. DataComp image-caption training uses sequence length 4096 and GBS/MBS 1280/1, natural HybridEP routing, FP32 optimizer state, and two shared MTP prediction depths at loss scale 0.3. The vision encoder is frozen; the language model and projection are trainable. Final export and native HF reload are checked separately. Token rates are padded slots, not measured supervised-token totals. This verifies image-caption training, not video training or full convergence.
 </p>
       </section>
     </article>
@@ -525,30 +525,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-24</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-03</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>2.483866</dd>
+            <dd>2.497767</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.596869</dd>
+            <dd>2.596731</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>5,634.590 ms</dd>
+            <dd>5,624.810 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>60.860 TFLOP/s/GPU</dd>
+            <dd>60.950 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>726.938 tokens/s/GPU</dd>
+            <dd>728.202 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -564,7 +564,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 500 finite LoRA optimizer steps on 16 H100 GPUs with zero skipped or NaN iterations and a complete final native adapter checkpoint. DataComp image-caption training uses sequence length 4096, GBS/MBS 16/1, rank 32, alpha 32, zero adapter dropout and language-only targets. Native save/reload and merge preserve updated router expert-bias buffers as well as adapter tensors. Full merged HF reload and bounded image generation passed; stronger post-merge numerical diagnostics are not all passing. Standalone HF adapter export does not preserve these trained router buffers; use native reload and full-model merge/export. Token rates are padded slots, not measured supervised-token totals.
+        <p>Completed 500 finite LoRA optimizer steps on 16 H100 GPUs with zero skipped or NaN iterations and a complete final native adapter checkpoint. DataComp image-caption training uses sequence length 4096, GBS/MBS 16/1, rank 32, alpha 32, zero adapter dropout and language-only targets. Native save/reload and merge preserve updated router expert-bias buffers as well as adapter tensors. Full merged HF reload and bounded image generation passed (&quot;Tensorboard&quot;, 3 tokens under a 32-token maximum). All eight post-merge image/video fixtures passed next-token and supervised-position cosine gates without router replay; minimum next-token cosine was 0.9999897480 and minimum supervised cosine was 0.9948826432. Standalone HF adapter export does not preserve these trained router buffers; use native reload and full-model merge/export. Token rates are padded slots, not measured supervised-token totals.
 </p>
       </section>
     </article>
@@ -576,30 +576,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-09-24</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-04</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>3.45039</dd>
+            <dd>3.499214</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>2.059837</dd>
+            <dd>2.047297</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>3,640.690 ms</dd>
+            <dd>3,820.530 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>94.230 TFLOP/s/GPU</dd>
+            <dd>89.760 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>1,125.061 tokens/s/GPU</dd>
+            <dd>1,072.103 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -615,7 +615,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Completed 500 finite LoRA optimizer steps on 16 GB200 GPUs with zero skipped or NaN iterations and a complete final native adapter checkpoint. DataComp image-caption training uses sequence length 4096, GBS/MBS 16/1, rank 32, alpha 32, zero adapter dropout and language-only targets. Native save/reload and merge preserve updated router expert-bias buffers as well as adapter tensors. Full merged HF reload and bounded image generation passed; stronger post-merge numerical diagnostics are not all passing. Standalone HF adapter export does not preserve these trained router buffers; use native reload and full-model merge/export. Token rates are padded slots, not measured supervised-token totals.
+        <p>Completed 500 finite LoRA optimizer steps on 16 GB200 GPUs with zero skipped or NaN iterations and a complete final native adapter checkpoint. DataComp image-caption training uses sequence length 4096, GBS/MBS 16/1, rank 32, alpha 32, zero adapter dropout and language-only targets. Native save/reload and merge preserve updated router expert-bias buffers as well as adapter tensors. Full merged HF reload and bounded image generation passed (&quot;Tensorboard&quot;, 3 tokens under a 32-token maximum). All eight post-merge image/video fixtures passed next-token and supervised-position cosine gates without router replay; minimum next-token cosine was 0.9999402165 and minimum supervised cosine was 0.9954361916. One teacher-forced top-1 mismatch remained; cosine correlation does not establish probability equality. Standalone HF adapter export does not preserve these trained router buffers; use native reload and full-model merge/export. Token rates are padded slots, not measured supervised-token totals.
 </p>
       </section>
     </article>

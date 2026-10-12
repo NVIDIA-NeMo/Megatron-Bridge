@@ -14,9 +14,10 @@ summary: >
   2048-token offline packs aligned to eight tokens, and assistant-only loss.
   H100 and GB200 use byte-identical packed training and validation files;
   their training metrics count padded token slots, not supervised tokens.
-  The public revision is intentionally blank; results must not be interpreted
-  as bound to an immutable public release revision. Refreshed SFT and PEFT,
-  dependent export, merge, and reload checks are recorded for H100 and GB200.
+  Results use the recorded final-checkpoint revision. The HF ID remains the
+  release-facing name; resolving that name to this revision has not been
+  independently verified. Refreshed SFT and PEFT, dependent export, merge,
+  and reload checks are recorded for H100 and GB200.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, manual_forward_pass, inference]
@@ -30,7 +31,8 @@ verification_index:
       unverified: [pretrain, sft_long_context, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
-  hf_revision:
+  # Immutable checkpoint commit, not a credential.
+  hf_revision: 57caf4206b81bdb3f38e61eff60dc0ba248643f7  # pragma: allowlist secret
   architecture: NemotronHForCausalLM
   min_transformers_version: "5.12.1"
 verification_environment:
@@ -55,7 +57,7 @@ items:
       --text-only --trust-remote-code --torch-dtype bfloat16
       --tp 1 --pp 2 --ep 2 --etp 1
       --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron
-    last_verified: 2026-09-23
+    last_verified: 2026-10-02
     expected_result: >
       Distributed GPU import and paired export passed on H100 and GB200.
       All 42,683 language tensors, including 1,040 MTP tensors, matched in
@@ -81,7 +83,7 @@ items:
       --tp 1 --pp 2 --ep 2 --etp 1 --distributed-save
       --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron
       --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/hf
-    last_verified: 2026-09-23
+    last_verified: 2026-10-02
     expected_result: >
       Exported a standalone native NemotronHForCausalLM checkpoint with
       unprefixed language and MTP weights and zero media tensors. All 42,683
@@ -100,7 +102,7 @@ items:
       --hf-logits-path work/model-verification/nemotron-3.5-super-vl-text-only/hf-reference.pt
       --prompt $'<|im_start|>system\n<|im_end|>\n<|im_start|>user\nWhat is two plus two?<|im_end|>\n<|im_start|>assistant\n<think></think>'
       --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code
-    last_verified: 2026-09-27
+    last_verified: 2026-10-03
     expected_result: >
       The maintained public comparison passed on four GB200 GPUs with the
       native 22-token chat prompt and a separately saved native-VL HF
@@ -108,12 +110,14 @@ items:
       compares that reference with the saved text-only Megatron checkpoint;
       standalone text HF reload is verified separately below.
       The next token matches: 16489 (Two).
-      Cosine similarity is 0.999996; maximum and mean absolute logit
-      differences are 0.500000 and 0.063002. Bash ANSI-C quoting preserves
+      Cosine similarity is 0.999995; maximum and mean absolute logit
+      differences are 0.500000 and 0.103587. Bash ANSI-C quoting preserves
       the native prompt's newline characters.
       This is single-prompt forward correlation, not strict probability
       equality, generation, or MTP forward verification. Regenerate the HF
-      reference if the checkpoint changes. The public revision remains unbound.
+      reference if the checkpoint changes. This replay regenerated the saved
+      reference from the recorded revision; the exact command consumes that
+      file and does not contain an --hf-revision argument.
   inference:
     status: verified
     precision: bf16
@@ -126,7 +130,7 @@ items:
       --tp 1 --pp 1 --ep 4 --etp 1 --max_new_tokens 32 --max_seq_length 256
       --temperature 0 --top_k 1 --use-coordinator --coordinator-host 127.0.0.1
       --return-log-probs --skip-prompt-log-probs --trust-remote-code
-    last_verified: 2026-09-27
+    last_verified: 2026-10-03
     expected_result: >
       The maintained cached text-generation path completed on four GB200
       GPUs, using the same native 22-token chat prompt as the comparison.
@@ -198,15 +202,15 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-04
       metrics:
-        initial_loss: 0.6722764
-        final_loss: 0.5672588
-        last_10_steps_step_time_ms_avg: 3792.22
-        last_10_steps_model_tflops_per_gpu_avg: 23.57
-        last_10_steps_tokens_per_second_per_gpu_avg: 270.02652799679345
+        initial_loss: 0.6729569
+        final_loss: 0.5676078
+        last_10_steps_step_time_ms_avg: 3797.89
+        last_10_steps_model_tflops_per_gpu_avg: 24.97
+        last_10_steps_tokens_per_second_per_gpu_avg: 269.62339614891425
       expected_result: >
-        Completed a fresh-root continuation from the original complete step-250 checkpoint through step 500 after the reference run failed at final save. All 1250 loss comparisons across steps 251-500 passed the unchanged 1% plus 1e-6 bound. Metrics below describe only that continuation, not an uninterrupted 500-step execution.
+        Recreated the prerequisite steps 1-250 from the recorded model revision with the original 500-step learning-rate schedule, then ran the recorded fresh-root continuation through step 500, restoring optimizer and RNG state. Metrics describe only steps 251-500, not an uninterrupted 500-step execution. No matched uninterrupted resume-loss comparison is claimed for this revision.
         Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1.
         Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3.
         Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality.
@@ -243,13 +247,13 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-05
       metrics:
-        initial_loss: 0.5975891
-        final_loss: 0.5676602
-        last_10_steps_step_time_ms_avg: 6013.67
-        last_10_steps_model_tflops_per_gpu_avg: 14.42
-        last_10_steps_tokens_per_second_per_gpu_avg: 170.2787149943379
+        initial_loss: 0.6110347
+        final_loss: 0.5677683
+        last_10_steps_step_time_ms_avg: 6772.68
+        last_10_steps_model_tflops_per_gpu_avg: 12.95
+        last_10_steps_tokens_per_second_per_gpu_avg: 151.1956861980782
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1.
@@ -277,7 +281,7 @@ items:
           --prompt "What is two plus two?" --max-new-tokens 32
           --chat-template --disable-thinking --device cuda --device-map balanced
           --dtype bfloat16 --require-gpu-only
-      last_verified: 2026-09-27
+      last_verified: 2026-10-04
       expected_result: >
         Exported the final step-500 language checkpoint through its standalone
         native text source, retaining 42,683 language tensors including 1,040
@@ -289,7 +293,9 @@ items:
         completion was "Two plus two equals four.". This validates full-model
         export and one greedy completion, not native HF MTP execution or broad
         numerical equivalence. The separate matched six-position forward
-        comparison also passed without changing numerical tolerances.
+        comparison also passed without changing numerical tolerances:
+        next-token cosine 0.9999944568, minimum supervised cosine 0.9912286997.
+        These are natural-routing results, without router replay.
     GB200:
       status: verified
       precision: bf16
@@ -310,7 +316,7 @@ items:
           --prompt "What is two plus two?" --max-new-tokens 32
           --chat-template --disable-thinking --device cuda --device-map balanced
           --dtype bfloat16 --require-gpu-only
-      last_verified: 2026-09-27
+      last_verified: 2026-10-05
       expected_result: >
         Exported the final step-500 language checkpoint through its standalone
         native text source, retaining 42,683 language tensors including 1,040
@@ -322,7 +328,9 @@ items:
         completion was "Two plus two equals four.". This validates full-model
         export and one greedy completion, not native HF MTP execution or broad
         numerical equivalence. The separate matched six-position forward
-        comparison also passed without changing numerical tolerances.
+        comparison also passed without changing numerical tolerances:
+        next-token cosine 0.9999669790, minimum supervised cosine 0.9993302822.
+        These are natural-routing results, without router replay.
   sft_long_context:
     H100:
       status: unverified
@@ -385,13 +393,13 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-03
       metrics:
-        initial_loss: 0.6401206
-        final_loss: 0.6625465
-        last_10_steps_step_time_ms_avg: 8122.16
-        last_10_steps_model_tflops_per_gpu_avg: 21.22
-        last_10_steps_tokens_per_second_per_gpu_avg: 252.14967447083043
+        initial_loss: 0.6535465
+        final_loss: 0.6623005
+        last_10_steps_step_time_ms_avg: 7977.79
+        last_10_steps_model_tflops_per_gpu_avg: 21.58
+        last_10_steps_tokens_per_second_per_gpu_avg: 256.71269862957035
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super PEFT recipe on 16 H100 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1.
@@ -430,13 +438,13 @@ items:
         logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-27
+      last_verified: 2026-10-04
       metrics:
-        initial_loss: 0.6392546
-        final_loss: 0.6631947
-        last_10_steps_step_time_ms_avg: 13720.5
-        last_10_steps_model_tflops_per_gpu_avg: 12.72
-        last_10_steps_tokens_per_second_per_gpu_avg: 149.26569731423783
+        initial_loss: 0.6527809
+        final_loss: 0.6626244
+        last_10_steps_step_time_ms_avg: 13177.4
+        last_10_steps_model_tflops_per_gpu_avg: 13.12
+        last_10_steps_tokens_per_second_per_gpu_avg: 155.41760893651252
       expected_result: >
         Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint.
         Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model's converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1.

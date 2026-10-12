@@ -7,15 +7,17 @@ summary: >
   performance result; reported timing and throughput metrics are functional
   verification observations, not standalone optimized performance results.
   Refreshed verification uses the release-facing model name and the official
-  container below. The public revision is intentionally blank; these results
-  do not establish correspondence to an immutable public release revision.
+  container below with the recorded final-checkpoint revision. The HF ID is
+  the release-facing name; resolving that name to this revision has not been
+  independently verified.
   The model reuses the Omni image/video stack without audio and retains a
   separate temporal embedder. Training uses fixed-resolution images;
   inference exercises dynamic-resolution processing. This is bounded support
   verification, not a cross-model convergence comparison. Stronger visual
-  parity diagnostics and the GB200 resume comparison are not all passing.
-  CPU conversion and long-context training are deferred. The companion card
-  separately covers text-only workflows.
+  post-SFT natural-routing parity failed on GB200; expert-ID replay passed
+  the cosine gate and is reported separately. Pretraining and checkpoint
+  resume are unverified for this revision. CPU conversion and long-context
+  training are deferred. The companion card separately covers text-only workflows.
 verification_index:
   model_level:
     verified:
@@ -28,14 +30,15 @@ verification_index:
       - megatron_to_hf_cpu
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
-      unverified: [sft_long_context]
+      verified: [sft, sft_export_inference, peft]
+      unverified: [pretrain, sft_long_context, checkpoint_resume]
     GB200:
       verified: [sft, sft_export_inference, peft]
       unverified: [pretrain, sft_long_context, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16
-  hf_revision:
+  # Immutable checkpoint commit, not a credential.
+  hf_revision: 57caf4206b81bdb3f38e61eff60dc0ba248643f7  # pragma: allowlist secret
   architecture: NemotronH_Omni_Reasoning_V3
   min_transformers_version: "5.12.1"
 verification_environment:
@@ -63,7 +66,7 @@ items:
       --megatron-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-megatron
       --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1
       --trust-remote-code
-    last_verified: 2026-09-23
+    last_verified: 2026-10-02
     expected_result: >
       Distributed BF16 GPU import and paired export passed with all 43,079
       source tensors exact in keys, shapes, dtypes and values. Compared
@@ -92,7 +95,7 @@ items:
       --hf-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/gpu-hf-export
       --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1
       --trust-remote-code --distributed-save
-    last_verified: 2026-09-23
+    last_verified: 2026-10-02
     expected_result: >
       Saved round-trip comparison passed for all 43,079 tensors with no
       missing or extra keys and zero value differences. The exported package
@@ -110,18 +113,18 @@ items:
       --hf-logits-path work/model-verification/nemotron-3.5-super-vl-120b-a12b/hf-reference.pt
       --image_path docs/images/mtp_loss.png --prompt "Describe this image."
       --tp 1 --pp 1 --ep 4 --etp 1 --trust-remote-code
-    last_verified: 2026-09-23
+    last_verified: 2026-10-03
     expected_result: >
       The maintained comparison passed for this rectangular-image prompt on
       four GB200 GPUs using a separately saved native HF reference from the
       same checkpoint and inputs. The next token matches: 1784 (The).
-      Cosine similarity is 0.999980. Maximum and mean absolute logit
-      differences are 1.250000 and 0.216821. The input had 314 text tokens
+      Cosine similarity is 0.999990. Maximum and mean absolute logit
+      differences are 0.750000 and 0.130255. The input had 314 text tokens
       and 1160 vision patches. This establishes single-prompt functional
       correlation, not strict probability equality or comprehensive visual
-      parity. Stronger image/video diagnostics are not all passing. The
-      reference must be regenerated for any changed checkpoint; the blank
-      public revision does not bind these results to a public release commit.
+      parity. The saved HF reference was regenerated from the recorded
+      checkpoint revision; the exact replay command consumes that file and
+      does not contain an --hf-revision argument.
 
   inference:
     status: verified
@@ -134,7 +137,7 @@ items:
       --image_path docs/images/mtp_loss.png --prompt "Describe this image."
       --tp 1 --pp 1 --ep 4 --etp 1 --max_new_tokens 32
       --deterministic --trust_remote_code
-    last_verified: 2026-09-23
+    last_verified: 2026-10-03
     expected_result: >
       Native dynamic-resolution image generation completed on four GB200
       GPUs with deterministic execution requested. The literal completion was
@@ -146,7 +149,7 @@ items:
 
   pretrain:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         moe_dispatcher: hybridep
@@ -168,24 +171,18 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-pretrain-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-25
+      last_verified: null
       metrics:
-        initial_loss: 3.368271
-        final_loss: 1.918807
-        last_10_steps_step_time_ms_avg: 60028.32
-        last_10_steps_model_tflops_per_gpu_avg: 114.33
-        last_10_steps_tokens_per_second_per_gpu_avg: 1364.6892000309188
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Completed 200 finite optimizer steps on 64 H100s with zero skipped or
-        NaN iterations, full checkpoints at steps 100 and 200, and a fresh
-        final-checkpoint native inference reload. DataComp image-caption
-        training warm-started from converted pretrained weights at sequence
-        length 4096, GBS/MBS 1280/1, TP2/PP2/EP32/ETP1, natural HybridEP
-        routing and FP32 optimizer state. Shared MTP uses two prediction
-        depths and loss scale 0.3. Native finalization and update preflights
-        passed for this workload. Rates are padded token slots per GPU, not
-        actual supervised-token counts; production supervised totals were
-        not recorded. This is bounded support verification, not full convergence.
+        The final-checkpoint replay was canceled before completing the recorded
+        200-step workload. No completed pretraining or final-checkpoint reload
+        is claimed for this revision. Further pretraining/resume verification
+        is deferred; results from the previous checkpoint are not carried forward.
 
     GB200:
       status: unverified
@@ -201,15 +198,8 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Refreshed DataComp pretraining used 64 GB200 GPUs, pretrained weights,
-        natural HybridEP routing, FP32 optimizer state, TP2/PP1/EP64/ETP1,
-        sequence length 8192, GBS/MBS 512/1 and selective moe_act recompute.
-        The original 500-step schedule reached step 475 before its four-hour
-        limit. A fresh-root continuation from step 250 reached step 500 and
-        saved a complete final checkpoint, whose native model reload passed.
-        This is not an uninterrupted 500-step reference. One of 1125 matched
-        loss observations exceeded the unchanged resume tolerance; independent
-        replay remains pending, so no verified pretrain/resume pair is claimed.
+        Not rerun for this revision: the previous card had no verified command
+        for this item. No final-checkpoint pretraining result is claimed.
 
   sft:
     H100:
@@ -236,20 +226,20 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-sft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-23
+      last_verified: 2026-10-03
       metrics:
-        initial_loss: 3.375419
-        final_loss: 1.958105
-        last_10_steps_step_time_ms_avg: 42907.8
-        last_10_steps_model_tflops_per_gpu_avg: 159.84
-        last_10_steps_tokens_per_second_per_gpu_avg: 1909.2099804697514
+        initial_loss: 3.40958
+        final_loss: 1.961229
+        last_10_steps_step_time_ms_avg: 42475.75
+        last_10_steps_model_tflops_per_gpu_avg: 161.49
+        last_10_steps_tokens_per_second_per_gpu_avg: 1928.6298652760695
       expected_result: >
         Completed 200 finite optimizer steps on 64 H100 GPUs with zero skipped
         or NaN iterations and a complete final checkpoint. DataComp image-caption
         training uses sequence length 4096 and GBS/MBS 1280/1, natural HybridEP
         routing, FP32 optimizer state, and two shared MTP prediction depths at
         loss scale 0.3. The vision encoder is frozen; the language model and
-        projection are trainable. Native finalization/update preflights passed.
+        projection are trainable.
         Final export and native HF reload are checked separately. Token rates
         are padded slots, not measured supervised-token totals. This verifies
         image-caption training, not video training or full convergence.
@@ -275,20 +265,20 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-sft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-23
+      last_verified: 2026-10-04
       metrics:
-        initial_loss: 3.428863
-        final_loss: 1.934663
-        last_10_steps_step_time_ms_avg: 55224.62
-        last_10_steps_model_tflops_per_gpu_avg: 124.21
-        last_10_steps_tokens_per_second_per_gpu_avg: 1483.39635474178
+        initial_loss: 3.465678
+        final_loss: 1.936599
+        last_10_steps_step_time_ms_avg: 55619.84
+        last_10_steps_model_tflops_per_gpu_avg: 123.33
+        last_10_steps_tokens_per_second_per_gpu_avg: 1472.8557291786526
       expected_result: >
         Completed 200 finite optimizer steps on 64 GB200 GPUs with zero skipped
         or NaN iterations and a complete final checkpoint. DataComp image-caption
         training uses sequence length 4096 and GBS/MBS 1280/1, natural HybridEP
         routing, FP32 optimizer state, and two shared MTP prediction depths at
         loss scale 0.3. The vision encoder is frozen; the language model and
-        projection are trainable. Native finalization/update preflights passed.
+        projection are trainable.
         Final export and native HF reload are checked separately. Token rates
         are padded slots, not measured supervised-token totals. This verifies
         image-caption training, not video training or full convergence.
@@ -316,19 +306,19 @@ items:
           --max-new-tokens 32 --chat-template --disable-thinking
           --separate-image-processing --trust-remote-code
           --device cuda --device-map balanced --dtype bfloat16 --require-gpu-only
-      last_verified: 2026-09-23
+      last_verified: 2026-10-05
       expected_result: >
         Exported the final step-200 full-SFT checkpoint, retaining the native
         model package and reasoning-parser file. Strict Transformers reload
         checked missing, unexpected and mismatched keys, covered 1453 modules,
         and passed GPU-only placement on four H100 GPUs. Greedy generation
-        stopped at EOS after exactly 7 tokens under the 32-token maximum.
-        The literal completion was "Losses of the two models". Export used
+        stopped at EOS after exactly 6 tokens under the 32-token maximum.
+        The literal completion was "Losses of the model". Export used
         the leaf Bridge commit; subsequent HF inference used
         e2cf6cbb30f3c93d99e727f8a12c143324308012.
         This verifies export and one native HF image completion, not
-        HF/Bridge numerical equality. Separate stronger post-SFT visual
-        forward diagnostics have failures and are not reclassified as passing.
+        HF/Bridge numerical equality; no additional H100 post-SFT numerical
+        parity result is claimed here.
 
     GB200:
       status: verified
@@ -352,19 +342,24 @@ items:
           --max-new-tokens 32 --chat-template --disable-thinking
           --separate-image-processing --trust-remote-code
           --device cuda --device-map balanced --dtype bfloat16 --require-gpu-only
-      last_verified: 2026-09-23
+      last_verified: 2026-10-05
       expected_result: >
         Exported the final step-200 full-SFT checkpoint, retaining the native
         model package and reasoning-parser file. Strict Transformers reload
         checked missing, unexpected and mismatched keys, covered 1453 modules,
         and passed GPU-only placement on four GB200 GPUs. Greedy generation
-        stopped at EOS after exactly 7 tokens under the 32-token maximum.
-        The literal completion was "Losses of the two models". Export used
+        stopped at EOS after exactly 11 tokens under the 32-token maximum.
+        The literal completion was "Losses of mtp_1 and lm". Export used
         the leaf Bridge commit; subsequent HF inference used
         e2cf6cbb30f3c93d99e727f8a12c143324308012.
         This verifies export and one native HF image completion, not
-        HF/Bridge numerical equality. Separate stronger post-SFT visual
-        forward diagnostics have failures and are not reclassified as passing.
+        HF/Bridge numerical equality. A separate eight-fixture image/video
+        comparison failed natural-routing cosine correlation at 4 of 73
+        supervised positions (minimum 0.9761264324). Expert-ID-only router
+        replay, retaining HF router weights and normalization, passed all
+        73 positions (minimum 0.9987812042); all next-token checks matched.
+        Small routing differences motivate this diagnostic, which does not
+        establish natural-routing probability equality or replace the failure.
 
   sft_long_context:
     H100:
@@ -419,13 +414,13 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-24
+      last_verified: 2026-10-03
       metrics:
-        initial_loss: 2.483866
-        final_loss: 2.596869
-        last_10_steps_step_time_ms_avg: 5634.59
-        last_10_steps_model_tflops_per_gpu_avg: 60.86
-        last_10_steps_tokens_per_second_per_gpu_avg: 726.9384285280739
+        initial_loss: 2.497767
+        final_loss: 2.596731
+        last_10_steps_step_time_ms_avg: 5624.81
+        last_10_steps_model_tflops_per_gpu_avg: 60.95
+        last_10_steps_tokens_per_second_per_gpu_avg: 728.2023748357723
       expected_result: >
         Completed 500 finite LoRA optimizer steps on 16 H100 GPUs with zero
         skipped or NaN iterations and a complete final native adapter checkpoint.
@@ -433,8 +428,11 @@ items:
         16/1, rank 32, alpha 32, zero adapter dropout and language-only targets.
         Native save/reload and merge preserve updated router expert-bias buffers
         as well as adapter tensors. Full merged HF reload and bounded image
-        generation passed; stronger post-merge numerical diagnostics are not
-        all passing. Standalone HF adapter export does not preserve these
+        generation passed ("Tensorboard", 3 tokens under a 32-token maximum).
+        All eight post-merge image/video fixtures passed next-token and
+        supervised-position cosine gates without router replay; minimum
+        next-token cosine was 0.9999897480 and minimum supervised cosine
+        was 0.9948826432. Standalone HF adapter export does not preserve these
         trained router buffers; use native reload and full-model merge/export.
         Token rates are padded slots, not measured supervised-token totals.
 
@@ -459,13 +457,13 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/gb200-peft-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-24
+      last_verified: 2026-10-04
       metrics:
-        initial_loss: 3.45039
-        final_loss: 2.059837
-        last_10_steps_step_time_ms_avg: 3640.69
-        last_10_steps_model_tflops_per_gpu_avg: 94.23
-        last_10_steps_tokens_per_second_per_gpu_avg: 1125.0614581301895
+        initial_loss: 3.499214
+        final_loss: 2.047297
+        last_10_steps_step_time_ms_avg: 3820.53
+        last_10_steps_model_tflops_per_gpu_avg: 89.76
+        last_10_steps_tokens_per_second_per_gpu_avg: 1072.1025616864674
       expected_result: >
         Completed 500 finite LoRA optimizer steps on 16 GB200 GPUs with zero
         skipped or NaN iterations and a complete final native adapter checkpoint.
@@ -473,14 +471,19 @@ items:
         16/1, rank 32, alpha 32, zero adapter dropout and language-only targets.
         Native save/reload and merge preserve updated router expert-bias buffers
         as well as adapter tensors. Full merged HF reload and bounded image
-        generation passed; stronger post-merge numerical diagnostics are not
-        all passing. Standalone HF adapter export does not preserve these
+        generation passed ("Tensorboard", 3 tokens under a 32-token maximum).
+        All eight post-merge image/video fixtures passed next-token and
+        supervised-position cosine gates without router replay; minimum
+        next-token cosine was 0.9999402165 and minimum supervised cosine
+        was 0.9954361916. One teacher-forced top-1 mismatch remained;
+        cosine correlation does not establish probability equality. Standalone HF
+        adapter export does not preserve these
         trained router buffers; use native reload and full-model merge/export.
         Token rates are padded slots, not measured supervised-token totals.
 
   checkpoint_resume:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       depends_on: pretrain
       command: >
@@ -502,29 +505,23 @@ items:
         logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-120b-a12b/h100-resume-config/ConfigContainer.yaml
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-      last_verified: 2026-09-25
+      last_verified: null
       metrics:
-        initial_loss: 1.951292
-        final_loss: 1.919275
-        last_10_steps_step_time_ms_avg: 51787.35
-        last_10_steps_model_tflops_per_gpu_avg: 132.45
-        last_10_steps_tokens_per_second_per_gpu_avg: 1581.8534835244516
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [101, 200]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: true
+        sentinels_match: null
       expected_result: >
-        Loaded pretrain.H100 step 100 directly into a fresh output directory,
-        restored optimizer, RNG and Energon state, and completed steps 101-200.
-        All 500 logged loss comparisons across the 100 resumed steps passed
-        the unchanged tolerance. The final checkpoint contains 64 distributed
-        shards and 16 Energon states; a fresh native model reload and one-token
-        image-conditioned forward passed separately. Model, data, schedule and
-        parallel topology match the reference. Compilation was serialized for
-        execution stability without changing training arithmetic. Rates are
-        padded token slots; actual supervised-token totals were not recorded.
+        Not rerun: the final-checkpoint pretraining prerequisite did not
+        complete. The recorded resume command is retained, but the previous
+        checkpoint's loss comparison does not verify this revision.
 
     GB200:
       status: unverified
@@ -540,18 +537,11 @@ items:
         last_10_steps_tokens_per_second_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
-        sentinel_steps: [251, 430, 475]
+        sentinel_steps: null
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: false
+        sentinels_match: null
       expected_result: >
-        The fresh-root step-250 continuation restored optimizer, RNG and
-        Energon state and completed steps 251-500, retaining the original
-        500-step schedule. The final checkpoint contains 64 distributed model
-        shards and 32 Energon states and passed native model-weight reload.
-        Comparison against the available original steps 251-475 passed
-        1124 of 1125 logged-loss checks, but step-430 LM loss differed by
-        2.55%, exceeding the fixed 1% plus 1e-6 tolerance. The original run
-        has no reference rows for steps 476-500. The comparison remains
-        failed, with independent diagnostic replay pending; successful
-        checkpoint loading does not establish numerical resume equivalence.
+        Not rerun for this revision: there is no completed matching pretraining
+        reference. The previous checkpoint's failed resume comparison remains
+        historical evidence, not a result for this checkpoint.
