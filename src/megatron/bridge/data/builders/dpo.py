@@ -20,19 +20,21 @@ architecture (registered in ``data/utils.py``); loader construction is the DPO
 branch of ``data/loaders.py``.
 """
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
-
-from torch.utils.data import Subset
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer
 from megatron.bridge.data.datasets.preference import load_ref_logprobs
 from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
-from megatron.bridge.data.datasets.utils import _JSONLMemMapDataset
-from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_hf_dataset_source, prepare_hf_dataset_sources
-from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
+from megatron.bridge.data.sources.hf import (
+    HFDatasetSourceConfig,
+    as_hf_dataset_source,
+    load_hf_dataset_source,
+    prepare_hf_dataset_sources,
+)
 
 
 if TYPE_CHECKING:
@@ -41,24 +43,12 @@ if TYPE_CHECKING:
     from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
-PreferenceSource = HFDatasetSourceConfig | JSONLSourceConfig
-
-_JSONL_SUFFIXES = (".jsonl", ".json")
-
-
-def _as_source(entry: "PreferenceSource | Mapping[str, Any]") -> Any:
-    """Rebuild a source that an override round trip flattened into a mapping."""
-    if not isinstance(entry, Mapping):
-        return entry
-    return JSONLSourceConfig(**dict(entry)) if "paths" in entry else HFDatasetSourceConfig(**dict(entry))
-
-
 @dataclass(kw_only=True)
 class DPODatasetConfig(DataloaderConfig):
     """Preference dataset plus its offline-scored ref-logprob artifact.
 
-    ``source`` is an ``HFDatasetSourceConfig`` for anything HuggingFace ``datasets``
-    can read, or a ``JSONLSourceConfig`` for JSONL that may live in object storage.
+    ``source`` is an ``HFDatasetSourceConfig``: a Hub dataset, or local or ``msc://`` files
+    through a file loader (``path_or_dataset="json"`` with the files in ``load_kwargs["data_files"]``).
     The source identity, the run tokenizer, and ``seq_length`` must equal the
     scoring run's values, which ``dpo_train`` checks against ``scoring_metadata.json``
     (where the length is recorded under its dataset-level name, ``max_seq_length``).
@@ -75,13 +65,13 @@ class DPODatasetConfig(DataloaderConfig):
 
     seq_length: int
     """Truncation ceiling for tokenized pairs."""
-    source: PreferenceSource
+    source: HFDatasetSourceConfig
     ref_artifact: str | None = None
     """Scorer artifact directory or URL. Required to build datasets; only
     source-only helpers (``load_source``) may leave it unset."""
     validation_ref_artifact: str | None = None
     """Scorer artifact for the validation split. Required when a validation source is set."""
-    validation_source: PreferenceSource | None = None
+    validation_source: HFDatasetSourceConfig | None = None
     validation_num_pairs: int = 0
     chosen_key: str = "chosen"
     rejected_key: str = "rejected"
@@ -91,7 +81,6 @@ class DPODatasetConfig(DataloaderConfig):
     chat_template_kwargs: dict[str, Any] | None = None
     """Extra chat-template kwargs for every row, e.g. ``{"truncate_history_thinking": false}`` so multi-turn
     trajectories keep the reasoning of turns before the last user message (Nemotron 3 / Qwen3 strip it)."""
-    index_mapping_dir: str | None = None
     num_pairs: int = 0
     dataloader_type: Literal["batch"] | None = "batch"
     """Pinned: the batch sampler's cyclic wrap provides epochs beyond one dataset pass."""
@@ -100,14 +89,12 @@ class DPODatasetConfig(DataloaderConfig):
     TP | seq_len; ``dpo_train`` derives it from the model config, the scorer from its flags."""
     shuffle: bool = True
 
-    def resolve_source(self, source: PreferenceSource, *, field: str) -> PreferenceSource:
-        """Route a JSONL path to the memmap reader, then validate whichever source type results."""
-        source = _as_source(source)
-        if isinstance(source, HFDatasetSourceConfig) and (source.path_or_dataset or "").endswith(_JSONL_SUFFIXES):
-            source = JSONLSourceConfig(paths=[source.path_or_dataset], index_mapping_dir=self.index_mapping_dir)
-        if not isinstance(source, (HFDatasetSourceConfig, JSONLSourceConfig)):
-            raise TypeError(f"{field} must be an HFDatasetSourceConfig or JSONLSourceConfig; got {source!r}.")
-
+    @staticmethod
+    def resolve_source(source: HFDatasetSourceConfig, *, field: str) -> HFDatasetSourceConfig:
+        """Rebuild a flattened source if needed, then validate it."""
+        if not isinstance(source, (HFDatasetSourceConfig, Mapping)):
+            raise TypeError(f"{field} must be an HFDatasetSourceConfig; got {source!r}.")
+        source = as_hf_dataset_source(source)
         source.validate()
         return source
 
@@ -144,14 +131,16 @@ class DPODatasetConfig(DataloaderConfig):
         return self.validation_source is not None
 
     @staticmethod
-    def source_identity(source: PreferenceSource) -> tuple[str, str | None]:
+    def source_identity(source: HFDatasetSourceConfig) -> tuple[str, str | None]:
         """``(dataset, split)`` as recorded in and checked against ``scoring_metadata.json``.
 
-        JSONL sources have no split: their paths name the rows directly.
+        File-backed loaders (``json``, ``parquet``, ...) are told apart by their ``data_files``.
         """
-        if isinstance(source, JSONLSourceConfig):
-            return ",".join(source.paths), None
-        return source.dataset_name or source.path_or_dataset, source.split
+        dataset = source.dataset_name or source.path_or_dataset
+        data_files = (source.load_kwargs or {}).get("data_files")
+        if data_files:
+            dataset = f"{dataset}:{json.dumps(data_files, sort_keys=True)}"
+        return dataset, source.split
 
     def load_source(self, split: Literal["train", "validation"] = "train"):
         """Load the raw preference rows of ``split``, truncated to that split's ``num_pairs``.
@@ -167,23 +156,14 @@ class DPODatasetConfig(DataloaderConfig):
         return self._load_rows(self.source, self.num_pairs)
 
     @staticmethod
-    def _load_rows(source: PreferenceSource, num_pairs: int):
-        if isinstance(source, JSONLSourceConfig):
-            rows = _JSONLMemMapDataset(
-                dataset_paths=source.paths,
-                tokenizer=None,
-                header_lines=0,
-                index_mapping_dir=source.index_mapping_dir,
-            )
-        else:
-            # Rank 0 materializes the HuggingFace cache first: concurrent builders on a
-            # shared filesystem are not safe. No-op for single-process callers.
-            prepare_hf_dataset_sources([source])
-            rows = load_hf_dataset_source(source)
-
+    def _load_rows(source: HFDatasetSourceConfig, num_pairs: int):
+        # Rank 0 materializes the HuggingFace cache first: concurrent builders on a
+        # shared filesystem are not safe. No-op for single-process callers.
+        prepare_hf_dataset_sources([source])
+        rows = load_hf_dataset_source(source)
         if num_pairs and num_pairs < len(rows):
             # Truncate by position so row index == pair_id survives.
-            rows = rows.select(range(num_pairs)) if hasattr(rows, "select") else Subset(rows, range(num_pairs))
+            rows = rows.select(range(num_pairs))
         return rows
 
 

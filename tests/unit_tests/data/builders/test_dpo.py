@@ -83,3 +83,18 @@ def test_builder_requires_the_run_tokenizer_to_carry_a_chat_template():
 
     with pytest.raises(ValueError, match="chat template"):
         DPODatasetBuilder(config).build(context)
+
+
+def test_source_identity_names_file_backed_sources_by_their_files():
+    """Two local files through the same loader must fingerprint differently; Hub sources keep their id."""
+    local = DPODatasetConfig.resolve_source(
+        {"path_or_dataset": "json", "load_kwargs": {"data_files": "/data/pairs.jsonl"}, "split": "train"},
+        field="source",
+    )
+    assert isinstance(local, HFDatasetSourceConfig)
+    assert DPODatasetConfig.source_identity(local) == ('json:"/data/pairs.jsonl"', "train")
+
+    hub = DPODatasetConfig.resolve_source(
+        HFDatasetSourceConfig(path_or_dataset="org/prefs", split="test"), field="source"
+    )
+    assert DPODatasetConfig.source_identity(hub) == ("org/prefs", "test")

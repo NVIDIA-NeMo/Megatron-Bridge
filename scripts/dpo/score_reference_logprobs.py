@@ -35,7 +35,6 @@ With tensor and data parallelism (launch ``--tp`` x DP processes; rank 0 gathers
 
 import argparse
 import json
-import os
 from dataclasses import asdict
 
 import torch
@@ -47,7 +46,6 @@ from torch.utils.data import BatchSampler, DataLoader, SequentialSampler
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders.dpo import (
     DPODatasetConfig,
-    PreferenceSource,
     build_preference_split,
     hf_chat_tokenizer,
 )
@@ -60,7 +58,6 @@ from megatron.bridge.data.datasets.preference import (
 )
 from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
-from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.dpo import sequence_logprob_sums, split_pair_rows
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -85,23 +82,12 @@ PairRecord = dict[str, float | int]
 def parse_args() -> argparse.Namespace:
     """CLI arguments."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    source_group = parser.add_mutually_exclusive_group(required=True)
-    source_group.add_argument(
+    parser.add_argument(
         "--dataset",
-        help="HF hub id, local path, or a single JSONL file (local or msc://); must match training",
+        required=True,
+        help="HF hub id or local dataset path; must match training",
     )
     parser.add_argument("--split", default="train")
-    source_group.add_argument(
-        "--jsonl",
-        nargs="+",
-        default=None,
-        help="JSONL preference rows (local or msc://) read in place, instead of --dataset",
-    )
-    parser.add_argument(
-        "--index-mapping-dir",
-        default=os.path.expanduser("~/.cache/megatron_bridge/dpo_index"),
-        help="Where JSONL memmap index sidecars go; required for msc:// paths",
-    )
     parser.add_argument("--chosen-key", default="chosen")
     parser.add_argument("--rejected-key", default="rejected")
     parser.add_argument(
@@ -187,13 +173,6 @@ def shard_batches(batch_plan: list[list[int]], *, rank: int, size: int) -> list[
     return batch_plan[rank::size]
 
 
-def dpo_source(args: argparse.Namespace) -> PreferenceSource:
-    """The preference source these CLI args select; a path-shaped --dataset is routed to JSONL by the config."""
-    if args.jsonl:
-        return JSONLSourceConfig(paths=list(args.jsonl), index_mapping_dir=args.index_mapping_dir)
-    return HFDatasetSourceConfig(path_or_dataset=args.dataset, split=args.split)
-
-
 class ReferenceLogprobScorer:
     """Forward the reference model over every pair and write the ref-logprob artifact."""
 
@@ -202,8 +181,7 @@ class ReferenceLogprobScorer:
         self.tokenizer_name: str = args.tokenizer or args.model
         self.dataset_config = DPODatasetConfig(
             seq_length=args.max_seq_length,
-            source=dpo_source(args),
-            index_mapping_dir=args.index_mapping_dir,
+            source=HFDatasetSourceConfig(path_or_dataset=args.dataset, split=args.split),
             ref_artifact=args.output,
             num_pairs=args.num_pairs,
             chosen_key=args.chosen_key,
