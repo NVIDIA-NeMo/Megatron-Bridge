@@ -27,7 +27,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 GENERATOR_PATH = REPO_ROOT / "scripts/docs/generate_model_verification_catalog.py"
 RECIPE_METADATA_PATH = REPO_ROOT / "scripts/training/recipe_metadata.py"
 # Items whose commands intentionally launch benchmark recipes.
-BENCHMARK_ITEMS = frozenset({"pretrain_performance", "pretrain_fsdp", "pretrain_weak_scaling"})
+BENCHMARK_ITEMS = frozenset(
+    {"pretrain_performance", "pretrain_performance_hsdp", "pretrain_fsdp", "pretrain_weak_scaling"}
+)
 
 
 def _load_generator() -> ModuleType:
@@ -199,7 +201,7 @@ def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, c
             "megatron_to_hf_gpu",
         },
         "pretrain": {"pretrain", "pretrain_fsdp", "pretrain_weak_scaling"},
-        "benchmark": {"pretrain_performance"},
+        "benchmark": {"pretrain_performance", "pretrain_performance_hsdp"},
         "sft": {"sft"},
         "lora": {"peft"},
         "long-context": {"sft_long_context"},
@@ -238,6 +240,28 @@ def test_sphinx_model_page_renders_focused_combinations(generator: ModuleType, c
         for command in entry["commands"]:
             assert html.escape(command) in page
         assert html.escape(entry["expected_result"]) in page
+
+
+@pytest.mark.parametrize("fern", [False, True])
+def test_hsdp_performance_renders_as_a_separate_benchmark(
+    generator: ModuleType, catalog: dict[str, object], fern: bool
+) -> None:
+    model = _models(catalog)["deepseek-v3"]
+    page = generator.render_model_section([model], fern=fern)
+    benchmark_entries = [
+        entry
+        for entry in model["entries"]
+        if entry["workflow"] in {"pretrain_performance", "pretrain_performance_hsdp"}
+    ]
+
+    assert {entry["workflow"] for entry in benchmark_entries} == {"pretrain_performance", "pretrain_performance_hsdp"}
+    assert "Benchmark · HSDP · GB300" in page
+    for entry in benchmark_entries:
+        assert page.count(f'id="{entry["entry_id"]}"') == 1
+        button = next(line for line in page.splitlines() if f'data-entry="{entry["entry_id"]}"' in line)
+        assert 'data-capability="benchmark"' in button
+        for command in entry["commands"]:
+            assert html.escape(command) in page
 
 
 def test_full_verification_records_are_removed_from_every_model_page(
