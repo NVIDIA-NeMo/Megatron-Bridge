@@ -14,6 +14,7 @@
 
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.sequence_classification import Qwen3VLForSequenceClassification
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.token_classification import Qwen3VLForTokenClassification
 from megatron.bridge.models.qwen_vl.qwen3_vl_bridge import Qwen3VLBridge, Qwen3VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import (
@@ -25,11 +26,13 @@ from megatron.bridge.models.qwen_vl.qwen25_vl_provider import (
     Qwen25VLModelProvider,
 )
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import (
+    Qwen35SequenceClassificationBridge,
     Qwen35TokenClassificationBridge,
     Qwen35VLBridge,
     Qwen35VLMoEBridge,
 )
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
+    Qwen35SequenceClassificationModelProvider,
     Qwen35TokenClassificationModelProvider,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
@@ -41,6 +44,7 @@ __all__ = [
     "Qwen25VLBridge",
     "Qwen25VLModelProvider",
     "Qwen3VLModel",
+    "Qwen3VLForSequenceClassification",
     "Qwen3VLForTokenClassification",
     "Qwen3VLBridge",
     "Qwen3VLMoEBridge",
@@ -50,6 +54,8 @@ __all__ = [
     "Qwen35VLModelProvider",
     "Qwen35VLMoEBridge",
     "Qwen35VLMoEModelProvider",
+    "Qwen35SequenceClassificationBridge",
+    "Qwen35SequenceClassificationModelProvider",
     "Qwen35TokenClassificationBridge",
     "Qwen35TokenClassificationModelProvider",
 ]
