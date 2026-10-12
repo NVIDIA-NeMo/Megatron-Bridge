@@ -39,67 +39,25 @@ def dpo_train(
 
 
 def validate_dpo_run_config(config: ConfigContainer) -> None:
-    """Fail fast, listing every violation, if the run would train incorrectly."""
-    problems: list[str] = []
-    dataset_is_dpo = isinstance(config.dataset, DPODatasetConfig)
-    if config.dpo is None:
-        problems.append("config.dpo must be a DPOLossConfig; the DPO forward step binds it into the loss.")
-    if not dataset_is_dpo:
-        problems.append(
-            f"config.dataset must be a DPODatasetConfig, got {type(config.dataset).__name__}: DPO needs "
-            "the pair-granular dataset and loader."
-        )
-    elif not config.dataset.ref_artifact:
-        problems.append(
-            "dataset.ref_artifact must be set: training needs the offline scorer's artifact "
-            "(score_reference_logprobs.py --output) to anchor the margins."
-        )
-    if not config.model.calculate_per_token_loss:
-        problems.append(
-            "model.calculate_per_token_loss must be True: the DPO loss returns a raw (loss_sum, "
-            "num_live_pairs) that finalize_model_grads normalizes by the global live-pair count."
-        )
-    if config.ddp.average_in_collective:
-        problems.append(
-            "ddp.average_in_collective must be False: gradients are normalized by the global live-pair "
-            "count, not averaged over DP ranks."
-        )
-    if config.model.context_parallel_size != 1:
-        problems.append("context_parallel_size > 1 is not supported for DPO.")
-    if config.model.mtp_num_layers:
-        problems.append(
-            "model.mtp_num_layers must be None for DPO: an MTP head would backpropagate its own "
-            "next-token CE on top of the DPO loss."
-        )
-    if config.train.micro_batch_size % 2 != 0 or config.train.global_batch_size % 2 != 0:
-        problems.append(
-            f"Batch sizes are row-denominated and must be even (one pair == two rows); got "
-            f"micro_batch_size={config.train.micro_batch_size}, "
-            f"global_batch_size={config.train.global_batch_size}."
-        )
+    """Fail fast if the run has no usable reference artifact for each split it trains or evaluates on.
+
+    The loss contract itself (per-token loss, no collective averaging, CP=1, no MTP, even
+    row counts) is enforced by ``ConfigContainer.validate`` for any DPO dataset.
+    """
+    if not isinstance(config.dataset, DPODatasetConfig):
+        raise ValueError(f"DPO requires a DPODatasetConfig dataset, got {type(config.dataset).__name__}.")
+    if not config.dataset.ref_artifact:
+        raise ValueError("DPO requires dataset.ref_artifact, the output of score_reference_logprobs.py.")
 
     validation_enabled = (config.validation.eval_iters or 0) > 0
     if validation_enabled:
-        if not (dataset_is_dpo and config.dataset.has_validation_split):
-            problems.append(
-                "validation.eval_iters > 0 needs a scored validation split: set dataset.validation_source "
-                "plus dataset.validation_ref_artifact."
+        if not config.dataset.has_validation_split:
+            raise ValueError(
+                "validation.eval_iters > 0 requires a scored validation split: "
+                "dataset.validation_source and dataset.validation_ref_artifact."
             )
         if not config.validation.eval_interval:
-            problems.append(
-                "validation.eval_interval must be set when eval_iters > 0: the loop only evaluates "
-                "every eval_interval steps."
-            )
-        if config.dist.eval_context_parallel_size is not None:
-            problems.append("dist.eval_context_parallel_size is not supported for DPO.")
-        for name in ("eval_global_batch_size", "eval_micro_batch_size"):
-            value = getattr(config.validation, name)
-            if value is not None and value % 2 != 0:
-                problems.append(
-                    f"validation.{name} is row-denominated and must be even (one pair == two rows); got {value}."
-                )
-    if problems:
-        raise ValueError("DPO run config is invalid:\n- " + "\n- ".join(problems))
+            raise ValueError("validation.eval_iters > 0 requires validation.eval_interval.")
 
     _validate_artifact(config, config.dataset.ref_artifact, "train")
     if validation_enabled:

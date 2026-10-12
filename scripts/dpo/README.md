@@ -153,7 +153,7 @@ The margins only mean something if both runs saw the same tokens.
 | TP and sequence parallelism | metadata check at startup (PP and DP may differ) |
 | `num_pairs`, same rows in the same order | artifact must cover `pair_id 0..N-1` exactly |
 | Reference model is `pretrained_checkpoint` | not checked, shows up as step-0 loss far from ln 2 |
-| No MTP head | `validate_dpo_run_config` |
+| No MTP head | `ConfigContainer.validate` |
 | bf16 forward | not checked, the scorer pins it and the recipes default to `bf16_mixed` |
 
 ## Batch sizes are rows, not pairs

@@ -1395,6 +1395,30 @@ class ConfigContainer(Container):
                 if hasattr(config, field_name):
                     setattr(config, field_name, False)
 
+    def _validate_dpo_contract(self) -> None:
+        """Constraints the DPO loss places on the run."""
+        if self.dpo is None:
+            raise ValueError("DPO requires dpo to be a DPOLossConfig.")
+        if not getattr(self.model, "calculate_per_token_loss", False):
+            raise ValueError("DPO requires model.calculate_per_token_loss=True.")
+        if self.ddp.average_in_collective:
+            raise ValueError("DPO requires ddp.average_in_collective=False.")
+        if getattr(self.model, "context_parallel_size", 1) != 1:
+            raise ValueError("DPO does not support context parallelism (model.context_parallel_size must be 1).")
+        if getattr(self.model, "mtp_num_layers", None):
+            raise ValueError("DPO does not support MTP heads (model.mtp_num_layers must be None).")
+        row_counts = (
+            ("train.micro_batch_size", self.train.micro_batch_size),
+            ("train.global_batch_size", self.train.global_batch_size),
+            ("validation.eval_micro_batch_size", self.validation.eval_micro_batch_size),
+            ("validation.eval_global_batch_size", self.validation.eval_global_batch_size),
+        )
+        for name, value in row_counts:
+            if value is not None and value % 2 != 0:
+                raise ValueError(f"DPO requires an even {name} (one pair is two rows), got {value}.")
+        if self.dist.eval_context_parallel_size is not None:
+            raise ValueError("DPO does not support dist.eval_context_parallel_size.")
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1551,6 +1575,7 @@ class ConfigContainer(Container):
                 collate_padding_multiple,
             )
         elif isinstance(self.dataset, DPODatasetConfig):
+            self._validate_dpo_contract()
             self.dataset.pad_seq_length_to_mult = collate_padding_multiple
             # Pair batches are padded to their own longest row, so the activation width changes per
             # micro batch and pipeline stages must exchange shapes, as with in-batch packing.

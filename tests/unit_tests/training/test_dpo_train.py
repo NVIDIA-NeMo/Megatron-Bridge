@@ -9,7 +9,6 @@ import pytest
 from megatron.bridge.data.builders.dpo import DPODatasetConfig
 from megatron.bridge.data.datasets.preference import ScoringFingerprint
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
-from megatron.bridge.training.dpo import DPOLossConfig
 from megatron.bridge.training.dpo_train import validate_dpo_run_config
 
 
@@ -39,25 +38,15 @@ def make_config(tmp_path) -> SimpleNamespace:
         source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
     )
     return SimpleNamespace(
-        dpo=DPOLossConfig(),
         dataset=dataset,
         tokenizer=SimpleNamespace(tokenizer_model="org/some-model"),
         model=SimpleNamespace(
-            calculate_per_token_loss=True,
-            mtp_num_layers=None,
             tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
             expert_model_parallel_size=1,
             expert_tensor_parallel_size=None,
-            context_parallel_size=1,
             sequence_parallel=False,
         ),
-        ddp=SimpleNamespace(average_in_collective=False),
-        train=SimpleNamespace(micro_batch_size=4, global_batch_size=8),
-        validation=SimpleNamespace(
-            eval_iters=0, eval_interval=None, eval_global_batch_size=None, eval_micro_batch_size=None
-        ),
-        dist=SimpleNamespace(eval_context_parallel_size=None),
+        validation=SimpleNamespace(eval_iters=0, eval_interval=None),
     )
 
 
@@ -66,10 +55,7 @@ def make_config(tmp_path) -> SimpleNamespace:
     [
         (lambda c, _: None, None),
         (lambda c, _: setattr(c.dataset, "ref_artifact", None), "ref_artifact"),
-        (lambda c, _: setattr(c.model, "calculate_per_token_loss", False), "calculate_per_token_loss"),
-        (lambda c, _: setattr(c.ddp, "average_in_collective", True), "average_in_collective"),
-        (lambda c, _: setattr(c.model, "context_parallel_size", 2), "context"),
-        (lambda c, _: setattr(c.train, "micro_batch_size", 3), "even"),
+        (lambda c, _: setattr(c, "dataset", SimpleNamespace()), "DPODatasetConfig"),
         (lambda c, _: setattr(c.validation, "eval_iters", 2), "validation split"),
         # The artifact was scored with other inputs than this run tokenizes with.
         (lambda c, tmp: write_artifact_metadata(tmp / "train_ref", max_seq_length=4096), "max_seq_length"),
@@ -78,17 +64,7 @@ def make_config(tmp_path) -> SimpleNamespace:
             "tokenization_version",
         ),
     ],
-    ids=[
-        "valid",
-        "no_artifact",
-        "per_token_loss",
-        "average_in_collective",
-        "cp",
-        "odd_mbs",
-        "no_val_split",
-        "fingerprint",
-        "old_artifact",
-    ],
+    ids=["valid", "no_artifact", "not_a_dpo_dataset", "no_val_split", "fingerprint", "old_artifact"],
 )
 def test_run_config_validation_names_the_offending_knob(tmp_path, mutate, match):
     config = make_config(tmp_path)

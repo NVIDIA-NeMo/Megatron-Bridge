@@ -1026,7 +1026,7 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length: pairs are right-padded rows, never packed; must match the scoring run
     cfg.model.seq_length = cfg.dataset.seq_length
 
-    # DPO loss contract (validate_dpo_run_config enforces all but the CE-fusion knob, which
+    # DPO loss contract (ConfigContainer.validate enforces all but the CE-fusion knob, which
     # stays off to match the scorer's unfused CE rounding).
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
