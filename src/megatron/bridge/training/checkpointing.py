@@ -140,6 +140,12 @@ except ImportError:
     HAVE_MEGATRON_FSDP = False
 
 try:
+    from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_pipeline_parallel_in_state_dict
+except ImportError:
+    handle_pipeline_parallel_in_state_dict = None
+
+
+try:
     from megatron.core.transformer.fsdp_dtensor_checkpoint import handle_gdn_in_state_dict
 except ImportError:
     handle_gdn_in_state_dict = None
@@ -2291,7 +2297,7 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
         getattr(model_config, "gated_linear_unit", False) and getattr(model_config, "activation_func", None) is F.silu
     )
 
-    def apply(handler):
+    def apply(handler: Callable[..., tuple[dict[str, Any], dict[str, Any] | None]]) -> None:
         """Run a state dict handler over the model and, when present, the optimizer state."""
         model_state_dict, optimizer_state_dict = handler(model, state_dict["model"], state_dict.get("optimizer"))
         state_dict["model"] = model_state_dict
@@ -2323,6 +2329,15 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     # because they resolve keys against live module paths, which still use the new name.
     if handle_mtp_in_state_dict is not None:
         apply(handle_mtp_in_state_dict)
+
+    # Globalize layer names last: earlier handlers resolve stage-local module paths.
+    if handle_pipeline_parallel_in_state_dict is not None:
+        apply(handle_pipeline_parallel_in_state_dict)
+    elif model_config.pipeline_model_parallel_size > 1:
+        raise RuntimeError(
+            "FSDP pipeline checkpointing requires a Megatron-Core version with "
+            "handle_pipeline_parallel_in_state_dict; older versions collide stage-local layer names."
+        )
 
     preprocess_state_dict_for_uneven_dtensor(state_dict)
 

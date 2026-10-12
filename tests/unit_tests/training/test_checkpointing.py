@@ -4946,6 +4946,7 @@ class TestFSDPDTensorFunctionality:
             mock_model_config = Mock()
             mock_model_config.gated_linear_unit = False
             mock_model_config.num_moe_experts = None
+            mock_model_config.pipeline_model_parallel_size = 1
             mock_get_config.return_value = mock_model_config
 
             with (
@@ -4956,6 +4957,10 @@ class TestFSDPDTensorFunctionality:
                 patch("megatron.bridge.training.checkpointing.handle_gdn_in_state_dict", None),
                 patch("megatron.bridge.training.checkpointing.handle_mla_down_proj_in_state_dict", None),
                 patch("megatron.bridge.training.checkpointing.handle_mtp_in_state_dict", None),
+                patch(
+                    "megatron.bridge.training.checkpointing.handle_pipeline_parallel_in_state_dict",
+                    side_effect=lambda model, state, optim: (state, optim),
+                ) as mock_pipeline,
             ):
                 raw_state_dict = {"model": {"test_param": torch.tensor([1.0])}}
                 result = preprocess_fsdp_dtensor_state_dict(mock_cfg, raw_state_dict, mock_model)
@@ -4963,7 +4968,35 @@ class TestFSDPDTensorFunctionality:
                 # Should call FP8 and uneven dtensor preprocessing
                 mock_fp8.assert_called_once()
                 mock_uneven.assert_called_once()
+                mock_pipeline.assert_called_once_with(mock_model, raw_state_dict["model"], None)
                 assert "model" in result
+
+    @pytest.mark.parametrize("pp", [1, 2])
+    def test_fsdp_pipeline_checkpoint_requires_core_handler(self, pp: int) -> None:
+        """Old Core remains usable for PP=1 but must not silently corrupt PP>1."""
+        from types import SimpleNamespace
+
+        from megatron.bridge.training import checkpointing
+
+        model_config = SimpleNamespace(gated_linear_unit=False, num_moe_experts=None, pipeline_model_parallel_size=pp)
+        with (
+            patch("megatron.core.utils.get_model_config", return_value=model_config),
+            patch.object(checkpointing, "handle_fp8_extra_state_case"),
+            patch.object(checkpointing, "preprocess_state_dict_for_uneven_dtensor"),
+            patch.multiple(
+                checkpointing,
+                handle_gdn_in_state_dict=None,
+                handle_mla_down_proj_in_state_dict=None,
+                handle_mtp_in_state_dict=None,
+                handle_pipeline_parallel_in_state_dict=None,
+            ),
+        ):
+            state = {"model": {"weight": torch.ones(1)}}
+            if pp > 1:
+                with pytest.raises(RuntimeError, match="collide stage-local layer names"):
+                    checkpointing.preprocess_fsdp_dtensor_state_dict(None, state, None)
+            else:
+                assert checkpointing.preprocess_fsdp_dtensor_state_dict(None, state, None) == state
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_save_fsdp_dtensor_checkpoint_preprocesses_and_saves(self, tmp_path):
