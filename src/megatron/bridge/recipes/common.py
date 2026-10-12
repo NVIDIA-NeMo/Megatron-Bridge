@@ -14,10 +14,8 @@
 
 import os
 
-import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
@@ -243,51 +241,24 @@ def _sft_common() -> ConfigContainer:
     return cfg
 
 
-def _dpo_common(hf_path: str, *, seq_length: int = 4096, revision: str | None = None) -> ConfigContainer:
-    """Create a base DPO ConfigContainer for one HF reference model.
-
-    Builds on ``_sft_common`` and applies the loss contract that
-    ``validate_dpo_run_config`` enforces (per-token loss, no collective
-    averaging, fp32 CE, PP=CP=1). The dataset is a preference-pair
-    skeleton over ``hf_path``'s tokenizer; every run must still point at its
-    scored reference artifact and reference weights, typically via
-    ``dataset.ref_artifact=...`` and ``--pretrained_checkpoint``.
-
-    Args:
-        hf_path: HF id or local path of the reference model; also the tokenizer.
-        seq_length: Pair sequence length; must match the scoring run.
-        revision: HF revision to pin the model config and tokenizer to.
+def _dpo_common() -> ConfigContainer:
+    """Create a base DPO ConfigContainer with common defaults for any language model.
 
     Returns:
-        ConfigContainer: Base configuration for DPO training.
+        ConfigContainer: Base configuration template for DPO.
     """
+    # Default sequence length for DPO pairs
+    seq_length = 4096
+
     cfg = _sft_common()
-    hf_kwargs = {"revision": revision} if revision else {}
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, torch_dtype=torch.bfloat16, **hf_kwargs).to_megatron_provider(
-        load_weights=False
-    )
-    cfg.tokenizer.tokenizer_model = hf_path
-    cfg.tokenizer.hf_tokenizer_kwargs = hf_kwargs
 
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
-    cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
-    cfg.model.seq_length = seq_length
-    cfg.model.mtp_num_layers = None
-
-    # DPO loss contract (validate_dpo_run_config enforces all but the CE-fusion
-    # knob, which stays off to match the scorer's unfused CE rounding).
-    cfg.model.calculate_per_token_loss = True
-    cfg.model.cross_entropy_loss_fusion = False
     cfg.ddp.average_in_collective = False
 
     cfg.dataset = DPODatasetConfig(
-        tokenizer_name=hf_path,
+        tokenizer_name=None,  # type: ignore[arg-type]  # Must be set by each recipe
         seq_length=seq_length,
         source=HFDatasetSourceConfig(path_or_dataset="HuggingFaceH4/ultrafeedback_binarized", split="train_prefs"),
-        ref_artifact=None,  # required per run: the offline scorer's artifact for this source
+        ref_artifact=None,  # Must be set by each run
     )
     cfg.dpo = DPOLossConfig()
 

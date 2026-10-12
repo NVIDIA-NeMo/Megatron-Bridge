@@ -1003,13 +1003,35 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     Recommended parallelism: TP=4, PP=2, EP=4 (1 node, 8 GPUs with SP=True). Requires
     ``--pretrained_checkpoint`` and ``dataset.ref_artifact`` scored at ``--tp 4 --ep 4 --etp 1``.
     """
-    cfg = _dpo_common(_QWEN3_30B_A3B_MODEL_ID, seq_length=4096, revision=_QWEN3_30B_A3B_MODEL_REVISION)
+    cfg = _dpo_common()
 
+    # Model config
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
+
+    # Tokenizer: the pair dataset tokenizes with the same one the scorer used
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
+    cfg.dataset.tokenizer_name = _QWEN3_30B_A3B_MODEL_ID
+
+    # Parallelism settings (MoE-specific: includes expert parallelism)
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = None
+    cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = True
+
+    # Sequence length: pairs are right-padded rows, never packed; must match the scoring run
+    cfg.model.seq_length = cfg.dataset.seq_length
+
+    # DPO loss contract (validate_dpo_run_config enforces all but the CE-fusion knob, which
+    # stays off to match the scorer's unfused CE rounding).
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.mtp_num_layers = None  # an MTP head would backpropagate its own next-token CE on top of the DPO loss
 
     # Row-denominated (one pair == two rows, so mbs must be even): gbs 128 rows = 64 pairs
     # = DP1 x mbs2 x accum64.
