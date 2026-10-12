@@ -25,6 +25,7 @@ from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKe
 from megatron.bridge.peft.lora import get_lora_plus_config_overrides
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.optim import (
+    _realign_distributed_optimizer_param_index,
     hybrid_optimizer_state_loading,
     memory_efficient_fp32_optimizer_state_loading,
     memory_efficient_precision_aware_optimizer_state_checkpointing,
@@ -1031,3 +1032,133 @@ class TestGetLoraPlusConfigOverrides:
         name_keys = [k for k in overrides if getattr(k, "name", None) and not getattr(k, "attr", None)]
         names = {k.name for k in name_keys}
         assert {"*.linear_in.weight", "*.linear_out.weight"}.issubset(names)
+
+
+def _stand_in_distributed_optimizer(fp32_groups, float16_groups, index):
+    """A DistributedOptimizer carrying only the attributes the realignment reads."""
+    from megatron.core.optimizer import DistributedOptimizer
+
+    optimizer = DistributedOptimizer.__new__(DistributedOptimizer)
+    optimizer.model_fp32_groups = fp32_groups
+    optimizer.model_float16_groups = float16_groups
+    optimizer.model_param_group_index_map = dict(index)
+    return optimizer
+
+
+class TestRealignDistributedOptimizerParamIndex:
+    """The parameter index must follow the FP32-first order in which MCore stores each group's shards."""
+
+    def _mixed_group(self):
+        bf16_a, bf16_b = torch.zeros(4, dtype=torch.bfloat16), torch.zeros(8, dtype=torch.bfloat16)
+        fp32 = torch.zeros(2)
+        # Gradient-buffer order (BF16 buffer first), as MCore records it.
+        index = {bf16_a: (0, 0), bf16_b: (0, 1), fp32: (0, 2)}
+        return bf16_a, bf16_b, fp32, index
+
+    def test_mixed_dtype_group_is_reindexed_fp32_first(self):
+        bf16_a, bf16_b, fp32, index = self._mixed_group()
+        optimizer = _stand_in_distributed_optimizer([[fp32]], [[bf16_a, bf16_b]], index)
+
+        assert _realign_distributed_optimizer_param_index(optimizer) == 3
+        assert optimizer.model_param_group_index_map == {fp32: (0, 0), bf16_a: (0, 1), bf16_b: (0, 2)}
+        # A second pass finds nothing left to correct.
+        assert _realign_distributed_optimizer_param_index(optimizer) == 0
+
+    def test_aligned_index_is_left_unchanged(self):
+        bf16_a, bf16_b, fp32, _ = self._mixed_group()
+        aligned = {fp32: (0, 0), bf16_a: (0, 1), bf16_b: (0, 2)}
+        optimizer = _stand_in_distributed_optimizer([[fp32]], [[bf16_a, bf16_b]], aligned)
+        original = optimizer.model_param_group_index_map
+
+        assert _realign_distributed_optimizer_param_index(optimizer) == 0
+        assert optimizer.model_param_group_index_map is original
+
+    def test_chained_optimizers_and_other_types(self):
+        bf16_a, bf16_b, fp32, index = self._mixed_group()
+        distributed = _stand_in_distributed_optimizer([[fp32]], [[bf16_a, bf16_b]], index)
+        chained = SimpleNamespace(chained_optimizers=[SimpleNamespace(), distributed])
+
+        assert _realign_distributed_optimizer_param_index(chained) == 3
+        assert distributed.model_param_group_index_map[fp32] == (0, 0)
+        assert _realign_distributed_optimizer_param_index(None) == 0
+
+    def test_index_with_unknown_parameters_is_left_unchanged(self):
+        bf16_a, bf16_b, fp32, index = self._mixed_group()
+        index[torch.zeros(1)] = (0, 3)
+        optimizer = _stand_in_distributed_optimizer([[fp32]], [[bf16_a, bf16_b]], index)
+
+        assert _realign_distributed_optimizer_param_index(optimizer) == 0
+        assert optimizer.model_param_group_index_map == index
+
+    @pytest.mark.run_only_on("gpu")
+    def test_real_distributed_optimizer_with_fp32_params_builds_checkpoint_state(self, tmp_path):
+        """A BF16 buffer ahead of an FP32 one: the optimizer state must match every parameter's range."""
+        from megatron.core import parallel_state
+        from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig
+        from megatron.core.optimizer import DistributedOptimizer, get_megatron_optimizer
+        from megatron.core.transformer.module import MegatronModule, mark_keep_in_fp32
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        if not torch.cuda.is_available():
+            pytest.skip("requires CUDA")
+        owns_dist = not torch.distributed.is_initialized()
+        if owns_dist:
+            torch.distributed.init_process_group(
+                "nccl", init_method=f"file://{tmp_path}/rendezvous", rank=0, world_size=1
+            )
+        owns_parallel = not parallel_state.model_parallel_is_initialized()
+        if owns_parallel:
+            parallel_state.initialize_model_parallel()
+        try:
+            config = TransformerConfig(
+                num_layers=1, hidden_size=16, num_attention_heads=2, bf16=True, params_dtype=torch.bfloat16
+            )
+
+            class _MixedPrecision(MegatronModule):
+                def __init__(self):
+                    super().__init__(config)
+                    # Declared first, so DDP allocates the BF16 buffer before the FP32 one.
+                    self.proj = torch.nn.Linear(16, 16, bias=False, device="cuda", dtype=torch.bfloat16)
+                    # Distinct sizes and values, so state attached to the wrong parameter cannot pass unnoticed.
+                    self.norm = torch.nn.Parameter(torch.full((16,), 2.0, device="cuda", dtype=torch.bfloat16))
+                    self.gate = mark_keep_in_fp32(torch.nn.Parameter(torch.full((1,), 0.5, device="cuda")))
+
+                def forward(self, inputs):
+                    return (self.proj(inputs) * self.norm).float() * self.gate
+
+            model = DistributedDataParallel(
+                config, DistributedDataParallelConfig(use_distributed_optimizer=True), _MixedPrecision()
+            )
+            optimizer = get_megatron_optimizer(
+                OptimizerConfig(optimizer="adam", lr=1e-3, bf16=True, use_distributed_optimizer=True),
+                [model],
+                use_gloo_process_groups=False,
+            )
+            model(torch.randn(4, 16, device="cuda", dtype=torch.bfloat16)).sum().backward()
+            model.finish_grad_sync()
+            optimizer.step()
+
+            _realign_distributed_optimizer_param_index(optimizer)
+
+            inner = [
+                o for o in getattr(optimizer, "chained_optimizers", [optimizer]) if isinstance(o, DistributedOptimizer)
+            ]
+            assert inner
+            for distributed in inner:
+                assert {p.dtype for p in distributed.model_param_group_index_map} == {torch.bfloat16, torch.float32}
+                for param in distributed.model_param_group_index_map:
+                    param_range = distributed._get_model_param_range_map(param)["param"]
+                    states = distributed._get_main_param_and_optimizer_states(param)
+                    for key, tensor in states.items():
+                        if tensor.dim() > 0:
+                            assert tensor.numel() == param_range.end - param_range.start, key
+                    # The main-parameter state must hold this parameter's own values (up to BF16 rounding).
+                    own = param.detach().view(-1)[param_range.start : param_range.end].float()
+                    torch.testing.assert_close(states["param"].float(), own, rtol=1e-2, atol=1e-2)
+                # The step that failed before the realignment: building the dp_reshardable checkpoint state.
+                distributed.sharded_param_state_dp_reshardable({})
+        finally:
+            if owns_parallel and parallel_state.model_parallel_is_initialized():
+                parallel_state.destroy_model_parallel()
+            if owns_dist and torch.distributed.is_initialized():
+                torch.distributed.destroy_process_group()

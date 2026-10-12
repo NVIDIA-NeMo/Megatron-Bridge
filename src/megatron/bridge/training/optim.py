@@ -20,6 +20,7 @@ from typing import Optional, Union, cast
 
 import torch
 from megatron.core.optimizer import (
+    DistributedOptimizer,
     MegatronOptimizer,
     OptimizerConfig,
     get_megatron_optimizer,
@@ -110,9 +111,57 @@ def setup_optimizer(
             pg_collection=pg_collection,
         )
 
+    _realign_distributed_optimizer_param_index(optimizer)
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
 
     return optimizer, scheduler
+
+
+def _realign_distributed_optimizer_param_index(optimizer: MegatronOptimizer | None) -> int:
+    """Point each distributed optimizer's parameter index at the shard its group really holds.
+
+    Megatron-Core's ``DistributedOptimizer`` records every parameter's position within its optimizer group in
+    gradient-buffer order, but stores the group's shards as all FP32 shards followed by all 16-bit shards. When a
+    group mixes FP32 parameters (for example ones marked with ``mark_keep_in_fp32``) with 16-bit ones and a 16-bit
+    buffer comes first, ``model_param_group_index_map`` points at other parameters' shards. Only optimizer
+    checkpointing reads that map, so training is unaffected, but saving optimizer state fails in
+    ``sharded_param_state_dp_reshardable`` and loading could restore state onto the wrong parameters.
+
+    Rebuild the map in the stored order. Optimizers whose map already matches are left unchanged.
+
+    Args:
+        optimizer: The optimizer returned by ``setup_optimizer``, possibly a ``ChainedOptimizer``.
+
+    Returns:
+        The number of index entries that were corrected.
+    """
+    corrected = 0
+    for inner in getattr(optimizer, "chained_optimizers", None) or [optimizer]:
+        if not isinstance(inner, DistributedOptimizer):
+            continue
+        index = getattr(inner, "model_param_group_index_map", None)
+        fp32_groups = getattr(inner, "model_fp32_groups", None)
+        float16_groups = getattr(inner, "model_float16_groups", None)
+        if index is None or fp32_groups is None or float16_groups is None:
+            continue
+        stored = {}
+        for group_index, (fp32_params, float16_params) in enumerate(zip(fp32_groups, float16_groups)):
+            for group_order, param in enumerate([*fp32_params, *float16_params]):
+                stored[param] = (group_index, group_order)
+        if stored.keys() != index.keys():
+            G_LOGGER.warning(
+                "Distributed optimizer parameter groups do not match its index map; leaving it unchanged."
+            )
+            continue
+        changed = sum(stored[param] != position for param, position in index.items())
+        if changed:
+            inner.model_param_group_index_map = stored
+            corrected += changed
+    if corrected:
+        G_LOGGER.info(
+            f"Realigned {corrected} distributed-optimizer parameter index entries with the FP32-first group order."
+        )
+    return corrected
 
 
 def _optimizer_state_is_fp32_adam(state_dict: Mapping[str, object]) -> bool:
