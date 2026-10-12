@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for NemotronH and Nemotron 3."""
+"""VR200 performance recipes for Nemotron 3 and 3.5."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
@@ -217,10 +217,15 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300)."""
+def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300).
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
+    """
     cfg = _nemotron_3_ultra_gb300_fp8mx_config(
-        num_gpus=256,
+        num_gpus=num_gpus,
         expert_model_parallel_size=64,
         global_batch_size=256,
     )
@@ -254,9 +259,14 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× VR200, NVFP4 (alias of GB300)."""
-    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config()
+def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VR200, NVFP4 (alias of GB300).
+
+    Args:
+        num_gpus: Launch GPU count used to size HSDP optimizer instances.
+            Defaults to the canonical 256-GPU benchmark allocation.
+    """
+    cfg = nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(num_gpus=num_gpus)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

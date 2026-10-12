@@ -304,14 +304,14 @@ def test_flat_environment_preparation_defaults_missing_recipe_environment(model_
 
 def test_missing_exact_gpu_recipe_uses_canonical_family_recipe(monkeypatch):
     """Weak scaling falls back to the canonical recipe for the same workload."""
-    canonical_name = "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config"
+    canonical_name = "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config"
     args = SimpleNamespace(
         model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
+        model_recipe_name="nemotron_3_super",
         task="pretrain",
         num_gpus=8,
         gpu="b300",
-        compute_dtype="fp8_cs",
+        compute_dtype="fp8_mx",
         config_variant=None,
         global_batch_size=None,
     )
@@ -370,6 +370,69 @@ def test_exact_gpu_recipe_takes_precedence_over_canonical_fallback(monkeypatch):
     assert result is exact_recipe
 
 
+@pytest.mark.unit
+@pytest.mark.parametrize("gpu", ["gb200", "gb300", "vr200"])
+@pytest.mark.parametrize("precision", ["fp8_mx", "nvfp4"])
+@pytest.mark.parametrize("override", [None, 4, 8])
+def test_ultra_weak_scaling_resolves_hsdp_before_user_overrides(monkeypatch, gpu, precision, override):
+    """A 512-GPU fallback uses eight instances unless the user explicitly selects another count."""
+    suffix = "fp8mx" if precision == "fp8_mx" else precision
+    canonical_name = f"nemotron_3_ultra_pretrain_256gpu_{gpu}_{suffix}_config"
+    args = SimpleNamespace(
+        model_family_name="nemotronh",
+        model_recipe_name="nemotron_3_ultra",
+        task="pretrain",
+        num_gpus=512,
+        gpu=gpu,
+        compute_dtype=precision,
+        config_variant=None,
+        global_batch_size=None,
+    )
+
+    # Exercise the actual HSDP helper without importing GPU-only recipe dependencies.
+    path = utils._PERF_RECIPES_ROOT / "nemotronh" / "common.py"
+    tree = ast.parse(path.read_text())
+    helper = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_apply_nemotron_3_ultra_fsdp_hsdp"
+    )
+    namespace = {
+        "ConfigContainer": object,
+        "_GB300_NVLINK_DOMAIN_GPUS": 64,
+        "torch": SimpleNamespace(bfloat16="bf16", float32="fp32"),
+    }
+    exec(compile(ast.Module(body=[helper], type_ignores=[]), str(path), "exec"), namespace)
+
+    def build_recipe(*, num_gpus=256):
+        recipe = SimpleNamespace(ddp=SimpleNamespace(), model=SimpleNamespace(), checkpoint=SimpleNamespace())
+        namespace[helper.name](recipe, num_gpus)
+        return recipe
+
+    def missing_exact(**_kwargs):
+        raise utils.PerfRecipeNotFoundError("missing exact 512-GPU recipe")
+
+    def apply_override(recipe, cli_overrides, _args):
+        assert recipe.ddp.num_distributed_optimizer_instances == 8
+        assert recipe.ddp.outer_dp_sharding_strategy == "optim"
+        if cli_overrides:
+            recipe.ddp.num_distributed_optimizer_instances = int(cli_overrides[0].split("=", 1)[1])
+        return recipe
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
+    monkeypatch.setattr(utils, "flat_perf_recipe_names", lambda: (canonical_name,))
+    monkeypatch.setattr(utils, "find_perf_recipe", lambda _name: build_recipe)
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_override)
+    override_utils = types.ModuleType("utils.overrides")
+    override_utils.set_post_overrides = lambda recipe, **_kwargs: recipe
+    monkeypatch.setitem(sys.modules, "utils.overrides", override_utils)
+
+    cli_overrides = [] if override is None else [f"ddp.num_distributed_optimizer_instances={override}"]
+    result = run_script._prepare_perf_recipe(args, cli_overrides)
+
+    assert result.ddp.num_distributed_optimizer_instances == (8 if override is None else override)
+
+
 def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
     args = SimpleNamespace(
         model_family_name="test",
@@ -399,11 +462,11 @@ def test_exact_recipe_construction_error_is_not_treated_as_missing(monkeypatch):
 def test_missing_perf_recipe_family_reports_requested_workload(monkeypatch):
     args = SimpleNamespace(
         model_family_name="nemotronh",
-        model_recipe_name="nemotronh_56b",
+        model_recipe_name="nemotron_3_super",
         task="pretrain",
         num_gpus=8,
         gpu="b300",
-        compute_dtype="fp8_cs",
+        compute_dtype="fp8_mx",
         config_variant=None,
         global_batch_size=None,
     )
@@ -412,14 +475,14 @@ def test_missing_perf_recipe_family_reports_requested_workload(monkeypatch):
         raise utils.PerfRecipeNotFoundError("missing exact 8-GPU recipe")
 
     def missing_family(**_kwargs):
-        raise ValueError("No flat perf recipe found for nemotronh_56b/pretrain/b300/fp8_cs/default")
+        raise ValueError("No flat perf recipe found for nemotron_3_super/pretrain/b300/fp8_mx/default")
 
     monkeypatch.setattr(run_script, "get_perf_recipe_by_name", missing_exact)
     monkeypatch.setattr(run_script, "get_perf_optimized_recipe", missing_family)
 
     with pytest.raises(
         ValueError,
-        match=r"nemotronh_56b/pretrain/b300/fp8_cs/default",
+        match=r"nemotron_3_super/pretrain/b300/fp8_mx/default",
     ):
         run_script._prepare_perf_recipe(args, [])
 
@@ -474,9 +537,9 @@ def test_exp_name_rejects_fractional_data_parallel_weak_scaling(monkeypatch):
         utils.get_exp_name_config(
             args,
             model_family_name="nemotronh",
-            model_recipe_name="nemotronh_56b",
+            model_recipe_name="nemotron_3_super",
             gpu="b300",
-            compute_dtype="fp8_cs",
+            compute_dtype="fp8_mx",
             task="pretrain",
         )
 

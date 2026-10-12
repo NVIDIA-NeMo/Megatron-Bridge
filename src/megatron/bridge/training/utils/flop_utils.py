@@ -1067,7 +1067,7 @@ def num_floating_point_operations(
     def dsv4_attention_terms(compress_ratios: list[int]) -> tuple[float, float]:
         """Return token-linear and sequence-quadratic DSv4 attention FLOPs."""
         # DeepSeek-V4 hybrid MLA uses sparse attention instead of the full
-        # core-attention terms used by DeepSeek-V2/V3 MLA. Projection costs
+        # core-attention terms used by DeepSeek-V3 MLA. Projection costs
         # are accounted here; sparse attention, compressor, and indexer
         # costs are added below.
         q_lora_rank = getattr(cfg.model, "q_lora_rank", None)
