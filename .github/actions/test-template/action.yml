@@ -122,6 +122,9 @@ runs:
         echo "::group::Start test container"
         if [[ "$MOUNT_FS" == "true" ]]; then
           VOLUME_ARGS="--volume ${{ inputs.test-data-path }}:/home/TestData --env HF_HUB_OFFLINE=1"
+          # The shared offline cache may be read-only to the container user.
+          # All ranks in these single-container jobs share this writable lock directory.
+          VOLUME_ARGS+=" --env MEGATRON_CONFIG_LOCK_DIR=/home/ubuntu/.cache/huggingface"
           HF_HOME=/home/TestData/HF_HOME
           NEMO_HOME=/home/TestData/nemo_home
         else

@@ -167,6 +167,7 @@ COMBOS = [
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb300", "nvfp4"),
     ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "bf16", "fsdp"),
     ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "fp8_mx", "fsdp"),
+    ("deepseek", "deepseek_v3", "pretrain", 256, "gb300", "fp8_mx", "hsdp"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb200", "bf16"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb200", "fp8_cs"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb200", "fp8_mx"),
@@ -309,14 +310,6 @@ COMBOS = [
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "bf16"),
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "fp8_mx"),
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "nvfp4"),
-    # NemotronH 56B
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "gb300", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 256, "gb300", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "gb200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "b300", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "b200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "h100", "fp8_cs"),
     # GPT-OSS 20B
     ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4"),
     ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx"),

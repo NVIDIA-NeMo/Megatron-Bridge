@@ -647,7 +647,7 @@ def test_benchmark_recipe_weak_scales_noncanonical_world_size(monkeypatch):
     module.main(
         [
             "--recipe",
-            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
             "--mode",
             "pretrain",
         ]
@@ -683,7 +683,7 @@ def test_benchmark_recipe_weak_scales_by_data_parallel_ratio_after_topology_over
     module.main(
         [
             "--recipe",
-            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
             "--mode",
             "pretrain",
             "--tensor_model_parallel_size",
@@ -745,7 +745,7 @@ def test_benchmark_recipe_explicit_global_batch_size_disables_weak_scaling(monke
     module.main(
         [
             "--recipe",
-            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
             "--mode",
             "pretrain",
             "--global_batch_size",
@@ -773,7 +773,7 @@ def test_benchmark_recipe_rejects_world_size_incompatible_with_model_parallelism
         module.main(
             [
                 "--recipe",
-                "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+                "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
                 "--mode",
                 "pretrain",
             ]
@@ -797,7 +797,7 @@ def test_benchmark_recipe_rejects_fractional_weak_scaled_global_batch_size(monke
         module.main(
             [
                 "--recipe",
-                "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+                "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
                 "--mode",
                 "pretrain",
             ]
