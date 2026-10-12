@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Every GB300 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the VR200
+"""Every GB300 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the VRNVL72
 aliases built on the shared HybridEP bases stay on HybridEP."""
 
 import importlib
@@ -53,27 +53,27 @@ _GB300_NCCLEP_RECIPES = (
     ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
 )
 
-# VR200 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
-_VR200_ALIASES = (
-    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_256gpu_vr200_bf16_config"),
-    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config"),
-    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_256gpu_vr200_nvfp4_config"),
-    ("gpt_oss.vr200.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config"),
-    ("kimi.vr200.kimi_k2", "kimi_k2_pretrain_256gpu_vr200_fp8mx_config"),
-    ("nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config"),
-    ("nemotronh.vr200.nemotronh", "nemotron_3_super_pretrain_64gpu_vr200_bf16_config"),
-    ("nemotronh.vr200.nemotronh", "nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config"),
-    ("nemotronh.vr200.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config"),
-    ("nemotronh.vr200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config"),
-    ("nemotronh.vr200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config"),
-    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config"),
-    ("deepseek.vr200.deepseek_v3", "deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config"),
-    ("qwen.vr200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config"),
-    ("qwen.vr200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config"),
-    ("qwen.vr200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config"),
-    ("qwen.vr200.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config"),
-    ("qwen.vr200.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config"),
-    ("qwen_vl.vr200.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config"),
+# VRNVL72 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
+_VRNVL72_ALIASES = (
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config"),
+    ("gpt_oss.vrnvl72.gpt_oss", "gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config"),
+    ("kimi.vrnvl72.kimi_k2", "kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
+    ("qwen.vrnvl72.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config"),
+    ("qwen_vl.vrnvl72.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config"),
 )
 
 
@@ -81,7 +81,7 @@ _VR200_ALIASES = (
 # every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
     module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
-    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_VR200_ALIASES)})
+    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_VRNVL72_ALIASES)})
 }
 
 
@@ -118,8 +118,8 @@ def test_gb300_deepseek_hsdp_uses_hybridep() -> None:
     assert cfg.env_vars.keys().isdisjoint(_NCCL_EP_ENV)
 
 
-@pytest.mark.parametrize(("module_name", "factory_name"), _VR200_ALIASES, ids=lambda value: value)
-def test_vr200_aliases_do_not_inherit_nccl_ep(module_name: str, factory_name: str) -> None:
+@pytest.mark.parametrize(("module_name", "factory_name"), _VRNVL72_ALIASES, ids=lambda value: value)
+def test_vrnvl72_aliases_do_not_inherit_nccl_ep(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
 
     # The aliases keep the dispatcher their HybridEP base had upstream (flex/hybridep, or alltoall for the

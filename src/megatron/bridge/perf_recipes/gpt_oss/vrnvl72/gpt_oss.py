@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for GPT-OSS."""
+"""VRNVL72 performance recipes for GPT-OSS."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
@@ -30,8 +30,8 @@ from megatron.bridge.perf_recipes.gpt_oss.gb300.gpt_oss import (
 )
 
 
-def gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 8× VR200, NVFP4 (alias of GB300)."""
+def gpt_oss_20b_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """GPT-OSS 20B pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
     cfg = gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -60,8 +60,8 @@ def gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 8× VR200, MXFP8."""
+def gpt_oss_20b_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 20B pretrain: 8× VRNVL72, MXFP8."""
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
 
@@ -108,8 +108,8 @@ def gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 64× VR200, NVFP4."""
+def gpt_oss_20b_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """GPT-OSS 20B pretrain: 64× VRNVL72, NVFP4."""
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = _gpt_oss_20b_nvfp4_precision()
 
@@ -158,8 +158,8 @@ def gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× VR200, BF16 (alias of GB300)."""
+def gpt_oss_120b_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× VRNVL72, BF16 (alias of GB300)."""
     cfg = gpt_oss_120b_pretrain_64gpu_gb300_bf16_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -179,8 +179,8 @@ def gpt_oss_120b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× VR200, FP8-MX (alias of GB300)."""
+def gpt_oss_120b_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = _build_gpt_oss_120b_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

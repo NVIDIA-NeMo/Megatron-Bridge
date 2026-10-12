@@ -19,8 +19,8 @@ import torch
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.perf_recipes.nemotronh import (
-    nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config,
-    nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config,
+    nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config,
+    nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_256gpu_gb200_bf16_ep16_config,
@@ -160,9 +160,9 @@ def test_gb200_ep16_pretrain_preserves_functional_policy() -> None:
 
 
 @pytest.mark.unit
-def test_vr200_perf_recipe_uses_nvl72_ultra_topology() -> None:
-    """VR200 Ultra preserves the GB300 execution layout with explicit NVL72 settings."""
-    cfg = nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config()
+def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
+    """VRNVL72 Ultra preserves the GB300 execution layout with explicit NVL72 settings."""
+    cfg = nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config()
 
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
@@ -185,9 +185,9 @@ def test_vr200_perf_recipe_uses_nvl72_ultra_topology() -> None:
 
 
 @pytest.mark.unit
-def test_vr200_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
-    """VR200 Ultra NVFP4 preserves the GB300 NVFP4 execution layout with explicit NVL72 settings."""
-    cfg = nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config()
+def test_vrnvl72_nvfp4_perf_recipe_uses_nvl72_ultra_topology() -> None:
+    """VRNVL72 Ultra NVFP4 preserves the GB300 NVFP4 execution layout with explicit NVL72 settings."""
+    cfg = nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config()
 
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
