@@ -97,7 +97,8 @@ def loss_func(
         check_for_spiky_loss: Whether to check for unexpectedly large losses.
 
     Returns:
-        Tuple of (total_loss, num_tokens, {'lm loss': reporting_loss}).
+        A tuple containing the total loss, valid-token count, and reporting
+        metrics under the ``lm loss`` key.
 
     Note:
         Only the LLM module produces a loss. Encoders produce activations
@@ -279,6 +280,8 @@ def forward_step(
             data_batch, packing_kwargs = pack_language_shard(data_batch, lengths=pack_lengths)
             if packing_kwargs is not None:
                 data_batch["packing_kwargs"] = packing_kwargs
+        # The padding mask only feeds data-path lengths; the model runs causal attention and must get None.
+        data_batch["attention_mask"] = None
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {

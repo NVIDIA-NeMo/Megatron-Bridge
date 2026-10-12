@@ -534,3 +534,50 @@ class TestSafeTensorsStateSourceSave:
         with open(output_dir / "model.safetensors.index.json") as f:
             output_index = json.load(f)
         assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
+
+
+class TestSafeTensorsStateSourceResolve:
+    """Test SafeTensorsStateSource._resolve_path with revision and offline mode."""
+
+    def test_resolve_path_with_revision(self, tmp_path):
+        revision = "b5968e9190ef"  # pragma: allowlist secret
+        source = SafeTensorsStateSource("some/model-repo", revision=revision)
+        with patch("huggingface_hub.snapshot_download") as mock_download:
+            mock_download.return_value = str(tmp_path)
+            resolved = source.path
+            mock_download.assert_called_once()
+            _, kwargs = mock_download.call_args
+            assert kwargs.get("repo_id") == "some/model-repo"
+            assert kwargs.get("revision") == revision
+            assert resolved == tmp_path
+
+    def test_resolve_path_offline_mode(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("huggingface_hub.constants.HF_HUB_OFFLINE", True)
+        source = SafeTensorsStateSource("some/model-repo", revision="my-tag")
+        with patch("huggingface_hub.snapshot_download") as mock_download:
+            mock_download.return_value = str(tmp_path)
+            resolved = source.path
+            mock_download.assert_called_once()
+            _, kwargs = mock_download.call_args
+            assert kwargs.get("revision") == "my-tag"
+            assert kwargs.get("local_files_only") is True
+            assert resolved == tmp_path
+
+    def test_pretrained_base_passes_revision(self):
+        class DummyPreTrained(PreTrainedBase):
+            def __init__(self, model_name_or_path, revision=None):
+                super().__init__(revision=revision)
+                self.model_name_or_path = model_name_or_path
+
+            def _load_config(self):
+                pass
+
+            def _load_model(self):
+                pass
+
+        obj = DummyPreTrained("deepseek-ai/DeepSeek-V4-Pro", revision="abc1234")
+        with patch.object(SafeTensorsStateSource, "_resolve_path", return_value=Path("/tmp")):
+            accessor = obj.state
+            source = accessor.source
+            assert isinstance(source, SafeTensorsStateSource)
+            assert source.revision == "abc1234"

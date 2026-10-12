@@ -35,7 +35,7 @@ This module provides three model providers:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, List, Optional, cast
+from typing import Any, Callable, ClassVar, List, Literal, Optional, cast
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -202,6 +202,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
+    vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
+    vision_recompute_modules: list[str] | None = None
     hetereogenous_dist_checkpoint: bool = True
 
     mtp_num_layers: Optional[int] = None
@@ -455,6 +460,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     bias_activation_fusion: bool = True
     use_hf_vision_model: bool = False
     vision_dp_when_cp: bool = False
+    # "inherit" preserves legacy decoder-policy inheritance; None disables vision recompute.
+    vision_recompute_granularity: Literal["inherit", "full", "selective"] | None = "inherit"
+    vision_recompute_method: Literal["uniform", "block"] | None = None
+    vision_recompute_num_layers: int | None = None
+    vision_recompute_modules: list[str] | None = None
 
     # Vision encoder CUDA graph settings
     vision_cuda_graph_impl: str = "none"

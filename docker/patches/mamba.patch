@@ -1,0 +1,16 @@
+diff --git a/setup.py b/setup.py
+--- a/setup.py
++++ b/setup.py
+@@ -226,11 +226,10 @@
+         }
+     else:
+         extra_compile_args = {
+-            "cxx": ["-O3", "-std=c++17"],
++            "cxx": ["-O3"],
+             "nvcc": append_nvcc_threads(
+                 [
+                     "-O3",
+-                    "-std=c++17",
+                     "-U__CUDA_NO_HALF_OPERATORS__",
+                     "-U__CUDA_NO_HALF_CONVERSIONS__",
+                     "-U__CUDA_NO_BFLOAT16_OPERATORS__",

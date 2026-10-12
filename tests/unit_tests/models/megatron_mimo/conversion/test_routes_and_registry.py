@@ -25,12 +25,28 @@ from megatron.bridge.models.megatron_mimo.conversion import (
     supports_mimo_conversion,
     validate_route_table,
 )
-from megatron.bridge.models.megatron_mimo.conversion.orchestrator import _reset_registry_for_tests
+from megatron.bridge.models.megatron_mimo.conversion.orchestrator import _CONVERSION_SPECS, _reset_registry_for_tests
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+
+
+def test_encoder_and_projector_routes_share_component():
+    routes = [
+        MIMOComponent("language", "language_model.", "language_model"),
+        MIMOComponent("vision", "vision_model.", "modality_submodules.vision.encoders.vit"),
+        MIMOComponent("projector", "vision_projection.", "modality_submodules.vision.input_projections.0", "vision"),
+    ]
+    validate_route_table(
+        routes, parallelism_config=_two_component_config(), modality_submodules_spec={"vision": object()}
+    )
+    with pytest.raises(ValueError, match="not present"):
+        validate_route_table(
+            routes + [MIMOComponent("audio", "audio.", "audio", "missing")],
+            parallelism_config=_two_component_config(),
+        )
 
 
 def _two_component_config() -> MegatronMIMOParallelismConfig:
@@ -183,10 +199,12 @@ class _FakeSourceBridgeWithDefaultRoutes(_FakeSourceBridgeWithProvider):
 
 class TestConversionSpecRegistry:
     def setup_method(self):
+        self.saved_specs = _CONVERSION_SPECS.copy()
         _reset_registry_for_tests()
 
     def teardown_method(self):
         _reset_registry_for_tests()
+        _CONVERSION_SPECS.update(self.saved_specs)
 
     def test_register_and_lookup(self):
         @register_mimo_conversion_spec(_FakeBridgeA)

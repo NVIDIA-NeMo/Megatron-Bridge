@@ -1314,12 +1314,17 @@ class Gemma4TransformerLayer(TransformerLayer):
         # TODO: remove this guard when MCore dev includes commit e86c262ccd0c and both pins expose
         # TransformerLayer._maybe_unflatten_for_moe.
         if packed_seq_params is not None and hasattr(TransformerLayer, "_maybe_unflatten_for_moe"):
-            moe_input, padding_mask, moe_unflatten_mbs = TransformerLayer._maybe_unflatten_for_moe(
-                self,
-                residual,
-                padding_mask,
-                packed_seq_params,
-            )
+            unflatten_for_moe = TransformerLayer._maybe_unflatten_for_moe
+            # Hash-routing support added input_ids and a fourth return value in MCore.
+            # Gemma's separate-input MoE path does not use token IDs.
+            if "input_ids" in inspect.signature(unflatten_for_moe).parameters:
+                moe_input, padding_mask, _, moe_unflatten_mbs = unflatten_for_moe(
+                    self, residual, padding_mask, input_ids=None, packed_seq_params=packed_seq_params
+                )
+            else:
+                moe_input, padding_mask, moe_unflatten_mbs = unflatten_for_moe(
+                    self, residual, padding_mask, packed_seq_params
+                )
 
         expert_input = _gemma4_rms_norm(
             moe_input,
@@ -1736,10 +1741,29 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
         **kwargs,
     ):
         config = copy.deepcopy(config)
-        if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
-            config.window_size = (config.window_size - 1, 0)
+        is_local = _is_local_attn_layer(layer_number, config.interleaved_attn_pattern)
+        text_config = getattr(config, "text_config", None)
+        uses_vision_bidirectional = getattr(text_config, "use_bidirectional_attention", None) == "vision"
+        self._image_bidirectional_attention = uses_vision_bidirectional and (
+            is_local or getattr(config, "global_image_bidirectional_attention", False)
+        )
+        # Image bidirectionality also applies to DiffusionGemma's global layers,
+        # but only local layers have a finite left window. Keeping a window on a
+        # global layer silently drops distant prompt context once S > window.
+        self._image_attention_window = config.window_size if is_local and self._image_bidirectional_attention else None
+        if is_local:
+            if self._image_bidirectional_attention:
+                # Compose the left window into the explicit mask. TE cannot express
+                # a finite left window with an unrestricted right window, and a zero
+                # right window would remove future tokens in the same image block.
+                config.window_size = None
+                attn_mask_type = AttnMaskType.arbitrary
+            else:
+                config.window_size = (config.window_size - 1, 0)
         else:
             config.window_size = None
+            if self._image_bidirectional_attention:
+                attn_mask_type = AttnMaskType.arbitrary
 
         super().__init__(
             config=config,
@@ -1749,6 +1773,29 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
             attention_dropout=attention_dropout,
             **kwargs,
         )
+
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attention_mask: Tensor | None,
+        attn_mask_type: AttnMaskType,
+        **kwargs,
+    ) -> Tensor:
+        """Honor the image mask in sliding layers while keeping global layers causal."""
+        if self._image_bidirectional_attention:
+            # TE ignores explicit masks in causal mode. Global Gemma 4 attention
+            # remains causal, including image tokens, as in the HF implementation.
+            query_positions = torch.arange(query.size(0), device=query.device) + key.size(0) - query.size(0)
+            key_positions = torch.arange(key.size(0), device=key.device)
+            if attention_mask is None:
+                attention_mask = key_positions[None, :] > query_positions[:, None]
+            if self._image_attention_window is not None:
+                outside_window = key_positions[None, :] <= query_positions[:, None] - self._image_attention_window
+                attention_mask = attention_mask | outside_window[None, None, :, :]
+            attn_mask_type = AttnMaskType.arbitrary
+        return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
 
 
 class Gemma4RotaryEmbedding(RotaryEmbedding):

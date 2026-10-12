@@ -22,6 +22,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from megatron.bridge.models.deepseek.attention import get_deepseek_decoder_block_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.sarvam.sarvam_provider import (
     SarvamMLAModelProvider,
@@ -81,6 +82,7 @@ class TestSarvamProviderDefaults:
         assert provider.position_embedding_type == "rope"
         assert provider.add_qkv_bias is False
         assert provider.qk_layernorm is True
+        assert provider.transformer_layer_spec.func is get_deepseek_decoder_block_spec
         assert provider.make_vocab_size_divisible_by == 128
 
         # DType defaults

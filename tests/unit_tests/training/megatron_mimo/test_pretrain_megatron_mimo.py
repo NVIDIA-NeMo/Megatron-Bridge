@@ -198,14 +198,13 @@ def test_get_rng_state_namespaces_key_with_module_name():
     """
     from megatron.bridge.training.checkpointing import get_rng_state
 
-    pg = MagicMock()
+    pg = SimpleNamespace(pp=MagicMock(), tp=MagicMock(), dp_cp=MagicMock(), ep=None)
     pg.pp.rank.return_value = 0
     pg.pp.size.return_value = 1
     pg.tp.rank.return_value = 0
     pg.tp.size.return_value = 2
     pg.dp_cp.rank.return_value = 0
     pg.dp_cp.size.return_value = 1
-    pg.ep = None  # no EP
 
     with (
         patch("torch.cuda.get_rng_state", return_value=b"dummy_cuda_rng_state"),
@@ -279,7 +278,7 @@ def test_pretrain_megatron_mimo_aborts_async_state_after_training_failure():
         ),
         patch("megatron.bridge.training.pretrain_megatron_mimo.train_megatron_mimo", side_effect=failure),
         patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
-        patch("megatron.core.dist_checkpointing.strategies.filesystem_async._results_queue", None),
+        patch("nvidia_resiliency_ext.checkpointing.async_ckpt.filesystem_async._results_queue", None),
         pytest.raises(RuntimeError, match="training failed") as exc_info,
     ):
         mock_dist.is_initialized.return_value = True

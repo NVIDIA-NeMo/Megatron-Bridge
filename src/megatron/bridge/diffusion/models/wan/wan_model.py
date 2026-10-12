@@ -229,6 +229,10 @@ class WanModel(VisionModule):
 
         # context embeddings
         context = self.text_embedding(context)  # shape [text_len, b, hidden_size]
+        if self.config.sequence_parallel:
+            # The cross-attention KV projection gathers sequence shards across TP ranks.
+            # Scatter after embedding so its replicated parameters receive full gradients.
+            context = tensor_parallel.scatter_to_sequence_parallel_region(context)
 
         # ============= decoder =============
         # calculate rotary pos emb
@@ -284,7 +288,7 @@ class WanModel(VisionModule):
         self.decoder.set_input_tensor(input_tensor[0])
 
     def sharded_state_dict(
-        self, prefix: str = "module.", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
+        self, prefix: str = "", sharded_offsets: tuple = (), metadata: Optional[Dict] = None
     ) -> ShardedStateDict:
         """Sharded state dict implementation for GPTModel backward-compatibility (removing extra state).
 

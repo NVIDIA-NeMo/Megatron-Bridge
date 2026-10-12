@@ -144,6 +144,38 @@ class TestHybridModelProvider:
                 assert mock_model.call_args.kwargs["hybrid_stack_spec"] is hybrid_provider.default_hybrid_stack_spec
                 assert "logit_dtype" not in mock_model.call_args.kwargs
 
+    @pytest.mark.parametrize(
+        ("pp_first", "pp_last", "vp_stage", "expected_pre", "expected_post"),
+        [
+            (True, False, 0, True, False),
+            (True, False, 1, False, False),
+            (False, True, 0, False, False),
+            (False, True, 1, False, True),
+        ],
+    )
+    def test_provide_routes_virtual_pipeline_stages(self, pp_first, pp_last, vp_stage, expected_pre, expected_post):
+        provider = HybridModelProvider(
+            num_layers=4,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            pipeline_model_parallel_size=2,
+            virtual_pipeline_model_parallel_size=2,
+            hybrid_layer_pattern="M|M|M|M",
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+        with (
+            patch.object(hybrid_provider, "MCoreHybridModel", autospec=True) as model,
+            patch.object(hybrid_provider, "is_pp_first_stage", return_value=pp_first),
+            patch.object(hybrid_provider, "is_pp_last_stage", return_value=pp_last),
+        ):
+            provider.provide(vp_stage=vp_stage)
+        kwargs = model.call_args.kwargs
+        assert kwargs["vp_stage"] == vp_stage
+        assert kwargs["pre_process"] is expected_pre
+        assert kwargs["post_process"] is expected_post
+        assert provider._vp_stage == vp_stage
+
     def test_provide_preserves_runtime_config_identity_without_copying_process_groups(self):
         class UncopyableProcessGroupCollection:
             pp = object()

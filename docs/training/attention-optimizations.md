@@ -32,7 +32,7 @@ model_config = GPTModelProvider(
 
 # Or explicitly specify flash attention
 model_config = GPTModelProvider(
-    attention_backend=AttnBackend.flash_attn,  # Explicitly use flash attention
+    attention_backend=AttnBackend.flash,  # Explicitly use flash attention
     # ... other model parameters
 )
 ```
@@ -42,23 +42,24 @@ model_config = GPTModelProvider(
 Megatron Bridge supports several attention backends through the `attention_backend` configuration:
 
 - `AttnBackend.auto`: Automatically selects the best available backend (recommended)
-- `AttnBackend.flash_attn`: Explicitly use Flash Attention implementation
-- `AttnBackend.fused_attn`: Use cuDNN fused attention (when available)
+- `AttnBackend.flash`: Explicitly use Flash Attention implementation
+- `AttnBackend.fused`: Use cuDNN fused attention (when available)
+- `AttnBackend.unfused`: Use Transformer Engine's unfused attention
 - `AttnBackend.local`: Use local PyTorch implementation (for debugging)
 
 ### Environment Variable Control
 
-For fine-grained control, you can still use environment variables to disable specific implementations:
+Bridge resolves `attention_backend=None` in legacy recipes to `AttnBackend.auto`
+when the model configuration is finalized. For automatic selection, leave
+`NVTE_FLASH_ATTN`, `NVTE_FUSED_ATTN`, and `NVTE_UNFUSED_ATTN` unset so MCore can
+enable all three Transformer Engine backends.
 
-```bash
-# Disable flash attention
-export NVTE_FLASH_ATTN=0
-
-# Disable cuDNN flash attention  
-export NVTE_FUSED_ATTN=0
-```
-
-However, the recommended approach is to use the `attention_backend` configuration parameter.
+To restrict selection, use an explicit configuration value such as
+`model.attention_backend=fused`. Existing environment settings must agree with
+that choice: fused attention uses flash/fused/unfused flags of `0/1/0`.
+Bridge leaves these environment variables unchanged, and MCore rejects
+conflicting settings. Arbitrary subsets of backends selected through environment
+variables are not represented by `AttnBackend.auto`.
 
 ## Multi-query Attention (MQA) and Grouped-query Attention (GQA)
 

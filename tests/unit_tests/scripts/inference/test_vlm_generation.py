@@ -104,3 +104,52 @@ def test_builder_configuration_propagates_deterministic_mode() -> None:
     assert result is model_config
     assert transformer.deterministic_mode is True
     assert transformer.tensor_model_parallel_size == 8
+
+
+@pytest.mark.parametrize("uses_builder", [False, True])
+def test_checkpoint_generation_disables_dropping_without_replacing_dispatcher(uses_builder: bool) -> None:
+    class LoadReached(Exception):
+        pass
+
+    bridge = MagicMock()
+    bridge._model_bridge = SimpleNamespace(USE_MODEL_CONFIG_FOR_CONVERSION=uses_builder)
+    bridge.load_megatron_model.side_effect = LoadReached
+    args = SimpleNamespace(
+        deterministic=False,
+        tp=1,
+        pp=1,
+        ep=8,
+        etp=1,
+        pp_layout=None,
+        hf_model_path="test/model",
+        hf_revision="test-revision",
+        megatron_model_path="work/checkpoint",
+        trust_remote_code=True,
+    )
+    with (
+        patch.object(vlm_generation, "maybe_initialize_distributed"),
+        patch.object(vlm_generation, "is_safe_repo", return_value=True),
+        patch.object(vlm_generation, "print_rank_0"),
+        patch.object(
+            vlm_generation.AutoConfig,
+            "from_pretrained",
+            return_value=SimpleNamespace(model_type="test", architectures=[]),
+        ),
+        patch.object(vlm_generation.AutoBridge, "from_hf_pretrained", return_value=bridge),
+        pytest.raises(LoadReached),
+    ):
+        vlm_generation.main(args)
+
+    bridge.load_megatron_model.assert_called_once()
+    assert bridge.load_megatron_model.call_args.args == ("work/checkpoint",)
+    overrides = bridge.load_megatron_model.call_args.kwargs["mp_overrides"]
+    assert overrides["moe_expert_capacity_factor"] is None
+    assert overrides["moe_expert_rank_capacity_factor"] is None
+    assert overrides["moe_paged_stash"] is False
+    assert overrides["moe_ncclep_zero_copy"] is False
+    assert overrides["moe_pad_expert_input_to_capacity"] is False
+    assert overrides["moe_router_force_load_balancing"] is False
+    assert overrides["moe_router_force_biased"] is None
+    assert overrides["moe_hybridep_pad_uneven_dispatch_inputs"] is True
+    assert "moe_token_dispatcher_type" not in overrides
+    assert "moe_flex_dispatcher_backend" not in overrides

@@ -151,6 +151,59 @@ def _mask_all_tokens(example, input_ids, processor, skipped_tokens, **kwargs):  
     return torch.ones_like(input_ids, dtype=torch.float32)
 
 
+@pytest.mark.parametrize(
+    ("parts", "expected"),
+    [
+        ([], ""),
+        (["<image>", "question"], "<image>\nquestion"),
+        (["<image>", "\nquestion"], "<image>\nquestion"),
+        (["<image>", "\n\nquestion"], "<image>\n\nquestion"),
+        (["before\n", "<image>", "\nafter"], "before\n<image>\nafter"),
+        (["before\n", "\nafter"], "before\n\nafter"),
+    ],
+)
+def test_content_join_preserves_existing_newlines(parts, expected):
+    assert omni_collate._join_content_parts(parts) == expected
+
+
+@pytest.mark.parametrize("kind", ["image", "temporal_image", "video"])
+@pytest.mark.parametrize("separator", ["", "\n", "\n\n"])
+def test_energon_media_prompt_does_not_duplicate_source_separator(monkeypatch, kind, separator):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "_patchify_frame", lambda *args, **kwargs: torch.ones(2, 3))
+    processor = _Processor([[1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21]])
+    encoder = NemotronOmniTaskEncoder(processor=processor, pad_to_multiple_of=1)
+    media_kind = "video" if kind == "video" else "image"
+    media = Image.new("RGB", (32, 16))
+    sample = _sample(
+        [{"role": "user", "content": f"<{media_kind}>{separator}question"}],
+        imgs=[media] if media_kind == "image" else None,
+        videos=[[media, media]] if media_kind == "video" else None,
+    )
+    example = encoder.encode_sample(sample).example
+    if kind == "image":
+        conversation, _ = omni_collate._render_text_conversation(example)
+        media_text = "<image>"
+    else:
+        batch, _, _, _ = omni_collate._prepare_temporal_rows(
+            [example],
+            processor,
+            temporal_patch_size=2,
+            video_fps=1.0,
+            video_nframes=2,
+            patch_dim=16,
+            temporal_video_resize_mode="fixed_512",
+        )
+        conversation = processor.tokenizer.conversations[0]
+        media_text = "<img><image></img>"
+        if kind == "video":
+            media_text = "Frame 1 sampled at 0.00 seconds and frame 2 sampled at 1.00 seconds: " + media_text
+        # Separator handling must not change the fixed training image policy.
+        assert batch["imgs_sizes"].tolist() == [[512, 512]] * (2 if kind == "video" else 1)
+    assert conversation[0]["content"] == media_text + (separator or "\n") + "question"
+
+
 def test_encoder_uses_generic_hf_style_sample_and_batch_contract():
     assert NemotronOmniTaskSample is HFEnergonSample
     assert issubclass(NemotronOmniTaskBatch, HFEnergonBatch)

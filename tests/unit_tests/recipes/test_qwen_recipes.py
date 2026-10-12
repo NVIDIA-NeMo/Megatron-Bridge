@@ -67,6 +67,10 @@ class _FakeBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         return _FakeModelCfg()
 
+    def get_model_config(self):
+        # Builder-backed recipes (e.g. dense Qwen3) request a ModelConfig instead.
+        return _FakeModelCfg()
+
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         expected_revisions = {
@@ -97,16 +101,19 @@ class _FakeMoeBridge(_FakeBridge):
 
 class _FakeTextConfig:
     architectures = None
+    model_type = "qwen3_5_moe_text"
+    max_position_embeddings = 262144
 
 
 class _FakeRootConfig:
     text_config = _FakeTextConfig()
+    tie_word_embeddings = False
 
 
 class _FakeAutoConfig:
     @staticmethod
-    def from_pretrained(hf_path: str):
-        # Ignore hf_path; return a unified config with a nested text config.
+    def from_pretrained(hf_path: str, *, revision: str | None = None):
+        # Match the pinned-config API without downloading a model configuration.
         return _FakeRootConfig()
 
 

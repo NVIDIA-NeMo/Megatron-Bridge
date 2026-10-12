@@ -15,7 +15,7 @@
 import os
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict
 from unittest.mock import mock_open, patch
 
@@ -35,6 +35,15 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     read_run_config,
     read_train_state,
 )
+from megatron.bridge.utils.instantiate_utils import InstantiationException
+
+
+@dataclass
+class LegacyConfig:
+    """Test config with a field removed by backward compatibility sanitization."""
+
+    active: int = 1
+    removed: str = field(default="", init=False)
 
 
 @dataclass
@@ -275,6 +284,81 @@ class TestCheckpointUtils:
         assert result["model"]["nested"][0]["timers"] is None
         assert result["model"]["keep"]["_target_"] == "some.other.Component"
         assert result["model"]["nested"][1]["other"]["_target_"] == "another.Component"
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "transformers.dynamic_module_utils.get_class_in_module",
+            "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
+            "transformers.pipelines.pipeline",
+            "torch.serialization.load",
+        ],
+    )
+    def test_read_run_config_rejects_unsafe_targets_before_compat_import(self, target):
+        """Compatibility sanitization must not import directly prohibited targets."""
+        config_yaml = yaml.safe_dump({"model": {"layers": [{"_target_": target, "_call_": False}]}})
+        with (
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
+            patch("builtins.open", mock_open(read_data=config_yaml)),
+            patch("megatron.bridge.training.utils.checkpoint_utils.apply_run_config_backward_compat") as compat,
+        ):
+            with pytest.raises(InstantiationException, match=r"model\.layers\[0\]"):
+                read_run_config(f"unsafe-{target}.yaml")
+        compat.assert_not_called()
+
+    def test_read_run_config_broadcasts_validation_failure(self):
+        """All ranks receive a rank-zero validation error instead of a partial config."""
+        config_yaml = yaml.safe_dump({"model": {"_target_": "transformers.pipeline"}})
+        with (
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=True
+            ),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe", return_value=1),
+            patch("megatron.bridge.training.utils.checkpoint_utils.print_rank_0"),
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.broadcast_object_list"
+            ) as broadcast,
+            patch("builtins.open", mock_open(read_data=config_yaml)),
+        ):
+            with pytest.raises(RuntimeError, match="transformers.pipeline"):
+                read_run_config("unsafe-distributed.yaml")
+        broadcast.assert_called_once()
+
+    def test_read_run_config_preserves_benign_legacy_config(self):
+        """A benign init=False field is still removed during compatibility cleanup."""
+        config_yaml = yaml.safe_dump(
+            {"model": {"_target_": f"{LegacyConfig.__module__}.{LegacyConfig.__qualname__}", "removed": "old"}}
+        )
+        with (
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
+            patch("builtins.open", mock_open(read_data=config_yaml)),
+        ):
+            config = read_run_config("benign-legacy.yaml")
+        assert "removed" not in config["model"]
+
+    def test_read_run_config_rejects_unsafe_legacy_field(self):
+        """An unsafe target is rejected even if compatibility would discard its field."""
+        config_yaml = yaml.safe_dump(
+            {
+                "model": {
+                    "_target_": f"{LegacyConfig.__module__}.{LegacyConfig.__qualname__}",
+                    "removed": {"_target_": "transformers.pipeline"},
+                }
+            }
+        )
+        with (
+            patch(
+                "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized", return_value=False
+            ),
+            patch("builtins.open", mock_open(read_data=config_yaml)),
+        ):
+            with pytest.raises(InstantiationException, match="model.removed"):
+                read_run_config("unsafe-legacy.yaml")
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
     @patch("megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized")

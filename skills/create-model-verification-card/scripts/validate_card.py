@@ -181,6 +181,7 @@ FORBIDDEN_KEY_FRAGMENTS = (
 )
 
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD|PLACEHOLDER)\b|<[^>]+>", re.IGNORECASE)
+CHAT_TOKEN_RE = re.compile(r"<\|im_start\|>|<\|im_end\|>|<think>|</think>")
 HF_ID_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
@@ -585,13 +586,30 @@ def _is_finite_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(float(value))
 
 
-def _contains_ipv6(value: str) -> bool:
+def _mask_chat_tokens(value: str) -> str:
+    # Mask only exact delimiters, not their contents, and preserve diagnostic offsets.
+    return CHAT_TOKEN_RE.sub(lambda match: " " * len(match.group(0)), value)
+
+
+def _contains_placeholder(value: str) -> bool:
+    return PLACEHOLDER_RE.search(_mask_chat_tokens(value)) is not None
+
+
+def _contains_non_loopback_ip(value: str) -> bool:
+    for match in IPV4_RE.finditer(value):
+        try:
+            address = ipaddress.ip_address(match.group(0))
+        except ValueError:
+            # Preserve the existing conservative rejection of IPv4-like text.
+            return True
+        if not address.is_loopback:
+            return True
     for match in IPV6_CANDIDATE_RE.finditer(value):
         try:
             address = ipaddress.ip_address(match.group(0))
         except ValueError:
             continue
-        if address.version == 6:
+        if address.version == 6 and address != ipaddress.IPv6Address("::1"):
             return True
     return False
 
@@ -1584,11 +1602,11 @@ def _validate_item(
         if len(complete_commands) != expected_count:
             errors.append(f"{_pointer(*path, command_field)}: verified item requires {expected_count} command(s)")
         for entry_path, entry in command_entries:
-            if PLACEHOLDER_RE.search(entry):
+            if _contains_placeholder(entry):
                 errors.append(f"{_pointer(*entry_path)}: verified command contains a placeholder")
         if not isinstance(expected, str) or not expected.strip():
             errors.append(f"{_pointer(*path, 'expected_result')}: verified items require a concrete result")
-        elif PLACEHOLDER_RE.search(expected):
+        elif _contains_placeholder(expected):
             errors.append(f"{_pointer(*path, 'expected_result')}: verified result contains a placeholder")
         if not _is_iso_date(item.get("last_verified")):
             errors.append(f"{_pointer(*path, 'last_verified')}: verified items require an ISO date")
@@ -1597,7 +1615,7 @@ def _validate_item(
             errors.append(f"{_pointer(*path, command_field)}: must be null for status {status}")
         if item.get("last_verified") is not None:
             errors.append(f"{_pointer(*path, 'last_verified')}: must be null for status {status}")
-        if not isinstance(expected, str) or not expected.strip() or PLACEHOLDER_RE.search(expected):
+        if not isinstance(expected, str) or not expected.strip() or _contains_placeholder(expected):
             errors.append(f"{_pointer(*path, 'expected_result')}: explain the public limitation")
 
     if status == "verified" and item_name in CONVERSION_ITEMS:
@@ -1763,7 +1781,7 @@ def _validate_weak_scaling_group(
     expected_result = group.get("expected_result")
     if not isinstance(expected_result, str) or not expected_result.strip():
         errors.append(f"{_pointer(*path, 'expected_result')}: verified items require a concrete result")
-    elif PLACEHOLDER_RE.search(expected_result):
+    elif _contains_placeholder(expected_result):
         errors.append(f"{_pointer(*path, 'expected_result')}: verified result contains a placeholder")
 
     points = group.get("points")
@@ -1806,7 +1824,7 @@ def _validate_weak_scaling_group(
         if not isinstance(command, str) or not command.strip():
             errors.append(f"{_pointer(*point_path, 'command')}: expected a non-empty command string")
             command = None
-        elif PLACEHOLDER_RE.search(command):
+        elif _contains_placeholder(command):
             errors.append(f"{_pointer(*point_path, 'command')}: verified command contains a placeholder")
 
         sequence_length: int | None = None
@@ -1933,7 +1951,7 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
         errors.append("/: execution-environment names do not belong in the card")
     if URL_RE.search(privacy_raw):
         errors.append("/: URLs are forbidden; use a public model name or repository-relative path")
-    if EMAIL_RE.search(privacy_raw) or IPV4_RE.search(privacy_raw) or _contains_ipv6(privacy_raw):
+    if EMAIL_RE.search(privacy_raw) or _contains_non_loopback_ip(privacy_raw):
         errors.append("/: email or IP address detected")
     if REMOTE_COMMAND_RE.search(privacy_raw) or REMOTE_COPY_RE.search(privacy_raw):
         errors.append("/: remote host commands are forbidden")
@@ -1972,7 +1990,7 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
     if "../" in privacy_raw:
         errors.append("/: parent-directory traversal is forbidden in cards")
 
-    raw_without_urls = URL_RE.sub("", privacy_raw)
+    raw_without_urls = _mask_chat_tokens(URL_RE.sub("", privacy_raw))
     for match in ABSOLUTE_PATH_RE.finditer(raw_without_urls):
         errors.append(f"/: absolute path detected at character {match.start()}")
 

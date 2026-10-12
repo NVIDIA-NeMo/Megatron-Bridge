@@ -1,0 +1,613 @@
+# Nemotron-3.5 Super Text-only
+
+The text-only bridge imports language and shared Multi-Token Prediction (MTP) weights from the Nemotron 3.5 Super VL checkpoint while excluding the vision encoder, projector, and temporal video embedder. Export produces a standalone `NemotronHForCausalLM` checkpoint that uses the native Nemotron-H text bridge.
+
+This workflow reuses [Nemotron 3 Super](nemotron3-super.md) text recipes with the language-only checkpoint as their initialization source. The records below describe the exact verified configurations, not every recipe or parallelism combination. See the [full-VL guide](nemotron3.5-super-vl.md) for image/video workflows.
+
+The public checkpoint revision remains unbound. CPU conversion, long-context training, and text-only pretrain/resume verification are deferred; their unverified status does not imply lack of implementation support.
+
+<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+
+## Verified configurations
+
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-nemotron-3.5-super-vl-120b-a12b-text-only"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H100">H100</button>
+        <button type="button" data-hardware="GB200">GB200</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-cpu" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-gpu" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-cpu" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-gpu" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-sft-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-sft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-sft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-sft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H100" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H100</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · GB200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H100" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-peft-h100" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-peft-h100" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H100</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="nemotron-3-5-super-vl-120b-a12b-text-only-peft-gb200" aria-controls="nemotron-3-5-super-vl-120b-a12b-text-only-peft-gb200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · GB200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU conversion is deferred; no CPU-only verification is claimed.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Distributed GPU import and paired export passed on H100 and GB200. All 42,683 language tensors, including 1,040 MTP tensors, matched in keys, shapes, dtypes and values across the saved round trip. Compared 247,222,108,160 source tensor bytes; no media tensors were exported. This establishes weight conversion, not forward or training parity.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU conversion is deferred; no CPU-only verification is claimed.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-23</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 1 --gpus-per-node 4 --hf-model nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16 --text-only --trust-remote-code --torch-dtype bfloat16 --tp 1 --pp 2 --ep 2 --etp 1 --distributed-save --megatron-path work/model-verification/nemotron-3.5-super-vl-text-only/megatron --hf-path work/model-verification/nemotron-3.5-super-vl-text-only/hf</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Exported a standalone native NemotronHForCausalLM checkpoint with unprefixed language and MTP weights and zero media tensors. All 42,683 tensors matched the source exactly, including 1,040 MTP tensors. The tokenizer was preserved, native HF config loading and normal text bridge dispatch passed, and the tensor-name/shape structure matched Nemotron 3 Super. This does not claim identical weights to that model.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Additional text-only pretrain and resume verification is deferred. Recipe construction alone does not establish training or resume correctness.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-pretrain-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Additional text-only pretrain and resume verification is deferred. Recipe construction alone does not establish training or resume correctness.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-sft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-sft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-27</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.6722764</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.5672588</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>3,792.220 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>23.570 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>270.027 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 8 --gpus-per-node 8 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --load_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft checkpoint.ckpt_step=250 checkpoint.finetune=false --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-indices &#x27;dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}&#x27; scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load_optim=true checkpoint.load_rng=true checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-sft-recovery-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Completed a fresh-root continuation from the original complete step-250 checkpoint through step 500 after the reference run failed at final save. All 1250 loss comparisons across steps 251-500 passed the unchanged 1% plus 1e-6 bound. Metrics below describe only that continuation, not an uninterrupted 500-step execution. Uses the native Nemotron 3 Super SFT recipe on 64 H100 GPUs with this model&#x27;s converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-sft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-sft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-27</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.5975891</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.5676602</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>6,013.670 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>14.420 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>170.279 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 16 --gpus-per-node 4 --recipe nemotron_3_super_sft_16gpu_h100_bf16_config --mode sft --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=64 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 mixed_precision.grad_reduce_in_fp32=true ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft-indices &#x27;dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}&#x27; scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-sft-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super SFT recipe on 64 GB200 GPUs with this model&#x27;s converted language weights and tokenizer, no media modules, TP8/PP1/EP64/ETP1, sequence length 2048 and recipe GBS/MBS 32/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. Final export, native HF reload and one matched numerical fixture passed; those do not establish general probability equality. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H100</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Long-context text-only training is deferred; no long-context verification is claimed.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-sft-long-context-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · GB200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <p>No runnable command is recorded for this status.</p>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Long-context text-only training is deferred; no long-context verification is claimed.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-peft-h100" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-peft-h100" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H100</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H100</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-27</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.6401206</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.6625465</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>8,122.160 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>21.220 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>252.150 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8 --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/h100-peft model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=16 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/h100-peft-indices &#x27;dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}&#x27; scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/h100-peft-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super PEFT recipe on 16 H100 GPUs with this model&#x27;s converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. LoRA rank/alpha 32/32 targets native language projections with zero dropout. Native adapter and trained router-bias buffers reloaded exactly; full merge, strict HF reload and one matched numerical fixture passed. Standalone HF adapter export does not preserve trained router-bias buffers. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+</p>
+      </section>
+    </article>
+    <article id="nemotron-3-5-super-vl-120b-a12b-text-only-peft-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-5-super-vl-120b-a12b-text-only-peft-gb200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · GB200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>GB200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-09-27</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>0.6392546</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.6631947</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>13,720.500 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>12.720 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>149.266 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --wait --nodes 4 --gpus-per-node 4 --recipe nemotron_3_super_peft_16gpu_h100_bf16_config --mode lora --dataset tulu3 --seq_length 2048 --max_steps 500 --save_interval 250 --pretrained_checkpoint work/model-verification/nemotron-3.5-super-vl-text-only/megatron/iter_0000000 --save_dir work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft model.hf_model_id=work/model-verification/nemotron-3.5-super-vl-text-only/hf tokenizer.tokenizer_model=work/model-verification/nemotron-3.5-super-vl-text-only/hf ++tokenizer.hf_tokenizer_kwargs.trust_remote_code=false model.expert_model_parallel_size=16 model.moe_token_dispatcher_type=flex model.moe_flex_dispatcher_backend=hybridep model.moe_shared_expert_overlap=false model.moe_router_force_load_balancing=false optimizer.use_precision_aware_optimizer=false optimizer.main_grads_dtype=float32 optimizer.main_params_dtype=float32 optimizer.exp_avg_dtype=float32 optimizer.exp_avg_sq_dtype=float32 ddp.grad_reduce_in_fp32=true dataset.hf_dataset=null dataset.hf_validation_proportion=null dataset.dataset_root=work/data/tulu3/jsonl dataset.do_validation=false dataset.do_test=false dataset.enable_offline_packing=true ++dataset.dataset_kwargs.pad_to_max_length=true ++dataset.dataset_kwargs.index_mapping_dir=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft-indices &#x27;dataset.offline_packing_specs={packed_sequence_size:2048,pad_seq_to_mult:8,packed_train_data_path:work/data/tulu3/packed/training.idx.parquet,packed_val_data_path:work/data/tulu3/packed/validation.idx.parquet,packed_metadata_path:work/data/tulu3/packed/metadata.jsonl}&#x27; scheduler.lr_decay_iters=500 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.load_optim=false checkpoint.load_rng=false checkpoint.async_save=false checkpoint.exit_on_missing_checkpoint=true logger.log_interval=1 logger.log_throughput=true logger.log_device_memory_used=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/nemotron-3.5-super-vl-text-only/gb200-peft-config/ConfigContainer.yaml ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Completed 500 finite optimizer steps with zero skipped or NaN iterations and a complete final checkpoint. Uses the native Nemotron 3 Super PEFT recipe on 16 GB200 GPUs with this model&#x27;s converted language weights and tokenizer, no media modules, TP8/PP1/EP16/ETP1, sequence length 2048 and recipe GBS/MBS 16/1. Tulu 3 offline-packed data uses assistant-only main and MTP loss masking, natural HybridEP routing and FP32 optimizer state. Both shared MTP prediction depths use loss scale 0.3. LoRA rank/alpha 32/32 targets native language projections with zero dropout. Native adapter and trained router-bias buffers reloaded exactly; full merge, strict HF reload and one matched numerical fixture passed. Standalone HF adapter export does not preserve trained router-bias buffers. Token rates are padded slots, not measured supervised-token counts. This is bounded support verification, not full convergence or a cross-model convergence comparison.
+</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+<!-- END GENERATED VERIFIED CONFIGURATIONS -->

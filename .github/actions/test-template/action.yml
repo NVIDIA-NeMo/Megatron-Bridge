@@ -177,10 +177,17 @@ runs:
           set -e
           export GH_TOKEN=${{ inputs.github-token }}
 
+          # Keep the FlashAttention generation policy scoped to CI tests.
+          export NVTE_FLASH_ATTN_V2=1 NVTE_FLASH_ATTN_V3=0 NVTE_FLASH_ATTN_V4=0
+
           if [[ "${{ contains(inputs.runner, 'gcp') }}" == "true" ]]; then
             export NCCL_ENV_PLUGIN=none
             export NCCL_NET_PLUGIN=none
+            export NCCL_PROFILER_PLUGIN=none
             export NCCL_NET=Socket
+            # The container startup has already run in this shell. Do not let
+            # child Bash startup scripts re-enable cloud plugins for the tests.
+            export BASH_ENV=/dev/null
           fi
 
           timeout $(( ${{ inputs.timeout }} * 60 ))s bash tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/${{ inputs.script }}.sh || EXIT_CODE=$?
