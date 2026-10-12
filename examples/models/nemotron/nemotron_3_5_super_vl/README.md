@@ -93,3 +93,8 @@ must preserve that qualification if language-only adapters are intended.
 - Add SFT and PEFT dataset requirements and launch examples.
 - Document dynamic-resolution image and temporal-video preprocessing.
 - Replace the draft label in the Nemotron example index when the page is complete.
+
+## IITC LoRA tutorial
+
+See the [IITC fine-tuning tutorial](../../../../tutorials/recipes/nemotron/iitc-lora.md)
+for data preparation, LoRA training, HF export, and evaluation.

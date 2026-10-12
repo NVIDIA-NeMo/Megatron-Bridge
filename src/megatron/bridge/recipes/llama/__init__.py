@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Llama2 models
-from .llama2 import (
-    llama2_7b_pretrain_config,
-)
 
 # Llama3 models
 from .llama3 import (
@@ -54,8 +50,6 @@ from .llama3 import (
 
 
 __all__ = [
-    # Llama2 models
-    "llama2_7b_pretrain_config",
     # Llama3 models
     "llama3_8b_pretrain_config",
     "llama3_8b_16k_pretrain_config",

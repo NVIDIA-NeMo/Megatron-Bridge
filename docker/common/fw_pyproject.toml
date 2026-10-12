@@ -61,7 +61,9 @@ override-dependencies = [
     "pyzmq==25.1.2",                            # @URL: https://github.com/NVIDIA/NeMo/issues/13625
     "tiktoken>=0.9.0",                          # let megatron-hub win over nemo-toolkit
     "datasets==4.8.5",
-    "pyarrow>=21.0.0",                          # datasets 4.8.5 needs >=21; override export-deploy's <21 cap (not exercised by training)
+    # datasets 4.8.5 needs >=21, overriding export-deploy's <21 cap.
+    # PyArrow 26 requires NumPy 2; preserve MBridge's NumPy 1 runtime.
+    "pyarrow>=21.0.0,<26",
     "fsspec[http]>=2023.1.0,<=2024.9.0",
     "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
     "packaging>=25.0",

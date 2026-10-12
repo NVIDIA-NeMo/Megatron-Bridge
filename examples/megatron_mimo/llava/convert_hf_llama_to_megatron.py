@@ -5,7 +5,7 @@
 Produces per-TP-rank .pt files that can be loaded into a Megatron
 GPTModel with ``load_megatron_llm_weights()``.
 
-Supports: Llama-2-7B, Vicuna-7B-v1.5, or any HF model with the same
+Supports: Vicuna-7B-v1.5, or any HF model with the same
 LlamaForCausalLM architecture (including GQA variants).
 
 Usage:

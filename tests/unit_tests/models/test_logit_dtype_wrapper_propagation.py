@@ -17,7 +17,6 @@ from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_LLAVA_CONTRACT,
     NemotronOmniLlavaModelProvider,
 )
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.thinker_model import Qwen3ASRThinkerModel
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import Qwen3OmniThinkerModel
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.thinker_model import Qwen25OmniThinkerModel
@@ -192,35 +191,6 @@ class LegacyLLaVAModel:
 
     def __init__(self, **kwargs: object) -> None:
         raise AssertionError("Unsupported constructor must be rejected before invocation")
-
-
-@pytest.mark.parametrize("supports_dtype", [False, True])
-@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
-def test_nemotron_vl_provider_logit_dtype_at_llava_boundary(supports_dtype: bool, dtype: torch.dtype) -> None:
-    provider = NemotronVLModelProvider(logit_dtype=dtype)
-    captured: dict[str, torch.dtype] = {}
-    fake_llava = SimpleNamespace(config=provider)
-
-    def compatible_llava(*args: object, logit_dtype: torch.dtype | None = None, **kwargs: object) -> SimpleNamespace:
-        assert logit_dtype is not None
-        captured["logit_dtype"] = logit_dtype
-        return fake_llava
-
-    with (
-        patch(
-            "megatron.bridge.models.nemotron_vl.nemotron_vl_provider.LLaVAModel",
-            new=compatible_llava if supports_dtype else LegacyLLaVAModel,
-        ),
-        patch("megatron.bridge.models.nemotron_vl.modeling_nemotron_vl.NemotronVLModel") as wrapper,
-    ):
-        if supports_dtype:
-            assert provider.provide() is wrapper.return_value
-            assert captured["logit_dtype"] is dtype
-            wrapper.assert_called_once_with(config=provider, llava_model=fake_llava)
-        else:
-            with pytest.raises(RuntimeError, match="LegacyLLaVAModel does not support logit_dtype"):
-                provider.provide()
-            wrapper.assert_not_called()
 
 
 @pytest.mark.parametrize("supports_dtype", [False, True])
