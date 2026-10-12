@@ -1001,7 +1001,8 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a DPO config for Qwen3-30B-A3B MoE.
 
     Recommended parallelism: TP=4, PP=2, EP=4 (1 node, 8 GPUs with SP=True). Requires
-    ``--pretrained_checkpoint`` and ``dataset.ref_artifact`` scored at ``--tp 4 --ep 4 --etp 1``.
+    ``--pretrained_checkpoint`` and ``dataset.ref_artifact`` scored by
+    ``scripts/dpo/score_reference_logprobs.py --recipe qwen3_30b_a3b_dpo_config``.
     """
     cfg = _dpo_common()
 
@@ -1026,8 +1027,8 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length: pairs are right-padded rows, never packed; must match the scoring run
     cfg.model.seq_length = cfg.dataset.seq_length
 
-    # DPO loss contract (ConfigContainer.validate enforces all but the CE-fusion knob, which
-    # stays off to match the scorer's unfused CE rounding).
+    # DPO loss contract (ConfigContainer.validate enforces all but the CE-fusion knob). The
+    # scorer builds from this recipe, so the reference is scored with the same unfused CE.
     cfg.model.calculate_per_token_loss = True
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.mtp_num_layers = None  # an MTP head would backpropagate its own next-token CE on top of the DPO loss

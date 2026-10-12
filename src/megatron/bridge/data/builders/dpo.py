@@ -86,7 +86,8 @@ class DPODatasetConfig(DataloaderConfig):
     """Pinned: the batch sampler's cyclic wrap provides epochs beyond one dataset pass."""
     pad_seq_length_to_mult: int = 1
     """Round each batch's padded row length up to this multiple. Sequence parallelism needs
-    TP | seq_len; ``dpo_train`` derives it from the model config, the scorer from its flags."""
+    TP | seq_len; ``ConfigContainer.validate`` derives it from the model config, the scorer
+    from the recipe's TP and sequence parallelism."""
     shuffle: bool = True
 
     @staticmethod
