@@ -26,7 +26,6 @@ from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import (
     deepseek_v3_pretrain_256gpu_gb300_bf16_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8cs_config,
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
-    deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
@@ -330,8 +329,10 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, NVFP4 (alias of GB300)."""
-    cfg = deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
+    """DeepSeek V3 pretrain: 256× VR200, NVFP4 without full-iteration CUDA graphs."""
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.comm_overlap.tp_comm_overlap = False
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
