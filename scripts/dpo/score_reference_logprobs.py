@@ -45,7 +45,12 @@ from megatron.core.pipeline_parallel import get_forward_backward_func
 from torch.utils.data import BatchSampler, DataLoader, SequentialSampler
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.builders.dpo import DPODatasetConfig, PreferenceSource, build_preference_split
+from megatron.bridge.data.builders.dpo import (
+    DPODatasetConfig,
+    PreferenceSource,
+    build_preference_split,
+    hf_chat_tokenizer,
+)
 from megatron.bridge.data.datasets.preference import (
     ScoringFingerprint,
     pack_pairs_by_token_budget,
@@ -59,6 +64,8 @@ from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training.dpo import sequence_logprob_sums, split_pair_rows
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
@@ -194,7 +201,6 @@ class ReferenceLogprobScorer:
         self.args = args
         self.tokenizer_name: str = args.tokenizer or args.model
         self.dataset_config = DPODatasetConfig(
-            tokenizer_name=self.tokenizer_name,
             seq_length=args.max_seq_length,
             source=dpo_source(args),
             index_mapping_dir=args.index_mapping_dir,
@@ -215,7 +221,7 @@ class ReferenceLogprobScorer:
         print_rank_0(f"loading {source_key} and tokenizer {self.tokenizer_name}...")
 
         # The trainer's own builder, so both sides see identical rows, token streams, and pair_ids.
-        dataset = build_preference_split(self.dataset_config, "train", self.dataset_config.load_tokenizer())
+        dataset = build_preference_split(self.dataset_config, "train", self._load_tokenizer())
         model = self._build_model()
         records = self._score_all(model, dataset)
 
@@ -224,6 +230,10 @@ class ReferenceLogprobScorer:
             self._commit_artifact(num_pairs=len(dataset))
         if torch.distributed.is_initialized():
             torch.distributed.barrier()  # don't tear down the process group under the writer
+
+    def _load_tokenizer(self):
+        tokenizer_config = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=self.tokenizer_name)
+        return hf_chat_tokenizer(build_tokenizer(tokenizer_config))
 
     def _score_all(self, model: list[torch.nn.Module], dataset: PreferencePairDataset) -> list[PairRecord]:
         """Score this replica's batches, then gather every replica's records; complete and pair_id-sorted on all ranks."""

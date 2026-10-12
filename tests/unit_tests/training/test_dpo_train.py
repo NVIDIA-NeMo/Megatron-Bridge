@@ -34,7 +34,6 @@ def write_artifact_metadata(artifact_dir, **overrides) -> str:
 
 def make_config(tmp_path) -> SimpleNamespace:
     dataset = DPODatasetConfig(
-        tokenizer_name="org/some-model",
         seq_length=64,
         ref_artifact=write_artifact_metadata(tmp_path / "train_ref"),
         source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
@@ -42,6 +41,7 @@ def make_config(tmp_path) -> SimpleNamespace:
     return SimpleNamespace(
         dpo=DPOLossConfig(),
         dataset=dataset,
+        tokenizer=SimpleNamespace(tokenizer_model="org/some-model"),
         model=SimpleNamespace(
             calculate_per_token_loss=True,
             mtp_num_layers=None,

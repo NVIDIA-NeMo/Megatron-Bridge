@@ -25,15 +25,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from torch.utils.data import Subset
-from transformers import AutoTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
+from megatron.bridge.data.conversation_processing import get_processor_tokenizer
 from megatron.bridge.data.datasets.preference import load_ref_logprobs
 from megatron.bridge.data.datasets.preference_pair import PreferencePairDataset
 from megatron.bridge.data.datasets.utils import _JSONLMemMapDataset
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_hf_dataset_source, prepare_hf_dataset_sources
 from megatron.bridge.data.sources.jsonl import JSONLSourceConfig
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 if TYPE_CHECKING:
@@ -60,12 +59,12 @@ class DPODatasetConfig(DataloaderConfig):
 
     ``source`` is an ``HFDatasetSourceConfig`` for anything HuggingFace ``datasets``
     can read, or a ``JSONLSourceConfig`` for JSONL that may live in object storage.
-    The source identity, ``tokenizer_name``, and ``seq_length`` must equal the
+    The source identity, the run tokenizer, and ``seq_length`` must equal the
     scoring run's values, which ``dpo_train`` checks against ``scoring_metadata.json``
     (where the length is recorded under its dataset-level name, ``max_seq_length``).
 
     A validation split is optional and mirrors the train shape: one ``validation_source``
-    plus its own scored ``validation_ref_artifact`` (``tokenizer_name`` and
+    plus its own scored ``validation_ref_artifact`` (the tokenizer and
     ``seq_length`` are shared with training, so the validation split must be
     scored with the same values). Like the SFT dataset configs, a configured
     validation split is built only when the run actually validates
@@ -74,7 +73,6 @@ class DPODatasetConfig(DataloaderConfig):
     Batch sizes stay row-denominated; pair halving happens only in the loader builder.
     """
 
-    tokenizer_name: str
     seq_length: int
     """Truncation ceiling for tokenized pairs."""
     source: PreferenceSource
@@ -155,11 +153,6 @@ class DPODatasetConfig(DataloaderConfig):
             return ",".join(source.paths), None
         return source.dataset_name or source.path_or_dataset, source.split
 
-    def load_tokenizer(self):
-        """The HF tokenizer both the scorer and the trainer tokenize pairs with."""
-        trust_remote_code = is_safe_repo(hf_path=self.tokenizer_name, trust_remote_code=self.trust_remote_code)
-        return AutoTokenizer.from_pretrained(self.tokenizer_name, trust_remote_code=trust_remote_code)
-
     def load_source(self, split: Literal["train", "validation"] = "train"):
         """Load the raw preference rows of ``split``, truncated to that split's ``num_pairs``.
 
@@ -192,6 +185,17 @@ class DPODatasetConfig(DataloaderConfig):
             # Truncate by position so row index == pair_id survives.
             rows = rows.select(range(num_pairs)) if hasattr(rows, "select") else Subset(rows, range(num_pairs))
         return rows
+
+
+def hf_chat_tokenizer(tokenizer: Any) -> Any:
+    """The HF tokenizer behind the run tokenizer; pairs are rendered with its chat template."""
+    hf_tokenizer = get_processor_tokenizer(tokenizer)
+    if not callable(getattr(hf_tokenizer, "apply_chat_template", None)):
+        raise ValueError(
+            "DPO needs a HuggingFace tokenizer with a chat template: set tokenizer.tokenizer_type to "
+            "HuggingFaceTokenizer and tokenizer.tokenizer_model to the reference model."
+        )
+    return hf_tokenizer
 
 
 def build_preference_split(
@@ -237,7 +241,7 @@ class DPODatasetBuilder:
         self,
         context: DatasetBuildContext,
     ) -> tuple[PreferencePairDataset, PreferencePairDataset | None, None]:
-        tokenizer = self.config.load_tokenizer()
+        tokenizer = hf_chat_tokenizer(context.tokenizer)
         train_dataset = build_preference_split(self.config, "train", tokenizer, self.config.ref_artifact)
         valid_dataset = (
             build_preference_split(self.config, "validation", tokenizer, self.config.validation_ref_artifact)

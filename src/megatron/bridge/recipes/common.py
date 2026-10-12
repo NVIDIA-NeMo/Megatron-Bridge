@@ -255,7 +255,6 @@ def _dpo_common() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
 
     cfg.dataset = DPODatasetConfig(
-        tokenizer_name=None,  # type: ignore[arg-type]  # Must be set by each recipe
         seq_length=seq_length,
         source=HFDatasetSourceConfig(path_or_dataset="HuggingFaceH4/ultrafeedback_binarized", split="train_prefs"),
         ref_artifact=None,  # Must be set by each run

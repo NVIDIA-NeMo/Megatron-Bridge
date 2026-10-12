@@ -1489,7 +1489,6 @@ class TestConfigContainerValidation:
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
         dataset_cfg = DPODatasetConfig(
-            tokenizer_name="org/some-model",
             seq_length=512,
             source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
         )

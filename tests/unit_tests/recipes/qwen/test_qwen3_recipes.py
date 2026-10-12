@@ -128,7 +128,6 @@ def test_qwen3_30b_a3b_dpo_config_applies_the_dpo_contract(monkeypatch):
     cfg = qwen3_moe.qwen3_30b_a3b_dpo_8gpu_h100_bf16_config()
 
     assert isinstance(cfg.dataset, DPODatasetConfig)
-    assert cfg.dataset.tokenizer_name == cfg.tokenizer.tokenizer_model
     assert cfg.dataset.seq_length == cfg.model.seq_length
     assert cfg.dataset.ref_artifact is None  # every run must point at its scored artifact
     assert cfg.dpo is not None

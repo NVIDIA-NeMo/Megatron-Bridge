@@ -3,7 +3,12 @@
 import pytest
 
 import megatron.bridge.data.builders.dpo as dpo_module
-from megatron.bridge.data.builders.dpo import DPODatasetConfig, dpo_train_valid_test_datasets_provider
+from megatron.bridge.data.base import DatasetBuildContext
+from megatron.bridge.data.builders.dpo import (
+    DPODatasetBuilder,
+    DPODatasetConfig,
+    dpo_train_valid_test_datasets_provider,
+)
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 from tests.unit_tests.data.preference_fakes import ChatMLTokenizer
 
@@ -35,7 +40,6 @@ def test_provider_builds_each_split_from_its_own_scored_artifact(monkeypatch):
     from megatron.bridge.data.utils import get_dataset_provider
 
     config = DPODatasetConfig(
-        tokenizer_name="org/some-model",
         seq_length=64,
         ref_artifact="/artifacts/train",
         source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
@@ -50,13 +54,12 @@ def test_provider_builds_each_split_from_its_own_scored_artifact(monkeypatch):
         return ref_mapping(expected_num_pairs)
 
     monkeypatch.setattr(DPODatasetConfig, "load_source", lambda self, split="train": rows[split])
-    monkeypatch.setattr(DPODatasetConfig, "load_tokenizer", lambda self: ChatMLTokenizer())
     monkeypatch.setattr(dpo_module, "load_ref_logprobs", fake_load_ref_logprobs)
 
     provider = get_dataset_provider(config)
     assert provider is dpo_train_valid_test_datasets_provider
 
-    train_ds, valid_ds, test_ds = provider([0, 8, 0], config)
+    train_ds, valid_ds, test_ds = provider([0, 8, 0], config, tokenizer=ChatMLTokenizer())
 
     assert test_ds is None
     assert (len(train_ds), len(valid_ds)) == (6, 4)
@@ -67,3 +70,16 @@ def test_provider_builds_each_split_from_its_own_scored_artifact(monkeypatch):
     assert batch["tokens"].shape[0] == 4  # 2 pairs -> 4 interleaved rows
     for key in ("labels", "loss_mask", "pair_id", "loss_multiplier", "ref_logprob_sum", "ref_num_tokens"):
         assert key in batch, key
+
+
+def test_builder_requires_the_run_tokenizer_to_carry_a_chat_template():
+    """Pairs are rendered through the tokenizer's chat template, so a run without one cannot start."""
+    config = DPODatasetConfig(
+        seq_length=64,
+        ref_artifact="/artifacts/train",
+        source=HFDatasetSourceConfig(path_or_dataset="org/some-preference-set", split="train"),
+    )
+    context = DatasetBuildContext(train_samples=8, valid_samples=0, test_samples=0, tokenizer=None)
+
+    with pytest.raises(ValueError, match="chat template"):
+        DPODatasetBuilder(config).build(context)

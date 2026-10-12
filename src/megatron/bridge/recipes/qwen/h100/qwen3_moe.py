@@ -1010,10 +1010,9 @@ def qwen3_30b_a3b_dpo_8gpu_h100_bf16_config() -> ConfigContainer:
         _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
     ).to_megatron_provider(load_weights=False)
 
-    # Tokenizer: the pair dataset tokenizes with the same one the scorer used
+    # Tokenizer
     cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
-    cfg.dataset.tokenizer_name = _QWEN3_30B_A3B_MODEL_ID
 
     # Parallelism settings (MoE-specific: includes expert parallelism)
     cfg.model.tensor_model_parallel_size = 4

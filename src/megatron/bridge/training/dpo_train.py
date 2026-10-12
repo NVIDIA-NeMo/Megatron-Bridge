@@ -142,7 +142,7 @@ def expected_scoring_metadata(
     return ScoringFingerprint(
         dataset=dataset_key,
         split=source_split,
-        tokenizer=config.dataset.tokenizer_name,
+        tokenizer=config.tokenizer.tokenizer_model,
         max_seq_length=config.dataset.seq_length,
         prompt_key=config.dataset.prompt_key,
         tools_key=config.dataset.tools_key,
