@@ -32,6 +32,7 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[Configuration Container Overview](config-container-overview.md)** | Central configuration object for all training settings | First time setting up training |
 | **[Entry Points](entry-points.md)** | Training entry points and execution flow | Understanding how training starts |
+| **[Deterministic Startup](determinism.md)** | Shared MCore policy and startup ordering | Enabling deterministic training and validating settings |
 | **[Data Preparation](data-preparation.md)** | Dataset formats for pretraining, SFT, PEFT, and VLM fine-tuning | Preparing data or choosing dataset config fields |
 | **[Training Loop Settings](training-loop-settings.md)** | Training loop parameters and configuration | Configuring batch sizes, iterations, validation |
 

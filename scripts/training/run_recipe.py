@@ -88,14 +88,25 @@ COMMON_SCRIPT_DIR = SCRIPT_DIR.parent / "common"
 if str(COMMON_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(COMMON_SCRIPT_DIR))
 
-from benchmark_parallelism import (  # noqa: E402
-    ParallelTopology,
+# --deterministic is a startup contract, before any Bridge/Core imports. This
+# also runs in the fresh interpreter used for recipe-environment re-execution.
+if __name__ == "__main__" and "--deterministic" in sys.argv[1:] and not {"-h", "--help"}.intersection(sys.argv[1:]):
+    try:
+        from megatron.determinism import configure_determinism
+    except ModuleNotFoundError as error:
+        if error.name != "megatron.determinism":
+            raise
+        raise RuntimeError("--deterministic requires MCore's shared startup API (#7419).") from error
+    configure_determinism({"deterministic_mode": True})
+
+from benchmark_parallelism import (
+    ParallelTopology,  # noqa: E402
     data_parallel_size,
     topology_from_config,
     weak_scaled_global_batch_size,
 )
-from recipe_metadata import (  # noqa: E402
-    BenchmarkRecipeMetadata,
+from recipe_metadata import (
+    BenchmarkRecipeMetadata,  # noqa: E402
     infer_recipe_mode,
     recipe_step,
     recipe_steps_match,
@@ -103,8 +114,8 @@ from recipe_metadata import (  # noqa: E402
     resolved_benchmark_recipe_metadata,
     validate_benchmark_recipe_scope,
 )
-from recipe_runner import (  # noqa: E402
-    apply_cli_overrides,
+from recipe_runner import (
+    apply_cli_overrides,  # noqa: E402
     apply_determinism,
     apply_runtime_environment,
     bootstrap_recipe_environment,

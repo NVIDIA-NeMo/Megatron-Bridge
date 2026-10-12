@@ -35,6 +35,13 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
     """
     cfg.model.deterministic_mode = True
     cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.tp_comm_overlap = False
+    # Keep deterministic router fusion available while disabling its separate
+    # nondeterministic auxiliary-loss reduction when Core exposes that option.
+    if hasattr(cfg.model, "moe_router_aux_loss_fusion"):
+        cfg.model.moe_router_aux_loss_fusion = False
+    else:
+        cfg.model.moe_router_fusion = False
     cfg.env_vars.update(
         {
             "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
