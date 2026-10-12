@@ -28,7 +28,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5DSANativeFp8Provider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -37,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 
 @MegatronModelBridge.register_bridge(
-    source=GlmMoeDsaForCausalLM, target=GPTModel, provider=GLM5DSANativeFp8Provider, model_type="glm_moe_dsa"
+    source=GlmMoeDsaForCausalLM, target=GPTModel, provider=MLAModelProvider, model_type="glm_moe_dsa"
 )
 class GLM5Bridge(MegatronModelBridge):
     """
@@ -147,12 +146,6 @@ class GLM5Bridge(MegatronModelBridge):
         provider.dsa_indexer_k_norm_epsilon = 1e-6
         provider.dsa_indexer_loss_coeff = 0.001
         provider.dsa_indexer_use_sparse_loss = True
-
-        # Record the HF identity so the provider can select the GLM-5.2 native
-        # SM90 FP8 DSA adapter at model-build time and exclude GLM-5/5.1/5.3.
-        provider.glm_dsa_native_fp8_hf_model_id = str(
-            hf_pretrained.model_name_or_path or getattr(hf_config, "_name_or_path", "") or ""
-        )
 
         return provider
 
