@@ -14,9 +14,10 @@ summary: >
   Nemotron 3.5 Lightning support verification covers conversion, inference,
   and training on H100 and GB200. Recipe names, work paths, and this
   verification-card path use the public Lightning name. The conversion and
-  inference evidence used the 26.08 release-candidate software stack; the
-  training evidence was measured in the public 26.08 base container at the
-  recorded bridge_commit.
+  inference evidence used the 26.08 release-candidate software stack; every
+  verified training leaf was measured in the public 26.08 base container at
+  the card's default bridge_commit, with the H100 long-context SFT leaf on
+  four eight-GPU nodes.
 verification_index:
   model_level:
     verified:
@@ -433,7 +434,7 @@ items:
         context_parallel_size: 2
         moe_dispatcher: deepep
       command: >
-        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        ./scripts/training/train.sh --nodes 4 --gpus-per-node 8
         --recipe nemotron_3_5_lightning_sft_config
         --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768
         --lr 5e-6 --min_lr 0 --warmup_iters 10
@@ -455,21 +456,22 @@ items:
         --save_dir work/model-verification/nemotron-3.5-lightning-h100/long-sft-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-03
+      last_verified: 2026-10-12
       metrics:
-        initial_loss: 0.4268321
-        final_loss: 0.2650192
-        last_10_steps_step_time_ms_avg: 40863.010
-        last_10_steps_model_tflops_per_gpu_avg: 188.950
-        last_10_steps_tokens_per_second_per_gpu_avg: 6415.191
+        initial_loss: 0.4268879
+        final_loss: 0.2653436
+        last_10_steps_step_time_ms_avg: 20822.740
+        last_10_steps_model_tflops_per_gpu_avg: 207.600
+        last_10_steps_tokens_per_second_per_gpu_avg: 6294.657
       expected_result: >
-        Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K
-        steps with LM loss 0.4268321 -> 0.2650192 and MTP-1 loss 0.7322379 ->
-        0.4439273. All 100 steps have finite LM/MTP losses and no skipped or
-        NaN iterations. Steps 91-100 average 40,863.010 ms / 188.950
-        TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 20
-        files, distributed metadata, saved run configuration and training
-        state, with latest marker 100.
+        On four complete eight-H100 80GB nodes, packed OpenMathInstruct-2 CP2
+        SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268879
+        -> 0.2653436 and MTP-1 loss 0.7321755 -> 0.4469606. All 100 steps have
+        finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100
+        average 20,822.740 ms / 207.600 TFLOP/s/GPU. Complete step-50 and
+        step-100 checkpoints each contain 36 files, distributed metadata, saved
+        run configuration and training state, with latest marker 100. The
+        two-node layout runs out of memory in iteration 2 on H100 80GB.
 
     GB200:
       status: verified

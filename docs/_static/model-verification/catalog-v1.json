@@ -6164,15 +6164,15 @@
               "expert_parallel": "8",
               "expert_tensor_parallel": "1",
               "gpus_per_node": "8",
-              "nodes": "2",
+              "nodes": "4",
               "recipe": "nemotron_3_5_lightning_sft_config",
               "sequence_length": "32768",
               "tensor_parallel": "2",
-              "total_gpus": 16
+              "total_gpus": 32
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}' model.sequence_parallel=true model.cp_comm_type=p2p model.cross_entropy_loss_fusion=true model.calculate_per_token_loss=true model.recompute_granularity=full model.recompute_modules=null model.recompute_method=uniform model.recompute_num_layers=1 model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-h100/long-sft-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
+            "./scripts/training/train.sh --nodes 4 --gpus-per-node 8 --recipe nemotron_3_5_lightning_sft_config --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768 --lr 5e-6 --min_lr 0 --warmup_iters 10 --tensor_model_parallel_size 2 --context_parallel_size 2 --expert_tensor_parallel_size 1 --expert_model_parallel_size 8 --pretrained_checkpoint work/model-verification/nemotron-3.5-lightning/imported-megatron/iter_0000000 'dataset.hf_dataset.load_kwargs={revision:\"469216e3f46f4dacf476b382e192485ea51a143e\"}' dataset.enable_offline_packing=true 'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}' model.sequence_parallel=true model.cp_comm_type=p2p model.cross_entropy_loss_fusion=true model.calculate_per_token_loss=true model.recompute_granularity=full model.recompute_modules=null model.recompute_method=uniform model.recompute_num_layers=1 model.moe_router_force_load_balancing=false ddp.average_in_collective=false ddp.overlap_param_gather=false optimizer.overlap_param_gather=false scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false --save_dir work/model-verification/nemotron-3.5-lightning-h100/long-sft-checkpoints --save_interval 50 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -6181,15 +6181,15 @@
             "sequence_packing": "offline"
           },
           "entry_id": "nemotron-3-5-lightning-sft-long-context-h100",
-          "expected_result": "Packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268321 -> 0.2650192 and MTP-1 loss 0.7322379 -> 0.4439273. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 40,863.010 ms / 188.950 TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 20 files, distributed metadata, saved run configuration and training state, with latest marker 100.\n",
+          "expected_result": "On four complete eight-H100 80GB nodes, packed OpenMathInstruct-2 CP2 SFT completes exactly 100 finite-loss 32K steps with LM loss 0.4268879 -> 0.2653436 and MTP-1 loss 0.7321755 -> 0.4469606. All 100 steps have finite LM/MTP losses and no skipped or NaN iterations. Steps 91-100 average 20,822.740 ms / 207.600 TFLOP/s/GPU. Complete step-50 and step-100 checkpoints each contain 36 files, distributed metadata, saved run configuration and training state, with latest marker 100. The two-node layout runs out of memory in iteration 2 on H100 80GB.\n",
           "hardware": "H100",
-          "last_verified": "2026-08-03",
+          "last_verified": "2026-10-12",
           "metrics": {
-            "final_loss": 0.2650192,
-            "initial_loss": 0.4268321,
-            "last_10_steps_model_tflops_per_gpu_avg": 188.95,
-            "last_10_steps_step_time_ms_avg": 40863.01,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 6415.191
+            "final_loss": 0.2653436,
+            "initial_loss": 0.4268879,
+            "last_10_steps_model_tflops_per_gpu_avg": 207.6,
+            "last_10_steps_step_time_ms_avg": 20822.74,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 6294.657
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H100",
@@ -6455,7 +6455,7 @@
       "min_transformers_version": "5.8.1",
       "slug": "nemotron-3.5-lightning",
       "source_card": "examples/model_verification_cards/nemotron-3.5-lightning/card.yaml",
-      "summary": "Performance scope: pretrain_performance.H100 and pretrain_performance.GB200 use tuned canonical performance recipes; timing and throughput metrics from functional training items remain sanity checks rather than optimized performance results. The convergence pretraining recipes retain real tokenization, real data, natural routing, safety checks, and checkpointing while adopting the corresponding hardware performance recipe's execution stack. The H100 performance leaf uses BF16 Adam moments in a benchmark-only workload and is not convergence-comparable with FP32 optimizer-state runs. Nemotron 3.5 Lightning support verification covers conversion, inference, and training on H100 and GB200. Recipe names, work paths, and this verification-card path use the public Lightning name. The conversion and inference evidence used the 26.08 release-candidate software stack; the training evidence was measured in the public 26.08 base container at the recorded bridge_commit.\n",
+      "summary": "Performance scope: pretrain_performance.H100 and pretrain_performance.GB200 use tuned canonical performance recipes; timing and throughput metrics from functional training items remain sanity checks rather than optimized performance results. The convergence pretraining recipes retain real tokenization, real data, natural routing, safety checks, and checkpointing while adopting the corresponding hardware performance recipe's execution stack. The H100 performance leaf uses BF16 Adam moments in a benchmark-only workload and is not convergence-comparable with FP32 optimizer-state runs. Nemotron 3.5 Lightning support verification covers conversion, inference, and training on H100 and GB200. Recipe names, work paths, and this verification-card path use the public Lightning name. The conversion and inference evidence used the 26.08 release-candidate software stack; every verified training leaf was measured in the public 26.08 base container at the card's default bridge_commit, with the H100 long-context SFT leaf on four eight-GPU nodes.\n",
       "title": "nemotron_3_5_lightning"
     },
     {
