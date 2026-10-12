@@ -366,28 +366,24 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config() -> ConfigContai
     cfg.mixed_precision.grad_reduce_in_fp32 = False
 
     # CuTe DSL fused grouped MLP (FC1 + SwiGLU + FC2 for MXFP8 on GPUs with compute capability 10.x). The op fuser,
-    # the 32-wide GLU interleave and the env gate are all required. Transformer Engine reads the gate when it is
-    # imported and registers the fusion only if it is set (scripts/training/run_recipe.py re-executes itself so the
-    # gate is set before that import; other entry points must export it); without the gate or the interleave it
-    # silently runs the unfused grouped GEMM.
+    # the 32-wide GLU interleave and the NVTE_CUTEDSL_FUSED_GROUPED_MLP env gate (cfg.env_vars below) are all
+    # required. Transformer Engine reads the gate when it is imported and registers the fusion only if it is set
+    # (scripts/training/run_recipe.py re-executes itself so the gate is set before that import; other entry points
+    # must export it); without the gate or the interleave it silently runs the unfused grouped GEMM.
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
-    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
 
     cfg.model.moe_flex_dispatcher_num_sms = 32
     # Off: HybridEP's fused permute requires identical dispatch, combine and preprocessing chunk sizes, and this
-    # recipe uses 64/128/64 (set below and in the 16-GPU env). The tuned configuration ran this way too.
+    # recipe uses 64/128/64 (cfg.env_vars below). The tuned configuration ran this way too.
     cfg.model.moe_permute_fusion_into_hybridep = False
 
     # The tuned configuration started from qwen35_vl_35b_a3b_pretrain_config and kept these values. The 16-GPU
-    # recipe does not carry them over (it leaves the two model fields at Megatron-Core defaults, sets both chunk
-    # sizes to 128 and omits the cuDNN normalization flags), and was never measured with MXFP8.
+    # recipe does not carry them over (it leaves the two model fields at Megatron-Core defaults, sets the dispatch
+    # and preprocessing chunk sizes to 128 and omits the cuDNN normalization flags), and was never measured with
+    # MXFP8.
     cfg.model.moe_hybridep_num_sms_preprocessing = 16
     cfg.model.overlap_dispatch_backward_with_experts_wgrad = True
-    cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] = 64
-    cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] = 64
-    cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] = 1
-    cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] = 1
 
     # cuDNN GDN (FROST engine: cuDNN frontend >= 1.29 and nvidia-cutlass-dsl >= 4.7): measured +12.0% to +19.4% end
     # to end at 35B-A3B on 16 GB300 GPUs (see _select_gdn_kernel_backend in perf_recipes/qwen_vl/common.py). Guarded
@@ -396,6 +392,27 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config() -> ConfigContai
     if hasattr(type(cfg.model), "gdn_kernel_backend") or hasattr(cfg.model, "gdn_kernel_backend"):
         cfg.model.gdn_kernel_backend = "transformer_engine"
 
+    # The complete environment, declared here rather than inherited from the 16-GPU recipe. It differs from that
+    # recipe in the fused-MLP gate, the dispatch and preprocessing chunk sizes (64 instead of 128) and the cuDNN
+    # normalization flags.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # Must equal expert_model_parallel_size or HybridEP splits the NVLink
+        # domain wrongly. Unset does NOT auto-detect.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 4,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # 0, as in the 16-GPU recipe: the LayerNorm SM margin follows the communication share (see there).
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
     return cfg
 
 
