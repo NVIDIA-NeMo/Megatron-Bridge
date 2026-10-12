@@ -2330,14 +2330,15 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     if handle_mtp_in_state_dict is not None:
         apply(handle_mtp_in_state_dict)
 
-    # Globalize layer names last: earlier handlers resolve stage-local module paths.
-    if handle_pipeline_parallel_in_state_dict is not None:
-        apply(handle_pipeline_parallel_in_state_dict)
-    elif model_config.pipeline_model_parallel_size > 1:
-        raise RuntimeError(
-            "FSDP pipeline checkpointing requires a Megatron-Core version with "
-            "handle_pipeline_parallel_in_state_dict; older versions collide stage-local layer names."
-        )
+    # V2 optimizer keys are already global. Only v1 needs this final renaming.
+    if getattr(getattr(cfg, "ddp", None), "megatron_fsdp_version", 1) == 1:
+        if handle_pipeline_parallel_in_state_dict is not None:
+            apply(handle_pipeline_parallel_in_state_dict)
+        elif model_config.pipeline_model_parallel_size > 1:
+            raise RuntimeError(
+                "FSDP pipeline checkpointing requires a Megatron-Core version with "
+                "handle_pipeline_parallel_in_state_dict; older versions collide stage-local layer names."
+            )
 
     preprocess_state_dict_for_uneven_dtensor(state_dict)
 

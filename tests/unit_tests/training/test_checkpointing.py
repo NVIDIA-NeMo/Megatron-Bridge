@@ -4930,8 +4930,9 @@ class TestFSDPDTensorFunctionality:
                 3.1 if hasattr(distrib_optimizer, "get_legacy_grad_dtypes") else 3.0
             )
 
+    @pytest.mark.parametrize("version", [1, 2])
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
-    def test_preprocess_fsdp_dtensor_state_dict(self):
+    def test_preprocess_fsdp_dtensor_state_dict(self, version: int) -> None:
         """Test preprocess_fsdp_dtensor_state_dict applies all preprocessing steps."""
         from unittest.mock import Mock
 
@@ -4940,6 +4941,7 @@ class TestFSDPDTensorFunctionality:
         # Create mock model and config
         mock_model = Mock()
         mock_cfg = Mock()
+        mock_cfg.ddp.megatron_fsdp_version = version
 
         # Mock model config without swiglu or experts
         with patch("megatron.core.utils.get_model_config") as mock_get_config:
@@ -4968,11 +4970,15 @@ class TestFSDPDTensorFunctionality:
                 # Should call FP8 and uneven dtensor preprocessing
                 mock_fp8.assert_called_once()
                 mock_uneven.assert_called_once()
-                mock_pipeline.assert_called_once_with(mock_model, raw_state_dict["model"], None)
+                if version == 1:
+                    mock_pipeline.assert_called_once_with(mock_model, raw_state_dict["model"], None)
+                else:
+                    mock_pipeline.assert_not_called()
                 assert "model" in result
 
     @pytest.mark.parametrize("pp", [1, 2])
-    def test_fsdp_pipeline_checkpoint_requires_core_handler(self, pp: int) -> None:
+    @pytest.mark.parametrize("version", [1, 2])
+    def test_fsdp_pipeline_checkpoint_requires_core_handler(self, pp: int, version: int) -> None:
         """Old Core remains usable for PP=1 but must not silently corrupt PP>1."""
         from types import SimpleNamespace
 
@@ -4992,11 +4998,12 @@ class TestFSDPDTensorFunctionality:
             ),
         ):
             state = {"model": {"weight": torch.ones(1)}}
-            if pp > 1:
+            cfg = SimpleNamespace(ddp=SimpleNamespace(megatron_fsdp_version=version))
+            if pp > 1 and version == 1:
                 with pytest.raises(RuntimeError, match="collide stage-local layer names"):
-                    checkpointing.preprocess_fsdp_dtensor_state_dict(None, state, None)
+                    checkpointing.preprocess_fsdp_dtensor_state_dict(cfg, state, None)
             else:
-                assert checkpointing.preprocess_fsdp_dtensor_state_dict(None, state, None) == state
+                assert checkpointing.preprocess_fsdp_dtensor_state_dict(cfg, state, None) == state
 
     @patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True)
     def test_save_fsdp_dtensor_checkpoint_preprocesses_and_saves(self, tmp_path):
