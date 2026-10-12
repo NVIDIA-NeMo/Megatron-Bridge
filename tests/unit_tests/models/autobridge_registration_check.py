@@ -30,18 +30,19 @@ def main() -> None:
     """Validate the expected registration manifest in a fresh interpreter."""
     expected = cast(dict[str, str], json.loads(sys.argv[1]))
     string_registrations = set(cast(list[str], json.loads(sys.argv[2])))
-    deprecated_registrations = set(cast(list[str], json.loads(sys.argv[3])))
+    removed_registrations = set(cast(list[str], json.loads(sys.argv[3])))
     # Subset rather than equality: adding a new model must not require editing the manifest.
     # The contract worth guarding is that every architecture already listed stays registered,
     # keeps its key kind, and resolves to the same bridge class.
-    supported = set(AutoBridge.list_supported_models()) - deprecated_registrations
+    supported = set(AutoBridge.list_supported_models())
+    assert not (supported & removed_registrations), "retired architectures must not remain registered"
     missing = sorted(set(expected) - supported)
     assert not missing, f"expected architectures are no longer registered: {missing!r}"
 
     key_kinds = {
         key if isinstance(key, str) else key.__name__: isinstance(key, str)
         for key in model_bridge.get_model_bridge._exact_types
-        if (key if isinstance(key, str) else key.__name__) not in deprecated_registrations
+        if (key if isinstance(key, str) else key.__name__) not in removed_registrations
     }
     mismatched_key_kinds = {
         architecture: key_kinds.get(architecture)

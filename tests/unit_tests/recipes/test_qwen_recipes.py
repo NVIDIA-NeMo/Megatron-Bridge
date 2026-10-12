@@ -67,6 +67,10 @@ class _FakeBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         return _FakeModelCfg()
 
+    def get_model_config(self):
+        # Builder-backed recipes (e.g. dense Qwen3) request a ModelConfig instead.
+        return _FakeModelCfg()
+
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         expected_revisions = {
