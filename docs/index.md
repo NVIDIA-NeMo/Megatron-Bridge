@@ -77,6 +77,7 @@ training/resiliency.md
 training/mixed-precision.md
 training/cuda-graphs.md
 training/hierarchical-context-parallel.md
+training/dynamic-context-parallel.md
 training/communication-overlap.md
 training/attention-optimizations.md
 training/activation-recomputation.md
@@ -84,6 +85,7 @@ training/cpu-offloading.md
 training/moe-optimization.md
 training/peft.md
 training/packed-sequences.md
+training/mimo-intra-microbatch-reorder.md
 training/multi-token-prediction.md
 training/dspark-speculative-decoding.md
 training/callbacks.md

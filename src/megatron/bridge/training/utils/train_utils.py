@@ -1290,7 +1290,7 @@ def training_log(
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
             cuda_graphs_enabled = (
-                config.model.cuda_graph_impl != "none"
+                getattr(config.model, "cuda_graph_impl", "none") != "none"
                 or config.optimizer.optimizer_cuda_graph
                 or getattr(config.model, "vision_cuda_graph_impl", None) == "transformer_engine"
             )
@@ -1300,7 +1300,7 @@ def training_log(
                 # after that step, so warmup_steps + 1 is the post-capture iteration.
                 memory_reporting_iterations = max(
                     memory_reporting_iterations,
-                    config.model.cuda_graph_warmup_steps + 1,
+                    getattr(config.model, "cuda_graph_warmup_steps", 0) + 1,
                 )
             if iteration >= loaded_iteration + memory_reporting_iterations:
                 # Always include optimizer state memory and, when enabled, CUDA graph

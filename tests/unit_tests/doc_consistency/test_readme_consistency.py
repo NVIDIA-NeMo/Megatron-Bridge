@@ -427,11 +427,11 @@ def test_model_examples_use_current_run_recipe_arguments():
 def test_nemotron_and_qwen2_audio_finetune_launchers_use_exported_recipes():
     """SFT and PEFT example recipes must match their launcher-visible aliases."""
     launcher_expectations = {
-        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_sft.sh": (
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3_nano" / "slurm_sft.sh": (
             "${MODEL_NAME}_sft_config",
             "nemotron_3_nano_finetune_config",
         ),
-        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_peft.sh": (
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3_nano" / "slurm_peft.sh": (
             "${MODEL_NAME}_peft_config",
             "nemotron_3_nano_finetune_config",
         ),

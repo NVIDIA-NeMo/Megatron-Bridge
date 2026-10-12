@@ -201,7 +201,6 @@ functional quantized-weight export interface.
 | Llama-3.2-1B | ✅ | ✅ |
 | Qwen3-8B | ✅ | ✅ |
 | Qwen3-30B-A3B | ✅ | ✅ |
-| Nemotron-H-8B-Base-8K | ✅ | ✅ |
 | Qwen3-VL-8B-Instruct | ✅ | ✅ |
 | Qwen3-VL-30B-A3B-Instruct | ✅ | ✅ |
 

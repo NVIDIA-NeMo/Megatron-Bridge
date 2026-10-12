@@ -86,6 +86,16 @@ def _copy_mapping_with_prefixes(mapping, *, megatron_prefix: str, hf_prefix: str
 
 
 @MegatronModelBridge.register_bridge(
+    source="NemotronH_Nano_VL_V2",
+    target=NemotronOmniModel,
+    provider=NemotronOmniModelProvider,
+    model_type="nemotron_vl",
+)
+class _LegacyNemotronOmniBridge(NemotronVLBridge):
+    """Load MoE Nano Omni checkpoints carrying the historical V2 label."""
+
+
+@MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_Omni_Reasoning_V3",
     target=NemotronOmniModel,
     provider=NemotronOmniModelProvider,
@@ -345,6 +355,7 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
         merge_adapter_weights: bool = True,
         weight_dtype: torch.dtype | None = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
         """Export model weights and preserve immutable source-only buffers."""
         yield from super().stream_weights_megatron_to_hf(
@@ -356,7 +367,10 @@ from .configuration_radio import RADIOConfig as _RADIOConfig
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
             with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
         )
+        if not self._should_emit_hf_passthrough(megatron_model, current_pp_stage_only=current_pp_stage_only):
+            return
         # Passthrough tensors are copied straight from the HF checkpoint and have no
         # Megatron counterpart, so with ``with_megatron_names`` they carry zero sources.
         passthrough_sources = () if with_megatron_names else None

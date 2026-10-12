@@ -22,7 +22,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-PACK_DATA_SCRIPT = REPO_ROOT / "examples/models/nemotron/nemotron_3/ultra/pack_data_job.sh"
+PACK_DATA_SCRIPT = REPO_ROOT / "examples/models/nemotron/nemotron_3_ultra/pack_data_job.sh"
 
 
 def test_nemotron_3_ultra_pack_data_uses_recipe_defaults(tmp_path: Path) -> None:

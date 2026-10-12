@@ -1071,7 +1071,7 @@ class MegatronModelBridge(
     ) -> List[str]:
         """Get all parameter names across all pipeline parallel ranks."""
         # Filtered discovery must neither reuse nor replace ordinary conversion's cache.
-        if not exclude_module_types and hasattr(self, "_cached_param_names"):
+        if not exclude_module_types and hasattr(self, "_cached_param_names") and hasattr(self, "_cached_param_owners"):
             return self._cached_param_names
 
         # Compute the result
@@ -1090,6 +1090,8 @@ class MegatronModelBridge(
                 global_param_name = _megatron_local_name_to_global(
                     models_list, model_config, local_param_name, vp_stage
                 )
+                if self._should_skip_mtp_duplicate_embedding_export(global_param_name, model):
+                    continue
                 if self._is_adapter_param_name(global_param_name):
                     continue
                 global_param_names.append(global_param_name)
@@ -1097,10 +1099,20 @@ class MegatronModelBridge(
         gathered_global_param_names = [None] * pp_group.size()
         torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
 
-        # flatten the list, sort it and remove duplicates
+        # Record the lowest PP rank that physically owns every parameter. Some
+        # models legitimately duplicate a logical parameter across stages
+        # (e.g. MTP/MLA/shared embeddings). Full export already chooses the
+        # lowest owner as its broadcast source; PP-local export uses the same
+        # canonical owner so stage streams remain non-overlapping.
+        param_owners = {}
+        for owner_rank, owner_names in enumerate(gathered_global_param_names):
+            for name in owner_names:
+                param_owners.setdefault(name, owner_rank)
+
+        # Flatten the list, sort it and remove duplicates.
         # the order matters here, casually re-order will cause a hang.
         # e.g. decoder.layers.0.mlp.experts.linear_fc1.weight100
-        flattened_names = list(set(sum(gathered_global_param_names, [])))
+        flattened_names = list(param_owners)
 
         # the order cannot be changed, this sync for all ranks for conversion
         # change this might cause a hang
@@ -1108,6 +1120,7 @@ class MegatronModelBridge(
 
         if not exclude_module_types:
             self._cached_param_names = gathered_global_param_names
+            self._cached_param_owners = param_owners
 
         return gathered_global_param_names
 
@@ -1716,6 +1729,20 @@ class MegatronModelBridge(
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
+    def _should_emit_hf_passthrough(
+        self,
+        megatron_model: MegatronModel | List[MegatronModel],
+        *,
+        current_pp_stage_only: bool,
+    ) -> bool:
+        """Return whether this rank should emit source-only HF tensors.
+
+        Source-only tensors have no Megatron parameter owner. In PP-local mode
+        assign them to PP rank 0 so every pipeline group emits one deterministic
+        copy while the union of stage streams remains complete.
+        """
+        return not current_pp_stage_only or _get_pp_rank(megatron_model) == 0
+
     @torch.no_grad()
     def _stream_weight_events_megatron_to_hf(
         self,
@@ -1727,13 +1754,15 @@ class MegatronModelBridge(
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple | None]:
         """Export weights and emit ``None`` after each conversion task.
 
         This method orchestrates the conversion of weights from Megatron's distributed
         format back to HuggingFace format. It handles gathering from tensor parallel
         ranks, broadcasting across pipeline parallel ranks, and format conversions.
-        All ranks receive the full tensors.
+        By default all ranks receive the full tensors; pipeline-stage-local mode instead
+        yields only tensors owned by the current pipeline stage.
 
         The export order is determined automatically:
         - First tries safetensors order (if key_to_filename_map is available)
@@ -1760,6 +1789,10 @@ class MegatronModelBridge(
                 directly converted weight, every contributing per-expert task for a grouped-expert
                 export, and no names for HF-only passthrough tensors. Defaults to False, which
                 keeps the two-field :class:`HFWeightTuple` output.
+            current_pp_stage_only (bool, optional): When True, execute only conversion tasks whose
+                Megatron parameter is owned by the current pipeline stage and suppress PP tensor and
+                metadata broadcasts. TP/EP gathering and all HF layout conversions remain enabled.
+                Defaults to False.
 
         Yields:
             HuggingFace weight tuples, optionally carrying source names, followed
@@ -1783,7 +1816,8 @@ class MegatronModelBridge(
             ValueError: If input parameters are invalid.
 
         Note:
-            All ranks yield the full tensors after gathering from distributed format.
+            Unless ``current_pp_stage_only`` is enabled, all ranks yield the full tensors after
+            gathering from distributed format.
         """
 
         if not isinstance(megatron_model, list):
@@ -1806,6 +1840,31 @@ class MegatronModelBridge(
                 "omit conversion_tasks so the dtype can be recorded at task-build time."
             )
 
+        if current_pp_stage_only:
+            # Keep the globally deterministic task construction above, but only
+            # execute tasks whose parameter is physically present on this PP
+            # stage. If a logical parameter is duplicated across stages, use
+            # the same lowest-rank canonical owner as full export. The mapping
+            # policy below returns local values instead of entering a cross-PP
+            # broadcast.
+            if not hasattr(self, "_cached_param_owners"):
+                self._megatron_global_param_names_all_pp_ranks(megatron_model)
+            canonical_owners = self._cached_param_owners
+            current_pp_rank = _get_pp_rank(megatron_model)
+
+            def _canonical_owner(task: WeightConversionTask) -> int:
+                global_name = task.global_param_name
+                owner = canonical_owners.get(global_name)
+                if owner is None and global_name.endswith("_scale_inv"):
+                    owner = canonical_owners.get(global_name.removesuffix("_scale_inv"))
+                return current_pp_rank if owner is None else owner
+
+            conversion_tasks = [
+                task
+                for task in conversion_tasks
+                if task.param_weight is not None and _canonical_owner(task) == current_pp_rank
+            ]
+
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
         if merge_adapter_weights:
@@ -1824,6 +1883,9 @@ class MegatronModelBridge(
         # Megatron params folded into each packed grouped tensor; only tracked when requested.
         _grouped_sources: Optional[Dict[str, List[str]]] = {} if with_megatron_names else None
 
+        def _mapping_export_context():
+            return MegatronParamMapping.skip_pp_broadcast() if current_pp_stage_only else contextlib.nullcontext()
+
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             merged_result = None
             tensor = None
@@ -1836,11 +1898,14 @@ class MegatronModelBridge(
             else:
                 megatron_weights = _gather_gtp_weight(task.param_weight)
             megatron_module = task.megatron_module
-            if self._should_skip_mtp_duplicate_embedding_export(task, megatron_model):
+            if task.vp_stage is not None and self._should_skip_mtp_duplicate_embedding_export(
+                task.global_param_name, megatron_model[task.vp_stage]
+            ):
                 megatron_weights = None
                 megatron_module = None
 
-            converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
+            with _mapping_export_context():
+                converted_weights_dict = task.mapping.megatron_to_hf(megatron_weights, megatron_module)
             adapter_tasks = None
             task_global_base_prefix = None
             if merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
@@ -1852,7 +1917,8 @@ class MegatronModelBridge(
                 if merge_adapter_weights and adapter_tasks:
                     adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
                     if adapter_weights is None:
-                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                        with _mapping_export_context():
+                            adapter_weights = self.materialize_adapter_weights(adapter_tasks)
                         materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                     converted_weights_dict = self._merge_grouped_export_adapter_weights(
                         task,
@@ -1900,7 +1966,8 @@ class MegatronModelBridge(
             if merge_adapter_weights and adapter_tasks:
                 adapter_weights = materialized_adapter_weights_cache.get(task_global_base_prefix)
                 if adapter_weights is None:
-                    adapter_weights = self.materialize_adapter_weights(adapter_tasks)
+                    with _mapping_export_context():
+                        adapter_weights = self.materialize_adapter_weights(adapter_tasks)
                     materialized_adapter_weights_cache[task_global_base_prefix] = adapter_weights
                 converted_weights_dict = self._merge_lora_adapter_weights(
                     megatron_model,
@@ -1913,7 +1980,7 @@ class MegatronModelBridge(
                 converted_weights_dict,
                 hf_state_dict,
             )  # dict will be none except for one expert;
-            # All ranks get the full tensor
+            # Finalize the converted tensor for the current export rank
             converted_weights_dict = self._truncate_vocab_padding(task, converted_weights_dict)
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
@@ -1977,6 +2044,7 @@ class MegatronModelBridge(
         merge_adapter_weights: bool = True,
         weight_dtype: Optional[torch.dtype] = None,
         with_megatron_names: bool = False,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple | HFSourcedWeightTuple]:
         """Export Megatron weights as the existing flat HuggingFace stream."""
         for event in self._stream_weight_events_megatron_to_hf(
@@ -1988,6 +2056,7 @@ class MegatronModelBridge(
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
             with_megatron_names=with_megatron_names,
+            current_pp_stage_only=current_pp_stage_only,
         ):
             if event is not None:
                 yield event
@@ -2198,23 +2267,21 @@ class MegatronModelBridge(
         if refresh_module_caches is not None:
             refresh_module_caches(megatron_model)
 
-    def _should_skip_mtp_duplicate_embedding_export(
-        self,
-        task: WeightConversionTask,
-        megatron_model: List[MegatronModel],
-    ) -> bool:
-        """Treat duplicate MTP embedding copies as PP receivers during export."""
-        if task.vp_stage is None or not 0 <= task.vp_stage < len(megatron_model):
+    @staticmethod
+    def _should_skip_mtp_duplicate_embedding_export(global_param_name: str, model) -> bool:
+        """Return whether ``model`` owns only the MTP copy of the input embedding.
+
+        The MTP stage needs a local input embedding even when the model uses untied
+        output weights. Megatron keeps that tensor synchronized with the canonical
+        pre-process embedding, so it must not become a second HF parameter.
+        """
+        if not global_param_name.endswith("embedding.word_embeddings.weight"):
             return False
 
-        if not task.global_param_name.endswith("embedding.word_embeddings.weight"):
-            return False
-
-        model_chunk = unwrap_model(megatron_model[task.vp_stage])
+        model_chunk = unwrap_model(model)
         model_config = getattr(model_chunk, "config", None)
         if getattr(model_config, "pipeline_model_parallel_size", 1) <= 1:
             return False
-
         if getattr(model_chunk, "pre_process", False):
             return False
 
@@ -2569,6 +2636,8 @@ class MegatronModelBridge(
 
                 local_name = self._unwrap_name(local_name)
                 global_name = _megatron_local_name_to_global(megatron_model, model_config, local_name, vp_stage)
+                if self._should_skip_mtp_duplicate_embedding_export(global_name, model):
+                    continue
                 if global_name not in global_names_index_dict:
                     continue
 
@@ -2731,6 +2800,7 @@ def stream_weights_megatron_to_hf(
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
     merge_adapter_weights: bool = True,
+    current_pp_stage_only: bool = False,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...
@@ -2802,6 +2872,7 @@ def register_bridge_implementation(
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
+        current_pp_stage_only: bool = False,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
 
@@ -2816,6 +2887,7 @@ def register_bridge_implementation(
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
+            **({"current_pp_stage_only": True} if current_pp_stage_only else {}),
         )
 
     @stream_weights_megatron_to_hf_quant.impl((source, target))
