@@ -5,7 +5,7 @@ This guide will cover the next steps to make use of a training recipe, including
 
 ## Overview
 
-- **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
+- **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron 3/3.5 (Mamba-based).
 - **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point.
 - **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.

@@ -309,14 +309,6 @@ COMBOS = [
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "bf16"),
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "fp8_mx"),
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "nvfp4"),
-    # NemotronH 56B
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "gb300", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 256, "gb300", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "gb200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "b300", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "b200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 64, "h100", "fp8_cs"),
     # GPT-OSS 20B
     ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4"),
     ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx"),
