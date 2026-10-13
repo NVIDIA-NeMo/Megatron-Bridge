@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for Llama 3.1."""
+"""VRNVL72 performance recipes for Llama 3.1."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
@@ -24,8 +24,8 @@ from megatron.bridge.perf_recipes.llama.gb300.llama31 import (
 )
 
 
-def llama31_405b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain: 256x VR200, BF16 (alias of GB300)."""
+def llama31_405b_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256x VRNVL72, BF16 (alias of GB300)."""
     cfg = llama31_405b_pretrain_256gpu_gb300_bf16_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -43,8 +43,8 @@ def llama31_405b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain: 256x VR200, FP8-MX (alias of GB300)."""
+def llama31_405b_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256x VRNVL72, FP8-MX (alias of GB300)."""
     cfg = llama31_405b_pretrain_256gpu_gb300_fp8mx_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -66,8 +66,8 @@ def llama31_405b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def llama31_405b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """Llama3.1 405B pretrain: 256x VR200, NVFP4 (alias of GB300)."""
+def llama31_405b_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 256x VRNVL72, NVFP4 (alias of GB300)."""
     cfg = llama31_405b_pretrain_256gpu_gb300_nvfp4_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
