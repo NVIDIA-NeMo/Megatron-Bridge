@@ -27,6 +27,7 @@ overrides = [
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.16.0" },
+    { name = "nemo-lens", git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=7bcc03ce3565d2be6858b819b049bcc4c3ec05b4" },
     { name = "nvidia-cudnn-frontend", specifier = "==1.29.0" },
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
     { name = "nvidia-modelopt", specifier = "==0.46.0rc1", index = "https://pypi.nvidia.com/" },
@@ -1696,8 +1697,8 @@ name = "imageio"
 version = "2.38.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
+    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pillow", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/cd/69e4ac55b6dafdd2b5f32075236841a3945dea7323d0232d80f28c37cea8/imageio-2.38.1.tar.gz", hash = "sha256:6769f1f01c4dd46448307863a787c9a22fa4dbe11c0c88f525c6e410fdfd7983", size = 403667, upload-time = "2026-10-08T14:35:32.961Z" }
 wheels = [
@@ -2175,6 +2176,12 @@ bagel = [
     { name = "opencv-python-headless" },
     { name = "safetensors" },
 ]
+otel = [
+    { name = "nemo-lens" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
+]
 parquet = [
     { name = "pyarrow" },
 ]
@@ -2258,12 +2265,16 @@ requires-dist = [
     { name = "megatron-core", extras = ["te"], marker = "extra == 'te'", editable = "3rdparty/Megatron-LM" },
     { name = "mistral-common", specifier = ">=1.10.0" },
     { name = "mlflow", specifier = ">=3.16.0" },
+    { name = "nemo-lens", marker = "extra == 'otel'" },
     { name = "nemo-run", marker = "extra == 'recipes'" },
     { name = "nvdlfw-inspect", marker = "extra == 'tensor-inspect'", specifier = "==0.2.1" },
     { name = "nvidia-resiliency-ext" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "open-clip-torch", specifier = ">=3.2.0" },
     { name = "opencv-python-headless", marker = "extra == 'bagel'", specifier = ">=4.7.0.72" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "extra == 'otel'", specifier = ">=1.20.0" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "extra == 'otel'", specifier = ">=1.20.0" },
+    { name = "opentelemetry-sdk", marker = "extra == 'otel'", specifier = ">=1.20.0" },
     { name = "peft", specifier = ">=0.20.0,<=0.21.0" },
     { name = "pyarrow", marker = "extra == 'parquet'", specifier = ">=14.0.0" },
     { name = "pyyaml", specifier = ">=6.0.2" },
@@ -2281,7 +2292,7 @@ requires-dist = [
     { name = "typing-extensions" },
     { name = "wandb", specifier = ">=0.29.0" },
 ]
-provides-extras = ["bagel", "recipes", "parquet", "tensor-inspect", "te", "ssm", "audio"]
+provides-extras = ["bagel", "recipes", "parquet", "tensor-inspect", "te", "ssm", "audio", "otel"]
 
 [package.metadata.requires-dev]
 build = [
@@ -2815,8 +2826,8 @@ wheels = [
 
 [[package]]
 name = "nemo-lens"
-version = "0.2.0+b85578f"
-source = { git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=b85578fc2b736a1804705e537001b5f45e9c715d#b85578fc2b736a1804705e537001b5f45e9c715d" }
+version = "0.2.0+7bcc03c"
+source = { git = "https://github.com/NVIDIA-NeMo/Lens.git?rev=7bcc03ce3565d2be6858b819b049bcc4c3ec05b4#7bcc03ce3565d2be6858b819b049bcc4c3ec05b4" }
 dependencies = [
     { name = "opentelemetry-api" },
 ]
@@ -2953,8 +2964,8 @@ name = "nvidia-cutlass-dsl"
 version = "4.8.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "nvidia-cutlass-dsl-libs-base" },
-    { name = "nvidia-cutlass-dsl-libs-cu12" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cutlass-dsl-libs-cu12", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl/nvidia_cutlass_dsl-4.8.0-py3-none-any.whl", hash = "sha256:24f996e0e5fa88c8b417f4893e615af135bdfdfdbdbed7e239faf36a88df711b" },
@@ -2962,7 +2973,7 @@ wheels = [
 
 [package.optional-dependencies]
 cu13 = [
-    { name = "nvidia-cutlass-dsl-libs-cu13" },
+    { name = "nvidia-cutlass-dsl-libs-cu13", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 
 [[package]]
@@ -2970,10 +2981,10 @@ name = "nvidia-cutlass-dsl-libs-base"
 version = "4.8.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings" },
-    { name = "nvidia-cutlass-dsl-libs-core" },
-    { name = "protobuf" },
-    { name = "typing-extensions" },
+    { name = "cuda-bindings", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cutlass-dsl-libs-core", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "protobuf", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 
 [[package]]
@@ -2981,9 +2992,9 @@ name = "nvidia-cutlass-dsl-libs-core"
 version = "4.8.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings" },
-    { name = "protobuf" },
-    { name = "typing-extensions" },
+    { name = "cuda-bindings", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "protobuf", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 wheels = [
     { url = "https://pypi.nvidia.com/nvidia-cutlass-dsl-libs-core/nvidia_cutlass_dsl_libs_core-4.8.0-py3-none-any.whl", hash = "sha256:b32716d2ed10c185cdbbb6b5c6fca26a3113a60e6e2fe4e2f0cb15966422b621" },
@@ -2994,10 +3005,10 @@ name = "nvidia-cutlass-dsl-libs-cu12"
 version = "4.8.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings" },
-    { name = "nvidia-cutlass-dsl-libs-base" },
-    { name = "protobuf" },
-    { name = "typing-extensions" },
+    { name = "cuda-bindings", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "protobuf", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 
 [[package]]
@@ -3005,10 +3016,10 @@ name = "nvidia-cutlass-dsl-libs-cu13"
 version = "4.8.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
-    { name = "cuda-bindings" },
-    { name = "nvidia-cutlass-dsl-libs-base" },
-    { name = "protobuf" },
-    { name = "typing-extensions" },
+    { name = "cuda-bindings", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "protobuf", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 
 [[package]]
@@ -3268,6 +3279,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c1/8e/65e85e5137991a3c493b11682151d198638a5bc1dd4b4c5f67e013c57d7c/opentelemetry_exporter_otlp_proto_common-1.45.1.tar.gz", hash = "sha256:2e4adcc3a67bcf57804fc49514f0ef64974ca7590aa3491da389852b4a0628f6", size = 18873, upload-time = "2026-10-06T17:33:04.471Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/84/aa/92f225d353904e7f70b8b3e3c1b02db0cf56f744c2e83c581dc372e78873/opentelemetry_exporter_otlp_proto_common-1.45.1-py3-none-any.whl", hash = "sha256:2f446183ae7047b036226f1d846c41a834b0e8755ad13b51a51dd38952eb466c", size = 15393, upload-time = "2026-10-06T17:32:41.911Z" },
+]
+
+[[package]]
+name = "opentelemetry-exporter-otlp-proto-grpc"
+version = "1.45.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "googleapis-common-protos" },
+    { name = "grpcio" },
+    { name = "opentelemetry-api" },
+    { name = "opentelemetry-exporter-otlp-common" },
+    { name = "opentelemetry-exporter-otlp-proto-common" },
+    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-sdk" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d6/00/a82af0be959dc58495740b169c6669a86e0811f6cd353a01eda34d255db3/opentelemetry_exporter_otlp_proto_grpc-1.45.1.tar.gz", hash = "sha256:3b3dcfbfdcb4e35149fcf309972282054b45228f5c10547d0095d6578510a9a0", size = 25997, upload-time = "2026-10-06T17:33:05.114Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4d/46/2d1da202f1e17c81aae7efcf702898d524b46709e4d3e2bf1f7f8ca8fbc6/opentelemetry_exporter_otlp_proto_grpc-1.45.1-py3-none-any.whl", hash = "sha256:e42ecb789d2fc5d8145e3dadc3e2991c9f18cd166d7c7514e234702540274b76", size = 19492, upload-time = "2026-10-06T17:32:42.838Z" },
 ]
 
 [[package]]
@@ -4845,15 +4875,15 @@ name = "torch"
 version = "2.14.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings", marker = "sys_platform == 'linux'" },
-    { name = "filelock" },
-    { name = "fsspec" },
-    { name = "jinja2" },
-    { name = "networkx" },
-    { name = "setuptools" },
-    { name = "sympy" },
+    { name = "cuda-bindings", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "filelock", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "fsspec", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "jinja2", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "networkx", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "setuptools", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "sympy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "triton", marker = "sys_platform == 'never'" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
 ]
 
 [[package]]
@@ -4881,8 +4911,8 @@ name = "torchvision"
 version = "0.29.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
+    { name = "numpy", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
+    { name = "pillow", marker = "(platform_machine != 'aarch64' and sys_platform == 'linux') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
 
