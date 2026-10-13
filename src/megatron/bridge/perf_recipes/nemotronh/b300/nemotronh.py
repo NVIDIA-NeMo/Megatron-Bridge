@@ -274,8 +274,8 @@ def nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP hierarchical-topology pull mode.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # Pull/push mode is single-LSA-team only; EP64 spans eight NVL8 domains.
+        "NCCL_EP_HT_EM_PULL_PUSH": 0,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
         # Transformer Engine overlap settings for this model.
