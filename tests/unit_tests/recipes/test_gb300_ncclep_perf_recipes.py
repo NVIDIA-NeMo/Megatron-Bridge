@@ -110,8 +110,9 @@ def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     # Device-side expert token counts; the legacy grouped-MLP path host-syncs tokens_per_expert per layer.
     assert cfg.model.moe_use_grouped_tensor is True
-    # The plugin runs in hierarchical-topology pull mode, and nothing reads the HybridEP tuning anymore.
-    assert {name: cfg.env_vars[name] for name in _NCCL_EP_ENV} == _NCCL_EP_ENV
+    # EP64 crosses NVL8 domains: the runtime's single-LSA-team pull/push mode must be disabled.
+    expected_pull_push = 0 if (module_name, factory_name) in _ULTRA_NVL8_RECIPES else 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == expected_pull_push
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
 
 
