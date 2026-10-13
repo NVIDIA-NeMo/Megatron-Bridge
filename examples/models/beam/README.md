@@ -39,15 +39,11 @@ bridge = AutoBridge.from_hf_pretrained(
 )
 model_config = bridge.get_model_config()
 
-# Flat assignment routes to the nested transformer config.
+# Apply deployment-specific parallelism before construction.
 model_config.tensor_model_parallel_size = 2
 model_config.expert_model_parallel_size = 16
 models = bridge.get_model(model_config)
 ```
-
-Command-line overrides of model fields must use the nested path, for example
-`model.transformer.expert_model_parallel_size=16`. The `train.sh` shortcuts `-tp`, `-pp`, `-cp` and `-ep` write flat
-`model.*` keys, which builder-backed configurations reject.
 
 ## Runtime Requirements
 
@@ -233,11 +229,7 @@ The dataset must be tokenized with Beam's tokenizer into Megatron's indexed form
 
 ## Known Limitations
 
-- The `train.sh` parallelism shortcuts (`-tp`, `-pp`, `-cp`, `-ep`) do not work with the builder-backed
-  configuration; override `model.transformer.<field>` instead.
 - The launcher's distributed CPU export requests no GPU resources and therefore fails for Beam with
   "TransformerEngine needs CUDA". Use the single-process CPU commands above with one runtime GPU.
 - Megatron KV-cache inference is not verified; use the legacy full-prefix generation path.
-- Exporting a fine-tuned checkpoint writes the training sequence length into `max_position_embeddings` in
-  `config.json` (generic Bridge config mapping). Restore the published value if the export will serve long contexts.
 - Only BF16 recipes are provided; FP8 and Blackwell recipes are not part of this release.

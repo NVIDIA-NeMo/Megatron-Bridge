@@ -25,9 +25,7 @@ summary: >
   FP32 optimizer state); Beam's chat template packs that split into 499 packs, so 100 steps take about 1.6 passes.
   Pretraining and checkpoint resume use Beam's own bounded settings (wikitext-103, GBS 256, LR 1e-4 to 1e-5) and are
   support verification rather than cohort convergence evidence. All training keeps Beam's routing natural: the
-  expert bias stays fixed and there is no auxiliary load-balancing loss. Builder-backed configurations take model
-  overrides as model.transformer.<field>; the train.sh -tp/-pp/-cp/-ep shortcuts write flat model keys and are
-  rejected.
+  expert bias stays fixed and there is no auxiliary load-balancing loss.
 
 verification_index:
   model_level:
