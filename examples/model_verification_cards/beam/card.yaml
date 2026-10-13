@@ -17,7 +17,9 @@ summary: >
   between change only documentation and add the HF inference verifier's --max-gpu-memory-gib option. Loading the
   full fine-tuned export in
   Transformers on one 8x H200 node needs that cap: device_map auto otherwise fills each GPU with seven decoder layers,
-  and the load-time stacking of per-expert tensors then runs out of GPU memory.
+  and the load-time stacking of per-expert tensors then runs out of GPU memory. The verification runs fetched the
+  pinned revision under the repository's earlier, private name, which the Hub redirects to
+  reflection/Beam-1.0-501B-A23B; the revision is the same.
 
   Full SFT and PEFT follow qwen3_30b_a3b_convergence_v2 (Tulu 3 train[:10000], 8K offline packs, GBS 8, 100 steps,
   FP32 optimizer state); Beam's chat template packs that split into 499 packs, so 100 steps take about 1.6 passes.
@@ -41,7 +43,7 @@ verification_index:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 
 model:
-  hf_id: reflection/brandon-dire-surge-10-03-s200
+  hf_id: reflection/Beam-1.0-501B-A23B
   hf_revision: "3ea13c81833d9a523ed4bdc4152a33edd16bbd30"  # pragma: allowlist secret
   architecture: BeamForCausalLM
   min_transformers_version: "5.16.0"
@@ -56,7 +58,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1
-      --hf-model reflection/brandon-dire-surge-10-03-s200
+      --hf-model reflection/Beam-1.0-501B-A23B
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16
     last_verified: 2026-10-13
@@ -73,7 +75,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2
-      --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200
+      --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron-path work/model-verification/beam/imported-megatron --torch-dtype bfloat16
       --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --low-memory-save
@@ -89,7 +91,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1
-      --hf-model reflection/brandon-dire-surge-10-03-s200
+      --hf-model reflection/Beam-1.0-501B-A23B
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron-path work/model-verification/beam/cpu-megatron/iter_0000000
       --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16
@@ -107,7 +109,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2
-      --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200
+      --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron-path work/model-verification/beam/imported-megatron/iter_0000000
       --hf-path work/model-verification/beam/hf-export-gpu --torch-dtype bfloat16 --tp 1 --pp 1
@@ -125,7 +127,7 @@ items:
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8 --task model-comparison
-      --hf_model_path reflection/brandon-dire-surge-10-03-s200
+      --hf_model_path reflection/Beam-1.0-501B-A23B
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron_model_path work/model-verification/beam/imported-megatron/iter_0000000
       --hf-logits-path work/model-verification/beam/hf-reference-france.pt
@@ -144,7 +146,7 @@ items:
     command: >
       ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8
       --task legacy-full-prefix-generation
-      --hf_model_path reflection/brandon-dire-surge-10-03-s200
+      --hf_model_path reflection/Beam-1.0-501B-A23B
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron_model_path work/model-verification/beam/imported-megatron/iter_0000000 --tp 1
       --pp 1 --ep 16 --etp 1 --prompt 'Explain why the sky appears blue in one sentence.'
@@ -253,7 +255,7 @@ items:
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2
-          --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200
+          --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
           --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
           --megatron-path work/model-verification/beam/sft/checkpoints/iter_0000100
           --hf-path work/model-verification/beam/sft-hf-export --torch-dtype bfloat16 --tp 1

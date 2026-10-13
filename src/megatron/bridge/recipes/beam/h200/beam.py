@@ -34,7 +34,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
-BEAM_HF_MODEL_ID = "reflection/brandon-dire-surge-10-03-s200"
+BEAM_HF_MODEL_ID = "reflection/Beam-1.0-501B-A23B"
 BEAM_HF_MODEL_REVISION = "3ea13c81833d9a523ed4bdc4152a33edd16bbd30"
 
 # qwen3_30b_a3b_convergence_v2 data selection: Tulu 3 train[:10000] at a pinned dataset revision.
