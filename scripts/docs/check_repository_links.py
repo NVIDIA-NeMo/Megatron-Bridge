@@ -46,6 +46,10 @@ def repository_target(url: str, *, repository: str, branch: str) -> tuple[str, s
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError(f"Expected an HTTP(S) URL from Lychee, got {url!r}")
+    # A different authority is an online destination even when hostname matches.
+    default_port = 443 if parsed.scheme == "https" else 80
+    if parsed.username is not None or parsed.password is not None or parsed.port not in {None, default_port}:
+        return None
     parts = parsed.path.lstrip("/").split("/", 2)
     if len(parts) != 3 or "/".join(parts[:2]).casefold() != repository.casefold():
         return None
@@ -68,7 +72,9 @@ def repository_target(url: str, *, repository: str, branch: str) -> tuple[str, s
         for end in range(1, len(segments) + 1):
             candidate = unquote("/".join(segments[:end]))
             if candidate == ref:
-                return kind, unquote("/".join(segments[end:])).rstrip("/")
+                path = unquote("/".join(segments[end:]))
+                # GitHub HTML redirects trailing slashes; raw content returns 404.
+                return kind, path.rstrip("/") if kind == "object" else path
             if len(candidate) >= len(ref):
                 break
     return None

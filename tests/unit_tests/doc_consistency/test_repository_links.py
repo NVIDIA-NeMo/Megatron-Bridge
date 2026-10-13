@@ -1,3 +1,17 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Candidate-tree link checks need no model runtime or network access."""
 
 import importlib.util
@@ -78,6 +92,7 @@ def test_added_target_passes_before_merge_and_missing_target_fails(repo: Path) -
     "url",
     [
         f"{PREFIX}/blob/main/src/retired.py#L1",
+        f"{PREFIX}/blob/main/src/retired.py/",
         f"{PREFIX}/tree/main/src/retired.py?plain=1#L1",
         f"{PREFIX}/tree/main/src/",
         f"{PREFIX}/blob/main/src/",
@@ -85,6 +100,8 @@ def test_added_target_passes_before_merge_and_missing_target_fails(repo: Path) -
         f"https://raw.githubusercontent.com/{REPOSITORY}/main/src/retired.py",
         f"https://raw.githubusercontent.com/{REPOSITORY}/refs/heads/main/src/retired.py",
         f"http://github.com/{REPOSITORY.lower()}/blob/main/src/retired.py",
+        f"https://github.com:443/{REPOSITORY}/blob/main/src/retired.py",
+        f"http://github.com:80/{REPOSITORY}/blob/main/src/retired.py",
     ],
 )
 def test_supported_github_and_raw_urls(repo: Path, url: str) -> None:
@@ -93,6 +110,15 @@ def test_supported_github_and_raw_urls(repo: Path, url: str) -> None:
 
 def test_raw_url_requires_file(repo: Path) -> None:
     assert len(check(repo, [f"https://raw.githubusercontent.com/{REPOSITORY}/main/src"])[1]) == 1
+
+
+@pytest.mark.parametrize("suffix", ["/", "%2F"])
+def test_raw_file_trailing_slash_fails(repo: Path, suffix: str) -> None:
+    url = f"https://raw.githubusercontent.com/{REPOSITORY}/main/src/retired.py{suffix}"
+    external, errors = check(repo, [url])
+    assert external == []
+    assert len(errors) == 1
+    assert "missing" in errors[0]
 
 
 @pytest.mark.parametrize(
@@ -109,6 +135,11 @@ def test_raw_url_requires_file(repo: Path) -> None:
         "https://github.com/another/repo/blob/main/missing.py",
         f"https://example.com/{REPOSITORY}/blob/main/missing.py",
         f"https://github.com.evil.example/{REPOSITORY}/blob/main/missing.py",
+        f"https://github.com:8443/{REPOSITORY}/blob/main/src/retired.py",
+        f"https://raw.githubusercontent.com:8443/{REPOSITORY}/main/src/retired.py",
+        f"https://github.com:80/{REPOSITORY}/blob/main/src/retired.py",
+        f"http://github.com:443/{REPOSITORY}/blob/main/src/retired.py",
+        f"https://user@github.com/{REPOSITORY}/blob/main/src/retired.py",
     ],
 )
 def test_explicit_versions_and_external_urls_remain_online(repo: Path, url: str) -> None:
