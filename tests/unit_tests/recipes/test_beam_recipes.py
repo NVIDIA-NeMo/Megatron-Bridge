@@ -27,6 +27,7 @@ from megatron.bridge.models.beam.beam_config import BeamModelConfig
 from megatron.bridge.models.beam.modeling_beam import beam_hybrid_stack_spec
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.mixed_precision import update_config_with_precision_overrides
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -249,7 +250,9 @@ def test_pretrain_keeps_beam_bounded_settings() -> None:
     assert cfg.optimizer.main_grads_dtype == cfg.optimizer.exp_avg_dtype == cfg.optimizer.exp_avg_sq_dtype
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.main_params_dtype == torch.float32
+    # runtime_config_update copies the mixed-precision fields onto the DDP config, so both must agree.
     assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert update_config_with_precision_overrides(cfg.mixed_precision, cfg.ddp).grad_reduce_in_fp32 is False
 
 
 def test_recipes_pin_the_hub_revision_unless_given_a_local_path() -> None:

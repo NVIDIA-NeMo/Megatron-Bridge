@@ -190,6 +190,8 @@ def beam_pretrain_128gpu_h200_bf16_config(hf_path: str | None = None) -> ConfigC
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.mixed_precision = bf16_mixed()
+    # The mixed-precision setup copies this onto the DDP config at runtime.
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.env_vars = {**COMMON_RECIPE_ENV_VARS}
     return cfg
 
