@@ -549,10 +549,11 @@ def maybe_finalize_async_save(
     )
     with finalize_span as span:
         if async_queue is not None:
-            finalized_call_idx = async_queue.maybe_finalize_async_calls(blocking)
+            finalized_calls = async_queue.maybe_finalize_async_calls(blocking)
             if span is not None:
                 span.set_attribute("megatron.checkpoint.finalize.blocking", blocking)
-                span.set_attribute("nvrx.call_idx", list(finalized_call_idx))
+                # The count, not the indices: NVRx reports index 0 for every call it finalizes.
+                span.set_attribute("megatron.checkpoint.finalize.count", len(finalized_calls))
 
         if terminate and async_queue is not None:
             async_queue.close()
