@@ -24,7 +24,8 @@ from transformers import AutoConfig
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_coderforge_config
-from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -217,6 +218,21 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.rerun_state_machine.check_for_nan_in_loss = False
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    return cfg
+
+
+def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigContainer:
+    """Return a deterministic text-only Qwen3.5-9B pretraining config for eight GB200 GPUs.
+
+    Wraps :func:`qwen35_text_9b_pretrain_8gpu_gb200_bf16_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    """
+    cfg = qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
+    apply_determinism_overrides(cfg)
+    # Keep the exact process environment visible on the recipe.
+    cfg.env_vars = {
+        **DETERMINISM_ENV_VARS,
+    }
     return cfg
 
 
