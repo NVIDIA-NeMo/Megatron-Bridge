@@ -2,6 +2,8 @@
 
 This guide describes how to configure logging in Megatron Bridge. It introduces the high-level `LoggerConfig`, explains experiment logging to TensorBoard and Weights & Biases (W&B), and documents console logging behavior.
 
+To export OpenTelemetry spans and metrics that show where a job spends its time on every rank, see [OpenTelemetry Observability](observability.md).
+
 ## LoggerConfig Overview
 
 {py:class}`~bridge.training.config.LoggerConfig` is the dataclass that encapsulates logging‑related settings for training. It resides inside the overall {py:class}`bridge.training.config.ConfigContainer`, which represents the complete configuration for a training run.

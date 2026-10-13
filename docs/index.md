@@ -70,6 +70,7 @@ training/training-loop-settings.md
 training/optimizer-scheduler.md
 training/logging.md
 training/profiling.md
+training/observability.md
 training/memory-estimator.md
 training/checkpointing.md
 training/megatron-fsdp.md
