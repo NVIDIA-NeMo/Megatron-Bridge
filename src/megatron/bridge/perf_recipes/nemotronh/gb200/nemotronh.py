@@ -250,7 +250,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config(*, num_gpus: int = 256) 
 
     cfg.model.cuda_graph_impl = "local"
     set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_preprocess"])
-    #TODO: "moe_router" needs to be disabled due to MCore PR 7046, performing a CPU-to-GPU copy for per token loss
+    # TODO: "moe_router" needs to be disabled due to MCore PR 7046, performing a CPU-to-GPU copy for per token loss
     # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
     cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
 
