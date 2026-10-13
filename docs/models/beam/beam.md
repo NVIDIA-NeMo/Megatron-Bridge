@@ -47,10 +47,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     </div>
   </div>
   <div class="verification-combination-list" hidden>
-    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="beam-hf-to-megatron-cpu" aria-controls="beam-hf-to-megatron-cpu" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-hf-to-megatron-cpu" aria-controls="beam-hf-to-megatron-cpu" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>Import · CPU</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -108,12 +108,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="beam-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="beam-hf-to-megatron-cpu" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>Import · CPU</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>not specified</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
       </dl>
       <section class="verification-command-section">
         <h5>Exact command</h5>
@@ -122,12 +122,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>CPU import runs in a single process and materializes the full BF16 model (about 1 TB), so it needs a host with well over 1 TB of memory plus conversion workspace.
+        <p>The single-process CPU import materializes the full BF16 model on one B300 host with 3 TB of memory (the run requested 2000 GiB) and completes in 2607 s. It requests one runtime GPU because Beam&#x27;s attention layers are Transformer Engine modules and Transformer Engine refuses to construct them without CUDA; the GPU held only the CUDA context (at most 800 MiB) while every weight stayed on CPU, and a GPU-less run fails with &quot;TransformerEngine needs CUDA&quot;. The CPU export below reloads the resulting checkpoint and reproduces the pinned source exactly.
 </p>
       </section>
     </article>
@@ -153,7 +153,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 2 nodes x 8 H200 at TP1/PP1/EP16/ETP1 the import completes in 685 s and writes a complete 16-shard, 934 GiB iter_0000000 checkpoint (about 75 GiB per GPU during the import; EP8 on one node would leave too little headroom). The checkpoint reloads in the GPU and CPU exports, whose outputs match the pinned source exactly, and in the inference and forward-pass items.
+        <p>On 2 nodes x 8 H200 at TP1/PP1/EP16/ETP1 the import completes in 685 s and writes a complete 16-shard, 934 GiB iter_0000000 checkpoint (about 75 GiB per GPU during the import; EP8 on one node would leave too little headroom). The checkpoint reloads in the GPU export, whose output matches the pinned source exactly, and in the inference and forward-pass items.
 </p>
       </section>
     </article>
@@ -174,12 +174,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 2 --cpu-processes-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/imported-megatron/iter_0000000 --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/cpu-megatron/iter_0000000 --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Distributed CPU export with 8 processes on each of 2 hosts (EP16, no GPUs used) completes in 2857 s. Reloading every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in transformers_version.
+        <p>The single-process CPU export of the CPU-imported checkpoint completes in 2853 s on the same host, again with one runtime GPU that holds only the CUDA context while the weights stay on CPU. Reloading every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in transformers_version. The launcher&#x27;s distributed CPU export requests no GPU resources and therefore fails for Beam on GPU-less hosts with &quot;TransformerEngine needs CUDA&quot;.
 </p>
       </section>
     </article>

@@ -53,8 +53,11 @@ which is why the convergence-contract SFT layout reaches DP8 without it.
 ## Conversion
 
 The BF16 checkpoint is about 1 TB. GPU import and export on H200 use two nodes at EP16, which places about 69 GiB of
-weights on each GPU; EP8 on one node would need about 127 GiB per GPU. Distributed CPU export works across nodes. CPU
-import runs in a single process and needs a host with well over 1 TB of memory.
+weights on each GPU; EP8 on one node would need about 127 GiB per GPU. CPU import and export run in a single process
+on a host with well over 1 TB of memory and need one runtime GPU (`--gpus-per-node 1`): Beam's attention layers are
+Transformer Engine modules, and Transformer Engine refuses to construct them without CUDA even though the weights stay
+on CPU. For the same reason the distributed CPU export, which requests no GPU resources, fails for Beam on GPU-less
+hosts.
 
 ## Verification status
 

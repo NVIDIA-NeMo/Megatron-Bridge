@@ -6,11 +6,13 @@ summary: >
   Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
 
   Beam verification runs on H200 through the builder-backed BeamModelConfig (native Megatron-Core HybridModel). The
-  full 501B-parameter BF16 checkpoint imports on 2 nodes at EP16 and exports back to Hugging Face from GPUs and from
-  CPU processes with keys, dtypes, shapes, and values exactly equal to the pinned source. The imported checkpoint
-  matches the Hugging Face reference on the forward pass (same next token, cosine similarity 0.999692) and generates
-  deterministically through the non-cached legacy full-prefix path. CPU import is unverified: it runs in a single
-  process and needs a host with well over 1 TB of memory.
+  full 501B-parameter BF16 checkpoint imports on 2 nodes at EP16 and exports back to Hugging Face with keys, dtypes,
+  shapes, and values exactly equal to the pinned source. The imported checkpoint matches the Hugging Face reference on
+  the forward pass (same next token, cosine similarity 0.999692) and generates deterministically through the
+  non-cached legacy full-prefix path. CPU import and CPU export run single-process on a host with well over 1 TB of
+  memory and their round trip is exact as well; each requests one runtime GPU because Transformer Engine constructs
+  Beam's attention layers only when CUDA is available, so the launcher's GPU-less distributed CPU export does not
+  work for Beam. The CPU items ran on a B300 host; every other item ran on H200.
 
   Full SFT and PEFT follow qwen3_30b_a3b_convergence_v2 (Tulu 3 train[:10000], 8K offline packs, GBS 8, 100 steps,
   FP32 optimizer state); Beam's chat template packs that split into 499 packs, so 100 steps take about 1.6 passes.
@@ -23,13 +25,12 @@ summary: >
 verification_index:
   model_level:
     verified:
+      - hf_to_megatron_cpu
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
-    unverified:
-      - hf_to_megatron_cpu
   training:
     H200:
       verified: [peft]
@@ -47,17 +48,21 @@ verification_environment:
 
 items:
   hf_to_megatron_cpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
-      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1
       --hf-model reflection/brandon-dire-surge-10-03-s200
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
       --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-10-13
     expected_result: >
-      CPU import runs in a single process and materializes the full BF16 model (about 1 TB), so it needs a host with
-      well over 1 TB of memory plus conversion workspace.
+      The single-process CPU import materializes the full BF16 model on one B300 host with 3 TB of memory (the run
+      requested 2000 GiB) and completes in 2607 s. It requests one runtime GPU because Beam's attention layers are
+      Transformer Engine modules and Transformer Engine refuses to construct them without CUDA; the GPU held only the
+      CUDA context (at most 800 MiB) while every weight stayed on CPU, and a GPU-less run fails with
+      "TransformerEngine needs CUDA". The CPU export below reloads the resulting checkpoint and reproduces the pinned
+      source exactly.
 
   hf_to_megatron_gpu:
     status: verified
@@ -72,26 +77,26 @@ items:
     expected_result: >
       On 2 nodes x 8 H200 at TP1/PP1/EP16/ETP1 the import completes in 685 s and writes a complete 16-shard,
       934 GiB iter_0000000 checkpoint (about 75 GiB per GPU during the import; EP8 on one node would leave too
-      little headroom). The checkpoint reloads in the GPU and CPU exports, whose outputs match the pinned source
-      exactly, and in the inference and forward-pass items.
+      little headroom). The checkpoint reloads in the GPU export, whose output matches the pinned source exactly,
+      and in the inference and forward-pass items.
 
   megatron_to_hf_cpu:
     status: verified
     precision: bf16
     command: >
-      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 2
-      --cpu-processes-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1
+      --hf-model reflection/brandon-dire-surge-10-03-s200
       --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30
-      --megatron-path work/model-verification/beam/imported-megatron/iter_0000000
-      --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1
-      --ep 16 --etp 1 --distributed-timeout-minutes 240 --distributed-save
-      --save-every-n-ranks 1 --no-progress
+      --megatron-path work/model-verification/beam/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16
     last_verified: 2026-10-13
     expected_result: >
-      Distributed CPU export with 8 processes on each of 2 hosts (EP16, no GPUs used) completes in 2857 s. Reloading
-      every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor
-      keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or
-      mismatched tensors); config.json differs only in transformers_version.
+      The single-process CPU export of the CPU-imported checkpoint completes in 2853 s on the same host, again with one
+      runtime GPU that holds only the CUDA context while the weights stay on CPU. Reloading every exported safetensors
+      shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes,
+      shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json
+      differs only in transformers_version. The launcher's distributed CPU export requests no GPU resources and
+      therefore fails for Beam on GPU-less hosts with "TransformerEngine needs CUDA".
 
   megatron_to_hf_gpu:
     status: verified
