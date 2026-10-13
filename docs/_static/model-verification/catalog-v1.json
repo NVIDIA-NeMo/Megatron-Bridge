@@ -11113,19 +11113,19 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "beam-pretrain-h200",
-          "expected_result": "100 finite steps with checkpoints at steps 50 and 100.\n",
+          "expected_result": "On 128 H200 (16 nodes x 8), TP2/PP1/EP128/ETP1, DP64, SP on, full recompute, GBS/MBS 256/1 (4 micro-batches per step) at 4,096 tokens and natural routing (fixed expert bias, no auxiliary loss), with BF16 gradient reduction and a precision-aware distributed optimizer (FP32 master weights, BF16 Adam moments). The run warm starts from the imported checkpoint on Beam-tokenized wikitext-103 with LR 1e-4 cosine to 1e-5 after 40 warmup steps and weight decay 0.1. All 100 steps are finite with no skipped or NaN iterations. Single-step LM loss varies by batch between 0.63 and 0.78, so the first and last steps are close; the 10-step mean falls from 0.734 (steps 1-10) to 0.685 (steps 91-100) while the gradient norm settles from 0.72 to about 0.2. All five metrics are recorded and the post-setup configuration persists. The full-state checkpoints at steps 50 and 100 are complete (128 distcp shards, 5.01 TB and 45,711 entries each); step 50 feeds the resume item.\n",
           "hardware": "H200",
-          "last_verified": null,
+          "last_verified": "2026-10-13",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.7262869,
+            "initial_loss": 0.7239673,
+            "last_10_steps_model_tflops_per_gpu_avg": 51.95,
+            "last_10_steps_step_time_ms_avg": 20287.32,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 403.799
           },
           "precision": "bf16",
           "source_pointer": "items.pretrain.H200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "pretrain"
         },
@@ -11184,7 +11184,7 @@
           ],
           "commands": [
             "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/sft/checkpoints/iter_0000100 --hf-path work/model-verification/beam/sft-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --distributed-save --save-every-n-ranks 1 --no-progress",
-            "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8 --hf-model work/model-verification/beam/sft-hf-export --prompt 'Write one concise sentence explaining why deterministic tests matter:' --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 125"
+            "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8 --hf-model work/model-verification/beam/sft-hf-export --prompt 'Write one concise sentence explaining why deterministic tests matter:' --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 110"
           ],
           "dimensions": {},
           "enabled_features": {},
