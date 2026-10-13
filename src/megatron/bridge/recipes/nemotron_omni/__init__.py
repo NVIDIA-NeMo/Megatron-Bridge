@@ -12,39 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .gb200 import (
-    nemotron_35_super_vl_peft_16gpu_gb200_bf16_config,
-    nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config,
-    nemotron_35_super_vl_sft_64gpu_gb200_bf16_config,
-    nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config,
-)
-from .nemotron_35_super_vl import (
-    NEMOTRON_35_SUPER_VL_HF_MODEL_ID,
-    NEMOTRON_35_SUPER_VL_HF_REVISION,
-    nemotron_35_super_vl_peft_config,
-    nemotron_35_super_vl_pretrain_config,
-    nemotron_35_super_vl_sft_config,
-)
-from .nemotron_omni import (
-    nemotron_omni_cord_v2_peft_config,
-    nemotron_omni_cord_v2_sft_config,
-    nemotron_omni_valor32k_peft_config,
-    nemotron_omni_valor32k_sft_config,
-)
+"""Compatibility imports for recipes now owned by ``nemotronh_multimodal``."""
+
+import sys
+from importlib import import_module
 
 
-__all__ = [
-    "nemotron_35_super_vl_peft_config",
-    "nemotron_35_super_vl_peft_16gpu_gb200_bf16_config",
-    "nemotron_35_super_vl_pretrain_config",
-    "nemotron_35_super_vl_pretrain_64gpu_gb200_bf16_config",
-    "nemotron_35_super_vl_sft_config",
-    "nemotron_35_super_vl_sft_64gpu_gb200_bf16_config",
-    "nemotron_35_super_vl_sft_long_context_128gpu_gb200_bf16_config",
-    "NEMOTRON_35_SUPER_VL_HF_MODEL_ID",
-    "NEMOTRON_35_SUPER_VL_HF_REVISION",
-    "nemotron_omni_cord_v2_sft_config",
-    "nemotron_omni_cord_v2_peft_config",
-    "nemotron_omni_valor32k_sft_config",
-    "nemotron_omni_valor32k_peft_config",
-]
+# Alias modules, not just functions: old serialized targets and code that
+# patches recipe globals must resolve to the same implementation as new imports.
+for _suffix in (
+    "",
+    ".h100",
+    ".gb200",
+    ".nemotron_omni",
+    ".nemotron_35_super_vl",
+    ".h100.nemotron_omni",
+    ".h100.nemotron_35_super_vl",
+    ".gb200.nemotron_35_super_vl",
+):
+    sys.modules[__name__ + _suffix] = import_module("megatron.bridge.recipes.nemotronh_multimodal" + _suffix)

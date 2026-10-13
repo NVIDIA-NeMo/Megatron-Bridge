@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""H100 performance recipes for NemotronH and Nemotron 3."""
+"""H100 performance recipes for Nemotron 3 and 3.5."""
 
 import torch
 
@@ -22,7 +22,6 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _benchmark_common,
     _perf_precision,
     nemotron_3_nano_pretrain_config,
-    nemotronh_56b_pretrain_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
@@ -31,41 +30,6 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 # Public Nemotron 3.5 Lightning checkpoint used by the Lightning recipe API.
 _NEMOTRON_3_5_LIGHTNING_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
 _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c44"  # pragma: allowlist secret
-
-
-def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
-    """NemotronH 56B pretrain: 64× H100, FP8 current-scaling."""
-    cfg = nemotronh_56b_pretrain_config()
-    cfg.mixed_precision = _perf_precision("fp8_cs")
-
-    cfg.model.tensor_model_parallel_size = 8
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 192
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["mamba"]
-
-    _benchmark_common(cfg)
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
-    cfg.env_vars = {
-        **COMMON_PERF_ENV_VARS,
-        # CUDA stream scheduling for this model and parallel layout.
-        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
-        # CUDA graph and allocator behavior for this recipe.
-        "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        # NCCL user-buffer and launch settings.
-        "NCCL_NVLS_ENABLE": 0,
-        # Transformer Engine overlap settings for this model.
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    }
-    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:

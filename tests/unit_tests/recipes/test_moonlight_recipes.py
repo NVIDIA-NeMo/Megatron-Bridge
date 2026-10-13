@@ -531,6 +531,38 @@ def test_moonlight_pipeline_layout_tracks_supported_runner_override(monkeypatch:
     assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
 
 
+_MOONLIGHT_16B_NUM_LAYERS = 27
+
+
+def _supported_moonlight_pp_vp_layouts():
+    """Return every (pp, vp, layout) the Moonlight-16B layout helper supports."""
+    from megatron.bridge.recipes.moonlight.h100.moonlight_16b import _get_moonlight_pipeline_layout
+
+    supported = []
+    for pp in range(1, 17):
+        for vp in range(1, 9):
+            try:
+                layout = _get_moonlight_pipeline_layout(pp, vp)
+            except ValueError:
+                continue
+            if layout is not None:
+                supported.append((pp, vp, layout))
+    return supported
+
+
+def test_moonlight_pipeline_layouts_match_model_depth():
+    """Every supported Moonlight-16B pipeline layout must pass MCore layout validation."""
+    from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+
+    supported = _supported_moonlight_pp_vp_layouts()
+    assert supported
+
+    for pp, vp, layout in supported:
+        parsed = PipelineParallelLayerLayout(layout, pipeline_model_parallel_size=pp)
+        assert parsed.virtual_pipeline_model_parallel_size == vp, (pp, vp)
+        parsed.validate_layer_layout(num_layers=_MOONLIGHT_16B_NUM_LAYERS, mtp_num_layers=None)
+
+
 def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     """Test the exact 4-GPU LoRA convergence contract and frozen base."""
     from megatron.bridge.peft.lora import LoRA

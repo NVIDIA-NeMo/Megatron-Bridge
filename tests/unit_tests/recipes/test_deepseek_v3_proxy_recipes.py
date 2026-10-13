@@ -63,10 +63,10 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
 def test_proxy_preserves_parent_except_depth_and_layout(precision: str) -> None:
     parent_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_256gpu_vr200_{precision}_config"
+        deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
     )
     proxy_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_64gpu_vr200_{precision}_proxy_config"
+        deepseek, f"deepseek_v3_pretrain_64gpu_vrnvl72_{precision}_proxy_config"
     )
     parent = parent_fn()
     proxy = proxy_fn()
@@ -136,8 +136,8 @@ def test_proxy_preserves_parent_except_depth_and_layout(precision: str) -> None:
 
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
 def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
-    parent = getattr(deepseek, f"deepseek_v3_pretrain_256gpu_vr200_{precision}_config")()
-    proxy = getattr(deepseek, f"deepseek_v3_pretrain_4gpu_vr200_{precision}_proxy_config")()
+    parent = getattr(deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config")()
+    proxy = getattr(deepseek, f"deepseek_v3_pretrain_4gpu_vrnvl72_{precision}_proxy_config")()
 
     assert {key: value for key, value in vars(proxy.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS} == {
         key: value for key, value in vars(parent.model).items() if key not in _4GPU_PROXY_MODEL_FIELDS
@@ -192,8 +192,8 @@ def test_4gpu_proxy_only_resizes_its_parent(precision: str) -> None:
 
 
 def test_4gpu_proxies_differ_only_in_quantization() -> None:
-    mxfp8 = deepseek.deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config()
-    nvfp4 = deepseek.deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config()
+    mxfp8 = deepseek.deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config()
+    nvfp4 = deepseek.deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config()
 
     # Same model, parallelism, batch, CUDA graph, dispatcher, overlap, optimizer and runtime settings.
     assert vars(mxfp8.model) == vars(nvfp4.model)
@@ -232,7 +232,7 @@ def test_4gpu_proxies_differ_only_in_quantization() -> None:
 def test_proxy_overlap_setup_without_pipeline_parallelism(
     monkeypatch: pytest.MonkeyPatch, precision: str, num_gpus: int
 ) -> None:
-    cfg = getattr(deepseek, f"deepseek_v3_pretrain_{num_gpus}gpu_vr200_{precision}_proxy_config")()
+    cfg = getattr(deepseek, f"deepseek_v3_pretrain_{num_gpus}gpu_vrnvl72_{precision}_proxy_config")()
     # Validate the topology without requiring the GPU libraries in this unit test.
     monkeypatch.setattr("megatron.bridge.training.comm_overlap.is_te_min_version", lambda *_: True)
     monkeypatch.setattr("megatron.bridge.training.comm_overlap.is_torch_min_version", lambda *_: True)
@@ -261,7 +261,7 @@ def test_proxy_is_available_through_performance_selector(
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts" / "performance"))
     from utils.utils import get_perf_recipe_by_name, list_available_config_variants
 
-    cfg = get_perf_recipe_by_name("deepseek_v3", "pretrain", num_gpus, "vr200", precision, config_variant="proxy")
+    cfg = get_perf_recipe_by_name("deepseek_v3", "pretrain", num_gpus, "vrnvl72", precision, config_variant="proxy")
     assert cfg.train.global_batch_size == global_batch_size
     assert cfg.model.expert_model_parallel_size == expert_parallel_size
     assert cfg.model.num_layers == 13
@@ -272,7 +272,7 @@ def test_proxy_is_available_through_performance_selector(
     assert "proxy" in list_available_config_variants(
         model_family_name="deepseek",
         model_recipe_name="deepseek_v3",
-        gpu="vr200",
+        gpu="vrnvl72",
         compute_dtype=precision,
         task="pretrain",
     )

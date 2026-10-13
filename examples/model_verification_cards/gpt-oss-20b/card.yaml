@@ -3,13 +3,15 @@
 
 title: gpt_oss_20b
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. GPT-OSS 20B H100 support verification has completed GPU
+  Performance disclaimer: this card does not record a canonical pretrain
+  performance result; reported timing and throughput metrics are functional
+  verification observations, not standalone optimized performance results.
+  GPT-OSS 20B H100 support verification has completed GPU
   HF-to-Megatron conversion, CPU and GPU Megatron-to-HF export, manual forward-pass
   correlation, deterministic Megatron inference, bounded pretraining, full SFT,
-  SFT export/inference, long-context SFT, LoRA PEFT, and direct checkpoint
-  resume; CPU import remains pending.
+  SFT export/inference, LoRA PEFT, and direct checkpoint resume. CPU import
+  and long-context SFT remain pending; the recorded long-context command did
+  not exist at its originally attributed revision.
 verification_index:
   model_level:
     verified:
@@ -22,7 +24,8 @@ verification_index:
       - hf_to_megatron_cpu
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
+      unverified: [sft_long_context]
 model:
   hf_id: openai/gpt-oss-20b
   hf_revision: 6cee5e81ee83917806bbde320786a8fb61efebee  # pragma: allowlist secret
@@ -30,7 +33,7 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
+  bridge_commit: 8a84d716600a99358b0424ccc9628aa20ebc5142  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -52,6 +55,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8
@@ -90,6 +94,7 @@ items:
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 8
@@ -111,6 +116,7 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
+    bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -131,6 +137,7 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       scripts/inference/text_generation.py
@@ -152,6 +159,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
@@ -191,6 +199,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -268,7 +277,7 @@ items:
 
   sft_long_context:
     H100:
-      status: verified
+      status: unverified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -297,20 +306,22 @@ items:
         checkpoint.load=null checkpoint.save=null
         logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-08-10
+      last_verified: null
       metrics:
-        initial_loss: 2.235548
-        final_loss: 1.175326
-        last_10_steps_step_time_ms_avg: 306108.170
-        last_10_steps_model_tflops_per_gpu_avg: 13.430
-        last_10_steps_tokens_per_second_per_gpu_avg: 428.189
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Completed 20 optimizer steps using the 32K SFT recipe, immutable Tulu3
-        data selection, offline packing, TP4, CP2, sequence parallelism,
-        non-fused cross entropy, and full activation recompute. The run loaded
-        120 packed rows, recorded 99.79% packing efficiency with 83.333 source
-        sequences per pack on average, produced finite loss from 2.235548 to
-        1.175326, and reported zero skipped and zero NaN iterations.
+        Verification is pending on the card default revision, which contains
+        the 32K recipe. The original recorded revision did not contain this
+        recipe, so its verification date and metrics are not attributed to
+        this command. A fresh run must complete 20 optimizer steps with the
+        pinned Tulu3 selection, offline packing, TP4/CP2, sequence parallelism,
+        non-fused cross entropy, and full activation recompute, with finite
+        losses and zero skipped or NaN iterations. Record all five metrics
+        from that run before marking this item verified.
 
   peft:
     H100:
@@ -363,6 +374,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: 6799f099712c961f15cf92d6bd88998f029d672d  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8

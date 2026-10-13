@@ -14,8 +14,6 @@ license: Apache-2.0
 Stable docs: @docs/training/activation-recomputation.md
 Card: @skills/nemo-mbridge-perf-activation-recompute/card.yaml
 
-<!-- Guidance refreshed: 2026-08-12. -->
-
 Activation recompute (activation checkpointing) trades additional forward work during backward for lower retained-activation memory. The useful checkpoint boundary depends on the model architecture, attention backend, parallelism, and the tensor that actually drives the per-rank peak.
 
 ## Quick Decision Guide
@@ -278,4 +276,4 @@ Limitations of this evidence:
 - `skills/nemo-mbridge-perf-memory-tuning/SKILL.md`
 - `skills/nemo-mbridge-perf-cuda-graphs/SKILL.md`
 - `skills/nemo-mbridge-perf-cpu-offloading/SKILL.md`
-- Megatron Core activation recomputation guide: <https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html>
+- [Megatron Core activation recomputation guide](https://docs.nvidia.com/megatron-core/developer-guide/latest/api-guide/index.html)

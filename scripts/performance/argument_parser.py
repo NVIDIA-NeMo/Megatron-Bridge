@@ -33,9 +33,13 @@ NUM_GPUS_PER_NODE_MAP = {
     "b300": 8,
     "gb200": 4,
     "gb300": 4,
-    "vr200": 4,
+    "vrnvl72": 4,
     "r100": 1,
 }
+
+# Deprecated --gpu names and their replacements. When the deprecation window ends, drop an entry together with
+# its counterpart in LEGACY_HARDWARE_ALIASES (scripts/training/recipe_metadata.py).
+LEGACY_GPU_ALIASES = {"vr200": "vrnvl72"}
 
 
 def list_of_strings(arg):
@@ -78,6 +82,16 @@ def lower_str(arg):
     """Lowercase a CLI string argument with a runtime type check."""
     assert isinstance(arg, str), f"Argument {arg} is not a string"
     return arg.lower()
+
+
+def canonical_gpu(arg: str) -> str:
+    """Map a deprecated GPU name to its replacement before argparse checks the choices."""
+    if arg in LEGACY_GPU_ALIASES:
+        # Every rank re-parses the forwarded argv, so only the launcher and global rank 0 warn.
+        if os.environ.get("RANK", os.environ.get("SLURM_PROCID", "0")) == "0":
+            logger.warning("--gpu %s is deprecated; use --gpu %s.", arg, LEGACY_GPU_ALIASES[arg])
+        return LEGACY_GPU_ALIASES[arg]
+    return arg
 
 
 def bool_arg(arg):
@@ -681,14 +695,115 @@ def parse_cli_args():
         default=None,
     )
 
+    # Nvcre
+    nvcre_args = parser.add_argument_group("Nvcre arguments")
+    nvcre_args.add_argument(
+        "--nvcre_namespace",
+        type=str,
+        help="Kubernetes namespace for Nvcre WorkloadRun. When set, uses the Nvcre executor instead of Slurm.",
+        required=False,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_image_pull_secret",
+        type=str,
+        help="Kubernetes image pull secret name for pulling the container image.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_workdir_pvc",
+        type=str,
+        help="PVC name for syncing job workdir to the cluster before launch.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_workdir_pvc_path",
+        type=str,
+        help="Mount path for the workdir PVC inside the training pod.",
+        default="/nemo_run",
+        required=False,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_workdir_local_path",
+        type=str,
+        help="Local directory rsynced into the workdir PVC before launch.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_node_selector_json",
+        type=str,
+        help="JSON-encoded dict of node selector labels for targeting specific nodes.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_volumes_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Volume dicts.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_volume_mounts_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes VolumeMount dicts.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_timeout_per_job",
+        type=str,
+        help="Per-job timeout passed to Nvcre orchestration (e.g. '24h').",
+        required=False,
+        default="24h",
+    )
+
+    nvcre_args.add_argument(
+        "--nvcre_kubeconfig",
+        type=str,
+        help="Path to kubeconfig file for nvcrectl/kubectl.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_kube_context",
+        type=str,
+        help="Kubernetes context to use with nvcrectl/kubectl.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_gang_scheduler_name",
+        type=str,
+        help="Gang scheduler name for the WorkloadRun (e.g. 'kai-scheduler').",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_hf_token_secret_name",
+        type=str,
+        help="Name of the Kubernetes Secret holding the HuggingFace token.",
+        required=False,
+        default=None,
+    )
+    nvcre_args.add_argument(
+        "--nvcre_hf_token_secret_key",
+        type=str,
+        help="Key inside the Kubernetes Secret that holds the HuggingFace token value.",
+        required=False,
+        default="token",
+    )
+
     # For performance
     performance_args = parser.add_argument_group("Performance arguments")
     performance_args.add_argument(
         "-g",
         "--gpu",
-        type=str,
+        type=canonical_gpu,
         choices=NUM_GPUS_PER_NODE_MAP.keys(),
-        help="Target gpu type.",
+        help="Target gpu type. vr200 is a deprecated alias for vrnvl72.",
         required=True,
     )
     performance_args.add_argument(
@@ -730,8 +845,8 @@ def parse_cli_args():
         "--peak_mem_clk",
         help="Lock GPU memory clock to the specified peak frequency in MHz via "
         "`sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training. "
-        "Defaults to 4752 MHz for VR200 and is disabled by default for other GPUs. "
-        "Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.",
+        "Defaults to 4752 MHz for VRNVL72 and is disabled by default for other GPUs. "
+        "Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VRNVL72 default.",
         type=int,
         required=False,
         default=None,

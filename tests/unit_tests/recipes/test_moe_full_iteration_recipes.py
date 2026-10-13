@@ -19,19 +19,19 @@ from collections.abc import Callable
 import pytest
 
 from megatron.bridge.perf_recipes.deepseek import (
-    deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config,
-    deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config,
-    deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
+    deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config,
+    deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config,
+    deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config,
 )
 from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config,
     nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config,
-    nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config,
-    nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
+    nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config,
+    nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config,
 )
-from megatron.bridge.perf_recipes.qwen import qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config
+from megatron.bridge.perf_recipes.qwen import qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
@@ -76,8 +76,8 @@ def _assert_full_iteration_hybridep(cfg: ConfigContainer) -> None:
     assert "graph_capture_record_stream_reuse:True" in cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"]
 
 
-def test_qwen3_235b_vr200_nvfp4_uses_full_iteration_stack() -> None:
-    cfg = qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config()
+def test_qwen3_235b_vrnvl72_nvfp4_uses_full_iteration_stack() -> None:
+    cfg = qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config()
 
     _assert_full_iteration_hybridep(cfg)
     assert cfg.mixed_precision.fp4 == "e2m1"
@@ -98,8 +98,8 @@ def test_qwen3_235b_vr200_nvfp4_uses_full_iteration_stack() -> None:
     ) == (1, 4, 12, 32)
 
 
-def test_deepseek_v3_256gpu_vr200_nvfp4_uses_full_iteration_stack() -> None:
-    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+def test_deepseek_v3_256gpu_vrnvl72_nvfp4_uses_full_iteration_stack() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
 
     _assert_full_iteration_hybridep(cfg)
     assert cfg.mixed_precision.fp4 == "e2m1"
@@ -124,9 +124,10 @@ def test_deepseek_v3_256gpu_vr200_nvfp4_uses_full_iteration_stack() -> None:
 
 
 @pytest.mark.parametrize(
-    "recipe", [deepseek_v3_pretrain_4gpu_vr200_fp8mx_proxy_config, deepseek_v3_pretrain_4gpu_vr200_nvfp4_proxy_config]
+    "recipe",
+    [deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config, deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config],
 )
-def test_deepseek_v3_4gpu_vr200_proxies_use_full_iteration_stack(recipe: Callable[[], ConfigContainer]) -> None:
+def test_deepseek_v3_4gpu_vrnvl72_proxies_use_full_iteration_stack(recipe: Callable[[], ConfigContainer]) -> None:
     cfg = recipe()
 
     _assert_full_iteration_hybridep(cfg)
@@ -149,7 +150,7 @@ def test_deepseek_v3_4gpu_vr200_proxies_use_full_iteration_stack(recipe: Callabl
     [
         (nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config, 2, 16),
         (nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config, 1, 8),
-        (nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config, 1, 8),
+        (nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config, 1, 8),
     ],
 )
 def test_nemotron_3_super_mxfp8_uses_full_iteration_stack(
@@ -187,7 +188,7 @@ def test_nemotron_3_super_mxfp8_uses_full_iteration_stack(
     [
         (nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config, 2, 16),
         (nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config, 1, 16),
-        (nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config, 1, 16),
+        (nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config, 1, 16),
     ],
 )
 def test_nemotron_3_super_nvfp4_uses_full_iteration_stack(

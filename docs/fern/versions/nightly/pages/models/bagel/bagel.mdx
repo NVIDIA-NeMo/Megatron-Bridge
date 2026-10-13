@@ -12,7 +12,7 @@ for dependency setup, checkpoint initialization, training, and direct inference.
 See the [BAGEL data tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/bagel/README.md)
 for dataset preparation.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -131,8 +131,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>BAGEL native-checkpoint initialization currently runs as part of GPU model construction and is not registered with the maintained public CPU conversion launcher.
-</p>
+        <p>BAGEL native-checkpoint initialization currently runs as part of GPU model construction and is not registered with the maintained public CPU conversion launcher.</p>
       </section>
     </article>
     <article id="bagel-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="bagel-hf-to-megatron-gpu" tabindex="-1">
@@ -157,8 +156,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU reload completed without missing or unexpected checkpoint keys; all 56 MoT language-layer input-norm tensors used as regression sentinels exactly matched the official EMA values.
-</p>
+        <p>The public GPU importer consumed the pinned official EMA state, reported 1,223 source tensors consumed and 943 target tensors verified, and wrote a standalone torch_dist checkpoint. A clean one-GPU reload completed without missing or unexpected checkpoint keys; all 56 MoT language-layer input-norm tensors used as regression sentinels exactly matched the official EMA values.</p>
       </section>
     </article>
     <article id="bagel-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="bagel-megatron-to-hf-cpu" tabindex="-1">
@@ -177,8 +175,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging Face checkpoint is not implemented by the public CPU converter.
-</p>
+        <p>Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging Face checkpoint is not implemented by the public CPU converter.</p>
       </section>
     </article>
     <article id="bagel-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="bagel-megatron-to-hf-gpu" tabindex="-1">
@@ -197,8 +194,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging Face checkpoint is not implemented by the public GPU converter.
-</p>
+        <p>Exporting a BAGEL Megatron checkpoint to a complete reloadable Hugging Face checkpoint is not implemented by the public GPU converter.</p>
       </section>
     </article>
     <article id="bagel-pretrain-h100" class="verification-model-detail" data-entry-detail="bagel-pretrain-h100" tabindex="-1">
@@ -256,8 +252,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final step reports CE 0.9156674, MSE 0.3265290, and total loss 1.242196. The final-10 averages include first-step compilation and are 16,383.960 ms and 195.540 model TFLOP/s/GPU; 2,250.005 token slots/GPU/s uses the fixed 36,864 maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and iteration-10 model, optimizer, RNG, and per-DP dataloader state are persisted. A separate same-topology public-launcher load restored step 10 and exited without executing an additional optimizer step.
-</p>
+        <p>The clean public-data run completes 10 BF16 optimizer steps on 8 H100s at TP1/PP1/CP1/DP8 and GBS/MBS 8/1. Every step has finite CE, MSE, and total loss with no skipped or NaN iterations. The final step reports CE 0.9156674, MSE 0.3265290, and total loss 1.242196. The final-10 averages include first-step compilation and are 16,383.960 ms and 195.540 model TFLOP/s/GPU; 2,250.005 token slots/GPU/s uses the fixed 36,864 maximum packed sequence slots rather than variable logical tokens. The post-setup configuration and iteration-10 model, optimizer, RNG, and per-DP dataloader state are persisted. A separate same-topology public-launcher load restored step 10 and exited without executing an additional optimizer step.</p>
       </section>
     </article>
     <article id="bagel-sft-h100" class="verification-model-detail" data-entry-detail="bagel-sft-h100" tabindex="-1">
@@ -301,8 +296,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The BAGEL fine-tuning recipe must complete a bounded pinned-data run with finite losses, all required metrics, and a reloadable checkpoint.
-</p>
+        <p>The BAGEL fine-tuning recipe must complete a bounded pinned-data run with finite losses, all required metrics, and a reloadable checkpoint.</p>
       </section>
     </article>
     <article id="bagel-sft-long-context-h100" class="verification-model-detail" data-entry-detail="bagel-sft-long-context-h100" tabindex="-1">
@@ -346,8 +340,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The current BAGEL integration does not expose a maintained packed long-context fine-tuning recipe with context parallelism.
-</p>
+        <p>The current BAGEL integration does not expose a maintained packed long-context fine-tuning recipe with context parallelism.</p>
       </section>
     </article>
     <article id="bagel-peft-h100" class="verification-model-detail" data-entry-detail="bagel-peft-h100" tabindex="-1">
@@ -391,8 +384,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>BAGEL LoRA and other parameter-efficient fine-tuning workflows are not implemented by the current integration.
-</p>
+        <p>BAGEL LoRA and other parameter-efficient fine-tuning workflows are not implemented by the current integration.</p>
       </section>
     </article>
     <article id="bagel-pretrain-fsdp-h100" class="verification-model-detail" data-entry-detail="bagel-pretrain-fsdp-h100" tabindex="-1">
@@ -450,11 +442,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,789.299 token slots/GPU/s using 36,864 maximum packed sequence slots and GBS 32 across 32 GPUs. The separately measured logical throughput is 4,428.810 tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical tokens include text, ViT, VAE-latent, and special tokens and exclude physical padding. The variable packed sequence length averages 34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is 58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU under official BAGEL. Do not compute a relative speedup: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.
-</p>
+        <p>The 32-GPU TP1/PP1/CP1/DP32 real-data run completes exactly 30 BF16 steps at GBS/MBS 32/1 with one microbatch, block-23 language-model recompute, full vision recompute, Megatron FSDP, finite CE/MSE/total losses, and no skipped or NaN iterations. Steps 21-30 average 7,697.160 ms, 234.268 model TFLOP/s/GPU, 23.687% MFU, and 4,789.299 token slots/GPU/s using 36,864 maximum packed sequence slots and GBS 32 across 32 GPUs. The separately measured logical throughput is 4,428.810 tokens/GPU/s from 1,090,856.3 logical tokens per step. Logical tokens include text, ViT, VAE-latent, and special tokens and exclude physical padding. The variable packed sequence length averages 34,070.15 tokens/GPU over steps 6-30. Peak allocated/reserved memory is 58.594/62.919 GiB. The same steps 6-30 workload reports standalone raw metrics of 10,167.941 ms, 176.936 model TFLOP/s/GPU, and 17.890% MFU under official BAGEL. Do not compute a relative speedup: that run uses full language-model recompute and performs an EMA update, while the Bridge run uses block-23 recompute without EMA.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

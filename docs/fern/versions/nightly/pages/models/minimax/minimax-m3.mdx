@@ -2,7 +2,7 @@
 
 [MiniMax-M3](https://huggingface.co/MiniMaxAI/MiniMax-M3) is a natively multimodal sparse MoE model from MiniMaxAI (428B total, ~23B active parameters). `MiniMaxM3Bridge` converts the vision tower, both multimodal projector stages, and sparse-MoE text backbone into a `MiniMaxM3VLModel`.
 
-<!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
 
 ## Verified configurations
 
@@ -114,8 +114,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>No CPU HF-to-Megatron result is claimed. The CPU-only attempt enabled CPU weight initialization, but the current distributed-model initialization path still selected a CUDA device before tensor loading. With no GPU available, it exited without persisting iter_0000000, so no checkpoint reload or exact tensor audit completed. CPU conversion remains unverified rather than unsupported.
-</p>
+        <p>No CPU HF-to-Megatron result is claimed. The CPU-only attempt enabled CPU weight initialization, but the current distributed-model initialization path still selected a CUDA device before tensor loading. With no GPU available, it exited without persisting iter_0000000, so no checkpoint reload or exact tensor audit completed. CPU conversion remains unverified rather than unsupported.</p>
       </section>
     </article>
     <article id="minimax-m3-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="minimax-m3-hf-to-megatron-gpu" tabindex="-1">
@@ -140,8 +139,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The pinned 32-H100 full-VLM import exited successfully, persisted iter_0000000, and reloaded it at TP1/PP1/EP32/ETP1. A strict projection of the reloaded Megatron model covered exactly 23,416 of 23,416 published language, vision, projector, and lightning-indexer tensors and 854,172,958,720 actual tensor-payload bytes, with zero duplicate, missing, unexpected, shape, invalid-dtype, or value mismatches. The source index&#x27;s declared total_size is 869,157,697,024 bytes. No dtype widening was required. The audit covered 1,804 total Megatron state tensors; model-state structure matched across all 32 EP ranks, and all 1,348 replicated tensors comprising 13,917,973,376 elements matched exactly.
-</p>
+        <p>The pinned 32-H100 full-VLM import exited successfully, persisted iter_0000000, and reloaded it at TP1/PP1/EP32/ETP1. A strict projection of the reloaded Megatron model covered exactly 23,416 of 23,416 published language, vision, projector, and lightning-indexer tensors and 854,172,958,720 actual tensor-payload bytes, with zero duplicate, missing, unexpected, shape, invalid-dtype, or value mismatches. The source index&#x27;s declared total_size is 869,157,697,024 bytes. No dtype widening was required. The audit covered 1,804 total Megatron state tensors; model-state structure matched across all 32 EP ranks, and all 1,348 replicated tensors comprising 13,917,973,376 elements matched exactly.</p>
       </section>
     </article>
     <article id="minimax-m3-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="minimax-m3-megatron-to-hf-cpu" tabindex="-1">
@@ -166,8 +164,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The single-node CPU export exited successfully and wrote the complete indexed MiniMax-M3 VLM checkpoint. An exhaustive audit matched all 23,416 source and export tensors, 427,040,140,160 values, and 854,172,958,720 tensor-payload bytes with zero missing, unexpected, shape, dtype, or value mismatches and no dtype conversions (atol=0, rtol=0). A meta-device Transformers 5.14.0 reload instantiated MiniMaxM3SparseForConditionalGeneration with 1,582 state entries and zero missing, unexpected, mismatched, or error keys.
-</p>
+        <p>The single-node CPU export exited successfully and wrote the complete indexed MiniMax-M3 VLM checkpoint. An exhaustive audit matched all 23,416 source and export tensors, 427,040,140,160 values, and 854,172,958,720 tensor-payload bytes with zero missing, unexpected, shape, dtype, or value mismatches and no dtype conversions (atol=0, rtol=0). A meta-device Transformers 5.14.0 reload instantiated MiniMaxM3SparseForConditionalGeneration with 1,582 state entries and zero missing, unexpected, mismatched, or error keys.</p>
       </section>
     </article>
     <article id="minimax-m3-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="minimax-m3-megatron-to-hf-gpu" tabindex="-1">
@@ -192,8 +189,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>The 32-H100 distributed export exited successfully and wrote an indexed full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59 safetensors shards are byte-for-byte identical to the pinned source, covering all 23,416 tensors and 854,172,958,720 actual tensor-payload bytes. The exported configuration preserves 60 text layers, 128 top-4 experts, 32 vision layers, both projector stages, and 57 lightning-indexer layers. Three tokenizer probes and multimodal processor inputs match the source. Transformers 5.14.0 natively reloads both source and export as MiniMaxM3SparseForConditionalGeneration through its checkpoint conversion mapping with zero missing, unexpected, mismatched, or error keys. The export consolidates the tokenizer in tokenizer.json and does not reproduce four redundant source-side legacy tokenizer files.
-</p>
+        <p>The 32-H100 distributed export exited successfully and wrote an indexed full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59 safetensors shards are byte-for-byte identical to the pinned source, covering all 23,416 tensors and 854,172,958,720 actual tensor-payload bytes. The exported configuration preserves 60 text layers, 128 top-4 experts, 32 vision layers, both projector stages, and 57 lightning-indexer layers. Three tokenizer probes and multimodal processor inputs match the source. Transformers 5.14.0 natively reloads both source and export as MiniMaxM3SparseForConditionalGeneration through its checkpoint conversion mapping with zero missing, unexpected, mismatched, or error keys. The export consolidates the tokenizer in tokenizer.json and does not reproduce four redundant source-side legacy tokenizer files.</p>
       </section>
     </article>
     <article id="minimax-m3-pretrain-h100" class="verification-model-detail" data-entry-detail="minimax-m3-pretrain-h100" tabindex="-1">
@@ -237,8 +233,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Complete a 100-step HybridEP language-backbone run with finite loss, reported metrics, and a reloadable checkpoint.
-</p>
+        <p>Complete a 100-step HybridEP language-backbone run with finite loss, reported metrics, and a reloadable checkpoint.</p>
       </section>
     </article>
     <article id="minimax-m3-sft-h100" class="verification-model-detail" data-entry-detail="minimax-m3-sft-h100" tabindex="-1">
@@ -282,8 +277,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Complete a 100-step packed HybridEP language-backbone SFT run with finite loss, reported metrics, and a reloadable checkpoint.
-</p>
+        <p>Complete a 100-step packed HybridEP language-backbone SFT run with finite loss, reported metrics, and a reloadable checkpoint.</p>
       </section>
     </article>
     <article id="minimax-m3-sft-long-context-h100" class="verification-model-detail" data-entry-detail="minimax-m3-sft-long-context-h100" tabindex="-1">
@@ -327,8 +321,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A dedicated packed long-context recipe must complete 100 steps with context parallelism, finite loss, no skipped or NaN iterations, and all five metrics. Beyond 2,048 tokens, Bridge uses full causal attention instead of MiniMax-M3&#x27;s lightning-indexer sparse attention.
-</p>
+        <p>A dedicated packed long-context recipe must complete 100 steps with context parallelism, finite loss, no skipped or NaN iterations, and all five metrics. Beyond 2,048 tokens, Bridge uses full causal attention instead of MiniMax-M3&#x27;s lightning-indexer sparse attention.</p>
       </section>
     </article>
     <article id="minimax-m3-peft-h100" class="verification-model-detail" data-entry-detail="minimax-m3-peft-h100" tabindex="-1">
@@ -372,11 +365,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>A MiniMax-M3 PEFT recipe with an audited adapter target set must complete 100 steps with finite loss, no skipped or NaN iterations, all four metrics, and a reloadable adapter checkpoint.
-</p>
+        <p>A MiniMax-M3 PEFT recipe with an audited adapter target set must complete 100 steps with finite loss, no skipped or NaN iterations, all four metrics, and a reloadable adapter checkpoint.</p>
       </section>
     </article>
   </div>
 </div>
 
-<!-- END GENERATED VERIFIED CONFIGURATIONS -->
+{/* END GENERATED VERIFIED CONFIGURATIONS */}

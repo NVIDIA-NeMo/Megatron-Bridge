@@ -117,6 +117,12 @@ def exported_recipe_factory_keys(module: ModuleType) -> set[tuple[str, str]]:
     }
 
 
+# Nemotron 3 Ultra's 108-layer decoder pattern from the Hugging Face config.
+NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN = (
+    "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+)
+
+
 class _OfflineModelProvider:
     """Mutable provider with the fields HF-backed recipes read before writing.
 
@@ -189,6 +195,15 @@ class _OfflineAutoBridge:
         del args, kwargs
         provider = _OfflineModelProvider()
         model_id = getattr(self, "_model_id", "").lower()
+        if model_id in {"zai-org/glm-5", "zai-org/glm-5.1", "zai-org/glm-5.2", "zai-org/glm-5.3"}:
+            provider.hybrid_layer_pattern = "D-" * 3 + "DE" * 75
+            provider.num_layers = len(provider.hybrid_layer_pattern)
+            if model_id in {"zai-org/glm-5.2", "zai-org/glm-5.3"}:
+                provider.dsa_indexer_topk_freq = 4
+                provider.dsa_indexer_skip_topk_offset = 3
+        if model_id == "nvidia/nvidia-nemotron-3-ultra-550b-a55b-bf16":
+            provider.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
+            provider.num_layers = len(provider.hybrid_layer_pattern)
         if "deepseek-v4-" in model_id:
             logical_layers = 61 if "deepseek-v4-pro" in model_id else 43
             provider.hybrid_layer_pattern = "WEWE" + "".join(
@@ -261,7 +276,14 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     def load_offline_auto_config(*args: object, **kwargs: object) -> SimpleNamespace:
         del args, kwargs
-        return SimpleNamespace(text_config=SimpleNamespace(architectures=None))
+        return SimpleNamespace(
+            tie_word_embeddings=False,
+            text_config=SimpleNamespace(
+                architectures=None,
+                model_type="qwen3_5_moe_text",
+                max_position_embeddings=262144,
+            ),
+        )
 
     monkeypatch.setattr(
         AutoConfig,

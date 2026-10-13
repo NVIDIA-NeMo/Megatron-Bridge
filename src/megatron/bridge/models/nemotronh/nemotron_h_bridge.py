@@ -246,7 +246,7 @@ class NemotronHBridge(MegatronModelBridge):
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
+        >>> bridge = AutoBridge.from_hf_pretrained("nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
 
@@ -460,6 +460,16 @@ class NemotronHBridge(MegatronModelBridge):
         _, mtp_pattern = self._hf_mtp_config(self.hf_config)
         mtp_layers_per_block = len(mtp_pattern) if mtp_pattern else 0
 
+        # Transformers saves the embedding under a singular name, while older
+        # remote-code checkpoints use the plural name. Preserve the source key.
+        embedding_hf_param = "backbone.embeddings.weight"
+        hf_state = getattr(getattr(self, "hf_pretrained", None), "state", None)
+        state_source = getattr(hf_state, "source", None)
+        if state_source is not None:
+            hf_keys = set(state_source.get_all_keys())
+            if embedding_hf_param not in hf_keys and "backbone.embedding.weight" in hf_keys:
+                embedding_hf_param = "backbone.embedding.weight"
+
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
@@ -480,7 +490,7 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.pre_mlp_layernorm.weight": "backbone.layers.*.norm.weight",
             "decoder.layers.*.input_layernorm.weight": "backbone.layers.*.norm.weight",
             # TODO (@maanug): need to find a way to prune the vocab padding from the vocab dimension for these params
-            "embedding.word_embeddings.weight": "backbone.embeddings.weight",
+            "embedding.word_embeddings.weight": embedding_hf_param,
             "output_layer.weight": "lm_head.weight",
             # MoE layers
             "decoder.layers.*.mlp.router.weight": "backbone.layers.*.mixer.gate.weight",

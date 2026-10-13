@@ -110,14 +110,12 @@ def _validate_args(args: argparse.Namespace) -> None:
 
     distributed_cpu = args.device == "cpu" and args.cpu_processes_per_node > 1
     if args.device == "cpu":
-        if distributed_cpu and args.command != "export":
-            raise ValueError("Distributed CPU conversion currently supports export only.")
         if not distributed_cpu and args.nodes != 1:
             raise ValueError("Single-process CPU conversion supports exactly one node.")
         if args.gpus_per_node is not None and args.gpus_per_node < 0:
             raise ValueError("--gpus-per-node must not be negative.")
         if distributed_cpu and args.gpus_per_node not in (None, 0):
-            raise ValueError("Distributed CPU export does not request GPU resources.")
+            raise ValueError("Distributed CPU conversion does not request GPU resources.")
         if args.gres:
             raise ValueError("CPU conversion does not accept --gres.")
         if not distributed_cpu and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
