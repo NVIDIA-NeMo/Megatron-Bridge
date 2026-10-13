@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for Nemotron 3 and 3.5."""
+"""VRNVL72 performance recipes for Nemotron 3 and 3.5."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
@@ -32,8 +32,8 @@ from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
 )
 
 
-def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× VR200, BF16 (alias of GB300)."""
+def nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Nano pretrain: 8× VRNVL72, BF16 (alias of GB300)."""
     cfg = _build_nemotron_3_nano_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -61,8 +61,8 @@ def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× VR200, FP8-MX (alias of GB300)."""
+def nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Nano pretrain: 8× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = _build_nemotron_3_nano_gb300_mxfp8()
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_mlp_glu_interleave_size = 32
@@ -95,8 +95,8 @@ def nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Nano pretrain: 8× VR200, NVFP4 (alias of GB300)."""
+def nemotron_3_nano_pretrain_8gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Nano pretrain: 8× VRNVL72, NVFP4 (alias of GB300)."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -126,8 +126,8 @@ def nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× VR200, BF16 (alias of GB300)."""
+def nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× VRNVL72, BF16 (alias of GB300)."""
     cfg = _build_nemotron_3_super_gb300_bf16()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -152,8 +152,8 @@ def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× VR200, MXFP8 with full-iteration CUDA graph."""
+def nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× VRNVL72, MXFP8 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_super_gb300_mxfp8()
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.model.expert_model_parallel_size = 8
@@ -183,8 +183,8 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """Nemotron 3 Super pretrain: 64× VR200, NVFP4 with full-iteration CUDA graph."""
+def nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× VRNVL72, NVFP4 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_super_gb300_nvfp4()
     cfg.model.expert_model_parallel_size = 16
 
@@ -217,8 +217,8 @@ def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× VR200, MXFP8 (alias of GB300).
+def nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VRNVL72, MXFP8 (alias of GB300).
 
     Args:
         num_gpus: Launch GPU count used to size HSDP optimizer instances.
@@ -248,7 +248,7 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config(*, num_gpus: int = 256) 
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN normalization kernels for the VR200 performance candidate.
+        # Use cuDNN normalization kernels for the VRNVL72 performance candidate.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Required by fine-grained activation offloading to avoid offloading weights.
@@ -259,8 +259,8 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_fp8mx_config(*, num_gpus: int = 256) 
     return cfg
 
 
-def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config(*, num_gpus: int = 256) -> ConfigContainer:
-    """Nemotron 3 Ultra pretrain: 256× VR200, NVFP4 (alias of GB300).
+def nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config(*, num_gpus: int = 256) -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× VRNVL72, NVFP4 (alias of GB300).
 
     Args:
         num_gpus: Launch GPU count used to size HSDP optimizer instances.
@@ -286,7 +286,7 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config(*, num_gpus: int = 256) 
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        # Use cuDNN normalization kernels for the VR200 performance candidate.
+        # Use cuDNN normalization kernels for the VRNVL72 performance candidate.
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Required by fine-grained activation offloading to avoid offloading weights.
@@ -299,8 +299,8 @@ def nemotron_3_ultra_pretrain_256gpu_vr200_nvfp4_config(*, num_gpus: int = 256) 
     return cfg
 
 
-def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× VR200, BF16 (alias of GB300)."""
+def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× VRNVL72, BF16 (alias of GB300)."""
     cfg = _build_nemotron_3_5_lightning_gb300_bf16()
     # Offload MoE expert activations to host memory: the current Rubin base image ships a Transformer
     # Engine without TE PR #3273, whose fused cross entropy holds an extra fp32 gradient per loss head.
@@ -309,7 +309,7 @@ def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["expert_fc1", "moe_act"]
 
-    # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -330,15 +330,15 @@ def nemotron_3_5_lightning_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_lightning_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3.5 Lightning pretrain: 8× VR200, MXFP8 with full-iteration CUDA graph."""
+def nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Lightning pretrain: 8× VRNVL72, MXFP8 with full-iteration CUDA graph."""
     cfg = _build_nemotron_3_5_lightning_gb300_mxfp8()
     cfg.model.recompute_modules = []
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
     _enable_nemotron_3_5_lightning_full_iteration(cfg)
 
-    # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,

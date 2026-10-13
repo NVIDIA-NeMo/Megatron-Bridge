@@ -46,13 +46,13 @@ from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config,
     qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
 )
-from megatron.bridge.perf_recipes.qwen_vl.vr200.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+from megatron.bridge.perf_recipes.qwen_vl.vrnvl72.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 from tests.unit_tests.recipes.recipe_test_utils import (
@@ -364,15 +364,15 @@ def test_qwen35_vl_122b_gb300_keeps_cuda_graphs_disabled(monkeypatch: pytest.Mon
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
         qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
-        qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+        qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
     ],
 )
 def test_qwen35_vl_397b_hybridep_domain_matches_expert_parallel_size(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The VR200 aliases inherit EP from GB300 but restate the HybridEP env inline.
+    """The VRNVL72 aliases inherit EP from GB300 but restate the HybridEP env inline.
 
     HybridEP asserts that the EP group size is divisible by
     ``NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN``, and the launcher only re-derives
@@ -395,14 +395,14 @@ _GB300_CUDNN_GDN_RECIPES = (
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8cs_config,
     qwen35_vl_397b_a17b_pretrain_64gpu_gb300_fp8mx_config,
 )
-# VR200 aliases built from those recipes; they keep FLA until cuDNN GDN is measured on VR200.
-_VR200_CUDNN_GDN_ALIASES = (
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
-    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
-    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+# VRNVL72 aliases built from those recipes; they keep FLA until cuDNN GDN is measured on VRNVL72.
+_VRNVL72_CUDNN_GDN_ALIASES = (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vrnvl72_fp8mx_config,
 )
 _QWEN35_VL_PERF_RECIPES = tuple(
     factory
@@ -439,7 +439,7 @@ def test_qwen35_vl_cudnn_gdn_is_limited_to_gb300_35b_397b(
 ) -> None:
     """Only the measured GB300 35B/397B recipes leave FLA.
 
-    122B, B200, B300, GB200 and VR200 were not measured (the VR200 aliases inherit the GB300 model config and reset
+    122B, B200, B300, GB200 and VRNVL72 were not measured (the VRNVL72 aliases inherit the GB300 model config and reset
     to FLA), and H100 is SM90, outside cuDNN's fast GDN engine.
     """
     patch_recipe_construction_dependencies(monkeypatch)
@@ -450,7 +450,7 @@ def test_qwen35_vl_cudnn_gdn_is_limited_to_gb300_35b_397b(
     assert config.model.gdn_kernel_backend == expected
 
 
-@pytest.mark.parametrize("recipe_fn", _GB300_CUDNN_GDN_RECIPES + _VR200_CUDNN_GDN_ALIASES, ids=recipe_factory_id)
+@pytest.mark.parametrize("recipe_fn", _GB300_CUDNN_GDN_RECIPES + _VRNVL72_CUDNN_GDN_ALIASES, ids=recipe_factory_id)
 def test_qwen35_vl_gdn_kernel_backend_not_invented_on_older_core(
     recipe_fn: Callable, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -522,7 +522,7 @@ def test_megatron_core_gdn_kernel_backend_contract() -> None:
 def test_qwen35_vl_perf_recipe_discovery_covers_the_cudnn_gdn_recipes() -> None:
     """The recipe matrix above must keep finding every recipe the cuDNN GDN tests reason about."""
     discovered = set(_QWEN35_VL_PERF_RECIPES)
-    assert set(_GB300_CUDNN_GDN_RECIPES + _VR200_CUDNN_GDN_ALIASES) <= discovered
+    assert set(_GB300_CUDNN_GDN_RECIPES + _VRNVL72_CUDNN_GDN_ALIASES) <= discovered
     platforms = {factory.__module__.split(".")[-2] for factory in discovered}
-    assert {"b200", "b300", "gb200", "gb300", "h100", "vr200"} <= platforms
+    assert {"b200", "b300", "gb200", "gb300", "h100", "vrnvl72"} <= platforms
     assert any("122b" in factory.__name__ for factory in discovered)

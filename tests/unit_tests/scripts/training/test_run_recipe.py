@@ -618,7 +618,7 @@ def test_benchmark_ep_override_updates_hybridep_topology_environment(monkeypatch
     module.main(
         [
             "--recipe",
-            "qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config",
+            "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config",
             "--mode",
             "pretrain",
             "--dry-run",

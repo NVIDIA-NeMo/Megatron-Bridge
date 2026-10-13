@@ -42,7 +42,7 @@ _NEMOTRON_3_5_LIGHTNING_MODEL_REVISION = "b3caaabed0263651a17dc1f2d4ce97e794f76c
 
 
 def _build_nemotron_3_super_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Nemotron 3 Super GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Nemotron 3 Super GB300 recipe and its VRNVL72 alias."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
 
@@ -149,7 +149,7 @@ def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def _build_nemotron_3_super_gb300_nvfp4() -> ConfigContainer:
-    """Shared HybridEP NVFP4 base for the Nemotron 3 Super GB300 recipe and its VR200 alias."""
+    """Shared HybridEP NVFP4 base for the Nemotron 3 Super GB300 recipe and its VRNVL72 alias."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
 
@@ -395,7 +395,7 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(*, num_gpus: int = 256) 
 
 
 def _build_nemotron_3_nano_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Nemotron 3 Nano GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Nemotron 3 Nano GB300 recipe and its VRNVL72 alias."""
     cfg = nemotron_3_nano_pretrain_config()
     _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("bf16")
@@ -568,7 +568,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
 
 
 def _build_nemotron_3_5_lightning_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Nemotron 3.5 Lightning GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Nemotron 3.5 Lightning GB300 recipe and its VRNVL72 alias."""
     cfg = _build_nemotron_3_nano_gb300_bf16()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
