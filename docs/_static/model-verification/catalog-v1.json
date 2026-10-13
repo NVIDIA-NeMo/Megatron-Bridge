@@ -11108,7 +11108,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_pretrain_128gpu_h200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --warmup_iters 40 'dataset.blend=[[\"work/data/wikitext103/wikitext103_beam_text_document\"],null]' dataset.path_to_cache=work/model-verification/beam/cache/wikitext103 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 checkpoint.load=null --save_dir work/model-verification/beam/pretrain-reference/checkpoints --save_interval 50 logger.save_config_filepath=work/model-verification/beam/pretrain-reference/ConfigContainer.yaml"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_pretrain_128gpu_h200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --warmup_iters 40 'dataset.blend=[[\"work/data/wikitext103/wikitext103_beam_text_document\"],null]' dataset.path_to_cache=work/model-verification/beam/cache/wikitext103 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 checkpoint.load=null --save_dir work/model-verification/beam/pretrain-reference/checkpoints --save_interval 50 logger.save_config_filepath=work/model-verification/beam/pretrain-reference/ConfigContainer.yaml"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -11184,7 +11184,7 @@
           ],
           "commands": [
             "./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/sft/checkpoints/iter_0000100 --hf-path work/model-verification/beam/sft-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --distributed-save --save-every-n-ranks 1 --no-progress",
-            "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8 --hf-model work/model-verification/beam/sft-hf-export --prompt 'Write one concise sentence explaining why deterministic tests matter:' --max-new-tokens 16 --chat-template --device-map auto"
+            "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8 --hf-model work/model-verification/beam/sft-hf-export --prompt 'Write one concise sentence explaining why deterministic tests matter:' --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 125"
           ],
           "dimensions": {},
           "enabled_features": {},
@@ -11211,7 +11211,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 30 --seq_length 65536 model.transformer.context_parallel_size=8 model.transformer.tensor_model_parallel_size=1 model.transformer.sequence_parallel=false model.transformer.pipeline_model_parallel_size=2 model.transformer.expert_model_parallel_size=64 --lr 5e-6 --min_lr 0 --warmup_iters 3 'dataset.hf_dataset.split=\"train[:100000]\"' 'dataset.hf_dataset.load_kwargs={revision:\"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be\"}' '++tokenizer.hf_tokenizer_kwargs.revision=\"3ea13c81833d9a523ed4bdc4152a33edd16bbd30\"' dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-64k-pad16 +dataset.offline_packing_specs.pad_seq_to_mult=16 scheduler.lr_decay_iters=30 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/long-context/ConfigContainer.yaml"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 30 --seq_length 65536 model.transformer.context_parallel_size=8 model.transformer.tensor_model_parallel_size=1 model.transformer.sequence_parallel=false model.transformer.pipeline_model_parallel_size=2 model.transformer.expert_model_parallel_size=64 --lr 5e-6 --min_lr 0 --warmup_iters 3 'dataset.hf_dataset.split=\"train[:100000]\"' 'dataset.hf_dataset.load_kwargs={revision:\"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be\"}' '++tokenizer.hf_tokenizer_kwargs.revision=\"3ea13c81833d9a523ed4bdc4152a33edd16bbd30\"' dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-64k-pad16 +dataset.offline_packing_specs.pad_seq_to_mult=16 scheduler.lr_decay_iters=30 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 logger.save_config_filepath=work/model-verification/beam/long-context/ConfigContainer.yaml"
           ],
           "dimensions": {},
           "enabled_features": {
@@ -11219,19 +11219,19 @@
             "sequence_packing": "offline"
           },
           "entry_id": "beam-sft-long-context-h200",
-          "expected_result": "30 finite 64K packed steps with all-to-all context parallelism of size 8.\n",
+          "expected_result": "On 128 H200 (16 nodes x 8), TP1/PP2/CP8/EP64/ETP1 with all-to-all context parallelism, DP8, SP off, full recompute, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), with the SFT recipe's FP32 gradient reduction, FP32 master weights and FP32 Adam moments. This item is outside the 8K v2 cohort: 65,536-token packs need more data, so it reads Tulu 3 train[:100000]. Pad-16 offline packing (2 x CP) is 99.96% efficient and yields 580 packs; the 30 steps sample 240 distinct packs whose 15,728,640 token slots contain 2,701,436 supervised tokens after label masking. LM loss is finite from 1.659422 to 0.7725405 with no skipped or NaN iterations, all five metrics are recorded and the post-setup configuration persists; the run saves no checkpoint.\n",
           "hardware": "H200",
-          "last_verified": null,
+          "last_verified": "2026-10-13",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.7725405,
+            "initial_loss": 1.659422,
+            "last_10_steps_model_tflops_per_gpu_avg": 31.28,
+            "last_10_steps_step_time_ms_avg": 16694.41,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 245.352
           },
           "precision": "bf16",
           "source_pointer": "items.sft_long_context.H200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft_long_context"
         },
@@ -11282,7 +11282,7 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_pretrain_128gpu_h200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --warmup_iters 40 'dataset.blend=[[\"work/data/wikitext103/wikitext103_beam_text_document\"],null]' dataset.path_to_cache=work/model-verification/beam/cache/wikitext103 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null --load_dir work/model-verification/beam/pretrain-reference/checkpoints --save_dir work/model-verification/beam/pretrain-resume/checkpoints --save_interval 50 checkpoint.ckpt_step=50 logger.save_config_filepath=work/model-verification/beam/pretrain-resume/ConfigContainer.yaml"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_pretrain_128gpu_h200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --warmup_iters 40 'dataset.blend=[[\"work/data/wikitext103/wikitext103_beam_text_document\"],null]' dataset.path_to_cache=work/model-verification/beam/cache/wikitext103 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 --load_dir work/model-verification/beam/pretrain-reference/checkpoints --save_dir work/model-verification/beam/pretrain-resume/checkpoints --save_interval 50 checkpoint.ckpt_step=50 logger.save_config_filepath=work/model-verification/beam/pretrain-resume/ConfigContainer.yaml"
           ],
           "dimensions": {},
           "enabled_features": {},

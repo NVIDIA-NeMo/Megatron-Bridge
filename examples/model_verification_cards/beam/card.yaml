@@ -33,8 +33,8 @@ verification_index:
       - inference
   training:
     H200:
-      verified: [sft, peft]
-      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [sft, sft_long_context, peft]
+      unverified: [pretrain, sft_export_inference, checkpoint_resume]
 
 model:
   hf_id: reflection/brandon-dire-surge-10-03-s200
@@ -171,7 +171,7 @@ items:
         model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true
         ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
         validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1
-        logger.log_throughput=true logger.tensorboard_dir=null
+        logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
         --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000
         checkpoint.load=null
         --save_dir work/model-verification/beam/pretrain-reference/checkpoints
@@ -249,7 +249,7 @@ items:
           ./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8
           --hf-model work/model-verification/beam/sft-hf-export
           --prompt 'Write one concise sentence explaining why deterministic tests matter:'
-          --max-new-tokens 16 --chat-template --device-map auto
+          --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 125
       last_verified: null
       expected_result: >
         The step-100 SFT checkpoint exports to HF and one deterministic greedy generation completes within the
@@ -257,7 +257,7 @@ items:
 
   sft_long_context:
     H200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -281,17 +281,24 @@ items:
         ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         checkpoint.save=null logger.log_interval=1 logger.log_throughput=true
-        logger.tensorboard_dir=null
+        logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
         logger.save_config_filepath=work/model-verification/beam/long-context/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-10-13
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.659422
+        final_loss: 0.7725405
+        last_10_steps_step_time_ms_avg: 16694.41
+        last_10_steps_model_tflops_per_gpu_avg: 31.28
+        last_10_steps_tokens_per_second_per_gpu_avg: 245.352
       expected_result: >
-        30 finite 64K packed steps with all-to-all context parallelism of size 8.
+        On 128 H200 (16 nodes x 8), TP1/PP2/CP8/EP64/ETP1 with all-to-all context parallelism, DP8, SP off, full
+        recompute, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss),
+        with the SFT recipe's FP32 gradient reduction, FP32 master weights and FP32 Adam moments. This item is outside the
+        8K v2 cohort: 65,536-token packs need more data, so it reads Tulu 3 train[:100000]. Pad-16 offline packing
+        (2 x CP) is 99.96% efficient and yields 580 packs; the 30 steps sample 240 distinct packs whose 15,728,640 token
+        slots contain 2,701,436 supervised tokens after label masking. LM loss is finite from 1.659422 to 0.7725405 with
+        no skipped or NaN iterations, all five metrics are recorded and the post-setup configuration persists; the run
+        saves no checkpoint.
 
   peft:
     H200:
@@ -350,7 +357,7 @@ items:
         model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true
         ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
         validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1
-        logger.log_throughput=true logger.tensorboard_dir=null
+        logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120
         --load_dir work/model-verification/beam/pretrain-reference/checkpoints
         --save_dir work/model-verification/beam/pretrain-resume/checkpoints --save_interval 50
         checkpoint.ckpt_step=50
