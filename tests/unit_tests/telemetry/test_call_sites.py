@@ -236,7 +236,7 @@ class TestAsyncCheckpointSpans:
         queue.maybe_finalize_async_calls.assert_called_once_with(blocking)
         attributes = capture.span_named("megatron.checkpoint.save.finalize").attributes
         assert attributes["megatron.checkpoint.finalize.blocking"] is blocking
-        assert tuple(attributes["nvrx.call_idx"]) == (3,)
+        assert attributes["megatron.checkpoint.finalize.count"] == 1
 
     @pytest.mark.parametrize(("span_groups", "pending_calls"), [("default", 0), ("job", 1)])
     def test_finalize_is_not_traced_otherwise(self, telemetry_capture, span_groups, pending_calls):
