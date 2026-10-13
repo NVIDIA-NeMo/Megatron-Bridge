@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Every GB300 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the VRNVL72
-aliases built on the shared HybridEP bases stay on HybridEP. VR200 aliases built on an NCCL EP base
+aliases built on the shared HybridEP bases stay on HybridEP. VRNVL72 aliases built on an NCCL EP base
 carry the same NCCL EP stack."""
 
 import importlib
