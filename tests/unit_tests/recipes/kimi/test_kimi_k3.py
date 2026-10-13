@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """K3 recipe integration without checkpoint downloads or model allocations."""
 
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +10,8 @@ import megatron.bridge.recipes as recipes
 from megatron.bridge.models.kimi.kimi_k3_provider import KimiK3ModelProvider
 from megatron.bridge.recipes.kimi import kimi_k3
 from megatron.bridge.recipes.kimi.kimi_k3_runtime import configure_kimi_k3_kernels
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 @pytest.fixture
@@ -64,3 +67,48 @@ def test_local_snapshot_and_short_run_keep_optimizer_contract(offline_bridge, mo
     assert cfg.model.recompute_num_layers == 1
     assert cfg.dataset.seq_length == cfg.model.seq_length == 8192
     assert "early, perf not optimized" in kimi_k3.kimi_k3_pretrain_config.__doc__
+
+
+def test_runner_overrides_preserve_k3_tokenizer_and_hook(offline_bridge):
+    cfg = kimi_k3.kimi_k3_pretrain_config()
+    cfg = process_config_with_overrides(
+        cfg,
+        cli_overrides=[
+            "train.train_iters=10",
+            "dataset.seq_length=8192",
+            "dataset.split='100,0,0'",
+            "checkpoint.save=null",
+        ],
+    )
+    # ConfigContainer.validate reruns initialization for subconfigs without finalize.
+    cfg.tokenizer.__post_init__()
+    assert cfg.tokenizer.trust_remote_code is True
+    assert cfg.tokenizer.vocab_file.endswith("tiktoken.model")
+    assert configure_kimi_k3_kernels in cfg.model._pre_wrap_hooks
+    assert cfg.scheduler.lr_decay_iters == 10000
+
+
+@pytest.mark.parametrize("legacy_kwargs", [{}, None])
+def test_direct_tokenizer_options_survive_reconstruction(legacy_kwargs):
+    cfg = TokenizerConfig(
+        trust_remote_code=True,
+        tokenizer_hf_no_use_fast=True,
+        tokenizer_hf_no_include_special_tokens=True,
+        hf_tokenizer_kwargs=legacy_kwargs,
+    )
+    copied = replace(cfg, tokenizer_model="local-snapshot")
+    assert copied.trust_remote_code is True
+    assert copied.tokenizer_hf_no_use_fast is True
+    assert copied.tokenizer_hf_no_include_special_tokens is True
+
+
+def test_explicit_legacy_tokenizer_options_keep_precedence():
+    cfg = TokenizerConfig(
+        trust_remote_code=True,
+        tokenizer_hf_no_use_fast=True,
+        tokenizer_hf_no_include_special_tokens=True,
+        hf_tokenizer_kwargs={"trust_remote_code": False, "use_fast": True, "include_special_tokens": True},
+    )
+    assert cfg.trust_remote_code is False
+    assert cfg.tokenizer_hf_no_use_fast is False
+    assert cfg.tokenizer_hf_no_include_special_tokens is False
