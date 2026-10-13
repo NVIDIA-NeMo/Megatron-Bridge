@@ -580,11 +580,15 @@ def test_initialize_megatron_pins_triton_autotune_only_in_deterministic_mode(det
         patch("megatron.bridge.training.initialize.tuning") as tuning,
         patch("megatron.bridge.training.initialize.torch.distributed.is_initialized", return_value=False),
     ):
-        tuning.install.side_effect = lambda **_: torch_dist_init.assert_not_called()
+        calls = Mock()
+        calls.attach_mock(tuning, "tuning")
+        calls.attach_mock(torch_dist_init, "torch_dist_init")
         initialize_megatron(cfg, allow_no_cuda=True)
 
+    called = [name for name, _, _ in calls.mock_calls]
     if deterministic_mode:
         tuning.install.assert_called_once_with(deterministic=True)
+        assert called.index("tuning.install") < called.index("torch_dist_init")
     else:
         tuning.install.assert_not_called()
     torch_dist_init.assert_called_once()
