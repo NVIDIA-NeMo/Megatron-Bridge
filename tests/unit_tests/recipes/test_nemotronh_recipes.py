@@ -201,11 +201,11 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
             id="nano-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
-            "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config",
+            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "nemotron_3_nano_pretrain_8gpu_vrnvl72_fp8mx_config",
             True,
             108,
-            id="nano-vr200",
+            id="nano-vrnvl72",
         ),
         pytest.param(
             "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
@@ -222,11 +222,11 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
             id="super-gb300",
         ),
         pytest.param(
-            "megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh",
-            "nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config",
+            "megatron.bridge.perf_recipes.nemotronh.vrnvl72.nemotronh",
+            "nemotron_3_super_pretrain_64gpu_vrnvl72_fp8mx_config",
             False,
             32,
-            id="super-vr200",
+            id="super-vrnvl72",
         ),
     ],
 )

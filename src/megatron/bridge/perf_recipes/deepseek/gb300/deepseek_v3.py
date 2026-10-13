@@ -29,7 +29,7 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
 def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the DeepSeek V3 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the DeepSeek V3 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _deepseek_v3_common(cfg)
@@ -136,7 +136,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def _build_deepseek_v3_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the DeepSeek V3 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the DeepSeek V3 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     _deepseek_v3_common(cfg)
@@ -198,7 +198,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def _build_deepseek_v3_gb300_nvfp4() -> ConfigContainer:
-    """Shared HybridEP NVFP4 base for the DeepSeek V3 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP NVFP4 base for the DeepSeek V3 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _deepseek_v3_common(cfg)

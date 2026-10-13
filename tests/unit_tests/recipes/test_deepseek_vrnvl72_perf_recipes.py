@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for DeepSeek V3 VR200 performance recipe topology."""
+"""Tests for DeepSeek V3 VRNVL72 performance recipe topology."""
 
 import importlib.util
 import sys
@@ -26,7 +26,7 @@ from scripts.common.benchmark_parallelism import data_parallel_size, topology_fr
 pytestmark = pytest.mark.unit
 
 
-def _load_vr200_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+def _load_vrnvl72_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     common = ModuleType("megatron.bridge.perf_recipes.deepseek.common")
     common.ConfigContainer = SimpleNamespace
     common._benchmark_common = lambda _cfg: None
@@ -45,7 +45,7 @@ def _load_vr200_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     gb300 = ModuleType("megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3")
     for precision in ("bf16", "fp8cs", "fp8mx", "nvfp4"):
         setattr(gb300, f"deepseek_v3_pretrain_256gpu_gb300_{precision}_config", lambda: SimpleNamespace())
-        # HybridEP base builders shared with the VR200 aliases (the GB300 configs add NCCL EP on top).
+        # HybridEP base builders shared with the VRNVL72 aliases (the GB300 configs add NCCL EP on top).
         setattr(gb300, f"_build_deepseek_v3_gb300_{precision}", lambda: SimpleNamespace())
     monkeypatch.setitem(sys.modules, gb300.__name__, gb300)
 
@@ -53,8 +53,8 @@ def _load_vr200_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     environment.COMMON_PERF_ENV_VARS = {}
     monkeypatch.setitem(sys.modules, environment.__name__, environment)
 
-    path = Path(__file__).resolve().parents[3] / "src/megatron/bridge/perf_recipes/deepseek/vr200/deepseek_v3.py"
-    spec = importlib.util.spec_from_file_location("_deepseek_vr200_recipe_under_test", path)
+    path = Path(__file__).resolve().parents[3] / "src/megatron/bridge/perf_recipes/deepseek/vrnvl72/deepseek_v3.py"
+    spec = importlib.util.spec_from_file_location("_deepseek_vrnvl72_recipe_under_test", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -64,14 +64,16 @@ def _load_vr200_recipe_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 @pytest.mark.parametrize(
     "recipe_factory_name",
     (
-        "deepseek_v3_pretrain_128gpu_vr200_bf16_config",
-        "deepseek_v3_pretrain_128gpu_vr200_fp8cs_config",
-        "deepseek_v3_pretrain_128gpu_vr200_fp8mx_config",
-        "deepseek_v3_pretrain_128gpu_vr200_nvfp4_config",
+        "deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config",
+        "deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config",
+        "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
+        "deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config",
     ),
 )
-def test_deepseek_v3_128gpu_vr200_topology_is_valid(recipe_factory_name: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_vr200_recipe_module(monkeypatch)
+def test_deepseek_v3_128gpu_vrnvl72_topology_is_valid(
+    recipe_factory_name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = _load_vrnvl72_recipe_module(monkeypatch)
     recipe_factory = getattr(module, recipe_factory_name)
     cfg = recipe_factory()
 

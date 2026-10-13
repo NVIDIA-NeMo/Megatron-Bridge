@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for DeepSeek V3."""
+"""VRNVL72 performance recipes for DeepSeek V3."""
 
 from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
@@ -31,8 +31,8 @@ from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import (
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
-def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× VR200, BF16."""
+def deepseek_v3_pretrain_128gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× VRNVL72, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _deepseek_v3_common(cfg)
@@ -82,8 +82,8 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× VR200, FP8 current-scaling."""
+def deepseek_v3_pretrain_128gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× VRNVL72, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     _deepseek_v3_common(cfg)
@@ -133,8 +133,8 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× VR200, MXFP8."""
+def deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× VRNVL72, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     _deepseek_v3_common(cfg)
@@ -189,8 +189,8 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 128× VR200, NVFP4."""
+def deepseek_v3_pretrain_128gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× VRNVL72, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _deepseek_v3_common(cfg)
@@ -242,8 +242,8 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
+def deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× VRNVL72, BF16 (alias of GB300)."""
     cfg = _build_deepseek_v3_gb300_bf16()
     cfg.model.cuda_graph_scope = ["attn"]
 
@@ -272,8 +272,8 @@ def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, FP8-CS (alias of GB300)."""
+def deepseek_v3_pretrain_256gpu_vrnvl72_fp8cs_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× VRNVL72, FP8-CS (alias of GB300)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8cs_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -300,8 +300,8 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB300)."""
+def deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× VRNVL72, FP8-MX (alias of GB300)."""
     cfg = _build_deepseek_v3_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -333,8 +333,8 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
-    """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
+def deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 MXFP8 debugging proxy: 13 decoder layers on 64 VRNVL72 GPUs.
 
     Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
     virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
@@ -342,7 +342,7 @@ def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
     overlap path. This reduced-depth model does not reproduce at-scale
     pipeline traffic, convergence or memory use; GPU validation is required.
     """
-    cfg = deepseek_v3_pretrain_256gpu_vr200_fp8mx_config()
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config()
     cfg.model.num_layers = 13
     # Retain DeepSeek V3's three leading dense layers; shorten its MoE pattern.
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
@@ -374,8 +374,8 @@ def deepseek_v3_pretrain_64gpu_vr200_fp8mx_proxy_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, NVFP4 with full-iteration CUDA graph."""
+def deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× VRNVL72, NVFP4 with full-iteration CUDA graph."""
     cfg = _build_deepseek_v3_gb300_nvfp4()
 
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -408,8 +408,8 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config() -> ConfigContainer:
-    """DeepSeek V3 NVFP4 debugging proxy: 13 decoder layers on 64 VR200 GPUs.
+def deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config() -> ConfigContainer:
+    """DeepSeek V3 NVFP4 debugging proxy: 13 decoder layers on 64 VRNVL72 GPUs.
 
     Keep GBS=4096, per-layer shapes, EP=32 and one MTP layer. PP=1 without
     virtual pipelining gives dense DP=64, expert DP=2 and 64 microbatches.
@@ -417,7 +417,7 @@ def deepseek_v3_pretrain_64gpu_vr200_nvfp4_proxy_config() -> ConfigContainer:
     overlap path. Use this reduced-depth model for feature and kernel
     performance experiments, not convergence or at-scale acceptance.
     """
-    cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
+    cfg = deepseek_v3_pretrain_256gpu_vrnvl72_nvfp4_config()
     cfg.model.num_layers = 13
     cfg.model.moe_layer_freq = [0] * 3 + [1] * (cfg.model.num_layers - 3)
     cfg.model.pipeline_model_parallel_size = 1
