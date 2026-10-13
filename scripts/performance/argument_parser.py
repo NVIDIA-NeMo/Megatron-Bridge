@@ -753,26 +753,14 @@ def parse_cli_args():
         default=None,
     )
     nvcre_args.add_argument(
-        "--nvcre_init_containers_json",
-        type=str,
+        "--nvcre_use_mbridge_commit",
+        action="store_true",
         help=(
-            "JSON-encoded list of Kubernetes init container dicts, emitted as the WorkloadRun's "
-            "spec.initContainers (e.g. to clone a pinned Megatron-Bridge into a shared volume). "
-            "Volumes they mount must also be given via --nvcre_volumes_json / --nvcre_volume_mounts_json."
+            "Run this Megatron-Bridge checkout in the pods instead of the image's /opt/Megatron-Bridge, as the "
+            "Slurm bind mount does: an init container clones this checkout's origin at its current commit "
+            "(and its Megatron-LM submodule commit). Commits must be pushed to origin; uncommitted changes "
+            "are not included."
         ),
-        required=False,
-        default=None,
-    )
-    nvcre_args.add_argument(
-        "--nvcre_bridge_root",
-        type=str,
-        help=(
-            "Megatron-Bridge checkout inside the pod that the job runs from. Defaults to the image's "
-            "/opt/Megatron-Bridge; set it to the path an init container (--nvcre_init_containers_json) "
-            "clones a pinned Megatron-Bridge into."
-        ),
-        required=False,
-        default="/opt/Megatron-Bridge",
     )
     nvcre_args.add_argument(
         "--nvcre_timeout_per_job",
