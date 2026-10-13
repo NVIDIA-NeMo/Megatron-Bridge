@@ -1,0 +1,62 @@
+{
+  "fla.modules.l2norm.l2norm_fwd_kernel/0": {
+    "kwargs": {
+      "BT": 8
+    },
+    "num_warps": 8,
+    "num_ctas": 1,
+    "num_stages": 3,
+    "maxnreg": null
+  },
+  "fla.ops.common.chunk_delta_h.chunk_gated_delta_rule_fwd_kernel_h_blockdim64/1": {
+    "kwargs": {
+      "BV": 32
+    },
+    "num_warps": 2,
+    "num_ctas": 1,
+    "num_stages": 3,
+    "maxnreg": null
+  },
+  "fla.ops.gla.chunk.chunk_gla_fwd_kernel_o/1": {
+    "kwargs": {
+      "BK": 64,
+      "BV": 64
+    },
+    "num_warps": 4,
+    "num_ctas": 1,
+    "num_stages": 2,
+    "maxnreg": null
+  },
+  "fla.ops.kda.wy_fast.recompute_w_u_fwd_kda_kernel/1": {
+    "kwargs": {},
+    "num_warps": 8,
+    "num_ctas": 1,
+    "num_stages": 4,
+    "maxnreg": null
+  },
+  "fla.ops.kda.chunk_intra.chunk_kda_fwd_kernel_inter_solve_fused/1": {
+    "kwargs": {
+      "BK": 64
+    },
+    "num_warps": 4,
+    "num_ctas": 1,
+    "num_stages": 3,
+    "maxnreg": null
+  },
+  "fla.ops.kda.chunk_intra.chunk_kda_fwd_kernel_intra_sub_chunk/1": {
+    "kwargs": {},
+    "num_warps": 1,
+    "num_ctas": 1,
+    "num_stages": 3,
+    "maxnreg": null
+  },
+  "fla.ops.kda.gate.kda_gate_chunk_cumsum_vector_kernel/1": {
+    "kwargs": {
+      "BS": 32
+    },
+    "num_warps": 4,
+    "num_ctas": 1,
+    "num_stages": 3,
+    "maxnreg": null
+  }
+}
