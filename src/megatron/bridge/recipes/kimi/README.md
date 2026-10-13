@@ -43,7 +43,14 @@ forward. These controls do not repair underlying runtime libraries.
 `FLA_CACHE_MODE=always` adds file reads and is diagnostic overhead. Backward
 kernels retain the installed autotuner.
 
-The full 8K standard-runner training attempt is pending. Inspect actual
-iterations, loss, gradient norm, skipped/NaN counts, and memory logs;
-scheduler completion alone is insufficient. Successful short execution does
-not establish independent full-model loss agreement or long-run convergence.
+The full 8K standard-runner trial completed ten training iterations on real
+RP2 with 512 GB200 GPUs across 128 nodes. All ranks exited successfully, loss
+remained between 1.516120 and 1.573577, and gradient norms remained finite and
+positive. There were no skipped or NaN iterations and no OOM; a 4K fallback
+was unnecessary. All six focused recipe/tokenizer tests passed in the same
+allocation. The allocation ran for 17 minutes 17 seconds, including setup
+and compilation; this is not an optimized performance measurement.
+
+These results establish short-run functionality. They do not establish
+independent full-model loss agreement, long-run convergence, or checkpoint
+save/resume correctness; checkpoint saving was disabled for this trial.
