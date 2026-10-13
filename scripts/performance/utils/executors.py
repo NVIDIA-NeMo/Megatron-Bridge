@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
 
+# WorkloadRun ``orchestration.placement`` (NVCRE >= v0.7.0): run one job of exactly the requested number of nodes
+# instead of covering the whole target.
+NVCRE_PLACEMENT = "Unpinned"
+
 
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
     """Wrap a task with per-rank GPU-local NUMA binding without dropping task metadata."""
@@ -434,5 +438,6 @@ def nvcre_executor(
         kubeconfig=kubeconfig,
         kube_context=kube_context,
         gang_scheduler_name=gang_scheduler_name,
+        placement=NVCRE_PLACEMENT,
         **extra,
     )
