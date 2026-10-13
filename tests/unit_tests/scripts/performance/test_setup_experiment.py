@@ -180,6 +180,29 @@ def test_nvcre_flags_are_filtered_from_recipe_args() -> None:
     assert filtered == ["--tensor_model_parallel_size", "2"]
 
 
+def test_nvcre_use_mbridge_commit_flag_does_not_swallow_the_next_arg() -> None:
+    """--nvcre_use_mbridge_commit takes no value, so the arg after it must still reach the recipe."""
+    argv = ["--nvcre_use_mbridge_commit", "--tensor_model_parallel_size", "2"]
+    assert setup_experiment._filter_run_script_args(argv) == ["--tensor_model_parallel_size", "2"]
+
+
+def test_nemorun_script_puts_bundled_megatron_lm_on_pythonpath_only_when_asked() -> None:
+    kwargs = dict(
+        script_path="/mnt/workspace/megatron-bridge/scripts/performance/run.py",
+        script_dir="/mnt/workspace/megatron-bridge/scripts/performance",
+        args=[],
+        kubeflow_namespace=None,
+        custom_env_vars={},
+    )
+    root = "/mnt/workspace/megatron-bridge"
+    default = setup_experiment._build_nemorun_script(**kwargs)
+    assert default.env["PYTHONPATH"] == f"{root}/scripts/performance:{root}/src:$PYTHONPATH"
+    with_mcore = setup_experiment._build_nemorun_script(**kwargs, include_mcore=True)
+    assert with_mcore.env["PYTHONPATH"] == (
+        f"{root}/scripts/performance:{root}/src:{root}/3rdparty/Megatron-LM:$PYTHONPATH"
+    )
+
+
 # ── _nvcre_env_vars ───────────────────────────────────────────────────────────
 
 
