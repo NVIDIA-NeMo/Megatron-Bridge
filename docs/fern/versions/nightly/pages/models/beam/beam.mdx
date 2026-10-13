@@ -1,0 +1,411 @@
+# Beam
+
+Beam is a 52-layer sparse mixture-of-experts language model with about 501B parameters: three dense layers followed
+by 49 MoE layers with 256 routed experts (top-8, grouped sigmoid routing). Attention alternates five sliding-window
+RoPE layers with one full-attention NoPE layer. Megatron Bridge builds it as a native Megatron-Core `HybridModel`
+through the builder-backed `BeamModelConfig`.
+
+- Examples: [`examples/models/beam`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/beam)
+  (modeling notes, recipes, parallelism guidance)
+- Verification: [model verification card](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/model_verification_cards/beam/card.yaml)
+
+{/* BEGIN GENERATED VERIFIED CONFIGURATIONS */}
+
+## Verified configurations
+
+Choose an exact recorded configuration to see its command and expected result. These selectors are generated from the authoritative verification cards and never synthesize combinations.
+
+<a id="verified-beam"></a>
+### Run a configuration
+
+Choose a workflow, precision, and exact recorded combination. The command and expected result update below.
+
+<div class="verification-model-explorer" data-model-explorer>
+  <div class="verification-model-controls" hidden>
+    <div class="verification-capability-tabs" role="tablist" aria-label="Workflow">
+      <button type="button" role="tab" aria-selected="true" data-capability-tab="import-export">Import & Export</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="pretrain">Pretrain</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="benchmark" disabled>Benchmark</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="sft">SFT</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="lora">LoRA</button>
+      <button type="button" role="tab" aria-selected="false" data-capability-tab="long-context">Long Context</button>
+    </div>
+    <div class="verification-filter-row">
+      <div class="verification-precision-controls" aria-label="Precision filter">
+        <span>Precision</span>
+        <button type="button" class="is-active" data-precision="">All</button>
+        <button type="button" data-precision="bf16">BF16</button>
+        <button type="button" data-precision="fp8_mx">FP8 MX</button>
+        <button type="button" data-precision="nvfp4">NVFP4</button>
+      </div>
+      <div class="verification-hardware-controls" aria-label="GPU filter">
+        <span>GPU</span>
+        <button type="button" class="is-active" data-hardware="">All</button>
+        <button type="button" data-hardware="H200">H200</button>
+      </div>
+      <span class="verification-combination-count" aria-live="polite"></span>
+    </div>
+  </div>
+  <div class="verification-combination-list" hidden>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="unverified" data-entry="beam-hf-to-megatron-cpu" aria-controls="beam-hf-to-megatron-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · CPU</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-hf-to-megatron-gpu" aria-controls="beam-hf-to-megatron-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Import · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-megatron-to-hf-cpu" aria-controls="beam-megatron-to-hf-cpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · CPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="import-export" data-precision="bf16" data-hardware="" data-status="verified" data-entry="beam-megatron-to-hf-gpu" aria-controls="beam-megatron-to-hf-gpu" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Export · GPU</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="pretrain" data-precision="bf16" data-hardware="H200" data-status="unverified" data-entry="beam-pretrain-h200" aria-controls="beam-pretrain-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Pretrain · H200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H200" data-status="unverified" data-entry="beam-sft-h200" aria-controls="beam-sft-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>SFT · H200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="long-context" data-precision="bf16" data-hardware="H200" data-status="unverified" data-entry="beam-sft-long-context-h200" aria-controls="beam-sft-long-context-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>Long Context · H200</strong>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+    <button type="button" class="verification-combination" data-capability="lora" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-peft-h200" aria-controls="beam-peft-h200" aria-pressed="false">
+      <span class="verification-combination-heading">
+        <strong>LoRA · H200</strong>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </span>
+      <span class="verification-combination-meta">BF16</span>
+    </button>
+  </div>
+  <div class="verification-model-details">
+    <article id="beam-hf-to-megatron-cpu" class="verification-model-detail" data-entry-detail="beam-hf-to-megatron-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · CPU</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/cpu-megatron --torch-dtype bfloat16</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>CPU import runs in a single process and materializes the full BF16 model (about 1 TB), so it needs a host with well over 1 TB of memory plus conversion workspace.</p>
+      </section>
+    </article>
+    <article id="beam-hf-to-megatron-gpu" class="verification-model-detail" data-entry-detail="beam-hf-to-megatron-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Import · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/imported-megatron --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --low-memory-save</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 2 nodes x 8 H200 at TP1/PP1/EP16/ETP1 the import completes in 685 s and writes a complete 16-shard, 934 GiB iter_0000000 checkpoint (about 75 GiB per GPU during the import; EP8 on one node would leave too little headroom). The checkpoint reloads in the GPU and CPU exports, whose outputs match the pinned source exactly, and in the inference and forward-pass items.</p>
+      </section>
+    </article>
+    <article id="beam-megatron-to-hf-cpu" class="verification-model-detail" data-entry-detail="beam-megatron-to-hf-cpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · CPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 2 --cpu-processes-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/imported-megatron/iter_0000000 --hf-path work/model-verification/beam/cpu-hf-export --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 240 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>Distributed CPU export with 8 processes on each of 2 hosts (EP16, no GPUs used) completes in 2857 s. Reloading every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in transformers_version.</p>
+      </section>
+    </article>
+    <article id="beam-megatron-to-hf-gpu" class="verification-model-detail" data-entry-detail="beam-megatron-to-hf-gpu" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Export · GPU</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>not specified</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2 --gpus-per-node 8 --hf-model reflection/brandon-dire-surge-10-03-s200 --hf-revision 3ea13c81833d9a523ed4bdc4152a33edd16bbd30 --megatron-path work/model-verification/beam/imported-megatron/iter_0000000 --hf-path work/model-verification/beam/hf-export-gpu --torch-dtype bfloat16 --tp 1 --pp 1 --ep 16 --etp 1 --distributed-timeout-minutes 110 --distributed-save --save-every-n-ranks 1 --no-progress</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>The 2-node EP16 export completes in 1530 s. Reloading every exported safetensors shard and comparing it with the pinned source checkpoint finds the same 38,366 tensor keys and identical dtypes, shapes, and values for all 501,267,612,352 values (no missing, unexpected, or mismatched tensors); config.json differs only in transformers_version.</p>
+      </section>
+    </article>
+    <article id="beam-pretrain-h200" class="verification-model-detail" data-entry-detail="beam-pretrain-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Pretrain · H200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_pretrain_128gpu_h200_bf16_config --mode pretrain --dataset megatron-indexed --seq_length 4096 --max_steps 100 --warmup_iters 40 &#x27;dataset.blend=[[&quot;work/data/wikitext103/wikitext103_beam_text_document&quot;],null]&#x27; dataset.path_to_cache=work/model-verification/beam/cache/wikitext103 dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 checkpoint.load=null --save_dir work/model-verification/beam/pretrain-reference/checkpoints --save_interval 50 logger.save_config_filepath=work/model-verification/beam/pretrain-reference/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>100 finite steps with checkpoints at steps 50 and 100.</p>
+      </section>
+    </article>
+    <article id="beam-sft-h200" class="verification-model-detail" data-entry-detail="beam-sft-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>SFT · H200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad8 +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>100 finite full-SFT steps and a complete step-100 model checkpoint.</p>
+      </section>
+    </article>
+    <article id="beam-sft-long-context-h200" class="verification-model-detail" data-entry-detail="beam-sft-long-context-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>Long Context · H200</h4>
+        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>—</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>None</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>None ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>None TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>None tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 30 --seq_length 65536 model.transformer.context_parallel_size=8 model.transformer.tensor_model_parallel_size=1 model.transformer.sequence_parallel=false model.transformer.pipeline_model_parallel_size=2 model.transformer.expert_model_parallel_size=64 --lr 5e-6 --min_lr 0 --warmup_iters 3 &#x27;dataset.hf_dataset.split=&quot;train[:100000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-64k-pad16 +dataset.offline_packing_specs.pad_seq_to_mult=16 scheduler.lr_decay_iters=30 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save=null logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/long-context/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>30 finite 64K packed steps with all-to-all context parallelism of size 8.</p>
+      </section>
+    </article>
+    <article id="beam-peft-h200" class="verification-model-detail" data-entry-detail="beam-peft-h200" tabindex="-1">
+      <header class="verification-model-detail-heading">
+        <h4>LoRA · H200</h4>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
+      </header>
+      <dl class="verification-model-detail-meta">
+        <div><dt>Hardware</dt><dd>H200</dd></div>
+        <div><dt>Precision</dt><dd>BF16</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
+      </dl>
+      <section class="verification-recorded-metrics">
+        <h5>Recorded metrics</h5>
+        <dl class="verification-metric-list">
+          <div>
+            <dt>Initial loss</dt>
+            <dd>1.190599</dd>
+          </div>
+          <div>
+            <dt>Final loss</dt>
+            <dd>0.8183495</dd>
+          </div>
+          <div>
+            <dt>Step time · last 10 avg</dt>
+            <dd>3,474.810 ms</dd>
+          </div>
+          <div>
+            <dt>Model throughput · last 10 avg</dt>
+            <dd>150.020 TFLOP/s/GPU</dd>
+          </div>
+          <div>
+            <dt>Token throughput · last 10 avg</dt>
+            <dd>1,178.769 tokens/s/GPU</dd>
+          </div>
+        </dl>
+      </section>
+      <section class="verification-command-section">
+        <h5>Exact command</h5>
+        <div class="verification-command">
+          <div class="verification-command-heading">
+            <span>Command</span>
+            <button type="button" class="verification-copy-command">Copy</button>
+          </div>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --recipe beam_peft_16gpu_h200_bf16_config --mode lora --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs=&#123;revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;&#125;&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad2 +dataset.offline_packing_specs.pad_seq_to_mult=2 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null --save_dir work/model-verification/beam/peft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/peft/ConfigContainer.yaml</code></pre>
+        </div>
+      </section>
+      <section class="verification-expected-result">
+        <h5>Expected result</h5>
+        <p>On 16 H200 (2 nodes x 8), TP2/PP1/EP16/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2. Pad-2 offline packing is 99.65% efficient; Tulu 3 train[:10000] packs into 499 8K packs with Beam&#x27;s chat template, so the 100 steps sample 800 packs (497 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,992,654 supervised tokens after label masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_qkv (fused Q/K/V and attention output gate) and linear_proj is trainable. LM loss is finite from 1.190599 to 0.8183495 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 16-shard iter_0000100 adapter checkpoint holds all 208 expected adapter entries (52 attention layers x 2 projections x 2 LoRA matrices).</p>
+      </section>
+    </article>
+  </div>
+</div>
+
+{/* END GENERATED VERIFIED CONFIGURATIONS */}
