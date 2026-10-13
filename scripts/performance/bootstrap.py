@@ -52,6 +52,7 @@ def _apply_recipe_environment(recipe) -> None:
         if not isinstance(value, (str, int, float, bool)):
             raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
         os.environ.setdefault(name, str(value))
+    os.environ.pop("NCCL_NET_PLUGIN", None)
 
 
 def uses_ncclep(recipe) -> bool:
