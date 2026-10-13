@@ -67,9 +67,12 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.example.com:4317
 export OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer <token>"
 ```
 
-The exporter uses gRPC by default. Set `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` for an HTTP endpoint. To
-inspect telemetry without a collector, set `MEGATRON_OTEL_EXPORTER=console`, which writes one JSON object
-per span, and one per batch of metrics, to standard output.
+The exporter uses gRPC by default. Set `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` for an HTTP endpoint. Log
+records, which `MEGATRON_OTEL_LOGS_ENABLED` turns on, are the exception: the nemo-lens version that
+Megatron Bridge pins sends them over gRPC whenever the gRPC exporter is installed, as the `otel` extra does.
+With an HTTP-only collector, leave log export off. To inspect telemetry without a collector, set
+`MEGATRON_OTEL_EXPORTER=console`, which writes one JSON object per span, and one per batch of metrics, to
+standard output.
 
 ### Configuration Reference
 
