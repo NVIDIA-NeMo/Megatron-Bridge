@@ -40,6 +40,7 @@ def build_megatron_mimo_model(
     seed: int = 0,
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = True,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> tuple["MimoModel", "MegatronMIMOInfra"]:
     """Build a distributed MegatronMIMO model and return ``(model, infra)``.
 
@@ -76,6 +77,7 @@ def build_megatron_mimo_model(
         bf16=bf16,
         wrap_with_ddp=wrap_with_ddp,
         data_parallel_random_init=data_parallel_random_init,
+        use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
     )
     mimo_model = model_list[0]
 

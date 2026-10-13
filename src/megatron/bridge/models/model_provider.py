@@ -213,6 +213,8 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         post_wrap_hook: Callable[[list[MegatronModule]], list[MegatronModule]] | None = None,
         mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None = Float16Module,
         pg_collection: ProcessGroupCollection | None = None,
+        *,
+        use_layer_wise_distributed_optimizer: bool = False,
     ) -> list[ModelT]:
         """Instantiate and wrap the model for distributed training.
 
@@ -222,6 +224,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         in the Megatron ecosystem.
 
         Args:
+            use_layer_wise_distributed_optimizer: Build DDP layouts for layer-wise optimizer state.
             ddp_config: Configuration for distributed data parallel.
             model_type: Type of model (encoder, decoder, or both).
             overlap_param_gather_with_optimizer_step: Whether to overlap param gathering.
@@ -303,6 +306,7 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             pre_wrap_hook=final_pre_wrap_hook,
             mixed_precision_wrapper=mixed_precision_wrapper,
             pg_collection=pg_collection,
+            use_layer_wise_distributed_optimizer=use_layer_wise_distributed_optimizer,
         )
 
         if final_post_wrap_hook:

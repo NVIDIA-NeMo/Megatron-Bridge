@@ -8,16 +8,22 @@ Note: This module only supports DDP wrapping. FSDP is not yet implemented.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING, Dict, Optional
 
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
+from torch import nn
 
 
 if TYPE_CHECKING:
-    from megatron.core.distributed import DistributedDataParallelConfig
+    from megatron.core.distributed import (
+        DistributedDataParallel,
+        DistributedDataParallelConfig,
+    )
     from megatron.core.hyper_comm_grid import HyperCommGrid
     from megatron.core.models.mimo import MimoModel
     from megatron.core.process_groups_config import ProcessGroupCollection
+    from megatron.core.transformer.transformer_config import TransformerConfig
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 
@@ -28,6 +34,8 @@ def wrap_megatron_mimo_model_distributed(
     megatron_mimo_parallelism_config: "MegatronMIMOParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
     pg_collections: Dict[str, Optional["ProcessGroupCollection"]],
+    *,
+    use_layer_wise_distributed_optimizer: bool = False,
 ) -> "MimoModel":
     """Wrap MegatronMIMO model's submodules with DDP.
 
@@ -39,14 +47,52 @@ def wrap_megatron_mimo_model_distributed(
         megatron_mimo_parallelism_config: MegatronMIMO parallelism configuration.
         grids: Module name to HyperCommGrid mapping.
         pg_collections: Module name to ProcessGroupCollection mapping.
+        use_layer_wise_distributed_optimizer: Build shard-aligned layouts for layer-wise optimizers.
 
     Returns:
         The same megatron_mimo_model with wrapped submodules.
     """
     from megatron.core.distributed import DistributedDataParallel
+    from megatron.core.optimizer.layer_wise_optimizer import (
+        LayerWiseDistributedOptimizer,
+        tag_params_for_buffer_routing,
+    )
 
     # Lazy import to avoid circular dependency (models layer loads before training layer)
     from megatron.bridge.training.megatron_mimo_parallel_utils import is_current_rank_in_grid
+
+    def wrap_module(
+        module: nn.Module,
+        config: "TransformerConfig",
+        pg: "ProcessGroupCollection",
+        module_ddp_config: "DistributedDataParallelConfig",
+    ) -> "DistributedDataParallel":
+        layout = None
+        if use_layer_wise_distributed_optimizer:
+            module_ddp_config.use_distributed_optimizer = True
+            tag_params_for_buffer_routing([module])
+            groups = pg.setup_process_groups_for_ddp(pg, config, module_ddp_config)
+            bucket_size = module_ddp_config.bucket_size
+            if module_ddp_config.num_buckets is not None:
+                bucket_size = sum(p.numel() for p in module.parameters()) // module_ddp_config.num_buckets
+            elif bucket_size is None:
+                bucket_size = max(40000000, 1000000 * groups["dp_group"].size())
+            if not module_ddp_config.overlap_grad_reduce or groups["pp_group"].rank() > 0:
+                bucket_size = None
+            layout = LayerWiseDistributedOptimizer.compute_full_param_layout(
+                [p for p in module.parameters() if p.requires_grad],
+                bucket_size,
+                groups["intra_dp_cp_group"].size(),
+                module_ddp_config,
+                expert_data_parallel_world_size=groups["intra_expt_dp_group"].size(),
+            )
+        return DistributedDataParallel(
+            config=config,
+            ddp_config=module_ddp_config,
+            module=module,
+            pg_collection=pg,
+            full_param_layout=layout,
+        )
 
     # Wrap language model if present and rank participates
     if megatron_mimo_model.language_model is not None:
@@ -54,11 +100,11 @@ def wrap_megatron_mimo_model_distributed(
         if llm_grid is not None and is_current_rank_in_grid(llm_grid):
             llm_pg = pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
-                wrapped_lm = DistributedDataParallel(
-                    config=megatron_mimo_model.language_model.config,
-                    ddp_config=ddp_config,
-                    module=megatron_mimo_model.language_model,
-                    pg_collection=llm_pg,
+                wrapped_lm = wrap_module(
+                    megatron_mimo_model.language_model,
+                    megatron_mimo_model.language_model.config,
+                    llm_pg,
+                    ddp_config,
                 )
                 # MCore's DDP wrapper does not proxy arbitrary module methods.
                 # MimoModel._forward_language_module() checks for and calls
@@ -98,11 +144,16 @@ def wrap_megatron_mimo_model_distributed(
                         f"a 'config' attribute. Encoders must be MegatronModule subclasses."
                     )
 
-                wrapped = DistributedDataParallel(
-                    config=first_encoder.config,
-                    ddp_config=ddp_config,
-                    module=submodule,
-                    pg_collection=module_pg,
+                # An encoder rank that gets no media in a step runs no encoder forward or backward,
+                # so the DDP hooks would not issue its overlapped param all-gather or grad reduce.
+                encoder_ddp_config = dataclasses.replace(
+                    ddp_config, overlap_grad_reduce=False, overlap_param_gather=False
+                )
+                wrapped = wrap_module(
+                    submodule,
+                    first_encoder.config,
+                    module_pg,
+                    encoder_ddp_config,
                 )
                 # MCore optimizers unwrap DDP and read process groups from the wrapped module.
                 wrapped.module.pg_collection = module_pg

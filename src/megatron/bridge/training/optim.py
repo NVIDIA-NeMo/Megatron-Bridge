@@ -25,7 +25,6 @@ from megatron.core.optimizer import (
     get_megatron_optimizer,
     get_mup_config_overrides,
 )
-from megatron.core.optimizer.muon import get_megatron_muon_optimizer
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
@@ -92,21 +91,12 @@ def setup_optimizer(
             use_gloo_process_groups=use_gloo_process_groups,
             pg_collection=pg_collection,
         )
-    elif "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
+    else:
         optimizer = get_megatron_optimizer(
             config=optimizer_config,
             model_chunks=model,
             config_overrides=config_overrides,
             use_gloo_process_groups=use_gloo_process_groups,
-            pg_collection=pg_collection,
-        )
-    else:
-        optimizer = get_megatron_muon_optimizer(
-            config=optimizer_config,
-            model_chunks=model,
-            config_overrides=config_overrides,
-            use_gloo_process_groups=use_gloo_process_groups,
-            layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
             pg_collection=pg_collection,
         )
 

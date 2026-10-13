@@ -30,6 +30,7 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
+from megatron.bridge.training.utils.optimizer_utils import uses_layer_wise_optimizer
 
 
 if TYPE_CHECKING:
@@ -189,6 +190,7 @@ def setup_megatron_mimo(
     model, megatron_mimo_infra = build_megatron_mimo_model(
         megatron_mimo_provider,
         ddp_config=cfg.ddp,
+        use_layer_wise_distributed_optimizer=uses_layer_wise_optimizer(cfg.optimizer),
         fp16=getattr(cfg.model, "fp16", False),
         bf16=getattr(cfg.model, "bf16", True),
         seed=cfg.rng.seed,

@@ -104,6 +104,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     read_train_state,
 )
 from megatron.bridge.training.utils.log_utils import append_to_progress_log
+from megatron.bridge.training.utils.optimizer_utils import uses_distributed_optimizer
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.utils.common_utils import (
     get_rank_safe,
@@ -1393,9 +1394,9 @@ def save_checkpoint(
     rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
 
     # Collect cfg, model, RNG.
-    sharded_sd_metadata = _build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, ckpt_cfg)
+    sharded_sd_metadata = _build_sharded_state_dict_metadata(uses_distributed_optimizer(cfg.optimizer), ckpt_cfg)
     sharded_sd_metadata["dp_cp_group"] = _checkpoint_dp_cp_group(pg_collection)
-    if cfg.optimizer.use_distributed_optimizer:
+    if uses_distributed_optimizer(cfg.optimizer):
         print_rank_0(
             f"Storing distributed optimizer sharded state of type {sharded_sd_metadata['distrib_optim_sharding_type']}"
         )
@@ -3048,7 +3049,7 @@ def _load_checkpoint_from_path(
         if ckpt_type == CheckpointType.LOCAL:
             # Local checkpoints don't store content metadata in common.pt.
             sharded_sd_metadata = _build_sharded_state_dict_metadata(
-                cfg.optimizer.use_distributed_optimizer, cfg.checkpoint
+                uses_distributed_optimizer(cfg.optimizer), cfg.checkpoint
             )
         else:
             sharded_sd_metadata = dist_checkpointing.load_content_metadata(preloaded_state_dict=state_dict)
@@ -3064,7 +3065,7 @@ def _load_checkpoint_from_path(
             gen_sd_optim = optimizer
             gen_sd_opt_param_scheduler = opt_param_scheduler
 
-            if cfg.optimizer.use_distributed_optimizer:
+            if uses_distributed_optimizer(cfg.optimizer):
                 if sharded_sd_metadata is None:
                     sharded_sd_metadata = {
                         "distrib_optim_sharding_type": (
@@ -3198,7 +3199,7 @@ def _load_checkpoint_from_path(
                 print_rank_0("Optimizer state was not saved in the FSDP checkpoint; using a fresh optimizer")
 
         optim_sd_kwargs = dict(
-            metadata=_build_sharded_state_dict_metadata(cfg.optimizer.use_distributed_optimizer, cfg.checkpoint),
+            metadata=_build_sharded_state_dict_metadata(uses_distributed_optimizer(cfg.optimizer), cfg.checkpoint),
             is_loading=True,
         )
         # DTensor optimizer state does not contain dtype-keyed FQNs.

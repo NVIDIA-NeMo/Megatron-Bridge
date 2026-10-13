@@ -76,6 +76,11 @@ from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispa
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
+from megatron.bridge.training.utils.optimizer_utils import (
+    normalize_optimizer_config,
+    uses_distributed_optimizer,
+    uses_layer_wise_optimizer,
+)
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
     print_rank_0,
@@ -142,6 +147,7 @@ class OptimizerConfig(MCoreOptimizerConfig):
         This method calls the original Megatron Core OptimizerConfig.__post_init__()
         to compute derived fields based on the current field values.
         """
+        normalize_optimizer_config(self)
         super().__post_init__()
 
 
@@ -1396,6 +1402,12 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        _validate_and_sync_distributed_optimizer_settings(self)
+        if self.optimizer.optimizer not in ("adam", "sgd") and (
+            self.dist.use_megatron_fsdp or self.ddp.use_megatron_fsdp or self.dist.use_torch_fsdp2
+        ):
+            raise ValueError("Emerging optimizers such as Muon do not support Megatron-FSDP or Torch-FSDP2.")
+
         if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
                 "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
@@ -1768,7 +1780,7 @@ class ConfigContainer(Container):
 
         # Make sure all functionality that requires Gloo process groups is disabled.
         if not self.dist.use_gloo_process_groups:
-            if self.optimizer.use_distributed_optimizer:
+            if uses_distributed_optimizer(self.optimizer):
                 # If using distributed optimizer, must use distributed checkpointing.
                 # Legacy checkpointing uses Gloo process groups to collect full distributed
                 # optimizer state in the CPU memory of DP rank 0.
@@ -2240,6 +2252,9 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     # user-facing copy before CommOverlapConfig can apply the requested value to the model.
     cfg._disable_native_energon_packing_moe_overlap()
 
+    # Resolve optimizer mode before selecting communication overlap capabilities.
+    _validate_and_sync_distributed_optimizer_settings(cfg)
+
     # Apply communication overlap configuration if provided
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.finalize()
@@ -2312,8 +2327,18 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
             configure_nvtx_profiling(enabled=True)
 
-    # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
+
+    # The component training loop does not stage reused gradient buffers before
+    # overlapped parameter gathering.
+    if cfg.ddp.overlap_param_gather and (
+        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag or cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag
+    ):
+        raise ValueError(
+            "overlap_param_gather with reuse_grad_buf_for_mxfp8_param_ag is not supported for MegatronMIMO"
+        )
+
+    # Safe validations
     cfg._validate_and_apply_deterministic_mode()
 
 
@@ -2321,8 +2346,8 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     """Validate and synchronize distributed optimizer settings between DDP and optimizer configs.
 
     This function ensures that distributed optimizer settings are consistent across
-    DDP and optimizer configurations. If either setting is enabled, both will be
-    enabled to maintain consistency.
+    DDP and optimizer configurations. Emerging optimizers use layer-wise
+    distribution; Adam and SGD use the ordinary distributed optimizer.
 
     Args:
         config: The configuration container to validate and potentially modify.
@@ -2330,7 +2355,14 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
     ddp_setting = config.ddp.use_distributed_optimizer
     optimizer_setting = config.optimizer.use_distributed_optimizer
 
-    if ddp_setting or optimizer_setting:
+    normalize_optimizer_config(config.optimizer, ddp_use_distributed_optimizer=ddp_setting)
+    if uses_layer_wise_optimizer(config.optimizer):
+        if config.ddp.num_distributed_optimizer_instances != 1:
+            raise ValueError("Layer-wise optimizers require num_distributed_optimizer_instances=1.")
+        # Both distributed implementations use reduce-scatter. Model setup must
+        # additionally pass layer-wise intent so Core chooses the correct layout.
+        config.ddp.use_distributed_optimizer = True
+    elif ddp_setting or optimizer_setting:
         if ddp_setting != optimizer_setting:
             warn_rank_0(
                 f"Distributed optimizer settings were not in sync: "

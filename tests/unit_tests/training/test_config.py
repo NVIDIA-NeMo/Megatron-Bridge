@@ -4990,6 +4990,61 @@ class TestEpochBasedTraining:
             megatron_mimo_runtime_config_update(cfg)
         assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
 
+    @pytest.mark.parametrize("ddp_overlap,optimizer_overlap", [(True, False), (False, True), (True, True)])
+    @pytest.mark.parametrize("ddp_reuse,optimizer_reuse", [(True, False), (False, True), (True, True)])
+    def test_megatron_mimo_runtime_config_update_rejects_mxfp8_overlap_param_gather(
+        self, ddp_overlap, optimizer_overlap, ddp_reuse, optimizer_reuse
+    ):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = DistributedDataParallelConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=ddp_overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse,
+            fp8_param_gather=ddp_reuse,
+            grad_reduce_in_fp32=True,
+        )
+        cfg.optimizer = OptimizerConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=optimizer_overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+        )
+
+        with pytest.raises(ValueError, match="overlap_param_gather with reuse_grad_buf_for_mxfp8_param_ag"):
+            megatron_mimo_runtime_config_update(cfg)
+
+    @pytest.mark.parametrize(
+        ("overlap", "ddp_reuse", "optimizer_reuse"),
+        [(False, False, False), (False, True, False), (False, False, True), (False, True, True), (True, False, False)],
+    )
+    def test_megatron_mimo_runtime_config_update_accepts_supported_gather_configs(
+        self, overlap, ddp_reuse, optimizer_reuse
+    ):
+        cfg = MagicMock()
+        cfg.env_vars = {}
+        cfg.train.num_epochs = None
+        cfg.profiling = None
+        cfg.ddp = DistributedDataParallelConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=ddp_reuse,
+            fp8_param_gather=ddp_reuse,
+            grad_reduce_in_fp32=True,
+        )
+        cfg.optimizer = OptimizerConfig(
+            use_distributed_optimizer=True,
+            overlap_param_gather=overlap,
+            reuse_grad_buf_for_mxfp8_param_ag=optimizer_reuse,
+        )
+
+        megatron_mimo_runtime_config_update(cfg)
+
+        assert cfg.ddp.overlap_param_gather is overlap
+        assert cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag is ddp_reuse
+        assert cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag is optimizer_reuse
+
 
 class TestDatasetSequenceLengthValidation:
     """Tests for dataset sequence length validation with different dataset types."""
@@ -5348,6 +5403,7 @@ def test_layerwise_optimizer_rejects_single_grouped_weight(use_recipe):
             cfg.optimizer, cfg.scheduler = distributed_muon_with_cosine_annealing()
             assert not cfg.optimizer.use_layer_wise_distributed_optimizer
         else:
+            cfg.optimizer.optimizer = "muon"
             cfg.optimizer.use_layer_wise_distributed_optimizer = True
         with pytest.raises(ValueError, match="moe_single_grouped_weight"):
             cfg.validate()
