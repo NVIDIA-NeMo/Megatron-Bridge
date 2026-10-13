@@ -74,6 +74,7 @@ from modelopt.torch.opt.plugins import (
 )
 from torch.distributed.tensor import DTensor
 
+from megatron.bridge import telemetry
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -503,6 +504,7 @@ def _extract_megatron_lm_args_from_state_dict(state_dict: dict[str, Any]) -> dic
 # ============================================================================
 
 
+@telemetry.traced(telemetry.CHECKPOINT, "megatron.checkpoint.save.schedule")
 def schedule_async_save(global_state: GlobalState, async_request: NVRxAsyncRequest) -> None:
     """Schedule the async save request.
 
@@ -512,7 +514,9 @@ def schedule_async_save(global_state: GlobalState, async_request: NVRxAsyncReque
     """
     async_queue = global_state.async_calls_queue
     if async_queue is not None:
-        async_queue.schedule_async_request(async_request)
+        call_idx = async_queue.schedule_async_request(async_request)
+        if telemetry.enabled(telemetry.CHECKPOINT):
+            telemetry.set_span_attributes(telemetry.CHECKPOINT, {"nvrx.call_idx": call_idx})
 
 
 def maybe_finalize_async_save(
@@ -537,11 +541,21 @@ def maybe_finalize_async_save(
     if blocking and not is_empty_async_queue(global_state):
         print_rank_0("Unfinalized async checkpoint saves. Finalizing them synchronously now.")
 
-    if async_queue is not None:
-        async_queue.maybe_finalize_async_calls(blocking)
+    # This runs every iteration, so it is traced only while a save is pending.
+    finalize_span = (
+        telemetry.span(telemetry.CHECKPOINT, "megatron.checkpoint.save.finalize")
+        if telemetry.enabled(telemetry.CHECKPOINT) and not is_empty_async_queue(global_state)
+        else contextlib.nullcontext()
+    )
+    with finalize_span as span:
+        if async_queue is not None:
+            finalized_call_idx = async_queue.maybe_finalize_async_calls(blocking)
+            if span is not None:
+                span.set_attribute("megatron.checkpoint.finalize.blocking", blocking)
+                span.set_attribute("nvrx.call_idx", list(finalized_call_idx))
 
-    if terminate and async_queue is not None:
-        async_queue.close()
+        if terminate and async_queue is not None:
+            async_queue.close()
 
 
 def is_empty_async_queue(global_state: GlobalState) -> bool:
@@ -1088,6 +1102,7 @@ def _hf_weights_dir(iter_dir: str) -> str:
     return os.path.join(iter_dir, HF_WEIGHTS_SUBDIR)
 
 
+@telemetry.traced(telemetry.CHECKPOINT, "megatron.bridge.checkpoint.save.hf_export")
 def _save_hf_weights(
     state: GlobalState,
     model: list[MegatronModule],
@@ -1261,6 +1276,7 @@ def _save_hf_adapter_weights(
         torch.distributed.barrier()
 
 
+@telemetry.traced(telemetry.CHECKPOINT, "megatron.checkpoint.save")
 def save_checkpoint(
     state: GlobalState,
     model: list[MegatronModule],
@@ -1353,6 +1369,17 @@ def save_checkpoint(
 
     ckpt_format = ckpt_cfg.ckpt_format if ckpt_type == CheckpointType.GLOBAL else "torch"  # torch for local
     print_rank_0(f"saving checkpoint at iteration {train_state.step:7d} to {save_dir} in {ckpt_format} format")
+    if telemetry.enabled(telemetry.CHECKPOINT):
+        telemetry.set_span_attributes(
+            telemetry.CHECKPOINT,
+            {
+                telemetry.ITERATION: train_state.step,
+                "megatron.checkpoint.format": ckpt_format,
+                "megatron.checkpoint.type": ckpt_type.name.lower(),
+                "megatron.checkpoint.async": bool(ckpt_cfg.async_save),
+                "megatron.checkpoint.non_persistent": non_persistent_ckpt,
+            },
+        )
 
     # Collect rng state across data parallel ranks.
     if pg_collection is None:
@@ -1410,18 +1437,19 @@ def save_checkpoint(
         state_dict = prebuilt_state_dict
         print_rank_0("Using pre-built state dict (low-memory save mode)")
     else:
-        state_dict = generate_state_dict(
-            ckpt_cfg,
-            model,
-            optimizer,
-            opt_param_scheduler,
-            rng_state,
-            iteration=train_state.step,
-            optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
-            model_sd_kwargs=dict(metadata=sharded_sd_metadata),
-            rerun_state=rerun_state,
-            pg_collection=pg_collection,
-        )
+        with telemetry.span(telemetry.CHECKPOINT, "megatron.checkpoint.save.state_dict"):
+            state_dict = generate_state_dict(
+                ckpt_cfg,
+                model,
+                optimizer,
+                opt_param_scheduler,
+                rng_state,
+                iteration=train_state.step,
+                optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
+                model_sd_kwargs=dict(metadata=sharded_sd_metadata),
+                rerun_state=rerun_state,
+                pg_collection=pg_collection,
+            )
 
     # De-interleave GLU weights/biases if model has interleaved weights in memory.
     # Checkpoints are always saved in contiguous format.
@@ -1490,23 +1518,25 @@ def save_checkpoint(
                     use_msc=MultiStorageClientFeature.is_enabled(),
                 )
 
-                save_state_dict_ret = save_state_dict_async_plan(
-                    state_dict,
-                    fs_storage_writer,
-                    None,
-                    coordinator_rank,
-                    planner=planner,
-                    enable_cache=ckpt_cfg.ckpt_assume_constant_structure,
-                )
+                with telemetry.span(telemetry.CHECKPOINT, "megatron.checkpoint.save.io_write"):
+                    save_state_dict_ret = save_state_dict_async_plan(
+                        state_dict,
+                        fs_storage_writer,
+                        None,
+                        coordinator_rank,
+                        planner=planner,
+                        enable_cache=ckpt_cfg.ckpt_assume_constant_structure,
+                    )
                 async_save_request = get_save_and_finalize_callbacks(fs_storage_writer, save_state_dict_ret)
             else:
-                save_fsdp_dtensor_checkpoint(
-                    checkpoint_name,
-                    state_dict,
-                    cfg=cfg,
-                    model=model[0],
-                    barrier=False,
-                )
+                with telemetry.span(telemetry.CHECKPOINT, "megatron.checkpoint.save.io_write"):
+                    save_fsdp_dtensor_checkpoint(
+                        checkpoint_name,
+                        state_dict,
+                        cfg=cfg,
+                        model=model[0],
+                        barrier=False,
+                    )
         else:
             # torch_dist and other formats using MCore distributed checkpointing
             if checkpointing_context is not None and "save_strategy" in checkpointing_context:
@@ -1552,16 +1582,18 @@ def save_checkpoint(
                 checkpointing_context["save_strategy"] = save_strategy
             end_ckpt = time()
             logger.debug(f"rank: {rank}, takes {end_ckpt - start_ckpt} to prepare state dict for ckpt ")
-            async_save_request = dist_checkpointing.save(
-                state_dict,
-                dist_save_target,
-                save_strategy,
-                async_sharded_save=ckpt_cfg.async_save,
-                validate_access_integrity=validate_sharding_integrity,
-                preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
-                content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
-                verify_integrity=ckpt_cfg.verify_integrity,
-            )
+            # Under async save, this plans the write and the persistent worker writes later.
+            with telemetry.span(telemetry.CHECKPOINT, "megatron.checkpoint.save.io_write"):
+                async_save_request = dist_checkpointing.save(
+                    state_dict,
+                    dist_save_target,
+                    save_strategy,
+                    async_sharded_save=ckpt_cfg.async_save,
+                    validate_access_integrity=validate_sharding_integrity,
+                    preprocess_common_before_consistancy_check=preprocess_common_state_dict_fn,
+                    content_metadata=_clean_metadata_for_serialization(sharded_sd_metadata),
+                    verify_integrity=ckpt_cfg.verify_integrity,
+                )
             # [ModelOpt]: save sharded modelopt_state (skip if model is empty, e.g., low-memory save mode).
             # We always anchor modelopt_state at the iteration directory (``checkpoint_name``) so
             # that ``has_modelopt_state`` / ``load_modelopt_state`` can discover it via the
@@ -1603,9 +1635,10 @@ def save_checkpoint(
                 cached_metadata=cached_metadata,
                 parallelization_group=_checkpoint_dp_cp_group(pg_collection),
             )
-            async_save_request = checkpointing_context["local_checkpoint_manager"].save(
-                state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
-            )
+            with telemetry.span(telemetry.CHECKPOINT, "megatron.checkpoint.save.io_write"):
+                async_save_request = checkpointing_context["local_checkpoint_manager"].save(
+                    state_dict_for_save, train_state.step, is_async=bool(ckpt_cfg.async_save)
+                )
             checkpointing_context["local_checkpoint_cache"] = cacheable_metadata
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
@@ -2881,6 +2914,7 @@ def _load_hf_pretrained_checkpoint(
     return 0, 0
 
 
+@telemetry.traced(telemetry.LOAD_CHECKPOINT, "megatron.checkpoint.load")
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -3249,17 +3283,18 @@ def _load_checkpoint_from_path(
         )
 
     # Load the checkpoint
-    state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
-        load_dir,
-        cfg.checkpoint,
-        rank0=False,
-        checkpointing_context=checkpointing_context,
-        ignore_ckpt_step=ignore_ckpt_step,
-        cfg=cfg,
-        is_megatron_mimo=(_is_megatron_mimo if ckpt_format == "torch_dist" else False),
-        pg_collection=pg_collection,
-        **load_kwargs,
-    )
+    with telemetry.span(telemetry.LOAD_CHECKPOINT, "megatron.checkpoint.load.io_read"):
+        state_dict, checkpoint_name, release, ckpt_type = _load_base_checkpoint(
+            load_dir,
+            cfg.checkpoint,
+            rank0=False,
+            checkpointing_context=checkpointing_context,
+            ignore_ckpt_step=ignore_ckpt_step,
+            cfg=cfg,
+            is_megatron_mimo=(_is_megatron_mimo if ckpt_format == "torch_dist" else False),
+            pg_collection=pg_collection,
+            **load_kwargs,
+        )
 
     # Checkpoint not loaded
     if state_dict is None:

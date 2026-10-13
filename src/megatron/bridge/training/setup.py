@@ -41,6 +41,7 @@ from megatron.core.transformer.multi_token_prediction import get_mtp_ranks
 from megatron.core.utils import get_model_config
 from megatron.training.models.base import ModelConfig
 
+from megatron.bridge import telemetry
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -504,14 +505,15 @@ def setup(
         tokenizer=tokenizer,
         pg_collection=pg_collection,
     )
-    train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
-        cfg=cfg,
-        train_state=state.train_state,
-        model_length=len(model),
-        train_valid_test_datasets_provider=train_valid_test_datasets_provider,
-        dp_group=get_data_distribution_group(pg_collection, cfg.model),
-        eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
-    )
+    with telemetry.span(telemetry.DATA_LOADING, "megatron.startup.dataloader"):
+        train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
+            cfg=cfg,
+            train_state=state.train_state,
+            model_length=len(model),
+            train_valid_test_datasets_provider=train_valid_test_datasets_provider,
+            dp_group=get_data_distribution_group(pg_collection, cfg.model),
+            eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
+        )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
 
@@ -622,14 +624,16 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
-        model = builder.build_distributed_models(
-            pg_collection=pg_collection,
-            ddp_config=cfg.ddp,
-            overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
-            use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
-            use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
-            data_parallel_random_init=cfg.rng.data_parallel_random_init,
-        )
+        # Model providers are traced in get_model; the megatron-core builders are traced here.
+        with telemetry.span(telemetry.MODEL_INIT, "megatron.bridge.model.build"):
+            model = builder.build_distributed_models(
+                pg_collection=pg_collection,
+                ddp_config=cfg.ddp,
+                overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
+                use_megatron_fsdp=cfg.dist.use_megatron_fsdp,
+                use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
+                data_parallel_random_init=cfg.rng.data_parallel_random_init,
+            )
     else:
         model = model_config.provide_distributed_model(
             ddp_config=cfg.ddp,
