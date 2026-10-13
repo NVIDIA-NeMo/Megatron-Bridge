@@ -14,7 +14,7 @@ uv run python scripts/training/run_recipe.py \
   --recipe kimi_k3_pretrain_config \
   --pretrained_checkpoint "$KIMI_SNAPSHOT" \
   --seq_length 8192 --max_steps 10 \
-  dataset.blend="[['$RP2_TRAIN_PREFIX'],null]" dataset.split=100,0,0 \
+  dataset.blend="[['$RP2_TRAIN_PREFIX'],null]" "dataset.split='100,0,0'" \
   dataset.path_to_cache="$DATA_CACHE" \
   validation.eval_iters=0 \
   checkpoint.save=null checkpoint.load=null
