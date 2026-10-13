@@ -115,6 +115,7 @@ _QWEN35_VL_GB200_FUNCS = [
 ]
 
 _QWEN35_VL_GB300_FUNCS = [
+    _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config,
     _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config,
     _qwen35_vl_gb300_module.qwen35_vl_397b_a17b_pretrain_config,
 ]
@@ -512,6 +513,120 @@ def test_qwen35_vl_35b_a3b_pretrain_16gpu_gb300_defaults(monkeypatch: pytest.Mon
     assert cfg.train.micro_batch_size == 4
     assert cfg.tokenizer.use_tokenizer_vocab_size is False
     assert cfg.checkpoint.pretrained_checkpoint is None
+
+
+def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_defaults(monkeypatch: pytest.MonkeyPatch):
+    """The 8-GB300 MXFP8 recipe adds the measured precision, kernel and dispatcher settings to the 16-GPU recipe."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config()
+    base = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config()
+
+    _assert_basic_config(cfg)
+    # Same parallel layout, CUDA graphs, recompute, batch shape and routing as the 16-GPU recipe.
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 4
+    assert cfg.train.global_batch_size == base.train.global_batch_size == 2048
+    assert cfg.train.micro_batch_size == base.train.micro_batch_size == 4
+    assert cfg.model.max_vision_cuda_graph_seq_length == 3712
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.recompute_modules == ["core_attn", "gdn_norm_out"]
+    assert cfg.model.moe_router_force_load_balancing is False
+    # MXFP8 with FP8 parameter all-gather.
+    assert cfg.mixed_precision.fp8 == "e4m3"
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+    assert cfg.mixed_precision.fp8_param_gather is True
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    # CuTe DSL fused grouped MLP needs all three settings together.
+    assert cfg.model.use_transformer_engine_op_fuser is True
+    assert cfg.model.moe_mlp_glu_interleave_size == 32
+    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_permute_fusion_into_hybridep is False
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 16
+    assert cfg.model.overlap_dispatch_backward_with_experts_wgrad is True
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 64
+    assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    # Building the 8-GPU recipe must not leak the env gate into the 16-GPU recipe.
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in base.env_vars
+
+    # These are the only model-field and environment-variable differences from the 16-GPU recipe; an extra model
+    # field or environment variable fails here. Mixed precision is checked above on five fields only, and other
+    # sections, such as train, optimizer, ddp and comm_overlap, are not compared.
+    changed_model_fields = {
+        name
+        for name in vars(cfg.model).keys() | vars(base.model).keys()
+        if getattr(cfg.model, name, None) != getattr(base.model, name, None)
+    }
+    assert changed_model_fields == {
+        "use_transformer_engine_op_fuser",
+        "moe_mlp_glu_interleave_size",
+        "moe_flex_dispatcher_num_sms",
+        "moe_permute_fusion_into_hybridep",
+        "moe_hybridep_num_sms_preprocessing",
+        "overlap_dispatch_backward_with_experts_wgrad",
+    }
+    changed_env_vars = {
+        name
+        for name in cfg.env_vars.keys() | base.env_vars.keys()
+        if cfg.env_vars.get(name) != base.env_vars.get(name)
+    }
+    assert changed_env_vars == {
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP",
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API",
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API",
+        "NVTE_NORM_FWD_USE_CUDNN",
+        "NVTE_NORM_BWD_USE_CUDNN",
+    }
+
+
+class _FakeModelCfgWithGdnKernelBackend(_FakeModelCfg):
+    """Model config from a Megatron-Core that declares gdn_kernel_backend (NVIDIA/Megatron-LM#7583)."""
+
+    # Megatron-Core's default; a class attribute, as on the real dataclass.
+    gdn_kernel_backend = "fla"
+
+
+class _FakeAutoBridgeWithGdnKernelBackend(_FakeAutoBridge):
+    """AutoBridge yielding a provider that declares gdn_kernel_backend."""
+
+    @staticmethod
+    def from_hf_pretrained(hf_path: str, *, revision: str | None = None):
+        return _FakeAutoBridgeWithGdnKernelBackend()
+
+    def to_megatron_provider(self, load_weights: bool = False):
+        return _FakeModelCfgWithGdnKernelBackend()
+
+
+def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_selects_cudnn_gdn(monkeypatch: pytest.MonkeyPatch):
+    """If Megatron-Core has gdn_kernel_backend, the 8-GPU recipe selects cuDNN GDN; the 16-GPU one keeps FLA."""
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridgeWithGdnKernelBackend)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config()
+    base = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_16gpu_gb300_bf16_config()
+
+    assert cfg.model.gdn_kernel_backend == "transformer_engine"
+    # The 16-GPU BF16 recipe keeps Megatron-Core's default.
+    assert base.model.gdn_kernel_backend == "fla"
+
+
+def test_qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_no_phantom_gdn_kernel_backend(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """On a Megatron-Core without gdn_kernel_backend the recipe must not invent the attribute.
+
+    Assigning an unknown field would not raise: it would create an unused attribute, so the recipe would look as if it
+    selected cuDNN GDN while the layers keep running on FLA.
+    """
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_gb300_module.qwen35_vl_35b_a3b_pretrain_8gpu_gb300_fp8mx_library_config()
+
+    assert not hasattr(cfg.model, "gdn_kernel_backend")
 
 
 def test_qwen35_vl_35b_a3b_pretrain_16gpu_h100_defaults(monkeypatch: pytest.MonkeyPatch):
