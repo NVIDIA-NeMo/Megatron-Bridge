@@ -26,11 +26,11 @@ Key differences from standard GPT-style model bridges:
 - No input_layernorm or pre_feedforward_layernorm weights
 - Has post_attention_layernorm (after self-attention output)
 - Has post_feedforward_layernorm (after MLP output, EXAONE-specific)
-- Post-LN mapping follows Gemma2 pattern: *.post_layernorm.weight
+- Post-LN mapping follows shared post-normalization pattern: *.post_layernorm.weight
 
 References:
 - HuggingFace: LGAI-EXAONE/EXAONE-4.0-1.2B
-- Gemma2 bridge: Post-LN via TERowParallelLinearLayerNorm pattern
+- the shared post-normalization layer: Post-LN via TERowParallelLinearLayerNorm pattern
 - EXAONE bridge: QK layernorm mapping pattern
 """
 
@@ -52,7 +52,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 # Register custom EXAONE modules for AutoMapping weight distribution
 # TERowParallelLinearLayerNorm is a row-parallel linear with post-layernorm
-# (same pattern as Gemma2 for Post-LN architectures)
+# (same pattern as other Post-LN architectures)
 AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
 
 
@@ -71,7 +71,7 @@ class Exaone4Bridge(MegatronModelBridge):
     Architecture notes:
     - EXAONE 4.0 uses pure Post-LayerNorm (no input_layernorm).
     - Post-LN is implemented via custom layer spec with TERowParallelLinearLayerNorm,
-      following the same pattern established by Gemma2 bridge.
+      following the same pattern established by the shared post-normalization layer.
     - QK RMSNorm is mapped using EXAONE attention norm parameters.
     - 1.2B model uses full attention only (no sliding window / hybrid attention).
     - 32B model introduces hybrid attention (LLLG pattern) — future extension.
@@ -162,7 +162,7 @@ class Exaone4Bridge(MegatronModelBridge):
         EXAONE 4.0 weight mapping combines patterns from:
         - Llama: Basic GPT structure (embed, QKV, GatedMLP, final_layernorm)
         - EXAONE: QK layernorm (q_norm → q_layernorm, k_norm → k_layernorm)
-        - Gemma2: Post-LN (post_*_layernorm → *.post_layernorm.weight)
+        - Post-LN (post_*_layernorm → *.post_layernorm.weight)
 
         Key difference: No input_layernorm or pre_feedforward_layernorm mappings
         because EXAONE uses pure Post-LN (not Pre-LN or sandwich norm).
@@ -181,11 +181,11 @@ class Exaone4Bridge(MegatronModelBridge):
             # QK RMSNorm
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            # Post-LN: post-attention layernorm (Gemma2 pattern)
+            # Post-LN: post-attention layernorm (shared post-normalization pattern)
             "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
                 "model.layers.*.post_attention_layernorm.weight"
             ),
-            # Post-LN: post-feedforward layernorm (Gemma2 pattern)
+            # Post-LN: post-feedforward layernorm (shared post-normalization pattern)
             "decoder.layers.*.mlp.linear_fc2.post_layernorm.weight": (
                 "model.layers.*.post_feedforward_layernorm.weight"
             ),

@@ -462,7 +462,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H100</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>2026-07-24</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-08</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
@@ -473,19 +473,19 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>1.008992</dd>
+            <dd>1.011637</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>132,859.580 ms</dd>
+            <dd>123,114.400 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>5.580 TFLOP/s/GPU</dd>
+            <dd>6.890 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>30.830 tokens/s/GPU</dd>
+            <dd>33.270 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -501,7 +501,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly ten packed 32K SFT steps with pad-4 alignment, full recompute, and full optimizer CPU offload. Loss is finite from 1.168852 to 1.008992 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, the resolved configuration is persisted, and the final model-only checkpoint saves successfully.</p>
+        <p>On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly ten packed 32K SFT steps with pad-4 alignment, full recompute, and full optimizer CPU offload. Loss is finite from 1.168852 to 1.011637 with no skipped or NaN iterations. The ten-step metric window includes the first-step cold-start cost by policy, the resolved configuration is persisted, and the final model-only checkpoint saves successfully.</p>
       </section>
     </article>
     <article id="nemotron-3-super-120b-a12b-sft-long-context-gb200" class="verification-model-detail" data-entry-detail="nemotron-3-super-120b-a12b-sft-long-context-gb200" tabindex="-1">

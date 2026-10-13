@@ -399,7 +399,6 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 44f3031a2e77ff455eb128efbaa19322ad6397a6  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
@@ -431,17 +430,17 @@ items:
         --save_dir work/model-verification/nemotron-3-super-120b-a12b/h100-long-sft
         --save_interval 10 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-24
+      last_verified: 2026-10-08
       metrics:
         initial_loss: 1.168852
-        final_loss: 1.008992
-        last_10_steps_step_time_ms_avg: 132859.580
-        last_10_steps_model_tflops_per_gpu_avg: 5.580
-        last_10_steps_tokens_per_second_per_gpu_avg: 30.830
+        final_loss: 1.011637
+        last_10_steps_step_time_ms_avg: 123114.400
+        last_10_steps_model_tflops_per_gpu_avg: 6.890
+        last_10_steps_tokens_per_second_per_gpu_avg: 33.270
       expected_result: >
         On 16 H100s, the dedicated TP1/PP8/CP2/EP2 recipe completes exactly
         ten packed 32K SFT steps with pad-4 alignment, full recompute, and full
-        optimizer CPU offload. Loss is finite from 1.168852 to 1.008992 with no
+        optimizer CPU offload. Loss is finite from 1.168852 to 1.011637 with no
         skipped or NaN iterations. The ten-step metric window includes the
         first-step cold-start cost by policy, the resolved configuration is
         persisted, and the final model-only checkpoint saves successfully.

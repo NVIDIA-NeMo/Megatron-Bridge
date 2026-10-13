@@ -23,6 +23,7 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     _perf_precision,
     _qwen35_vl_common,
     _qwen35_vl_post,
+    _select_gdn_kernel_backend,
     qwen35_vl_35b_a3b_pretrain_mock_config,
     qwen35_vl_122b_a10b_pretrain_mock_config,
     qwen35_vl_397b_a17b_pretrain_mock_config,
@@ -57,6 +58,7 @@ def _build_qwen35_vl_35b_a3b_gb300_bf16() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
     _enable_partial_cuda_graphs(cfg)
+    _select_gdn_kernel_backend(cfg, "transformer_engine")
     return cfg
 
 
@@ -292,6 +294,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post(cfg)
     _enable_partial_cuda_graphs(cfg)
+    _select_gdn_kernel_backend(cfg, "transformer_engine")
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

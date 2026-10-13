@@ -264,7 +264,7 @@ items:
         --recipe qwen35_vl_35b_a3b_sft_8gpu_gb200_bf16_functional_config
         --dataset medpix
         --pretrained_checkpoint
-        work/model-verification/qwen3.6-35b-a3b/gb200-imported/iter_0000000
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 100 --warmup_iters 10
         'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
         'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
@@ -431,7 +431,7 @@ items:
         --recipe qwen35_vl_35b_a3b_peft_8gpu_gb200_bf16_functional_config
         --dataset medpix
         --pretrained_checkpoint
-        work/model-verification/qwen3.6-35b-a3b/gb200-imported/iter_0000000
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
         --max_steps 100 --warmup_iters 10
         'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
         'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'

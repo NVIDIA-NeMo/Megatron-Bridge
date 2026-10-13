@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import inspect
+import warnings
 from dataclasses import dataclass
 from unittest.mock import Mock, patch
 
@@ -21,12 +22,17 @@ import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt import GPTModel
 from megatron.core.transformer import ModuleSpec
+from transformers import Qwen2Config
 
+import megatron.bridge.models  # noqa: F401  (registers every model-family bridge)
 from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
 from megatron.bridge.models.gpt.gpt_builder import GPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.llama.llama_bridge import LlamaBridge
+from megatron.bridge.models.muse_glimmer.muse_glimmer_bridge import MuseGlimmerBridge
+from megatron.bridge.models.qwen.qwen2_bridge import Qwen2Bridge
+from megatron.bridge.models.qwen.qwen3_bridge import Qwen3Bridge
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -137,22 +143,88 @@ def test_model_config_class_selects_nested_transformer_type(monkeypatch: pytest.
     assert model_config.specialized_field is True
 
 
-def test_gpt_model_config_is_the_bridge_default() -> None:
-    assert MegatronModelBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
-    assert LlamaBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
-    assert "MODEL_CONFIG_CLASS" not in LlamaBridge.__dict__
+def _bridge_subclasses(bridge_class: type[MegatronModelBridge]) -> set[type[MegatronModelBridge]]:
+    subclasses = set(bridge_class.__subclasses__())
+    return subclasses.union(*(_bridge_subclasses(subclass) for subclass in subclasses))
+
+
+def _all_bridge_classes() -> list[type[MegatronModelBridge]]:
+    """Return every bridge class registered by importing ``megatron.bridge.models``."""
+    return sorted(
+        (
+            bridge_class
+            for bridge_class in _bridge_subclasses(MegatronModelBridge)
+            if bridge_class.__module__.startswith("megatron.bridge.")
+        ),
+        key=lambda bridge_class: bridge_class.__name__,
+    )
+
+
+def _has_model_config_mapping(bridge_class: type[MegatronModelBridge]) -> bool:
+    return (
+        bridge_class.hf_config_to_model_config_kwargs is not MegatronModelBridge.hf_config_to_model_config_kwargs
+        or bridge_class.hf_config_to_model_config is not MegatronModelBridge.hf_config_to_model_config
+    )
+
+
+def test_model_config_is_opt_in_per_family() -> None:
+    assert MegatronModelBridge.MODEL_CONFIG_CLASS is None
     assert MegatronModelBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
+    for bridge_class in (LlamaBridge, Qwen3Bridge):
+        assert bridge_class.__dict__["MODEL_CONFIG_CLASS"] is BridgeGPTModelConfig
+    assert MuseGlimmerBridge.__dict__["MODEL_CONFIG_CLASS"] is not None
     assert LlamaBridge.USE_MODEL_CONFIG_FOR_CONVERSION is False
     assert BridgeGPTModelConfig.transformer_config_class is TransformerConfig
     assert not hasattr(MegatronModelBridge, "TRANSFORMER_CONFIG_CLASS")
 
 
-def test_bridge_can_explicitly_disable_model_config() -> None:
-    class UnsupportedBridge(LlamaBridge):
-        MODEL_CONFIG_CLASS = None
+def test_bridge_subclass_inherits_model_config_opt_in() -> None:
+    class DerivedBridge(LlamaBridge):
+        pass
 
-    with pytest.raises(ModelConfigNotSupportedError, match="sets MODEL_CONFIG_CLASS to None"):
-        UnsupportedBridge().hf_config_to_model_config(object())
+    assert DerivedBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
+
+
+@pytest.mark.parametrize("bridge_class", _all_bridge_classes(), ids=lambda bridge_class: bridge_class.__name__)
+def test_bridge_can_explicitly_disable_model_config(bridge_class: type[MegatronModelBridge]) -> None:
+    if bridge_class.MODEL_CONFIG_CLASS is None:
+        # Unmigrated family: the builder path is rejected instead of returning generic defaults.
+        assert not _has_model_config_mapping(bridge_class)
+        assert bridge_class.USE_MODEL_CONFIG_FOR_CONVERSION is False
+        with pytest.raises(ModelConfigNotSupportedError, match=f"{bridge_class.__name__}.*to_megatron_provider"):
+            bridge_class().hf_config_to_model_config(object())
+    else:
+        # Opted-in family: it must map its Hugging Face config for the builder path.
+        assert _has_model_config_mapping(bridge_class)
+
+    # A bridge that replaces hf_config_to_model_config() wholesale does not read MODEL_CONFIG_CLASS.
+    if bridge_class.hf_config_to_model_config is MegatronModelBridge.hf_config_to_model_config:
+
+        class UnsupportedBridge(bridge_class):
+            MODEL_CONFIG_CLASS = None
+
+        with pytest.raises(ModelConfigNotSupportedError, match="UnsupportedBridge.*to_megatron_provider"):
+            UnsupportedBridge().hf_config_to_model_config(object())
+
+
+def test_unmigrated_bridge_keeps_provider_without_warning() -> None:
+    hf_config = Qwen2Config(
+        num_hidden_layers=2,
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        vocab_size=256,
+    )
+
+    assert Qwen2Bridge.MODEL_CONFIG_CLASS is None
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FutureWarning)
+        provider = Qwen2Bridge().provider_bridge(Mock(config=hf_config))
+
+    assert provider.position_embedding_type == "rope"
+    assert provider.add_qkv_bias is True
+    assert provider.add_bias_linear is False
 
 
 @pytest.mark.skipif(

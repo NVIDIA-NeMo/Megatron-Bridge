@@ -94,12 +94,28 @@ def test_load_recipe_auto_detects_exact_benchmark_export(
 
     library_finder = Mock()
     benchmark_finder = Mock(return_value=benchmark_recipe)
-    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: object())
+    monkeypatch.setattr(
+        recipe_runner, "resolved_benchmark_recipe_metadata", lambda name: SimpleNamespace(recipe_name=name)
+    )
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
     monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
 
     assert recipe_runner.load_recipe("shared_recipe_config") is config
     benchmark_finder.assert_called_once_with("shared_recipe_config")
+    library_finder.assert_not_called()
+
+
+def test_load_recipe_loads_renamed_benchmark_for_deprecated_hardware_name(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = object()
+    benchmark_finder = Mock(return_value=lambda: config)
+    library_finder = Mock()
+    monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
+    monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
+
+    assert recipe_runner.load_recipe("qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config") is config
+    benchmark_finder.assert_called_once_with("qwen3_30b_a3b_pretrain_8gpu_vrnvl72_bf16_config")
     library_finder.assert_not_called()
 
 
@@ -119,7 +135,9 @@ def test_duplicate_name_warns_and_selects_benchmark(
     recipe_name = "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config"
     config = object()
 
-    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: object())
+    monkeypatch.setattr(
+        recipe_runner, "resolved_benchmark_recipe_metadata", lambda name: SimpleNamespace(recipe_name=name)
+    )
     benchmark_finder = Mock(return_value=lambda: config)
     library_finder = Mock()
     monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
@@ -146,7 +164,9 @@ def test_finetuning_collision_selects_benchmark(
 ) -> None:
     config = object()
 
-    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: object())
+    monkeypatch.setattr(
+        recipe_runner, "resolved_benchmark_recipe_metadata", lambda name: SimpleNamespace(recipe_name=name)
+    )
     library_finder = Mock()
     benchmark_finder = Mock(return_value=lambda: config)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
