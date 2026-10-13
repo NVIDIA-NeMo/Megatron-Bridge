@@ -26,6 +26,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 
 
 def _build_deepseek_v3_gb300_bf16() -> ConfigContainer:
@@ -185,6 +186,53 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
         "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_gb300_fp8mx_deterministic_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× GB300, MXFP8, deterministic.
+
+    Wraps :func:`deepseek_v3_pretrain_256gpu_gb300_fp8mx_config` and applies
+    :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
+    """
+    cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
+    # TODO: revert back to NCCL EP once the NCCL EP issue is fixed.
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_use_grouped_tensor = False
+    apply_determinism_overrides(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # ---- Determinism (same values as apply_determinism_overrides) ----
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NCCL_EP_HT_EM_AG_SCAN_MODE": "1",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+        "MAMBA_DETERMINISTIC": "1",
+        "CAUSAL_CONV1D_DETERMINISTIC": "1",
+        # ---- Others ----
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
