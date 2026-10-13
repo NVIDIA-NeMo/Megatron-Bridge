@@ -47,6 +47,7 @@ from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.module import Float16Module, MegatronModule
 from megatron.core.utils import get_model_config
 
+from megatron.bridge import telemetry
 from megatron.bridge.models.config import from_hf_pretrained, save_hf_pretrained
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
@@ -586,6 +587,7 @@ class ModelParallelKwargs(TypedDict, total=False):
     moe_hybridep_pad_uneven_dispatch_inputs: bool
 
 
+@telemetry.traced(telemetry.MODEL_INIT, "megatron.bridge.model.build")
 def get_model(
     model_provider: ModelProviderMixin,
     ddp_config: DistributedDataParallelConfig,

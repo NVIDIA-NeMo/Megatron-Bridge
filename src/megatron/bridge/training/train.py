@@ -18,6 +18,7 @@ import os
 import sys
 import time
 from collections import deque
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional, Union
 
@@ -70,6 +71,7 @@ from megatron.core.utils import (
 )
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
+from megatron.bridge import telemetry
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -389,6 +391,8 @@ def train(
         else:
             pre_hook_enabled = True
 
+    # The first iteration this process runs pays one-off costs, such as compilation; it gets its own span.
+    is_first_iteration = True
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
@@ -504,26 +508,41 @@ def train(
         global_state._flops_requires_global_reduce = flops_require_global_reduce
         global_state.global_batch_packing_num_microbatches = None
 
-        (
-            loss_dict,
-            skipped_iter,
-            should_checkpoint,
-            should_exit,
-            exit_code,
-            grad_norm,
-            num_zeros_in_grad,
-            log_max_attention_logit,
-        ) = wrapped_train_step(
-            wrapped_forward_step_func,
-            train_data_iterator,
-            model,
-            optimizer,
-            scheduler,
-            global_state,
-            pg_collection,
-            forward_backward_func,
-            p2p_communicator,
+        first_iteration_span_cm = (
+            telemetry.span(telemetry.FIRST_ITERATION, "megatron.train.first_iteration")
+            if is_first_iteration
+            else nullcontext()
         )
+        with (
+            first_iteration_span_cm as first_iteration_span,
+            telemetry.span(telemetry.STEP, "megatron.train.iteration") as iteration_span,
+        ):
+            # Numbered as the training log numbers it: the step count once this iteration completes.
+            if first_iteration_span is not None:
+                first_iteration_span.set_attribute(telemetry.ITERATION, global_state.train_state.step + 1)
+            if iteration_span is not None:
+                iteration_span.set_attribute(telemetry.ITERATION, global_state.train_state.step + 1)
+            (
+                loss_dict,
+                skipped_iter,
+                should_checkpoint,
+                should_exit,
+                exit_code,
+                grad_norm,
+                num_zeros_in_grad,
+                log_max_attention_logit,
+            ) = wrapped_train_step(
+                wrapped_forward_step_func,
+                train_data_iterator,
+                model,
+                optimizer,
+                scheduler,
+                global_state,
+                pg_collection,
+                forward_backward_func,
+                p2p_communicator,
+            )
+        is_first_iteration = False
 
         fault_tolerance.on_training_step_end(global_state)
 
@@ -987,19 +1006,23 @@ def train_step(
             adjust_tensor_shapes_fn = None
 
         # Forward pass.
-        losses_reduced = forward_backward_func(
-            forward_step_func=forward_step_func,
-            data_iterator=forward_backward_data_iterator,
-            model=model,
-            num_microbatches=packed_num_microbatches if packing_enabled else get_num_microbatches(),
-            seq_length=seq_length,
-            micro_batch_size=train_config.micro_batch_size,
-            decoder_seq_length=seq_length,
-            forward_only=False,
-            adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
-            p2p_communicator=p2p_communicator,
-            pg_collection=pg_collection,
-        )
+        num_microbatches = packed_num_microbatches if packing_enabled else get_num_microbatches()
+        with telemetry.span(telemetry.FORWARD_BACKWARD, "megatron.train.iteration.forward_backward") as fb_span:
+            if fb_span is not None:
+                fb_span.set_attribute("megatron.train.num_microbatches", num_microbatches)
+            losses_reduced = forward_backward_func(
+                forward_step_func=forward_step_func,
+                data_iterator=forward_backward_data_iterator,
+                model=model,
+                num_microbatches=num_microbatches,
+                seq_length=seq_length,
+                micro_batch_size=train_config.micro_batch_size,
+                decoder_seq_length=seq_length,
+                forward_only=False,
+                adjust_tensor_shapes_fn=adjust_tensor_shapes_fn,
+                p2p_communicator=p2p_communicator,
+                pg_collection=pg_collection,
+            )
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None, None
@@ -1011,7 +1034,8 @@ def train_step(
     # Update parameters.
     nvtx_range_push(suffix="optimizer_step")
     timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
-    update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+    with telemetry.span(telemetry.OPTIMIZER, "megatron.train.iteration.optimizer"):
+        update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
     # get max attention logit for logging and run clip_qk()
     # Part of MuonClip Optimizer step
@@ -1352,6 +1376,7 @@ def compute_throughputs_and_append_to_progress_log(
     )
 
 
+@telemetry.traced(telemetry.CHECKPOINT, "megatron.checkpoint.exposed_save")
 def save_checkpoint_and_time(
     state: GlobalState,
     model: list[MegatronModule],
@@ -1384,6 +1409,8 @@ def save_checkpoint_and_time(
         pg_collection: Optional process group collection for MegatronMIMO topologies.
                        When None, save_checkpoint falls back to model-attached PGs.
     """
+    if telemetry.enabled(telemetry.CHECKPOINT):
+        telemetry.set_span_attributes(telemetry.CHECKPOINT, {telemetry.ITERATION: state.train_state.step})
     timers = state.timers
     energy_monitor = state.energy_monitor
 

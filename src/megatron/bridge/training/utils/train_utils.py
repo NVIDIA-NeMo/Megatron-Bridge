@@ -41,6 +41,7 @@ from megatron.bridge.models.common.heads import (
     create_value_head_hook,
     ensure_model_list,
 )
+from megatron.bridge.telemetry.lifecycle import record_training_metrics
 from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -1273,6 +1274,12 @@ def training_log(
                 mlflow_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
             if comet_logger:
                 comet_logger.log_metrics({"zero-token-iterations": zero_token_iters}, step=iteration)
+        # Before the interval counters are reset. Records nothing unless pretrain installed telemetry.
+        record_training_metrics(
+            step_duration_ms=elapsed_time_per_iteration * 1000.0,
+            throughput_tflops=per_gpu_tf if num_flops is not None else None,
+            skipped_iters=total_loss_dict[skipped_iters_key],
+        )
         total_loss_dict[advanced_iters_key] = 0
         total_loss_dict[skipped_iters_key] = 0
         total_loss_dict[nan_iters_key] = 0
