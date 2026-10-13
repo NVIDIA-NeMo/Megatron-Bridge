@@ -21,6 +21,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _apply_nemotron_3_ultra_fsdp_hsdp,
+    _apply_nemotron_3_ultra_gtp,
     _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _enable_nemotron_3_5_lightning_full_iteration,
@@ -209,13 +210,15 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
 def _nemotron_3_ultra_gb300_fp8mx_config(
     *, num_gpus: int, expert_model_parallel_size: int, global_batch_size: int
 ) -> ConfigContainer:
-    """Shared builder for Nemotron 3 Ultra GB300 MXFP8 Megatron-FSDP perf recipes."""
+    """Shared builder for Nemotron 3 Ultra GB300 MXFP8 GTP perf recipes."""
     cfg = nemotron_3_ultra_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
+    _apply_nemotron_3_ultra_perf_defaults(cfg)
+
     """
     Uses TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1,
-    seq 8192, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
+    seq 8192, NCCLEP flex dispatcher, CuteDSL fused grouped MLP, selective
     recompute + activation offload of the expert MLP, MTP=2. The MoE architecture
     (512 experts, latent MoE, MTP, squared-relu, hybrid Mamba/attention pattern,
     ...) is inherited from the base recipe via ``AutoBridge``.
@@ -252,20 +255,30 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act"]
 
-    _apply_nemotron_3_ultra_perf_defaults(cfg)
+    # Shard dense weights with GTP within each 64-GPU rack. GTP currently
+    # requires a single distributed-optimizer instance.
+    _apply_nemotron_3_ultra_gtp(cfg)
 
-    # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
-    _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
+    cfg.model.cuda_graph_impl = "local"
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba"])
+    # TODO: "moe_preprocess", "moe_router" needs to be disabled due to MCore PR 7046, performing a CPU-to-GPU copy for per token loss
+    # TE attention requires TE's RNG tracker while MCore local graphs are capturing.
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
+    _enable_ncclep(cfg)
+    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
+    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
+    cfg.model.moe_use_grouped_tensor = True
 
     return cfg
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, MXFP8, Megatron-FSDP (HSDP).
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, MXFP8, GTP.
 
     TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
-    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
-    recompute + fine-grained activation offload of the expert MLP, MTP=2.
+    precision, dense GTP64, NCCLEP flex dispatcher, CuteDSL fused grouped MLP,
+    selective recompute + fine-grained activation offload of the expert MLP, MTP=2.
 
     Args:
         num_gpus: Launch GPU count used to size HSDP optimizer instances.
@@ -276,10 +289,6 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
         expert_model_parallel_size=64,
         global_batch_size=256,
     )
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -296,6 +305,9 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN normalization kernels for the VR200 performance candidate.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
         # offloading weights;
         "NVTE_CPU_OFFLOAD_V1": 1,

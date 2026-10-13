@@ -177,17 +177,17 @@ def test_vrnvl72_perf_recipe_uses_nvl72_ultra_topology() -> None:
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
+    assert cfg.model.cuda_graph_impl == "local"
     assert cfg.train.global_batch_size == 256
     assert cfg.train.micro_batch_size == 1
-    assert cfg.ddp.use_megatron_fsdp is True
-    assert cfg.ddp.num_distributed_optimizer_instances == 4
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
-    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.ddp.use_megatron_fsdp is False
+    assert cfg.model.tensor_parallel_num_weight_shards == 64
+    assert cfg.model.expert_tensor_parallel_num_weight_shards == 1
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+    assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == 1
     assert cfg.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
     assert cfg.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
-    assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 @pytest.mark.unit
