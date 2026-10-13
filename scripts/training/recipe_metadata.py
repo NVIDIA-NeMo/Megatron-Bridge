@@ -19,10 +19,14 @@ from __future__ import annotations
 import argparse
 import ast
 import functools
+import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
+
+logger = logging.getLogger(__name__)
 
 BENCHMARK_RECIPE_FAMILY_PREFIXES = (
     ("qwen3_vl_", "qwen_vl"),
@@ -44,6 +48,10 @@ BENCHMARK_RECIPE_PATTERN = re.compile(
     r"(?P<precision>bf16|fp8cs|fp8ds|fp8mx|fp8sc|nvfp4)"
     r"(?:_[a-z0-9_]+)?_config$"
 )
+
+# Deprecated recipe hardware names and their replacements. When the deprecation window ends, drop an entry together
+# with its counterpart in LEGACY_GPU_ALIASES (scripts/performance/argument_parser.py).
+LEGACY_HARDWARE_ALIASES = {"vr200": "vrnvl72"}
 
 BENCHMARK_RECIPE_ROOT = Path(__file__).resolve().parents[2] / "src" / "megatron" / "bridge" / "perf_recipes"
 
@@ -181,8 +189,31 @@ def available_benchmark_recipe_metadata(recipe_name: str) -> BenchmarkRecipeMeta
     return metadata
 
 
+@functools.lru_cache(maxsize=None)
+def _canonical_recipe_name(recipe_name: str) -> str:
+    """Replace a deprecated hardware name in a benchmark recipe name when the renamed recipe is exported.
+
+    Cached so each process logs the deprecation once per requested name.
+    """
+    match = BENCHMARK_RECIPE_PATTERN.search(recipe_name)
+    if match is None or match.group("hardware") not in LEGACY_HARDWARE_ALIASES:
+        return recipe_name
+    start, end = match.span("hardware")
+    canonical_name = f"{recipe_name[:start]}{LEGACY_HARDWARE_ALIASES[match.group('hardware')]}{recipe_name[end:]}"
+    if available_benchmark_recipe_metadata(canonical_name) is None:
+        return recipe_name
+    # Every rank re-runs this lookup, so only the launcher and global rank 0 warn.
+    if os.environ.get("RANK", os.environ.get("SLURM_PROCID", "0")) == "0":
+        logger.warning("Recipe '%s' uses a deprecated hardware name; use '%s'.", recipe_name, canonical_name)
+    return canonical_name
+
+
 def resolved_benchmark_recipe_metadata(recipe_name: str) -> BenchmarkRecipeMetadata | None:
-    """Return benchmark metadata after applying unified lookup precedence."""
+    """Return benchmark metadata after applying legacy hardware aliases and unified lookup precedence.
+
+    A deprecated hardware name resolves to the renamed recipe, so callers load ``metadata.recipe_name``.
+    """
+    recipe_name = _canonical_recipe_name(recipe_name)
     if recipe_name in LIBRARY_RECIPE_PRECEDENCE_COLLISIONS:
         return None
     return available_benchmark_recipe_metadata(recipe_name)
