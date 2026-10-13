@@ -82,10 +82,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H200" data-status="unverified" data-entry="beam-sft-h200" aria-controls="beam-sft-h200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="H200" data-status="verified" data-entry="beam-sft-h200" aria-controls="beam-sft-h200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · H200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -263,35 +263,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="beam-sft-h200" class="verification-model-detail" data-entry-detail="beam-sft-h200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · H200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>H200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-13</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>1.04323</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.7583156</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>2,334.250 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>28.260 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>219.342 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -302,12 +302,12 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
             <span>Command</span>
             <button type="button" class="verification-copy-command">Copy</button>
           </div>
-          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad8 +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml</code></pre>
+          <pre><code class="language-bash">./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 &#x27;dataset.hf_dataset.split=&quot;train[:10000]&quot;&#x27; &#x27;dataset.hf_dataset.load_kwargs={revision:&quot;b14afda60f1bbebe55d5d2fa1e4df5042f97f8be&quot;}&#x27; &#x27;++tokenizer.hf_tokenizer_kwargs.revision=&quot;3ea13c81833d9a523ed4bdc4152a33edd16bbd30&quot;&#x27; dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad8 +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml</code></pre>
         </div>
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>100 finite full-SFT steps and a complete step-100 model checkpoint.
+        <p>On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3 train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label masking. LM loss is finite from 1.04323 to 0.7583156 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100 checkpoint (1.0 TB, model state only) is consumed by the export item. The 120-minute collective timeout covers rank 0&#x27;s offline packing while the other ranks wait.
 </p>
       </section>
     </article>

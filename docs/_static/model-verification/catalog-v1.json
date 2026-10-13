@@ -11141,26 +11141,26 @@
             }
           ],
           "commands": [
-            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 'dataset.hf_dataset.split=\"train[:10000]\"' 'dataset.hf_dataset.load_kwargs={revision:\"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be\"}' '++tokenizer.hf_tokenizer_kwargs.revision=\"3ea13c81833d9a523ed4bdc4152a33edd16bbd30\"' dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad8 +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml"
+            "./scripts/training/train.sh --nodes 16 --gpus-per-node 8 --recipe beam_sft_128gpu_h200_bf16_config --mode sft --dataset tulu3 --pretrained_checkpoint work/model-verification/beam/imported-megatron/iter_0000000 --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 'dataset.hf_dataset.split=\"train[:10000]\"' 'dataset.hf_dataset.load_kwargs={revision:\"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be\"}' '++tokenizer.hf_tokenizer_kwargs.revision=\"3ea13c81833d9a523ed4bdc4152a33edd16bbd30\"' dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678 dataset.do_validation=false dataset.hf_validation_proportion=null dataset.enable_offline_packing=true dataset.hf_output_root=work/model-verification/beam/data/tulu3-8k-pad8 +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 model.transformer.moe_router_force_load_balancing=false ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null checkpoint.save_optim=false checkpoint.save_rng=false --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100 logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null dist.distributed_timeout_minutes=120 logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml"
           ],
           "dimensions": {},
           "enabled_features": {
             "sequence_packing": "offline"
           },
           "entry_id": "beam-sft-h200",
-          "expected_result": "100 finite full-SFT steps and a complete step-100 model checkpoint.\n",
+          "expected_result": "On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3 train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label masking. LM loss is finite from 1.04323 to 0.7583156 with no skipped or NaN iterations, all five metrics are recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100 checkpoint (1.0 TB, model state only) is consumed by the export item. The 120-minute collective timeout covers rank 0's offline packing while the other ranks wait.\n",
           "hardware": "H200",
-          "last_verified": null,
+          "last_verified": "2026-10-13",
           "metrics": {
-            "final_loss": null,
-            "initial_loss": null,
-            "last_10_steps_model_tflops_per_gpu_avg": null,
-            "last_10_steps_step_time_ms_avg": null,
-            "last_10_steps_tokens_per_second_per_gpu_avg": null
+            "final_loss": 0.7583156,
+            "initial_loss": 1.04323,
+            "last_10_steps_model_tflops_per_gpu_avg": 28.26,
+            "last_10_steps_step_time_ms_avg": 2334.25,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 219.342
           },
           "precision": "bf16",
           "source_pointer": "items.sft.H200",
-          "status": "unverified",
+          "status": "verified",
           "variant": null,
           "workflow": "sft"
         },

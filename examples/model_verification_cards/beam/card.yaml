@@ -33,8 +33,8 @@ verification_index:
       - inference
   training:
     H200:
-      verified: [peft]
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [sft, peft]
+      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
 
 model:
   hf_id: reflection/brandon-dire-surge-10-03-s200
@@ -189,7 +189,7 @@ items:
 
   sft:
     H200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -211,16 +211,25 @@ items:
         checkpoint.save_optim=false checkpoint.save_rng=false
         --save_dir work/model-verification/beam/sft/checkpoints --save_interval 100
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+        dist.distributed_timeout_minutes=120
         logger.save_config_filepath=work/model-verification/beam/sft/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-10-13
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 1.04323
+        final_loss: 0.7583156
+        last_10_steps_step_time_ms_avg: 2334.25
+        last_10_steps_model_tflops_per_gpu_avg: 28.26
+        last_10_steps_tokens_per_second_per_gpu_avg: 219.342
       expected_result: >
-        100 finite full-SFT steps and a complete step-100 model checkpoint.
+        On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and
+        natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient
+        reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3
+        train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the
+        seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label
+        masking. LM loss is finite from 1.04323 to 0.7583156 with no skipped or NaN iterations, all five metrics are
+        recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100
+        checkpoint (1.0 TB, model state only) is consumed by the export item. The 120-minute collective timeout covers
+        rank 0's offline packing while the other ranks wait.
 
   sft_export_inference:
     H200:
