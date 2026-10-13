@@ -581,7 +581,9 @@ def test_nemotron_omni_vision_projection_uses_squared_relu():
     values = torch.tensor([-2.0, 0.0, 3.0])
 
     assert vision_projection_config.activation_func is squared_relu
-    assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
+    # This checks configuration and arithmetic; the model test covers compiled execution.
+    activation = torch.compiler.disable(vision_projection_config.activation_func)
+    assert torch.equal(activation(values), torch.tensor([0.0, 0.0, 9.0]))
 
 
 def test_nemotron_omni_providers_use_contract_specific_cpe_defaults():

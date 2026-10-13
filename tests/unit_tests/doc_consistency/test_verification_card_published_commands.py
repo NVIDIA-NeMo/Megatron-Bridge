@@ -27,6 +27,7 @@ import ast
 import shlex
 import sys
 from collections.abc import Iterator
+from functools import cache
 from pathlib import Path
 from typing import overload
 
@@ -41,9 +42,11 @@ CARDS_DIR = REPO_ROOT / "examples" / "model_verification_cards"
 CONVERSION_ARGUMENTS = REPO_ROOT / "scripts" / "conversion" / "arguments.py"
 SETUP_CONVERSION = REPO_ROOT / "scripts" / "conversion" / "setup_conversion.py"
 SETUP_INFERENCE = REPO_ROOT / "scripts" / "inference" / "setup_inference.py"
+PublishedCommands = tuple[tuple[str, tuple[str, ...]], ...]
 
 
-def _declared_options(source_path: Path, *, append_only: bool = False, function: str | None = None) -> set[str]:
+@cache
+def _declared_options(source_path: Path, *, append_only: bool = False, function: str | None = None) -> frozenset[str]:
     """Read parser options, including called argument helpers in Bridge source."""
     options: set[str] = set()
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
@@ -77,7 +80,15 @@ def _declared_options(source_path: Path, *, append_only: bool = False, function:
             if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
                 if argument.value.startswith("-"):
                     options.add(argument.value)
-    return options
+    return frozenset(options)
+
+
+@pytest.fixture(autouse=True)
+def _clear_declared_options_cache() -> Iterator[None]:
+    # Reuse parser results within a check, but never across tests that edit source.
+    _declared_options.cache_clear()
+    yield
+    _declared_options.cache_clear()
 
 
 def _inference_tasks() -> dict[str, Path]:
@@ -128,15 +139,21 @@ def _published_commands() -> Iterator[tuple[str, list[str]]]:
                 yield f"{card.parent.name}{location}", tokens
 
 
-@overload
-def _flag_value(tokens: list[str], flag: str, default: int) -> int: ...
+@pytest.fixture(scope="module")
+def published_commands() -> PublishedCommands:
+    """Parse every shipped command once, with immutable argv shared by the checks."""
+    return tuple((leaf, tuple(tokens)) for leaf, tokens in _published_commands())
 
 
 @overload
-def _flag_value(tokens: list[str], flag: str, default: None) -> int | None: ...
+def _flag_value(tokens: tuple[str, ...], flag: str, default: int) -> int: ...
 
 
-def _flag_value(tokens: list[str], flag: str, default: int | None) -> int | None:
+@overload
+def _flag_value(tokens: tuple[str, ...], flag: str, default: None) -> int | None: ...
+
+
+def _flag_value(tokens: tuple[str, ...], flag: str, default: int | None) -> int | None:
     """Return the last integer value passed to a flag, or the launcher default."""
     value = default
     for index, token in enumerate(tokens[:-1]):
@@ -145,7 +162,7 @@ def _flag_value(tokens: list[str], flag: str, default: int | None) -> int | None
     return value
 
 
-def _selected_task(tokens: list[str]) -> str:
+def _selected_task(tokens: tuple[str, ...]) -> str:
     task = "text-generation"
     for index, token in enumerate(tokens[:-1]):
         if token == "--task":
@@ -153,9 +170,11 @@ def _selected_task(tokens: list[str]) -> str:
     return task
 
 
-def test_published_gpu_conversion_commands_decompose_over_the_published_world_size() -> None:
+def test_published_gpu_conversion_commands_decompose_over_the_published_world_size(
+    published_commands: PublishedCommands,
+) -> None:
     offenders = []
-    for leaf, tokens in _published_commands():
+    for leaf, tokens in published_commands:
         if "convert.sh" not in tokens[0]:
             continue
         device = "gpu"
@@ -178,12 +197,12 @@ def test_published_gpu_conversion_commands_decompose_over_the_published_world_si
     assert not offenders, "setup_conversion.py refuses these published commands: " + "; ".join(offenders)
 
 
-def test_published_inference_commands_carry_no_conversion_launcher_flag() -> None:
+def test_published_inference_commands_carry_no_conversion_launcher_flag(published_commands: PublishedCommands) -> None:
     launcher_options = _declared_options(SETUP_INFERENCE)
     conversion_options = _declared_options(CONVERSION_ARGUMENTS) | _declared_options(SETUP_CONVERSION)
     tasks = _inference_tasks()
     offenders = []
-    for leaf, tokens in _published_commands():
+    for leaf, tokens in published_commands:
         if "infer.sh" not in tokens[0]:
             continue
         accepted = launcher_options | _declared_options(tasks[_selected_task(tokens)])
@@ -196,12 +215,12 @@ def test_published_inference_commands_carry_no_conversion_launcher_flag() -> Non
     assert not offenders, "these published inference commands die in the container: " + "; ".join(offenders)
 
 
-def test_published_card_commands_do_not_repeat_a_flag() -> None:
+def test_published_card_commands_do_not_repeat_a_flag(published_commands: PublishedCommands) -> None:
     repeatable = _declared_options(CONVERSION_ARGUMENTS, append_only=True) | _declared_options(
         SETUP_INFERENCE, append_only=True
     )
     offenders = []
-    for leaf, tokens in _published_commands():
+    for leaf, tokens in published_commands:
         flags = [token.split("=", 1)[0] for token in tokens[1:] if token.startswith("--")]
         repeated = sorted({flag for flag in flags if flags.count(flag) > 1 and flag not in repeatable})
         if repeated:
@@ -252,10 +271,7 @@ def test_declared_options_follow_only_called_helpers(tmp_path: Path, monkeypatch
         ),
     ],
 )
-def test_published_command_checks_reject_original_errors(
-    command: str, check_name: str, message: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_published_command_checks_reject_original_errors(command: str, check_name: str, message: str) -> None:
     module = sys.modules[__name__]
-    monkeypatch.setattr(module, "_published_commands", lambda: iter([("regression", shlex.split(command))]))
     with pytest.raises(AssertionError, match=message):
-        getattr(module, check_name)()
+        getattr(module, check_name)((("regression", tuple(shlex.split(command))),))

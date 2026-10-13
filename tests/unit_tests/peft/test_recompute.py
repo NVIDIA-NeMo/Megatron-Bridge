@@ -14,7 +14,6 @@
 
 """Unit tests for PEFT-specific recompute helpers."""
 
-import gc
 import weakref
 from types import SimpleNamespace
 
@@ -116,7 +115,7 @@ def test_recompute_patch_registry_tracks_model_lifetime(monkeypatch):
     maybe_enable_recompute_inputs_grad(first_model)
     first_model_ref = weakref.ref(first_model)
     del first_model
-    gc.collect()
+    # The model has no reference cycle; the registry must not keep it alive.
     assert first_model_ref() is None
 
     second_model = DummyModel(DummyHybridStack)

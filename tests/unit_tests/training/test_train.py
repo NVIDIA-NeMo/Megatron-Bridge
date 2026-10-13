@@ -1158,7 +1158,10 @@ class TestCheckpointAndDecideExit:
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
     @patch("megatron.bridge.training.train.barrier_and_log")
     @patch("megatron.bridge.training.train.check_nvrx_straggler_detection")
-    def test_multiple_exit_conditions_signal_wins(self, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint):
+    @patch("megatron.bridge.training.train.end_active_mlflow_run")
+    def test_multiple_exit_conditions_signal_wins(
+        self, mock_end_mlflow, mock_check_nvrx, mock_barrier_log, mock_save_checkpoint
+    ):
         """Test that signal handler exit takes precedence over other exit conditions."""
         mock_check_nvrx.return_value = True  # Straggler detection would also trigger
 
@@ -1180,6 +1183,10 @@ class TestCheckpointAndDecideExit:
 
         # Verify signal handler message was logged, not straggler message
         mock_barrier_log.assert_called_once_with("exiting program after receiving SIGTERM.")
+
+        mock_end_mlflow.assert_called_once_with("KILLED")
+        mock_check_nvrx.assert_not_called()
+        mock_save_checkpoint.assert_called_once()
 
     @patch("megatron.bridge.training.train.save_checkpoint_and_time")
     @patch("megatron.bridge.training.train.barrier_and_log")

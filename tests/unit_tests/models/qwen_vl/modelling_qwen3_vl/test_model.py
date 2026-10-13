@@ -152,10 +152,32 @@ def test_get_cp_local_vision_embed_indices_allows_zero_vision_tokens(monkeypatch
 
 @pytest.fixture(scope="module")
 def hf_config():
-    """Create a local HuggingFace config once for all tests."""
-    config = Qwen3VLMoeConfig()
-    config.vision_config.out_hidden_size = config.text_config.hidden_size
-    return config
+    """Keep real vision, deepstack and language paths with small, compatible shapes."""
+    return Qwen3VLMoeConfig(
+        text_config={
+            "num_hidden_layers": 2,
+            "hidden_size": 128,
+            "intermediate_size": 256,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 2,
+            "head_dim": 32,
+            "vocab_size": 256,
+            "max_position_embeddings": 256,
+            "rope_parameters": {"rope_type": "default", "rope_theta": 5000000.0, "mrope_section": [4, 6, 6]},
+        },
+        vision_config={
+            "depth": 2,
+            "hidden_size": 128,
+            "intermediate_size": 256,
+            "num_heads": 4,
+            "out_hidden_size": 128,
+            "deepstack_visual_indexes": [0, 1],
+        },
+        image_token_id=240,
+        video_token_id=241,
+        vision_start_token_id=242,
+        vision_end_token_id=243,
+    )
 
 
 class TestQwen3VLModel:
@@ -229,8 +251,7 @@ class TestQwen3VLModel:
     def get_language_transformer_config(hf_config):
         """Create a language transformer config for testing.
 
-        Uses actual Qwen3-VL-30B-A3B model sizes to ensure compatibility
-        with the vision model output (2048 hidden size).
+        Match the tiny HuggingFace fixture's language and vision dimensions.
 
         Args:
             hf_config: HuggingFace config object.
@@ -239,9 +260,8 @@ class TestQwen3VLModel:
             Qwen3VLTransformerConfig: Configuration for the language model.
         """
         return Qwen3VLTransformerConfig(
-            # Use actual model dimensions from HF config
-            num_layers=4,  # Reduced for testing (actual: hf_config.text_config.num_hidden_layers)
-            hidden_size=hf_config.text_config.hidden_size,  # Must match vision output: 2048
+            num_layers=hf_config.text_config.num_hidden_layers,
+            hidden_size=hf_config.text_config.hidden_size,
             num_attention_heads=hf_config.text_config.num_attention_heads,
             num_query_groups=hf_config.text_config.num_key_value_heads,
             kv_channels=hf_config.text_config.hidden_size // hf_config.text_config.num_attention_heads,
@@ -249,6 +269,9 @@ class TestQwen3VLModel:
             # Qwen3-VL specific
             vocab_size=hf_config.text_config.vocab_size,
             language_max_sequence_length=hf_config.text_config.max_position_embeddings,
+            image_token_id=hf_config.image_token_id,
+            video_token_id=hf_config.video_token_id,
+            vision_start_token_id=hf_config.vision_start_token_id,
             # Vision parameters
             patch_size=hf_config.vision_config.patch_size,
             temporal_patch_size=hf_config.vision_config.temporal_patch_size,
@@ -513,17 +536,17 @@ class TestQwen3VLModel:
 
         if torch.cuda.is_available():
             model_pre.to("cuda")
-            test_tensor = torch.randn(2, 4, 2048).cuda()
+            test_tensor = torch.randn(2, 4, language_transformer_config.hidden_size).cuda()
         else:
-            test_tensor = torch.randn(2, 4, 2048)
+            test_tensor = torch.randn(2, 4, language_transformer_config.hidden_size)
 
         # Test with single tensor (not a list)
         model_pre.set_input_tensor(test_tensor)
-        assert model_pre.encoder_hidden_state is not None
+        assert model_pre.encoder_hidden_state is test_tensor
 
         # Test with list of tensors
         model_pre.set_input_tensor([test_tensor])
-        assert model_pre.encoder_hidden_state is not None
+        assert model_pre.encoder_hidden_state is test_tensor
 
         # Test with pre_process=False
         model_no_pre = Qwen3VLModel(
@@ -543,7 +566,7 @@ class TestQwen3VLModel:
 
         # This should set the input tensor on the language model instead
         model_no_pre.set_input_tensor([test_tensor])
-        # No assertion here as it sets internal state
+        assert model_no_pre.language_model.decoder.input_tensor is test_tensor
 
     @staticmethod
     def _attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio: int = 1) -> None:
@@ -651,6 +674,10 @@ class TestQwen3VLModel:
             )
             vision_payload = enc_out["vision_module"].detach()
             decoder.set_input_tensor([{"vision_module": vision_payload}])
+            assert decoder.vision_embeds is not None
+            assert len(decoder.deepstack_feature_lists) == len(vision_transformer_config.deepstack_visual_indexes)
+            received_payload = torch.cat((*decoder.deepstack_feature_lists, decoder.vision_embeds), dim=0)
+            assert torch.equal(received_payload, vision_payload.flatten(0, 1))
             out = decoder(
                 input_ids=batch["input_ids"],
                 attention_mask=batch["attention_mask"],
