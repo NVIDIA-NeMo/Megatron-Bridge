@@ -32,6 +32,10 @@ import pytest
 import torch
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
+    nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config,
+)
 from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_nano as recipe_module
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_5_lightning_peft_config,
@@ -41,6 +45,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import DETERMINISM_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
@@ -628,3 +633,20 @@ class TestNemotron3NanoCommon:
         assert config.model.moe_shared_expert_intermediate_size == 3712
         assert config.model.moe_router_topk == 6
         assert config.model.moe_router_topk_scaling_factor == 2.5
+
+
+@pytest.mark.unit
+def test_gb200_8gpu_deterministic_pretrain_applies_determinism():
+    """The deterministic wrapper keeps the GB200 layout and adds determinism settings and env vars."""
+    base = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_deterministic_config()
+
+    assert cfg.model.deterministic_mode is True
+    assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.moe_router_aux_loss_fusion is False
+    assert cfg.model.expert_model_parallel_size == base.model.expert_model_parallel_size
+    assert cfg.train.global_batch_size == base.train.global_batch_size
+    for key, value in DETERMINISM_ENV_VARS.items():
+        assert cfg.env_vars[key] == value
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
