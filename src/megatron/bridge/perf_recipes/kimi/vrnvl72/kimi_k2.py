@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for Kimi K2."""
+"""VRNVL72 performance recipes for Kimi K2."""
 
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.kimi.common import (
@@ -23,8 +23,8 @@ from megatron.bridge.perf_recipes.kimi.gb300.kimi_k2 import (
 )
 
 
-def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
-    """Kimi K2 pretrain: 256× VR200, BF16 (alias of GB300)."""
+def kimi_k2_pretrain_256gpu_vrnvl72_bf16_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× VRNVL72, BF16 (alias of GB300)."""
     cfg = kimi_k2_pretrain_256gpu_gb300_bf16_config()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -49,8 +49,8 @@ def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def kimi_k2_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB300)."""
+def kimi_k2_pretrain_256gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× VRNVL72, MXFP8 (alias of GB300)."""
     cfg = _build_kimi_k2_gb300_fp8mx()
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {

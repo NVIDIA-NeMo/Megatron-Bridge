@@ -117,6 +117,12 @@ def exported_recipe_factory_keys(module: ModuleType) -> set[tuple[str, str]]:
     }
 
 
+# Nemotron 3 Ultra's 108-layer decoder pattern from the Hugging Face config.
+NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN = (
+    "MEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME"
+)
+
+
 class _OfflineModelProvider:
     """Mutable provider with the fields HF-backed recipes read before writing.
 
@@ -195,6 +201,9 @@ class _OfflineAutoBridge:
             if model_id in {"zai-org/glm-5.2", "zai-org/glm-5.3"}:
                 provider.dsa_indexer_topk_freq = 4
                 provider.dsa_indexer_skip_topk_offset = 3
+        if model_id == "nvidia/nvidia-nemotron-3-ultra-550b-a55b-bf16":
+            provider.hybrid_layer_pattern = NEMOTRON_3_ULTRA_HYBRID_LAYER_PATTERN
+            provider.num_layers = len(provider.hybrid_layer_pattern)
         if "deepseek-v4-" in model_id:
             logical_layers = 61 if "deepseek-v4-pro" in model_id else 43
             provider.hybrid_layer_pattern = "WEWE" + "".join(

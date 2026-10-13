@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""VR200 performance recipes for DeepSeek V4."""
+"""VRNVL72 performance recipes for DeepSeek V4."""
 
 from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v4 import (
     deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config,
@@ -20,8 +20,8 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 
 
-def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V4 Flash pretrain: 128× VR200, MXFP8 (alias of GB300)."""
+def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
+    """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8 (alias of GB300)."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
 
     # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
@@ -30,7 +30,7 @@ def deepseek_v4_flash_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.model.use_transformer_engine_op_fuser = True
     cfg.model.moe_use_grouped_tensor = True
 
-    # Keep the VR200 launch environment explicit instead of inheriting it from GB300.
+    # Keep the VRNVL72 launch environment explicit instead of inheriting it from GB300.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,

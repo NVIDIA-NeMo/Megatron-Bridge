@@ -233,7 +233,10 @@ def load_recipe(
     seq_length: int | None = None,
 ) -> ConfigContainer:
     """Load an exact benchmark recipe when exported, otherwise a library recipe."""
-    if resolved_benchmark_recipe_metadata(recipe_name) is not None:
+    benchmark_metadata = resolved_benchmark_recipe_metadata(recipe_name)
+    if benchmark_metadata is not None:
+        # The resolved name replaces a deprecated hardware name in the requested one.
+        recipe_name = benchmark_metadata.recipe_name
         config_builder = find_benchmark_recipe(recipe_name)
         package_name = "megatron.bridge.perf_recipes"
         recipe_kind = "benchmark"
