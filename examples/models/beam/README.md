@@ -66,8 +66,8 @@ export SLURM_PARTITION=your-partition
 export CONTAINER_IMAGE=your-container-image
 ```
 
-The conversion and Megatron inference commands below match the verification card's commands, which ran on H200 (CPU
-conversion on a B300 host) through the launchers' Python entry points. The training commands are shortened from the
+The conversion and Megatron inference commands below follow the verification card's commands with shorter paths; the
+card's commands ran on H200 (CPU conversion on a B300 host) through the launchers' Python entry points. The training commands are shortened from the
 card's commands, which add the pinned dataset revision, seeds, NaN checks and logging options.
 
 ## Conversion
@@ -133,14 +133,15 @@ To compare the imported checkpoint with Hugging Face, use `--task model-comparis
 Hugging Face forward of the same revision (`--hf-logits-path`). On the prompt "The capital of France is the city of"
 both predict " Paris" with cosine similarity 0.9997.
 
-For Hugging Face inference on a single 8 x H200 node, cap each GPU at 125 GiB so Transformers offloads the remaining
-layers to CPU. Uncapped `--device-map auto` placement runs out of memory while it stacks the per-expert weights:
+For Hugging Face inference on a single 8 x H200 node, cap each GPU at 110 GiB so Transformers offloads the remaining
+layers to CPU. Uncapped `--device-map auto` placement runs out of memory while it stacks the per-expert weights, and
+a 125 GiB cap leaves only about 1.5 GiB of headroom when the loader stacks two layers at once:
 
 ```bash
 ./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 8 \
   --hf-model work/models/beam-hf-export \
   --prompt 'Write one concise sentence explaining why deterministic tests matter:' \
-  --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 125
+  --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 110
 ```
 
 ## Recipes
