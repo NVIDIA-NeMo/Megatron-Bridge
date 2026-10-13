@@ -85,3 +85,35 @@ def test_container_startup_cannot_override_gcp_test_environment(
         "NVTE_FLASH_ATTN_V3": "0",
         "NVTE_FLASH_ATTN_V4": "0",
     }
+
+
+@pytest.mark.parametrize("mount_fs", [True, False])
+def test_mounted_cache_uses_container_local_config_locks(tmp_path: Path, mount_fs: bool) -> None:
+    action = yaml.safe_load(ACTION.read_text())
+    start = next(step["run"] for step in action["runs"]["steps"] if step.get("name") == "Start container")
+    expressions = {
+        "inputs.test-data-path": "/shared/test-data",
+        "github.run_id": "123",
+        "inputs.runner": "nemo-ci-gcp-gpu-x2",
+        "inputs.shard-id": "",
+        "inputs.num-shards": "",
+        "inputs.container-image": "test-image",
+        "inputs.timeout": "1",
+    }
+    start = re.sub(r"\$\{\{\s*(.*?)\s*\}\}", lambda match: expressions[match[1]], start)
+    docker = tmp_path / "docker"
+    docker.write_text('#!/bin/sh\n[ "$1" != run ] || printf "%s\\n" "$@" > docker-args\n')
+    docker.chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}", "MOUNT_FS": str(mount_fs).lower()}
+    subprocess.run(["bash", "-c", start], cwd=tmp_path, env=env, check=True, capture_output=True, text=True)
+    args = (tmp_path / "docker-args").read_text().splitlines()
+    container_env = dict(args[i + 1].split("=", 1) for i, arg in enumerate(args) if arg == "--env")
+    if mount_fs:
+        assert container_env["HF_HOME"] == "/home/TestData/HF_HOME"
+        assert container_env["HF_HUB_OFFLINE"] == "1"
+        assert container_env["MEGATRON_CONFIG_LOCK_DIR"] == "/home/ubuntu/.cache/huggingface"
+        assert args[args.index("--volume") + 1] == "/shared/test-data:/home/TestData"
+    else:
+        assert "MEGATRON_CONFIG_LOCK_DIR" not in container_env
+        assert "HF_HUB_OFFLINE" not in container_env
+        assert "--volume" not in args
