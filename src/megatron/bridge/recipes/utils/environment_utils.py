@@ -32,13 +32,14 @@ COMMON_RECIPE_ENV_VARS: dict[str, str | int | float | bool] = {
     "TORCH_NCCL_HIGH_PRIORITY": 1,
 }
 
-# Values identical across every deterministic recipe variant. Spread into a
-# recipe's static env_vars dict next to COMMON_RECIPE_ENV_VARS.
+# Values required for bit-exact reproducibility. Identical to what
+# apply_determinism_overrides exports; spread into a deterministic recipe's
+# static env_vars dict, which is reassigned after that call.
 DETERMINISM_ENV_VARS: dict[str, str | int | float | bool] = {
     "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
     "NCCL_ALGO": "Ring",
-    "NCCL_EP_HT_EM_AG_SCAN_MODE": 1,
-    "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-    "MAMBA_DETERMINISTIC": 1,
-    "CAUSAL_CONV1D_DETERMINISTIC": 1,
+    "NCCL_EP_HT_EM_AG_SCAN_MODE": "1",
+    "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+    "MAMBA_DETERMINISTIC": "1",
+    "CAUSAL_CONV1D_DETERMINISTIC": "1",
 }

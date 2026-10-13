@@ -229,6 +229,11 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_deterministic_config() -> ConfigCont
     """
     cfg = qwen35_text_9b_pretrain_8gpu_gb200_bf16_config()
     apply_determinism_overrides(cfg)
+
+    # Standalone Qwen3.5 override, not part of apply_determinism_overrides: Megatron-Core rejects
+    # deterministic_mode with Gated DeltaNet unless the torch kernel backend is used.
+    cfg.model.gdn_kernel_backend = "torch"
+
     # Keep the exact process environment visible on the recipe.
     cfg.env_vars = {
         **DETERMINISM_ENV_VARS,

@@ -65,6 +65,7 @@ def test_text_9b_pretrain_deterministic_applies_determinism():
 
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
+    assert cfg.model.gdn_kernel_backend == "torch"
     assert cfg.model.tensor_model_parallel_size == base.model.tensor_model_parallel_size == 1
     assert cfg.train.global_batch_size == base.train.global_batch_size
     assert cfg.env_vars == DETERMINISM_ENV_VARS
