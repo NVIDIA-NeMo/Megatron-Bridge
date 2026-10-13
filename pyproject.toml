@@ -149,7 +149,12 @@ override-dependencies = [
     "apache-tvm-ffi==0.1.11",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
     "fastapi<0.139.2",                                      # 0.139.2 fails with ray 2.55.1 at least
-    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
+    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0",  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
+    # Megatron Bridge's telemetry needs nemo-lens SpanRegistry, which the revision megatron-core pins (b85578fc,
+    # v0.2.0) predates, so this replaces that pin with v0.3.0. An override applies only to the project being
+    # locked: NeMo-RL, which resolves Megatron Bridge as a dependency, picks nemo-lens with its own override.
+    # Drop this override once megatron-core pins v0.3.0 or later.
+    "nemo-lens @ git+https://github.com/NVIDIA-NeMo/Lens.git@7bcc03ce3565d2be6858b819b049bcc4c3ec05b4",
 ]
 
 [[tool.uv.index]]
@@ -228,6 +233,16 @@ ssm = [
 ]
 audio = [
     "librosa",
+]
+# nemo-lens, plus the OpenTelemetry SDK and OTLP exporters that export what it records. megatron-core main
+# already requires nemo-lens, but megatron-core dev does not. The SDK and exporters mirror nemo-lens's own
+# `sdk` extra: the nemo-lens override above drops the extras of every nemo-lens requirement, so
+# `nemo-lens[sdk]` or `megatron-core[otel]` would not pull them in.
+otel = [
+    "nemo-lens",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
 ]
 
 [dependency-groups]
