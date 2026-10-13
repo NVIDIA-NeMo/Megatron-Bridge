@@ -12,7 +12,12 @@ summary: >
   non-cached legacy full-prefix path. CPU import and CPU export run single-process on a host with well over 1 TB of
   memory and their round trip is exact as well; each requests one runtime GPU because Transformer Engine constructs
   Beam's attention layers only when CUDA is available, so the launcher's GPU-less distributed CPU export does not
-  work for Beam. The CPU items ran on a B300 host; every other item ran on H200.
+  work for Beam. The CPU items ran on a B300 host; every other item ran on H200. Pretrain, checkpoint resume, SFT and
+  the SFT export ran at the recorded bridge commit; the other items ran at its ancestor 757805c, and the commits in
+  between change only documentation and add the HF inference verifier's --max-gpu-memory-gib option. Loading the
+  full fine-tuned export in
+  Transformers on one 8x H200 node needs that cap: device_map auto otherwise fills each GPU with seven decoder layers,
+  and the load-time stacking of per-expert tensors then runs out of GPU memory.
 
   Full SFT and PEFT follow qwen3_30b_a3b_convergence_v2 (Tulu 3 train[:10000], 8K offline packs, GBS 8, 100 steps,
   FP32 optimizer state); Beam's chat template packs that split into 499 packs, so 100 steps take about 1.6 passes.
@@ -33,8 +38,7 @@ verification_index:
       - inference
   training:
     H200:
-      verified: [pretrain, sft, sft_long_context, peft]
-      unverified: [sft_export_inference, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 
 model:
   hf_id: reflection/brandon-dire-surge-10-03-s200
@@ -44,7 +48,7 @@ model:
 
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.08-py3
-  bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
+  bridge_commit: dd861860b018d84b360cf13e87cc73b640c9b193  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -224,24 +228,26 @@ items:
       last_verified: 2026-10-13
       metrics:
         initial_loss: 1.04323
-        final_loss: 0.7583156
-        last_10_steps_step_time_ms_avg: 2334.25
-        last_10_steps_model_tflops_per_gpu_avg: 28.26
-        last_10_steps_tokens_per_second_per_gpu_avg: 219.342
+        final_loss: 0.7587349
+        last_10_steps_step_time_ms_avg: 2330.71
+        last_10_steps_model_tflops_per_gpu_avg: 28.3
+        last_10_steps_tokens_per_second_per_gpu_avg: 219.676
       expected_result: >
         On 128 H200 (16 nodes x 8), TP8/PP2/EP64/ETP1, DP8, SP on, GBS/MBS 8/1 with no gradient accumulation and
         natural routing (fixed expert bias, no auxiliary loss), under qwen3_30b_a3b_convergence_v2 with FP32 gradient
         reduction, FP32 master weights and FP32 Adam moments. Pad-8 offline packing is 99.59% efficient; Tulu 3
         train[:10000] packs into 503 8K packs, so the 100 steps sample 800 packs (501 distinct, about 1.6 passes of the
         seed-1234 per-epoch order) and the 6,553,600 token slots contain 3,952,199 supervised tokens after label
-        masking. LM loss is finite from 1.04323 to 0.7583156 with no skipped or NaN iterations, all five metrics are
+        masking. LM loss is finite from 1.04323 to 0.7587349 with no skipped or NaN iterations, all five metrics are
         recorded, the post-setup configuration persists, and the complete 128-shard weights-only iter_0000100
-        checkpoint (1.0 TB, model state only) is consumed by the export item. The 120-minute collective timeout covers
-        rank 0's offline packing while the other ranks wait.
+        checkpoint (1.0 TB, 26,131 entries, model state only) is the one the export item consumes. An earlier run of
+        the same command on the same packed data started from the same loss, ended at 0.7583156 and matched these
+        throughput figures within 0.2%. The 120-minute collective timeout covers rank 0's offline packing while the
+        other ranks wait.
 
   sft_export_inference:
     H200:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
       commands:
@@ -258,10 +264,22 @@ items:
           --hf-model work/model-verification/beam/sft-hf-export
           --prompt 'Write one concise sentence explaining why deterministic tests matter:'
           --max-new-tokens 16 --chat-template --device-map auto --max-gpu-memory-gib 110
-      last_verified: null
+      last_verified: 2026-10-13
       expected_result: >
-        The step-100 SFT checkpoint exports to HF and one deterministic greedy generation completes within the
-        16-token bound.
+        The step-100 SFT checkpoint exports on 2 nodes x 8 H200 (TP1/PP1/EP16/ETP1) in 1497 s. A structure audit
+        against the pinned base revision finds all 38,366 tensors with the source names, shapes and dtypes
+        (501,267,612,352 values), 38,158 of them changed by the SFT; config.json differs only in transformers_version
+        and in max_position_embeddings, which the export sets to the 8,192-token training length. The export reloads
+        strictly in Transformers on one 8x H200 node with device_map auto under a 110 GiB per-GPU cap, which keeps
+        five 18.9 GiB MoE decoder layers per GPU and offloads the rest to CPU memory. Without the cap, device_map auto
+        places seven layers per GPU and the load-time stacking of per-expert tensors runs out of GPU memory. The
+        deterministic greedy run generated exactly 16 new tokens under the 16-token maximum: the fine-tuned model
+        closes the analysis channel at once and answers in the final channel, while a probe of the base checkpoint with
+        the same prompt spends the whole bound on analysis text. The chat-template control tokens are not marked
+        special in the tokenizer, so they decode as text; with the six control tokens omitted, the literal completion
+        is 'analysisassistantfinalDeterministic tests matter because they provide'.
+        A second independent run produced the identical completion. Each run takes 67 to 86 minutes, mostly loading
+        the 1 TB export from shared storage and streaming the offloaded layers.
 
   sft_long_context:
     H200:
@@ -352,7 +370,7 @@ items:
 
   checkpoint_resume:
     H200:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: pretrain
       command: >
@@ -370,19 +388,25 @@ items:
         --save_dir work/model-verification/beam/pretrain-resume/checkpoints --save_interval 50
         checkpoint.ckpt_step=50
         logger.save_config_filepath=work/model-verification/beam/pretrain-resume/ConfigContainer.yaml
-      last_verified: null
+      last_verified: 2026-10-13
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-        last_10_steps_tokens_per_second_per_gpu_avg: null
+        initial_loss: 0.6730398
+        final_loss: 0.7265024
+        last_10_steps_step_time_ms_avg: 20361.52
+        last_10_steps_model_tflops_per_gpu_avg: 51.74
+        last_10_steps_tokens_per_second_per_gpu_avg: 402.328
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        Resumes from the step-50 reference checkpoint into a new root and completes steps 51-100; the step-51 and
-        step-100 losses must match the reference within 1e-6 absolute plus 1% relative.
+        In a separate Job, the pretrain recipe loads the reference run's full-state step-50 checkpoint (model,
+        optimizer, scheduler, RNG and data position) on the same 128 H200 layout and completes steps 51-100 into a new
+        root with no skipped or NaN iterations. The step-51 loss equals the reference exactly (0.6730398) and step 100
+        is 0.7265024 against 0.7262869 (0.03% apart), both inside the 1e-6 absolute plus 1% relative tolerance; across
+        all 50 shared steps the largest gap is 0.15% at step 66 (0.7022135 against 0.7011884), 15% of the tolerance.
+        Throughput matches the reference within 0.4%, all five metrics are recorded, the post-setup configuration
+        persists, and the resumed run saves its own complete step-100 checkpoint (128 distcp shards, 5.01 TB, 45,711
+        entries).
