@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Every GB300 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the VRNVL72
-aliases built on the shared HybridEP bases stay on HybridEP."""
+aliases built on the shared HybridEP bases stay on HybridEP. VRNVL72 aliases built on an NCCL EP base
+carry the same NCCL EP stack."""
 
 import importlib
 
@@ -53,6 +54,9 @@ _GB300_NCCLEP_RECIPES = (
     ("qwen_vl.gb300.qwen35_vl", "qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config"),
 )
 
+# VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
+_VRNVL72_NCCLEP_RECIPES = (("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),)
+
 # VRNVL72 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
 _VRNVL72_ALIASES = (
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_256gpu_vrnvl72_bf16_config"),
@@ -63,7 +67,6 @@ _VRNVL72_ALIASES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_nano_pretrain_8gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_super_pretrain_64gpu_vrnvl72_nvfp4_config"),
-    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_bf16_config"),
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
@@ -94,7 +97,9 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-@pytest.mark.parametrize(("module_name", "factory_name"), _GB300_NCCLEP_RECIPES, ids=lambda value: value)
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"), (*_GB300_NCCLEP_RECIPES, *_VRNVL72_NCCLEP_RECIPES), ids=lambda value: value
+)
 def test_gb300_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
 

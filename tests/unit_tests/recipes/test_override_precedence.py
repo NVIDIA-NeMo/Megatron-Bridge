@@ -435,19 +435,23 @@ class TestCudaGraphOverrides:
         assert recipe.rng.te_rng_tracker is True
         assert recipe.rerun_state_machine.check_for_nan_in_loss is False
 
-    def test_local_scoped_graph_is_rejected(self):
-        """Local graphs cannot capture individual layer modules in Bridge."""
+    def test_local_scoped_graph_is_normalized(self):
+        """Local per-layer graphs populate current MCore module values."""
         from utils.overrides import _set_cuda_graph_overrides
 
-        with pytest.raises(
-            ValueError,
-            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
-        ):
-            _set_cuda_graph_overrides(
-                _minimal_cuda_graph_recipe(),
-                cuda_graph_impl="local",
-                cuda_graph_scope="mlp",
-            )
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
+
+        recipe = _set_cuda_graph_overrides(
+            _minimal_cuda_graph_recipe(),
+            cuda_graph_impl="local",
+            cuda_graph_scope="mlp",
+        )
+
+        assert recipe.model.cuda_graph_impl == "local"
+        assert cuda_graph_module_names(recipe.model) == ["mlp"]
+        assert not is_full_iteration_cuda_graph(recipe.model)
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
 
     def test_transformer_engine_scoped_graph_is_normalized(self):
         """TE scoped graphs populate current MCore module values."""

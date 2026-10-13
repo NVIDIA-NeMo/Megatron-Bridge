@@ -273,8 +273,9 @@ class TestCudaGraphCleanup:
         ):
             _finish_train(state, checkpoint_manager)
 
+    @patch("megatron.bridge.training.train.delete_local_cuda_graphs")
     @patch("megatron.bridge.training.train.gc.collect")
-    def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect):
+    def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect, mock_delete_local):
         """Cleanup must leave reusable full-graph mappings for the next training run."""
         from megatron.core.full_cuda_graph import FullCudaGraphWrapper
         from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
@@ -301,6 +302,7 @@ class TestCudaGraphCleanup:
         assert OptimizerCudaGraphWrapper.result is None
         assert OptimizerCudaGraphWrapper.curr_iteration == 0
         helper.delete_cuda_graphs.assert_not_called()
+        mock_delete_local.assert_called_once_with()
         mock_collect.assert_called_once()
 
 
