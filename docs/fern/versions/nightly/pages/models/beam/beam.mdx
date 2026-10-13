@@ -1,6 +1,6 @@
 # Beam
 
-Beam is a 52-layer sparse mixture-of-experts language model with about 501B parameters: three dense layers followed
+[Beam](https://huggingface.co/reflection/Beam-1.0-501B-A23B) is a 52-layer sparse mixture-of-experts language model with about 501B parameters: three dense layers followed
 by 49 MoE layers with 256 routed experts (top-8, grouped sigmoid routing). Attention alternates five sliding-window
 RoPE layers with one full-attention NoPE layer. Megatron Bridge builds it as a native Megatron-Core `HybridModel`
 through the builder-backed `BeamModelConfig`.

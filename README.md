@@ -227,6 +227,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 |----------------|--------------------|
 | [**BAGEL**](docs/models/bagel/bagel.md) | BAGEL-7B-MoT (requires the tested MCore `dev` revision and `bagel` extra) |
 | [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
+| [**Beam**](docs/models/beam/beam.md) | Beam-1.0-501B-A23B |
 | [**BERT**](docs/models/bert/index.md) | Megatron-Style BERT (`MegatronBertForMaskedLM`) |
 | [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V3, DeepSeek V4 / V4 Flash |
 | [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
