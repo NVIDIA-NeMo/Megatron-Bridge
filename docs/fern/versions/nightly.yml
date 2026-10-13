@@ -189,6 +189,8 @@ navigation:
     path: ./nightly/pages/training/logging.mdx
   - page: Profiling
     path: ./nightly/pages/training/profiling.mdx
+  - page: OpenTelemetry Observability
+    path: ./nightly/pages/training/observability.mdx
   - page: Theoretical Memory Estimator
     path: ./nightly/pages/training/memory-estimator.mdx
   - page: Checkpointing
