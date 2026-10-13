@@ -496,10 +496,11 @@ def test_library_only_canonical_name_applies_runtime_environment_without_restart
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch):
+@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
+def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, env_name):
     module, handles = _load_module()
-    monkeypatch.delenv("NVTE_CPU_OFFLOAD_V1", raising=False)
-    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    monkeypatch.delenv(env_name, raising=False)
+    config = SimpleNamespace(env_vars={env_name: 1})
     handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
@@ -511,10 +512,11 @@ def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch):
     handles.recipe_runner.apply_runtime_environment.assert_not_called()
 
 
-def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch):
+@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
+def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch, env_name):
     module, handles = _load_module()
-    monkeypatch.setenv("NVTE_CPU_OFFLOAD_V1", "0")
-    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    monkeypatch.setenv(env_name, "0")
+    config = SimpleNamespace(env_vars={env_name: 1})
     handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
