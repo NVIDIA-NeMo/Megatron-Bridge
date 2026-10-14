@@ -19,8 +19,8 @@ Activation recompute (activation checkpointing) trades additional forward work d
 ## Quick Decision Guide
 
 1. Confirm the pressure is real allocation, not allocator fragmentation. Compare `max_memory_allocated()` with `max_memory_reserved()` on every rank.
-2. Start final library, performance, and verification-card recipes with no recompute when the workload fits. Keep an explicit no-recompute control. Under selective granularity, `recompute_modules=[]` is valid and useful for this comparison.
-3. When no recompute does not fit, select the narrowest supported boundary from the architecture and observed peak:
+2. For final library, performance, and verification-card recipes, no recompute and selective recompute on cheap supported modules are both appropriate starting choices. Choose by measured memory headroom and steady-state performance; a no-recompute OOM is not a prerequisite for selective recompute. Keep an explicit no-recompute control when it fits. Under selective granularity, `recompute_modules=[]` is valid and useful for this comparison.
+3. For selective recompute, start with cheap supported boundaries selected from the architecture and observed peak:
    - **Standard attention:** `core_attn` is the common first candidate. It is strongest when unfused attention materializes score/probability tensors. With Transformer Engine fused or Flash Attention, compare it against `[]` because those backends already rematerialize attention internals.
    - **Multi-Latent Attention (MLA):** start with `mla_up_proj` when expanded Q/K/V projections dominate. Add `core_attn` only when the attention-core state still matters.
    - **Grouped MoE:** start with `moe_act` when the expert intermediate activation dominates; add `layernorm` when norm outputs are material. Use whole `moe` recompute only after accounting for the extra expert compute and communication it replays.
@@ -138,8 +138,8 @@ iteration 2. Time and throughput are means over iterations 11--20.
 | `moe_act` | 35.941 | 466.26 | 75.50 | -1.85% | +1.99% |
 | `layernorm`, `moe_act` | 35.949 | 506.53 | 70.27 | -1.83% | +10.79% |
 
-For this exact workload, no recompute fits and is preferred. If additional
-headroom is needed, `moe_act` is the best first tested boundary: it recovered
+For this exact workload, both no recompute and cheap selective `moe_act` are
+reasonable choices depending on the desired memory headroom. `moe_act` recovered
 nearly as much allocated memory as `mla_up_proj` for less replay cost.
 `mla_up_proj` is the next candidate if its roughly 39 MB additional reduction
 matters. Adding `mlp` to `mla_up_proj` or `layernorm` to `moe_act` did not
@@ -182,12 +182,11 @@ is used here.
 ### Cross-model conclusion
 
 These measurements do not define one ranking. Moonlight fit with an empty
-control, so no recompute is preferred; narrow `moe_act` is a candidate when
-additional headroom is needed. Nemotron required broad whole-`moe` recompute;
-historical dense Llama evidence found whole-`mlp` replay costly and lacked an
-empty control. Start with no recompute when it fits, then the narrowest boundary
-implicated by the architecture and peak, broadening only when the narrow choice
-does not pass the complete step.
+control, and cheap selective `moe_act` offered additional headroom at modest
+cost. Nemotron required broad whole-`moe` recompute; historical dense Llama
+evidence found whole-`mlp` replay costly and lacked an empty control. Start with
+no recompute or cheap selective boundaries, choose by measured memory and
+performance, and broaden only as needed to pass the complete step.
 
 ## Compatibility and Validation
 

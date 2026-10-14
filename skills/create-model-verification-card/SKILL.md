@@ -426,9 +426,11 @@ hardware. It may vary across models or be tuned for throughput:
   provided routing, capacity, token dropping, and auxiliary losses are
   unchanged.
 
-For the final verification-card recipe, use no recompute when it fits;
-otherwise use the narrowest measured selective boundaries. Full recompute is
-acceptable temporarily for diagnostic bring-up, but can severely reduce
+For the final verification-card recipe, no recompute and selective recompute
+on cheap supported modules are both appropriate starting choices. Choose by
+measured memory headroom and steady-state performance; selective recompute
+does not require a no-recompute OOM first. Full recompute is acceptable
+temporarily for diagnostic bring-up, but can severely reduce
 throughput. Retain it only when target-scale measurements show no recompute
 and supported selective boundaries still fail to fit. Record memory/OOM
 evidence, boundaries tested, and steady-state performance cost in the recipe's

@@ -72,10 +72,11 @@ The smaller Qwen3.5-style multimodal experiments reinforce the same lessons:
 
 ### Choose recompute for the final recipe
 
-For library, performance, and verification-card recipes, start with **no
-recompute when it fits**; otherwise use the narrowest supported selective
-boundaries measured to fit at target scale. Full recompute can severely reduce
-throughput. It is acceptable temporarily during memory-constrained diagnostic
+For library, performance, and verification-card recipes, **no recompute and
+selective recompute on cheap supported modules are both appropriate starting
+choices**. Choose using measured memory headroom and steady-state performance
+at target scale; selective recompute does not require a no-recompute OOM first.
+Full recompute can severely reduce throughput. It is acceptable temporarily during memory-constrained diagnostic
 bring-up, but a successful bring-up run does not justify publishing it as the
 default. Retain full recompute only when target-scale measurements show that
 no recompute and supported selective boundaries still fail to fit. Document
@@ -98,9 +99,9 @@ performance cost.
    or output-layer weights, and the final choice must respect PP/DP rank layout
    and the hardware topology.
 
-3. **Use no recompute when it fits, then measured selective recompute**: if
-   temporary full recompute was used for bring-up, test no recompute and the
-   narrowest supported selective boundaries before recommending a recipe.
+3. **Use no recompute or cheap selective recompute**: if temporary full
+   recompute was used for bring-up, evaluate these lighter choices before
+   recommending a recipe; broaden selective boundaries only as needed for fit.
    Measure memory and steady-state throughput rather than carrying the
    diagnostic setting forward.
 
@@ -140,9 +141,9 @@ Use this order so each measurement answers one question:
 2. Minimize TP while retaining enough memory for non-expert weights.
 3. Establish a stable real-data run. Temporary full recompute is allowed for
    diagnostic bring-up when memory fit is uncertain.
-4. Select the final recipe by testing no recompute first, then the narrowest
-   supported selective boundaries needed to fit at target scale. Retain full
-   recompute only under the documented exception above.
+4. Select the final recipe using no recompute or cheap supported selective
+   boundaries, measuring their memory/performance tradeoff at target scale.
+   Retain full recompute only under the documented exception above.
 5. Measure per-rank peak allocated/reserved memory and steady-state step time
    or throughput through optimizer initialization and multiple complete steps.
 6. If there is headroom, increase MBS; if TP was used for activation pressure,
@@ -163,7 +164,7 @@ fits is the baseline; it is not automatically the performance recipe.
 TP=1  CP=1  PP=1
 EP sized to the expert topology, often large
 Dispatcher: HybridEP on GB200-class systems
-Recompute: none when it fits; otherwise the narrowest measured selective boundaries
+Recompute: none or cheap supported selective modules; measure memory and throughput
 ```
 
 ### 3D-parallel GB200 path
@@ -182,7 +183,7 @@ CUDA Graph: start narrow, then widen only after the real-data path is stable
 | HybridEP on GB200 | strong default | strong default once topology is stable |
 | CUDA graphs | useful after bring-up | useful, but more scope-sensitive |
 | Freeze vision | natural fit | possible, but less often used as the headline perf path |
-| Selective recompute | when no recompute does not fit | when no recompute does not fit |
+| Cheap selective recompute | appropriate alongside no recompute | appropriate alongside no recompute |
 
 ## Pitfalls
 

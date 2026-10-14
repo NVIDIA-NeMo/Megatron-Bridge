@@ -261,9 +261,11 @@ For an MoE recipe on a fixed allocation, use this practical order:
    is a common first candidate on one 8-GPU node, and EP=32 is a common first
    candidate on a 32-GPU allocation. These are starting points, not universal
    defaults: EP shards expert weights only, not dense layers or activations.
-3. For final library, benchmark, and verification-card recipes, start with no
-   recompute when it fits; otherwise use the narrowest measured selective
-   boundaries. Full recompute is acceptable temporarily for diagnostic bring-up,
+3. For final library, benchmark, and verification-card recipes, no recompute
+   and selective recompute on cheap supported modules are both appropriate
+   starting choices. Choose by measured memory headroom and steady-state
+   performance; selective recompute does not require a no-recompute OOM first.
+   Full recompute is acceptable temporarily for diagnostic bring-up,
    but can severely reduce throughput. Retain it only when target-scale
    measurements show no recompute and supported selective boundaries still fail
    to fit; document memory/OOM evidence and steady-state performance cost. For
