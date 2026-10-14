@@ -1680,6 +1680,9 @@ def num_floating_point_operations(
     # and its MLP. The standard Transformer path already accounts for that full
     # layer plus GQA, output gates, sliding attention, logits, and vision work.
     if getattr(cfg.model, "hybrid_attention_layers_include_mlp", False):
+        additional_flops = getattr(cfg.model, "_get_additional_transformer_flops", None)
+        if additional_flops is not None and peft is None:
+            return transformer_flops() + additional_flops(seqlen_sum=seqlen_sum)
         return transformer_flops()
 
     # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:

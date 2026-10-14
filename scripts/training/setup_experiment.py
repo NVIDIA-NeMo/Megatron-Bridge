@@ -129,6 +129,14 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
             "Defaults to 4752 for VR200 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
         ),
     )
+    execution.add_argument(
+        "--setup-script",
+        type=Path,
+        help=(
+            "Shell script captured at submission and run once on the batch node before training. "
+            "Use it for allocation-local data/cache staging; a failure prevents training."
+        ),
+    )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument(
         "--submission-dry-run",
@@ -256,6 +264,22 @@ def _configure_slurm_peak_mem_clk(executor: Any, peak_mem_clk: int | None) -> No
     executor.setup_lines = f"{executor.setup_lines or ''}{command}"
 
 
+def _configure_slurm_setup_script(executor: Any, setup_script: Path | None) -> None:
+    """Capture an allocation setup script without changing the training worker.
+
+    NeMo-Run's batch template disables errexit. Run setup in a strict child
+    shell and explicitly propagate failure before the worker srun can start.
+    Child environment changes do not affect the subsequent training command.
+    """
+    if setup_script is None:
+        return
+    source = setup_script.read_text()
+    if not source.strip():
+        raise ValueError("--setup-script must contain a non-empty shell script.")
+    command = f"bash -euo pipefail -c {shlex.quote(source)} || exit $?"
+    executor.setup_lines = f"{executor.setup_lines or ''}\n{command}\n"
+
+
 def _build_executor(
     args: argparse.Namespace,
     env_names: list[str],
@@ -320,6 +344,7 @@ def main(argv: list[str] | None = None) -> None:
     executor = _build_executor(args, env_names, mounts, task_environment=task_environment)
     peak_mem_clk = _resolve_peak_mem_clk(args.peak_mem_clk, benchmark_metadata)
     _configure_slurm_peak_mem_clk(executor, peak_mem_clk)
+    _configure_slurm_setup_script(executor, args.setup_script)
 
     task = run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),

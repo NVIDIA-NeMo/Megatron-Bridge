@@ -3695,3 +3695,16 @@ def test_hybrid_gdn2_projection_flops(pattern):
     gdn2 = num_floating_point_operations(cfg, batch_size=2)
     # GDN input width is 48, GDN2 input width is 64 for this configuration.
     assert gdn2 - gdn == pattern.count("G") * 2 * 2 * 8 * 16 * (64 - 48) * 3
+
+
+def test_complete_hybrid_layer_additive_flops_uses_runtime_token_count():
+    """Model-owned additions complement, rather than replace, standard accounting."""
+    model = SimpleNamespace(**vars(MockModelConfig()))
+    model.hybrid_attention_layers_include_mlp = True
+    cfg = MockConfigContainer(model=model)
+    baseline = num_floating_point_operations(cfg, batch_size=2, seqlen_sum=13, seqlen_squared_sum=85)
+    additional = MagicMock(return_value=1234)
+    model._get_additional_transformer_flops = additional
+    actual = num_floating_point_operations(cfg, batch_size=2, seqlen_sum=13, seqlen_squared_sum=85)
+    additional.assert_called_once_with(seqlen_sum=13)
+    assert actual == baseline + 1234

@@ -14,6 +14,7 @@
 
 """Declarative configuration for the Bridge-local Qwen4-Exp HybridModel."""
 
+import warnings
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -151,6 +152,62 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
             width = int(self.kv_channels * self.rotary_percent)
             if len(self.mrope_section) != 3 or sum(self.mrope_section) * 2 != width:
                 raise ValueError("mrope_section must partition the rotary head dimension into three axes.")
+
+    def _get_additional_transformer_flops(self, *, seqlen_sum: int | float) -> int | float:
+        """Count custom projection work beyond the generic GDN/MoE estimate.
+
+        Counts logical model matrix FLOPs, not TP-replicated execution or
+        hardware instructions. Trainable GR/PLE projections use six FLOPs per
+        weight per token (forward, input gradient and weight gradient); the
+        hard-selection QSA indexer has forward-only work. Norms, activations,
+        embedding lookups, PLE depthwise convolution and communication remain
+        outside this matrix estimate. While every visible QSA block is selected,
+        the native selector skips its score matmul. Outside that configured
+        length bound the inherited dense attention term is only a surrogate;
+        warn rather than restricting otherwise supported model training.
+        """
+        if seqlen_sum < 0:
+            raise ValueError("Qwen4 FLOPs require a nonnegative runtime token count.")
+        hidden = self.hidden_size
+        streams = self.mhc_num_residual_streams
+        rank = self.mhc_gated_residual_rank
+        if self.mhc_variant != "gated_residual" or rank is None or rank <= 0:
+            raise ValueError("Qwen4 FLOPs require the gated-residual architecture.")
+        stream_width = streams * hidden
+        # Two GR modules per complete layer; final output mixer has no inject.
+        gr_weights = 2 * self.num_layers * (2 * stream_width * rank + stream_width * streams)
+        gr_weights += 2 * stream_width * rank
+        ple_weights = len(self.ple_layer_ids or ()) * (self.ple_embed_dim or hidden) * (stream_width + hidden)
+        training_flops = 6 * (gr_weights + ple_weights)
+        indexer_flops = 0
+        if self.qsa_indexer_n_heads is not None:
+            if (
+                self.qsa_force_sparse
+                or self.qsa_indexer_budget is None
+                or self.qsa_indexer_compress_ratio is None
+                or self.seq_length > self.qsa_indexer_budget + self.qsa_indexer_compress_ratio - 1
+            ):
+                warnings.warn(
+                    "Qwen4 FLOPs use a dense-attention surrogate outside the QSA selection shortcut; "
+                    "sparse attention and indexer score work are not accurately accounted for.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+            frequency = self.linear_attention_freq
+            if isinstance(frequency, int):
+                attention_layers = self.num_layers // frequency
+            else:
+                attention_layers = self.num_layers - sum(frequency)
+            # index_qk_proj runs before the all-selected shortcut, but its
+            # detached outputs never receive a language-loss backward pass.
+            indexer_flops = (
+                2
+                * hidden
+                * (self.qsa_indexer_n_heads + self.qsa_indexer_kv_heads)
+                * self.qsa_indexer_head_dim
+                * attention_layers
+            )
+        return seqlen_sum * (training_flops + indexer_flops)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize the config with a symbolic activation function."""

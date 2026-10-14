@@ -146,8 +146,11 @@ items:
         not verification of the new public command or generalization evidence.
         Historical model TFLOP/s/GPU was not reliably captured; standard loss
         and iteration-time logging are enabled for the rerun. Logged TFLOP/s
-        is a partial analytical architecture estimate that omits custom
-        gated-residual, PLE, and QSA work, not complete model throughput or MFU.
+        uses an analytical matrix-work estimate including gated-residual and PLE
+        projections and the forward-only QSA indexer projection. At sequence
+        2048 QSA skips its score matmul. Norms, activations, lookups, PLE
+        depthwise convolution, communication, and duplicated parallel work are
+        outside this estimate; it is not hardware-counter throughput or MFU.
 
   sft_export_inference:
     GB200:

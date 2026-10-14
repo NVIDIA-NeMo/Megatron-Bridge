@@ -379,3 +379,16 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
 
 This entry point loads library recipes for pretraining, SFT, LoRA, and DoRA, and all exact exported
 benchmark recipes when selected explicitly.
+
+
+### Allocation setup
+
+`--setup-script /path/to/setup.sh` captures a caller-owned shell script at
+submission and executes it once on the batch node before the standard training
+worker. This supports staging large checkpoints, datasets, source, and caches
+to node-local storage without editing generated Slurm scripts or replacing the
+recipe runner. Use `srun` inside the setup script when each allocated node needs
+staging. The script runs in a strict child shell; failure stops the job before
+training, and child exports do not alter the worker environment. Keep runtime
+paths and setup scripts outside model verification cards, alongside the
+caller's account, image, and mount configuration.

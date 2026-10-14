@@ -80,10 +80,13 @@ TensorBoard logging is enabled when its output path is supplied. Save the
 post-setup config and complete keyed step records. Record initial/final loss
 and average step time and TFLOP/s over the same final ten steps in the card;
 derive token-slot throughput as `2048 * 8 / (step_seconds * 64)`.
-TFLOP/s uses Bridge's partial analytical architecture estimate, not hardware
-counters or full-model MFU. It includes GDN, dense attention, MoE, logits, and
-vision work, but omits Qwen4-specific gated-residual, PLE, and QSA-indexer work.
-Those omissions are material; compare only measurements using the same formula.
+TFLOP/s uses Bridge's analytical matrix-work estimate, not hardware counters
+or MFU. It includes GDN, dense attention, MoE, logits, vision, gated-residual
+and PLE projections, and the forward-only QSA indexer projection. At the recipe's
+sequence length2048 the QSA selector skips its score matrix multiplication.
+Norms, activations, embedding lookups, PLE depthwise convolution, communication,
+and duplicated work across parallel ranks are outside the matrix estimate.
+Longer or forced-sparse QSA configurations warn that their estimate is approximate.
 
 ## Recorded loss
 
