@@ -21,6 +21,7 @@ import torch
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge
@@ -509,6 +510,7 @@ class TestOlMoEBuilderConfig:
         assert "provider_bridge" not in OlMoEBridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert OlMoEBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert OlMoEBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):

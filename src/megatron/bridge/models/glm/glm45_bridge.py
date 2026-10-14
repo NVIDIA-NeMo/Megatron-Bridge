@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 try:
@@ -53,6 +54,7 @@ class GLM45Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:

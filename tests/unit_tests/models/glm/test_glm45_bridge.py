@@ -30,6 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
 )
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -269,10 +270,13 @@ class TestGLM45Bridge:
         """Test fused expert layout is detected from HF state source without enumerating all keys."""
         source = mock_pretrained_355b.state.source
         source.get_all_keys.side_effect = AssertionError("mapping registry should not enumerate all HF keys")
-        source.has_glob.side_effect = lambda pattern: pattern in {
-            "*mlp.experts.gate_up_proj*",
-            "*mlp.experts.down_proj*",
-        }
+        source.has_glob.side_effect = lambda pattern: (
+            pattern
+            in {
+                "*mlp.experts.gate_up_proj*",
+                "*mlp.experts.down_proj*",
+            }
+        )
 
         bridge = GLM45Bridge()
         bridge.hf_pretrained = mock_pretrained_355b
@@ -364,6 +368,7 @@ class TestGLM45BuilderConfig:
         assert "provider_bridge" not in GLM45Bridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert GLM45Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert GLM45Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):
