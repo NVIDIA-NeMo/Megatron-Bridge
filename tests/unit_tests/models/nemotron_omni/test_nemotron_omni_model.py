@@ -857,6 +857,21 @@ def test_audio_forward_replaces_expanded_placeholders_without_changing_length():
     assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
 
 
+def test_image_only_forward_preserves_ordinary_sound_token():
+    image_features = torch.tensor([[101.0, 102.0, 103.0]])
+    model = _BoundaryModel(image_features)
+    input_ids = torch.tensor([[7, 18, 19, 9]])
+
+    output = model(
+        input_ids=input_ids,
+        attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+        images=torch.ones(1),
+    )
+
+    assert torch.equal(output[1, 0], image_features[0])
+    assert torch.equal(output[2, 0], torch.tensor([19.0, 19.0, 19.0]))
+
+
 def test_sound_encoder_drops_padded_rows_and_preserves_sample_order():
     model = _SoundEncoderBoundaryModel()
 

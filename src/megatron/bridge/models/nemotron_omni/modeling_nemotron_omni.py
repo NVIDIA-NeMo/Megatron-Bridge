@@ -885,9 +885,12 @@ class NemotronOmniModel(MegatronModule):
                 media_token_validity_mask,
             )
 
-            if self.sound_token_index > 0:
-                if sound_embeddings is None:
-                    sound_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
+            # ``sound_token_index`` is an ordinary vocabulary id.  In an
+            # image-only/text-only batch it may therefore occur in generated
+            # prose without denoting an audio anchor.  Audio provenance, not
+            # the token id alone, decides whether sound insertion runs.
+            if self.sound_token_index > 0 and has_sound_inputs:
+                assert sound_embeddings is not None
                 combined_embeddings = self._merge_projected_media(
                     combined_embeddings,
                     input_ids,
