@@ -55,6 +55,7 @@ class TestQwen2Bridge:
 
     def test_conversion_uses_builder_config(self):
         """Checkpoint conversion constructs Qwen2 through its ModelBuilder."""
+        assert Qwen2Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert Qwen2Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):

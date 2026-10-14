@@ -19,6 +19,7 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
@@ -132,6 +133,7 @@ class TestMimoBridge:
         assert "provider_bridge" not in MimoBridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert MimoBridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert MimoBridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_model_config_maps_mtp_config(self, mock_pretrained_mimo):
