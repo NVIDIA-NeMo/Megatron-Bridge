@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import runpy
 import subprocess
 import sys
 from pathlib import Path
@@ -32,6 +34,15 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 import setup_experiment
+
+
+try:
+    import nemo_run
+    from nemo_run.core.execution.nvcre import NvcreExecutor  # noqa: F401
+
+    HAS_NVCRE = True
+except (ImportError, ModuleNotFoundError):
+    HAS_NVCRE = False
 
 
 def test_default_experiment_name_uses_only_cli_metadata() -> None:
@@ -186,7 +197,71 @@ def test_nvcre_use_mbridge_commit_flag_does_not_swallow_the_next_arg() -> None:
     assert setup_experiment._filter_run_script_args(argv) == ["--tensor_model_parallel_size", "2"]
 
 
-def test_nemorun_script_puts_bundled_megatron_lm_on_pythonpath_only_when_asked() -> None:
+def test_use_mbridge_commit_without_nvcre_namespace_is_an_error() -> None:
+    with pytest.raises(ValueError, match="--nvcre_namespace"):
+        setup_experiment._resolve_local_bridge(True, None)
+
+
+def test_resolve_local_bridge_is_none_when_the_flag_is_off() -> None:
+    assert setup_experiment._resolve_local_bridge(False, "ns") is None
+    assert setup_experiment._resolve_local_bridge(False, None) is None
+
+
+def test_resolve_local_bridge_reads_this_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    source = setup_experiment.LocalBridge("https://github.com/o/r.git", "a" * 40)
+    monkeypatch.setattr(setup_experiment, "local_bridge_source", lambda root: source)
+
+    assert setup_experiment._resolve_local_bridge(True, "ns") is source
+
+
+@pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
+def test_main_wires_the_pod_checkout_into_the_workloadrun(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """--nvcre_use_mbridge_commit runs the scripts from the pod clone, via an init container and its volume."""
+    from utils import nvcre_bridge
+
+    source = nvcre_bridge.LocalBridge("https://github.com/o/r.git", "a" * 40)
+    monkeypatch.setattr(nvcre_bridge, "local_bridge_source", lambda root: source)
+    user_volume = {"name": "data", "persistentVolumeClaim": {"claimName": "pvc"}}
+    user_mount = {"name": "data", "mountPath": "/data"}
+    submitted = {}
+
+    def fake_run(script, **kwargs):
+        submitted.update(script=script, **kwargs)
+
+    monkeypatch.setattr(nemo_run, "run", fake_run)
+    monkeypatch.setenv("NEMORUN_HOME", str(tmp_path / "nemorun"))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "setup_experiment.py",
+            *("--model_family_name", "llama", "--model_recipe_name", "llama3_8b"),
+            *("--num_gpus", "8", "--gpus_per_node", "4", "--gpu", "gb300"),
+            *("--container_image", "example.invalid/nemo:test", "--dryrun"),
+            *("--nvcre_namespace", "ns", "--nvcre_use_mbridge_commit"),
+            *("--nvcre_volumes_json", json.dumps([user_volume])),
+            *("--nvcre_volume_mounts_json", json.dumps([user_mount])),
+        ],
+    )
+
+    runpy.run_path(str(_PERF_SCRIPTS_DIR / "setup_experiment.py"), run_name="__main__")
+
+    executor = submitted["executor"]
+    executor.job_name = "job1"
+    executor.experiment_id = "exp_123456789"
+    command = submitted["script"].to_command()
+    spec = executor.build_workloadrun_yaml(command)["spec"]
+    pod_scripts = f"{nvcre_bridge.BRIDGE_POD_ROOT}/scripts/performance/"
+
+    assert any(pod_scripts in part for part in command)
+    assert [c["name"] for c in spec["initContainers"]] == ["megatron-bridge-clone"]
+    assert f"git fetch -q --depth 1 origin {'a' * 40}" in spec["initContainers"][0]["args"][0]
+    assert spec["volumes"] == [user_volume, nvcre_bridge.WORKSPACE_VOLUME]
+    assert spec["volumeMounts"] == [user_mount, nvcre_bridge.WORKSPACE_MOUNT]
+    assert submitted["script"].env["PYTHONPATH"].startswith(f"{pod_scripts.rstrip('/')}:")
+
+
+def test_nemorun_script_pythonpath_uses_the_pod_checkout_without_its_megatron_lm() -> None:
     kwargs = dict(
         script_path="/mnt/workspace/megatron-bridge/scripts/performance/run.py",
         script_dir="/mnt/workspace/megatron-bridge/scripts/performance",
@@ -195,12 +270,8 @@ def test_nemorun_script_puts_bundled_megatron_lm_on_pythonpath_only_when_asked()
         custom_env_vars={},
     )
     root = "/mnt/workspace/megatron-bridge"
-    default = setup_experiment._build_nemorun_script(**kwargs)
-    assert default.env["PYTHONPATH"] == f"{root}/scripts/performance:{root}/src:$PYTHONPATH"
-    with_mcore = setup_experiment._build_nemorun_script(**kwargs, include_mcore=True)
-    assert with_mcore.env["PYTHONPATH"] == (
-        f"{root}/scripts/performance:{root}/src:{root}/3rdparty/Megatron-LM:$PYTHONPATH"
-    )
+    script = setup_experiment._build_nemorun_script(**kwargs)
+    assert script.env["PYTHONPATH"] == f"{root}/scripts/performance:{root}/src:$PYTHONPATH"
 
 
 # ── _nvcre_env_vars ───────────────────────────────────────────────────────────

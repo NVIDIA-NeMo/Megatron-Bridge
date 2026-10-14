@@ -741,17 +741,12 @@ def parse_cli_args():
     nvcre_args.add_argument(
         "--nvcre_use_mbridge_commit",
         action="store_true",
-        help=(
-            "Run this Megatron-Bridge checkout in the pods instead of the image's /opt/Megatron-Bridge, as the "
-            "Slurm bind mount does: an init container clones this checkout's origin at its current commit "
-            "(and its Megatron-LM submodule commit). Commits must be pushed to origin; uncommitted changes "
-            "are not included."
-        ),
+        help=("Run this Megatron-Bridge checkout in the pods instead of the image's /opt/Megatron-Bridge"),
     )
     nvcre_args.add_argument(
         "--nvcre_timeout_per_job",
         type=str,
-        help="Per-job timeout passed to Nvcre orchestration (e.g. '24h').",
+        help="Per-job timeout passed to Nvcre orchestration (e.g. '12h').",
         required=False,
         default="24h",
     )
