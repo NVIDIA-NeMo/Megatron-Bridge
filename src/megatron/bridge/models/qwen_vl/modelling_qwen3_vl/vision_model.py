@@ -361,12 +361,20 @@ class Qwen3VLVisionModel(VisionModule):
         )
         # Remove padding if we added it
         if use_cuda_graph_padding and original_seq_len < seq_len:
-            hidden_states = hidden_states[:original_seq_len]
-            # Unpad deepstack features - they go through a merger that reduces by spatial_merge_size^2
-            # So their length is seq_len // (spatial_merge_size^2)
-            original_merged_seq_len = original_seq_len // (self.spatial_merge_size**2)
+            # Merge the padded rows (cut to whole merged tokens) and drop the padded merged tokens afterwards, so the
+            # merger always sees the same row count. On the real patch count, which changes with every micro batch,
+            # Transformer Engine builds a new patch_norm plan for each new count when the cuDNN norm flags
+            # (NVTE_NORM_FWD/BWD_USE_CUDNN=1) are set, while every other rank waits. The result is the same:
+            # patch_norm is per row and every image has a multiple of spatial_merge_size**2 patches, so the padding
+            # starts on a merged token boundary. The padded rows get zero gradient, so they only need to be finite.
+            merge_unit = self.spatial_merge_size**2
+            hidden_states = self.merger(hidden_states[: seq_len - seq_len % merge_unit])
+            original_merged_seq_len = original_seq_len // merge_unit
+            hidden_states = hidden_states[:original_merged_seq_len]
+            # Deepstack features went through a merger in the decoder: their length is seq_len // spatial_merge_size^2
             deepstack_feature_lists = [feat[:original_merged_seq_len] for feat in deepstack_feature_lists]
-        hidden_states = self.merger(hidden_states)
+        else:
+            hidden_states = self.merger(hidden_states)
 
         # Encodes images into continuous embeddings that can be forwarded to the language model.
         split_sizes = (grid_thw.prod(-1) // self.spatial_merge_size**2).tolist()
