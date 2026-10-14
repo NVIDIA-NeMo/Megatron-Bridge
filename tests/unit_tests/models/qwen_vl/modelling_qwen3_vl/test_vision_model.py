@@ -345,9 +345,31 @@ class TestQwen3VLVisionModelMergerOnPaddedRows:
 
         assert seen["out"].shape[0] == 56
         assert torch.isfinite(seen["out"]).all()
-        assert seen["out"][_NUM_PATCHES:].abs().sum() > 0  # the padded rows the merger sees are not zero ...
+        assert seen["out"][_NUM_PATCHES:].abs().sum() > 0  # the decoder's padded rows are not zero ...
         assert torch.equal(seen["grad"][_NUM_PATCHES:], torch.zeros_like(seen["grad"][_NUM_PATCHES:]))  # ... no grad
         assert seen["grad"][:_NUM_PATCHES].abs().sum() > 0
+
+    def test_nan_padded_rows_leave_output_and_gradients_unchanged(self):
+        m = _vision_model_for_forward(56)
+
+        def write_nan_into_padded_rows(module, args, output):
+            hidden_states, deepstack = output
+            is_pad = torch.arange(hidden_states.shape[0]) >= _NUM_PATCHES
+            return hidden_states.masked_fill(is_pad[:, None, None], float("nan")), deepstack
+
+        m.decoder.register_forward_hook(write_nan_into_padded_rows)
+        x = torch.randn(_NUM_PATCHES, _IN_DIM, dtype=torch.float64)
+        cotangent = torch.randn(_NUM_PATCHES // 4, _OUT_DIM, dtype=torch.float64)
+        out_p, _, dx_p, grads_p = _forward_backward(m, x, cotangent, pad=True)
+        out_u, _, dx_u, grads_u = _forward_backward(m, x, cotangent, pad=False)
+
+        assert m.decoder.rows_seen == [56, _NUM_PATCHES]
+        torch.testing.assert_close(out_p, out_u)
+        torch.testing.assert_close(dx_p, dx_u)
+        assert grads_p.keys() == grads_u.keys()
+        for name in grads_u:
+            assert torch.isfinite(grads_p[name]).all(), name
+            torch.testing.assert_close(grads_p[name], grads_u[name], msg=name)
 
     def test_deepstack_features_are_cut_to_the_real_merged_tokens(self):
         m = _vision_model_for_forward(56, with_deepstack=True)

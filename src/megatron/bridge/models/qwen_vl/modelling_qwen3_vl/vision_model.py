@@ -366,9 +366,12 @@ class Qwen3VLVisionModel(VisionModule):
             # Transformer Engine builds a new patch_norm plan for each new count when the cuDNN norm flags
             # (NVTE_NORM_FWD/BWD_USE_CUDNN=1) are set, while every other rank waits. The result is the same:
             # patch_norm is per row and every image has a multiple of spatial_merge_size**2 patches, so the padding
-            # starts on a merged token boundary. The padded rows get zero gradient, so they only need to be finite.
+            # starts on a merged token boundary. The padded rows are zeroed first: their merged tokens get zero
+            # gradient, but a non-finite padded row would still turn the merger's weight gradients into NaN (0 * NaN).
             merge_unit = self.spatial_merge_size**2
-            hidden_states = self.merger(hidden_states[: seq_len - seq_len % merge_unit])
+            merger_input = hidden_states[: seq_len - seq_len % merge_unit]
+            is_pad = torch.arange(merger_input.shape[0], device=merger_input.device) >= original_seq_len
+            hidden_states = self.merger(merger_input.masked_fill(is_pad[:, None, None], 0.0))
             original_merged_seq_len = original_seq_len // merge_unit
             hidden_states = hidden_states[:original_merged_seq_len]
             # Deepstack features went through a merger in the decoder: their length is seq_len // spatial_merge_size^2
