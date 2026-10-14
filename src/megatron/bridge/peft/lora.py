@@ -43,6 +43,7 @@ from megatron.bridge.peft.utils import (
     is_expert_linear,
     is_grouped_expert_linear,
     is_modelopt_linear,
+    wildcard_match,
 )
 
 
@@ -158,6 +159,63 @@ class LoRA(PEFT, ModuleMatcher):
     share_expert_adapters: bool = True
     experts_shared_outer_loras: bool = False
     use_transformer_engine_op_fuser: bool = False
+
+    def __call__(self, model, training: bool = True):
+        """Apply LoRA, promoting targeted parameter-backed projections first.
+
+        Parameter-backed projections use the same explicit ``target_modules``
+        patterns as ordinary modules. Turning such a parameter into the regular
+        LoRA module only when it is targeted lets the existing LoRA wrapper and
+        adapter export path handle it without changing the base model's
+        checkpoint layout for non-LoRA runs.
+        """
+
+        self._promote_parameter_targets(model)
+        return super().__call__(model, training=training)
+
+    def _promote_parameter_targets(self, model) -> None:
+        """Expose supported bare parameters as linear modules before walking.
+
+        The promoted module keeps the original ``nn.Parameter`` object as its
+        weight, so initialization, freezing, and optimizer ownership remain
+        unchanged. Parameters that do not match ``target_modules`` retain the
+        existing PEFT behavior.
+        """
+
+        target_patterns = self.target_modules
+        if isinstance(target_patterns, str):
+            target_patterns = (target_patterns,)
+        else:
+            target_patterns = tuple(target_patterns or ())
+        if not target_patterns:
+            return
+
+        models = model if isinstance(model, list) else [model]
+        for root in models:
+            if isinstance(root, torch.nn.parallel.DistributedDataParallel):
+                root = root.module
+            for prefix, parent in list(root.named_modules()):
+                for parameter_name, parameter in list(parent.named_parameters(recurse=False)):
+                    full_name = f"{prefix}.{parameter_name}" if prefix else parameter_name
+                    if not any(
+                        parameter_name == pattern or wildcard_match(pattern, full_name) for pattern in target_patterns
+                    ):
+                        continue
+                    if parameter.ndim != 2:
+                        raise ValueError(
+                            f"{full_name} must be a 2-D matrix for LoRA, got shape {tuple(parameter.shape)}"
+                        )
+                    promoted = nn.Linear(
+                        parameter.shape[1],
+                        parameter.shape[0],
+                        bias=False,
+                        device=parameter.device,
+                        dtype=parameter.dtype,
+                    )
+                    promoted.weight = parameter
+                    delattr(parent, parameter_name)
+                    setattr(parent, parameter_name, promoted)
+                    logger.info("Promoted parameter-backed LoRA target: %s", full_name)
 
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
