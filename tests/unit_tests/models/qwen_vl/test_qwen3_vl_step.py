@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -58,7 +60,8 @@ def test_get_batch_from_iterator_allows_deferred_none_packing_metadata(monkeypat
     assert torch.equal(result["input_ids"], batch["input_ids"])
 
 
-def test_forward_step_uses_compacted_loss_mask_from_model(monkeypatch):
+@pytest.mark.parametrize("vision_as_mapping", [False, True])
+def test_forward_step_uses_compacted_loss_mask_from_model(monkeypatch, vision_as_mapping):
     class _ProcessGroup:
         def rank(self):
             return 0
@@ -91,7 +94,11 @@ def test_forward_step_uses_compacted_loss_mask_from_model(monkeypatch):
     config = type(
         "ModelConfig",
         (),
-        {"mtp_num_layers": 0, "seq_length": 4, "overlap_moe_expert_parallel_comm": False},
+        {
+            "mtp_num_layers": 0,
+            "overlap_moe_expert_parallel_comm": False,
+            "vision_config": {"spatial_merge_size": 4} if vision_as_mapping else SimpleNamespace(spatial_merge_size=4),
+        },
     )()
     compacted_loss_mask = torch.tensor([[1.0, 0.0]])
 
@@ -109,6 +116,9 @@ def test_forward_step_uses_compacted_loss_mask_from_model(monkeypatch):
                 "Config",
                 (),
                 {
+                    # Builder-backed models expose only transformer settings
+                    # through get_model_config; sequence length is outer state.
+                    "model": SimpleNamespace(seq_length=4, vision_config=config.vision_config),
                     "dataset": type("Dataset", (), {"enable_in_batch_packing": True})(),
                     "rerun_state_machine": type(
                         "Rerun", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False}
@@ -129,11 +139,24 @@ def test_forward_step_uses_compacted_loss_mask_from_model(monkeypatch):
     monkeypatch.setattr("megatron.bridge.models.qwen_vl.qwen3_vl_step.get_model_config", lambda _: config)
     monkeypatch.setattr(
         "megatron.bridge.models.qwen_vl.qwen3_vl_step.get_batch",
-        lambda *args, **kwargs: (tokens, labels, original_loss_mask, attention_mask, position_ids, {}),
+        lambda *args, **kwargs: (
+            tokens,
+            labels,
+            original_loss_mask,
+            attention_mask,
+            position_ids,
+            {"image_grid_thw": torch.tensor([[2, 4, 4]], dtype=torch.int64)},
+        ),
     )
+
+    def pad_and_pack(*args, **kwargs):
+        assert not hasattr(config, "seq_length")
+        assert kwargs["seq_length"] == state.cfg.model.seq_length == 4
+        return (*args[:5], object())
+
     monkeypatch.setattr(
         "megatron.bridge.models.qwen_vl.qwen3_vl_step._pad_and_pack_qwen3_vl_step",
-        lambda *args, **kwargs: (*args[:5], object()),
+        pad_and_pack,
     )
     monkeypatch.setattr(
         "megatron.bridge.models.qwen_vl.qwen3_vl_step.get_batch_on_this_cp_rank",
@@ -149,3 +172,6 @@ def test_forward_step_uses_compacted_loss_mask_from_model(monkeypatch):
 
     assert output.item() == 0.0
     assert captured_loss_masks == [compacted_loss_mask]
+    assert state._flops_vision_patch_sum == 32
+    assert state._flops_vision_patch_sq_sum == 512
+    assert state._flops_vision_merged_token_sum == 2

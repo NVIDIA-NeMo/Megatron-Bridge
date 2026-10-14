@@ -13,6 +13,7 @@
 # limitations under the License.
 import logging
 import math
+from collections.abc import Mapping
 from functools import partial
 from typing import Any, Callable, Iterable
 
@@ -269,7 +270,7 @@ def _forward_step_common(
         this_pg_collection,
         use_fp8_padding=True,
         force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-        seq_length=config.seq_length,
+        seq_length=state.cfg.model.seq_length,
     )
 
     # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
@@ -285,7 +286,11 @@ def _forward_step_common(
     # Every DP rank using this VLM step must enter the same reduction, including
     # a rank whose current sample happens to contain no media.
     vision_patch_stats = (0, 0, 0)
-    spatial_merge_size = getattr(vision_config, "spatial_merge_size", 2)
+    spatial_merge_size = (
+        vision_config.get("spatial_merge_size", 2)
+        if isinstance(vision_config, Mapping)
+        else getattr(vision_config, "spatial_merge_size", 2)
+    )
     if isinstance(multi_modal_inputs, dict):
         for grid in (multi_modal_inputs.get("image_grid_thw"), multi_modal_inputs.get("video_grid_thw")):
             if grid is not None and grid.numel() > 0:

@@ -132,6 +132,7 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config", "vlm_step"),
         ("qwen3_vl_8b_peft_energon_config", "vlm_step"),
         ("qwen35_vl_9b_sft_config", "qwen3_vl_step"),
+        ("qwen38_flash_next_sft_64gpu_gb200_bf16_config", "qwen3_vl_step"),
         ("gemma3_vl_4b_sft_config", "vlm_step"),
         ("gemma4_vl_26b_sft_config", "vlm_step"),
         ("glm_45v_sft_config", "vlm_step"),

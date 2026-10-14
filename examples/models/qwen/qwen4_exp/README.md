@@ -1,128 +1,102 @@
-# Qwen4-Exp / Qwen3.8-Flash-Next image training
+# Qwen3.8-Flash-Next image SFT
 
-**Early recipe: performance is unoptimized.** This label applies to throughput
-and resource efficiency, not to the validity of the measured training loss.
+**Early recipe: performance is unoptimized.** This applies to throughput and
+resource efficiency. The measured training loss remains valid.
 
-[`finetune_nemotron_image_v3.py`](finetune_nemotron_image_v3.py) publishes the
-full-checkpoint VL training recipe used with **Qwen/Qwen3.8-Flash-Next** and
-**Nemotron-Image-Training-v3**. It builds a `ConfigContainer`, loads the complete
-HF checkpoint through an AutoBridge pre-wrap hook, and calls Bridge `pretrain`
-with an image-aware forward step. Language, vision, and projector parameters
-are all trainable. It is an executable recipe, not a registered
-`scripts/training/run_recipe.py` preset.
+The library recipe
+[`qwen38_flash_next_sft_64gpu_gb200_bf16_config`](../../../../src/megatron/bridge/recipes/qwen_vl/qwen38_flash_next.py)
+uses the standard training runner, Qwen VL forward step, Energon data loader,
+and HF checkpoint initialization. Language, vision, and projector parameters
+are all trainable. It replaces the standalone verification training script.
 
-The measured run completed **5,349 steps in 3h58m on 64 GB200 GPUs**. First/last
-10-step mean loss was **0.31155 / 0.01778**; no recorded update was skipped or
-nonfinite. The [loss curve and run results](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6354#issuecomment-6160448312)
-remain valid training measurements. This is repeated-subset training without
-held-out evaluation, not a numerical parity or performance claim.
+## Prepare data
 
-## Environment and checkpoint
+Use NeMo **26.10.rc4** with Transformers **5.16.1** and tokenizers **0.23.1**
+for Qwen4-Exp processor/model support. These commands do not install dependencies.
+Download **Qwen/Qwen3.8-Flash-Next**, revision
+`de4b8e4d43b917e7706784d8bb445c9af86a3540`, including its processor assets.
+Use the same revision for preparation and weight loading. The recipe pins its
+model config, processor, and tokenizer to this revision.
 
-The measured run used NeMo **26.10.rc4**, Bridge commit
-`228077d7b63b13d8b3b7f276c78f53c8110c57ac`, and a Transformers **5.16.1** overlay
-for Qwen4-Exp model/processor support. Use an environment with that support;
-the stock container's Transformers installation may need the same isolated
-overlay. These scripts do not install or change dependencies.
+The preparation script reuses the existing Nemotron converter and selects the
+first **8,192 complete, supervised conversations** from the pinned ECD portion
+of **nvidia/Nemotron-Image-Training-v3**. Images come from
+**ChartFoundation/ECD-10k-Images**. Overlength conversations are skipped whole,
+without truncation; the output has 32 shards and no validation split.
 
-Download the full checkpoint and processor assets before training. The run used
-HF revision `de4b8e4d43b917e7706784d8bb445c9af86a3540`. Set these portable paths
-in your shell, and run the commands below from the Bridge checkout:
-
-```bash
-export CHECKPOINT=/path/to/Qwen3.8-Flash-Next
-export DATA_SOURCE=/path/to/nemotron-image-v3-downloads
-export DATASET=/path/to/prepared-ecd-subset
-export OUTPUT=/path/to/new-training-output
-```
-
-## Prepare the image subset
-
-The companion script reuses the repository's
-[`prepare_nemotron_image_v3.py`](../../../../tutorials/data/energon/prepare_nemotron_image_v3.py)
-converter for media resolution, conversation normalization, shard writing, and
-Energon indexing. It downloads pinned ECD text and image payloads and selects
-the first **8,192 complete, supervised conversations** that fit sequence2048
-in source order. It skips overlength conversations instead of truncating them.
-The result is 32 training shards, with no validation split. The ECD images come
-from `ChartFoundation/ECD-10k-Images`.
+Run from the repository root, with portable paths supplied by the caller:
 
 ```bash
 CUDA_VISIBLE_DEVICES='' uv run python \
-  examples/models/qwen/qwen4_exp/prepare_nemotron_image_v3_subset.py \
-  --checkpoint "$CHECKPOINT" --source-dir "$DATA_SOURCE" \
-  --output-dir "$DATASET"
+  scripts/data/prepare_nemotron_image_v3_subset.py \
+  --checkpoint /path/to/Qwen3.8-Flash-Next \
+  --source-dir /path/to/downloads --output-dir /path/to/prepared-ecd
 ```
 
-Preparation uses four CPU workers and does not load model weights. Use a fresh
-output directory. `--max-samples` can select a smaller subset for data checks.
-The manifest binds processor assets, selection records, and shard hashes;
-training rejects different processor assets or changed selected token/label/mask
-prefixes. Existing subsets prepared by the verification driver are compatible.
+Preparation uses four CPU workers and writes a manifest with processor,
+selection, and shard hashes. Existing subsets from the measured run are usable.
+Keep the pinned processor and preprocessing limits when reusing the subset;
+the standard runner does not replay the old driver's per-sample hash checks.
 
-Run a CPU-only check of the real data encoder and finalized configuration:
+## Use the recipe
 
-```bash
-WORLD_SIZE=64 RANK=0 LOCAL_RANK=0 CUDA_VISIBLE_DEVICES='' uv run python \
-  examples/models/qwen/qwen4_exp/finetune_nemotron_image_v3.py \
-  --checkpoint "$CHECKPOINT" --dataset "$DATASET" \
-  --output "$OUTPUT/config-check" --check-config --check-batches 4
-```
-
-## Train
-
-The defaults reproduce the measured configuration: **64 GPUs, TP8 with SP,
-EP64, expert TP1, PP1, CP1**, microbatch1, global batch8, sequence2048, seed1234,
-BF16 parameters, FP32 gradient buffers, distributed Adam with constant LR1e-6,
-weight decay0, and clip1.0. This early recipe deliberately rejects other world
-sizes, EP sizes, sequence lengths, and global batch sizes.
-
-Within an existing 16-node allocation with four visible GPUs per node, run the
-following once per node. Set `NODE_RANK`, `MASTER_ADDR`, and `MASTER_PORT` for
-your launcher. Stage inputs and use suitable node-local caches according to
-your cluster's storage policy.
+Within an existing 16-node allocation with four GPUs per node, invoke the
+standard runner once per node with the launcher-provided rank and rendezvous:
 
 ```bash
-export OMP_NUM_THREADS=8
-export CUDA_DEVICE_MAX_CONNECTIONS=1
-export NCCL_NVLS_ENABLE=0
-export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-
 uv run python -m torch.distributed.run \
   --nnodes=16 --nproc_per_node=4 --node_rank="$NODE_RANK" \
   --master_addr="$MASTER_ADDR" --master_port="$MASTER_PORT" \
-  examples/models/qwen/qwen4_exp/finetune_nemotron_image_v3.py \
-  --checkpoint "$CHECKPOINT" --dataset "$DATASET" --output "$OUTPUT/train" \
-  --max-runtime-minutes 240 --exit-reserve-seconds 180
+  scripts/training/run_recipe.py \
+  --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config \
+  --pretrained_checkpoint /path/to/Qwen3.8-Flash-Next \
+  --max_steps 100 \
+  dataset.path=/path/to/prepared-ecd \
+  logger.save_config_filepath=/path/to/output/config.yaml \
+  logger.tensorboard_dir=/path/to/output/tensorboard
 ```
 
-The runtime budget starts when the Python driver starts, including model load;
-it is not the scheduler's allocation start time. To stop before an allocation's
-actual deadline, supply the same `--stop-at-epoch UNIX_SECONDS` on every rank;
-this overrides the relative runtime budget. The callback reserves cleanup time
-and stops after complete optimizer steps. `--steps` is an optional upper bound
-(default1,000,000). Output directories for training must be fresh.
+Create the output directory first. The
+[verification card](../../../model_verification_cards/qwen3.8-flash-next/card.yaml)
+uses the public `scripts/training/train.sh` launcher with this same recipe.
+Supply scheduler configuration through the launcher's normal external setup.
+Do not select a different `--dataset` preset: it would replace the prepared
+Energon dataset configuration. `--dryrun` resolves the launch configuration
+without allocating the model; it is not a runtime or correctness check.
 
-## Training behavior and limits
+Defaults preserve the measured training settings: **64 GB200 GPUs, TP8/SP,
+EP64, expert TP1, PP1, CP1**, sequence2048, microbatch1, global batch8, BF16
+parameters, FP32 gradient reduction, distributed Adam with constant LR1e-6,
+weight decay0, clip1, and seed1234. The image limits are65,536–262,144 pixels.
+Sequences are unpacked and runtime finalization pads to2048 for EP. Auxiliary
+MoE loss and dropout are disabled. Allgather dispatch, grouped GEMM, and
+unfused permutation are used, with no overlap, recomputation, or CUDA graphs.
+No evaluation or checkpoint saving is enabled.
 
-- One still image per conversation, min/max pixels65,536/262,144. The processor
-  and vision patch/merge geometry come from the HF checkpoint.
-- Unpacked sequences; EP configuration finalization pads to2,048. The original
-  complete sample and its labels/mask are checked against preparation records.
-  Image/user/padding labels are masked; assistant-token loss is normalized once
-  by the global supervised-token count, with SUM gradient collectives.
-- Native allgather MoE dispatcher and grouped GEMM, no fused permutation/shared
-  expert overlap, gradient-accumulation fusion, communication overlap,
-  activation recomputation, or CUDA graphs. No auxiliary MoE loss or dropout.
-- Each rank writes loss, preclip gradient norm, and sampled owned FP32 master
-  updates for language/vision/projector parameters. These checks add overhead;
-  they do not establish every parameter's gradient or update correctness.
-- No checkpoint saving/resume or validation is enabled in this recipe.
-  Gradient spikes in the measured run remain unexplained (maximum230.02);
-  clipping was active. This recipe does not establish HF/native backward parity
-  or correctness across TP/EP/PP/CP settings.
+The standard SFT path loads the full checkpoint and refreshes optimizer master
+parameters before the first step. Each step logs loss, pre-clipping gradient
+norm, skipped/NaN counts, iteration time, and estimated model TFLOP/s/GPU.
+TensorBoard logging is enabled when its output path is supplied. Save the
+post-setup config and complete keyed step records. Record initial/final loss
+and average step time and TFLOP/s over the same final ten steps in the card;
+derive token-slot throughput as `2048 * 8 / (step_seconds * 64)`.
+TFLOP/s uses Bridge's partial analytical architecture estimate, not hardware
+counters or full-model MFU. It includes GDN, dense attention, MoE, logits, and
+vision work, but omits Qwen4-specific gated-residual, PLE, and QSA-indexer work.
+Those omissions are material; compare only measurements using the same formula.
 
-The publication preserves the measured driver's training and preprocessing
-operations while adding portable CLI defaults and source discovery. The
-four-hour loss curve comes from the original run, not a second full training
-run of this packaged script. **Performance optimization remains future work.**
+## Recorded loss
+
+The original full-checkpoint run completed **5,349 steps in3h58m on64 GB200s**
+from Bridge commit `228077d7b63b13d8b3b7f276c78f53c8110c57ac`.
+Initial/final loss was **0.31087 / 0.01342**; first/last ten-step mean loss was
+**0.31155 / 0.01778**, with zero recorded skipped or nonfinite updates.
+The [loss curve](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6354#issuecomment-6160448312)
+remains valid evidence from that run. It did not capture trustworthy TFLOP/s.
+
+That run used the previous verification driver. The new standard-runner command
+requires a fresh run before its metrics can be marked verified. The old
+per-rank sampled-gradient/update callback and deadline controller are not part
+of the library recipe. Repeated-subset training does not establish held-out
+quality or HF/backward/parallelism parity; gradient spikes (maximum230.02 before
+clipping) remain unexplained. **Performance optimization remains future work.**

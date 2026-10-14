@@ -1,4 +1,4 @@
-"""Tests for the portable Nemotron ECD subset preparation example.
+"""Tests for the portable Nemotron ECD subset preparation script.
 
 These use only pytest and the stdlib, without Torch, Transformers, or Energon.
 The real processor/collator execution is a separate runtime qualification.
@@ -22,7 +22,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 ROOT = Path(__file__).resolve().parents[3]
-SCRIPT = ROOT / "examples/models/qwen/qwen4_exp/prepare_nemotron_image_v3_subset.py"
+SCRIPT = ROOT / "scripts/data/prepare_nemotron_image_v3_subset.py"
 SPEC = importlib.util.spec_from_file_location("prepare_nemotron_subset", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 prep = importlib.util.module_from_spec(SPEC)

@@ -76,9 +76,11 @@ from .qwen35_vl import (
     qwen35_vl_800m_peft_config,
     qwen35_vl_800m_sft_config,
 )
+from .qwen38_flash_next import qwen38_flash_next_sft_64gpu_gb200_bf16_config
 
 
 __all__ = [
+    "qwen38_flash_next_sft_64gpu_gb200_bf16_config",
     # Qwen3.5-VL pretrain configs
     "qwen35_vl_9b_pretrain_mock_config",
     "qwen35_vl_27b_pretrain_16gpu_gb200_bf16_mock_config",

@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 
 import torch
@@ -490,10 +491,14 @@ def accumulate_flops_metadata(
 def _get_vision_config(cfg: ConfigContainer):
     """Return a direct or thinker-nested vision config when available."""
     vision_config = getattr(cfg.model, "vision_config", None)
-    if vision_config is not None:
-        return vision_config
-    thinker_config = getattr(cfg.model, "thinker_config", None)
-    return getattr(thinker_config, "vision_config", None)
+    if vision_config is None:
+        thinker_config = getattr(cfg.model, "thinker_config", None)
+        vision_config = getattr(thinker_config, "vision_config", None)
+    # Qwen4-Exp serializes its vision settings as a mapping rather than a
+    # Transformers config. Normalize only this accounting view, not the model.
+    if isinstance(vision_config, Mapping):
+        return SimpleNamespace(**vision_config)
+    return vision_config
 
 
 def vit_flops_from_patch_stats(

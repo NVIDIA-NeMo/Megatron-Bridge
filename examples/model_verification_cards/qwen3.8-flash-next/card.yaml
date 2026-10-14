@@ -1,116 +1,210 @@
 # Agent-readable model verification card.
-# status: unverified | verified | unsupported | not_applicable
-
 title: qwen3_8_flash_next
 summary: >
-  Full released language-checkpoint import and ten loaded-weight real-text
-  pretraining steps passed on 32 GB200 GPUs with text_only=True in NeMo
-  26.10.rc4. Loss and pre-clipping gradient norm were finite at every step,
-  with zero skipped updates and nonzero sampled optimizer-weight changes.
-  Vision-language execution, HF numerical parity, checkpoint round trips,
-  convergence, and performance are unverified.
+  Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
+  Historical BF16 image SFT completed 5,349 steps on 64 GB200 GPUs using an
+  8,192-sample Nemotron-Image-Training-v3 ECD subset. The public recipe command
+  below has not been rerun. Historical language-only import and ten-step
+  pretraining observations are retained separately. HF numerical parity,
+  checkpoint roundtrips, resume, and optimized performance remain unverified.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu]
+    unverified: [hf_to_megatron_cpu, hf_to_megatron_gpu, megatron_to_hf_cpu, megatron_to_hf_gpu, manual_forward_pass, inference]
   training:
     GB200:
-      verified: [pretrain]
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: Qwen/Qwen3.8-Flash-Next
   hf_revision: de4b8e4d43b917e7706784d8bb445c9af86a3540  # pragma: allowlist secret
   architecture: Qwen4ExpForConditionalGeneration
   min_transformers_version: "5.16.1"
 verification_environment:
-  base_container: nvcr.io/nvidian/nemo:26.10.rc4
-  transformers: "5.16.1"
-  tokenizers: "0.23.1"
-  megatron_core_commit: d6316eb45bf1bfbb6f1f848c0b56e55166564d80  # pragma: allowlist secret
-  dependency_note: >
-    Transformers and tokenizers use an isolated overlay; Megatron-Core and
-    the GPU runtime come from the release-candidate container.
+  base_container: NeMo 26.10 RC4
+  bridge_commit: 228077d7b63b13d8b3b7f276c78f53c8110c57ac  # pragma: allowlist secret
 
 items:
-  hf_to_megatron_gpu:
-    status: verified
+  hf_to_megatron_cpu:
+    status: unverified
     precision: bf16
-    last_verified: 2026-10-08
+    command: null
+    last_verified: null
+    expected_result: CPU import and persisted-checkpoint reload have not been verified.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
     expected_result: >
-      The 32-GB200 TP8/EP32 import completed all 2427 mappings for the full
-      48-layer language model, including PLE, before DDP and optimizer
-      construction. Rank 0 reported 11,455,020,976 local parameters, including
-      replicated parameters. This is an
-      in-memory import; persisted Megatron checkpoint reload is a separate,
-      unverified operation. text_only=True excludes vision and MTP weights.
+      Historical in-memory language-only import on 32 GB200 GPUs at TP8/EP32
+      completed 2,427 mappings across all 48 layers, including PLE; rank 0 held
+      11,455,020,976 local parameters including replicas. Vision and MTP were
+      excluded. This does not verify the public conversion command or a
+      persisted-checkpoint reload.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: CPU export, reload, and weight equality have not been verified.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: GPU export, reload, and weight equality have not been verified.
 
   manual_forward_pass:
     status: unverified
     precision: bf16
+    command: null
+    last_verified: null
     expected_result: >
-      Full-checkpoint BF16 text-only forwards were compared across HF,
-      Bridge (TP4/EP4), and native vLLM, capturing all 48 layers and full-vocabulary
-      logits. The 64-token prompt passed last-position cosine >=0.99 with
-      matching argmax for all three pairs. The 128-token prompt containing
-      EOS failed that cosine gate for every pair despite matching final argmax:
-      HF/Bridge 0.986387, HF/vLLM 0.985372, Bridge/vLLM 0.985446.
-      Component isolation is ongoing; these results do not establish parity.
-      The pretrain item separately checks loaded-weight training health.
+      Historical full-checkpoint BF16 text-only HF, Bridge TP4/EP4, and native
+      vLLM comparisons covered all 48 layers and the full vocabulary. A 64-token
+      prompt met cosine similarity 0.99 and matching final argmax for all pairs.
+      A 128-token prompt with EOS failed the cosine gate despite matching final
+      argmax: HF/Bridge 0.986387, HF/vLLM 0.985372, Bridge/vLLM 0.985446.
+      Numerical parity remains unresolved.
 
   inference:
     status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
     expected_result: >
-      No standalone generation result is available. Cached generation is
-      currently unsupported by this model implementation.
+      Standalone deterministic generation has not been verified. Cached
+      generation is unsupported by the current model implementation.
 
   pretrain:
     GB200:
-      status: verified
+      status: unverified
       precision: bf16
-      last_verified: 2026-10-08
-      enabled_features:
-        text_only: true
-        tensor_model_parallel_size: 8
-        expert_model_parallel_size: 32
-        expert_tensor_parallel_size: 1
-        pipeline_model_parallel_size: 1
-        context_parallel_size: 1
-        sequence_parallel: true
-        grad_reduce_in_fp32: false
-        moe_token_dispatcher_type: allgather
-        moe_permute_fusion: false
-        moe_shared_expert_overlap: false
-      dataset:
-        hf_id: Salesforce/wikitext
-        hf_revision: b08601e04326c79dfdd32d625aee71d232d685c3  # pragma: allowlist secret
-        subset: wikitext-2-raw-v1
-        split: train
-        tokens: 1000000
-        documents: 9460
-        token_file_sha256: c67464af837ccb18834130ad6fb853b42e5157f5337cb67eb2b55c12eb3a0fd0  # pragma: allowlist secret
-        index_file_sha256: 55d1cd0dc221cf1942368458221925fa5015709dded14f36d1a3e87d4b096d7b  # pragma: allowlist secret
-      observed_result:
-        completed_steps: 10
-        skipped_steps: 0
-        first_lm_loss: 2.246053695678711
-        last_lm_loss: 2.0654714107513428
-        lm_loss_min: 2.0654714107513428
-        lm_loss_max: 2.4887423515319824
-        pre_clipping_grad_norm_min: 16.23810386657715
-        pre_clipping_grad_norm_max: 26.358875274658203
-        sampled_master_update_min_global: 1.0132789611816406e-6
-        clean_exit: true
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        Ten standard Bridge pretraining steps from the pinned HF weights,
-        with real indexed text, sequence length 512, microbatch size 1,
-        global batch size 4, and distributed Adam at learning rate 1e-6 and
-        zero weight decay. Gradient-reduction overlap is disabled because
-        the QSA hard-selection indexer receives no language-loss gradients.
-        Record every step's loss,
-        pre-clipping gradient norm, skipped-update count, and evidence that
-        optimizer updates changed a parameter. No checkpoint output or
-        convergence claim. At this sequence length QSA does not exercise
-        selection beyond its 2048-token budget. RC4 SPCX variable-split
-        all-to-all corrupted this workload; this check uses unfused all-gather.
-        All ten ordinary steps passed, including metric logging. These losses
-        and gradient norms support numerical training health; they do not
-        establish HF parity or convergence. Each process prepares its small
-        dataset cache locally before distributed initialization.
+        Historical language-only full-checkpoint training completed ten steps
+        on 32 GB200 GPUs at TP8/SP, EP32, ETP1/PP1/CP1, sequence 512, MBS1/GBS4,
+        Adam LR 1e-6 and zero weight decay. Salesforce/wikitext train,
+        wikitext-2-raw-v1 revision b08601e04326c79dfdd32d625aee71d232d685c3,
+        supplied 1,000,000 tokens from 9,460 documents. Loss went from
+        2.246053695678711 to 2.0654714107513428, with range
+        [2.0654714107513428, 2.4887423515319824]; preclip gradient norms ranged
+        from 16.23810386657715 to 26.358875274658203. There were zero skipped
+        steps, a clean exit, and a positive sampled master-parameter update
+        minimum of 1.0132789611816406e-6. BF16 gradient reduction, unfused
+        allgather dispatch, and disabled shared-expert overlap were used.
+        Gradient-reduction overlap was disabled because the hard-selection
+        indexer has no gradient. The RC4 variable-split all-to-all path failed
+        this workload; sequence 512 does not exercise the 2,048-token selection
+        budget. Public-command, checkpoint, and convergence verification remain
+        pending; no trustworthy throughput metrics were captured.
+
+  sft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
+        --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft
+        --max_steps 100
+        --pretrained_checkpoint work/cache/qwen3.8-flash-next
+        dataset.path=work/data/nemotron-image-v3-ecd
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3.8-flash-next/sft/resolved-config.yaml
+        logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: >
+        Pending execution of this public recipe command. Supply the full local
+        HF checkpoint at the pinned model revision and the 8,192 complete image
+        conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py
+        from nvidia/Nemotron-Image-Training-v3 ECD revision
+        7656391d4d4cb11ec3722b34f10d499435de0460. Recipe defaults are 64 GB200
+        GPUs, TP8/SP, EP64, ETP1/PP1/CP1, sequence 2048, MBS1/GBS8, BF16 with
+        FP32 gradient reduction, and constant LR 1e-6. Require finite losses,
+        zero skipped/NaN iterations, and a saved resolved configuration.
+        Historical training from the recorded Bridge base with Transformers
+        5.16.1 completed 5,349 steps on this bounded subset: first loss
+        0.310870707035, final loss 0.01342209149, first-ten mean 0.311553779,
+        and last-ten mean 0.017778902. These are historical loss observations,
+        not verification of the new public command or generalization evidence.
+        Historical model TFLOP/s/GPU was not reliably captured; standard loss
+        and iteration-time logging are enabled for the rerun. Logged TFLOP/s
+        is a partial analytical architecture estimate that omits custom
+        gated-residual, PLE, and QSA work, not complete model throughput or MFU.
+
+  sft_export_inference:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: SFT checkpoint export, reload, and deterministic HF generation remain unverified.
+
+  sft_long_context:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Long-context SFT with packing and context parallelism has not been verified.
+
+  peft:
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      expected_result: Parameter-efficient finetuning has not been verified.
+
+  checkpoint_resume:
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+        last_10_steps_tokens_per_second_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: []
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: Full optimizer/RNG checkpoint resume and loss sentinels have not been verified.

@@ -2002,6 +2002,37 @@ class TestVitFlops:
 
         assert vit_flops(cfg, batch_size=batch_size, num_patches=num_patches) == expected
 
+    @pytest.mark.parametrize("nested", [False, True])
+    def test_mapping_vision_config_matches_object_and_closed_form(self, nested):
+        """Serialized Qwen4 vision settings must not silently produce zero FLOPs."""
+        settings = dict(
+            depth=2,
+            hidden_size=8,
+            intermediate_size=16,
+            spatial_merge_size=4,
+            out_hidden_size=32,
+            deepstack_visual_indexes=[0],
+        )
+        object_cfg = self._base_cfg(**settings)
+        model_fields = {"hidden_size": 32}
+        if nested:
+            model_fields["thinker_config"] = SimpleNamespace(vision_config=settings)
+        else:
+            model_fields["vision_config"] = settings
+        mapping_cfg = SimpleNamespace(model=SimpleNamespace(**model_fields))
+        # Two independent 16-patch frames; merge size 4 and two mergers.
+        expected = 3 * (2 * ((8 * 8**2 + 4 * 8 * 16) * 32 + 4 * 8 * 512) + 2 * 2 * (2 * 128**2 + 2 * 128 * 32))
+        grid = torch.tensor([[2, 4, 4]], dtype=torch.int64)
+        assert expected > 0
+        for cfg in (mapping_cfg, object_cfg):
+            assert vit_flops(cfg, batch_size=2, num_patches=16) == expected
+            assert vit_flops_from_grid_thw(cfg, grid) == expected
+            assert (
+                flop_utils.vit_flops_from_patch_stats(cfg, patch_sum=32, patch_squared_sum=512, merged_token_sum=2)
+                == expected
+            )
+        assert settings["spatial_merge_size"] == 4
+
     def test_vit_flops_scales_linearly_with_batch_size(self):
         """Doubling batch_size should double the returned FLOPS (per-image attn is fixed)."""
         cfg = self._base_cfg()

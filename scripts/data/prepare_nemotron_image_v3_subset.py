@@ -360,7 +360,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--bridge-root",
         type=Path,
-        default=Path(__file__).resolve().parents[4],
+        default=Path(__file__).resolve().parents[2],
         help="Bridge checkout (defaults to the checkout containing this example)",
     )
     for name, default in (
