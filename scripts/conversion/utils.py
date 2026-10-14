@@ -13,12 +13,21 @@
 # limitations under the License.
 """Utilities shared by CPU and distributed GPU conversion backends."""
 
+from __future__ import annotations
+
+import os
 import re
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import torch
+
+
+if TYPE_CHECKING:
+    from megatron.bridge import AutoBridge
+    from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 DTYPE_MAP = {
@@ -26,6 +35,24 @@ DTYPE_MAP = {
     "float16": torch.float16,
     "float32": torch.float32,
 }
+
+
+def _configure_distributed_env() -> None:
+    """Derive the PyTorch distributed environment for direct Slurm launches."""
+    if os.environ.get("WORLD_SIZE") is not None or os.environ.get("SLURM_NTASKS") is None:
+        return
+
+    from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
+
+    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+    os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
+    master_addr = resolve_slurm_master_addr()
+    master_port = resolve_slurm_master_port()
+    if master_addr is not None:
+        os.environ["MASTER_ADDR"] = master_addr
+    if master_port is not None:
+        os.environ["MASTER_PORT"] = str(master_port)
 
 
 def _validate_hf_revision_target(hf_model: str, hf_revision: str | None) -> None:
@@ -163,3 +190,76 @@ def prepare_output_directory(path: str, *, overwrite: bool, source_paths: Iterab
         raise ValueError("Refusing to overwrite the filesystem root.")
     shutil.rmtree(output_path)
     return output_path
+
+
+def _uses_model_builder(bridge: AutoBridge) -> bool:
+    """Return whether the selected bridge supports native builder construction."""
+    return getattr(bridge._model_bridge, "USE_MODEL_CONFIG_FOR_CONVERSION", False)
+
+
+def _configure_model_provider(
+    model_provider: GPTModelProvider,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    dtype: torch.dtype,
+    use_cpu: bool = False,
+) -> None:
+    """Apply distributed parallelism and dtype settings to a model provider."""
+    model_provider.tensor_model_parallel_size = tp
+    model_provider.pipeline_model_parallel_size = pp
+    model_provider.expert_model_parallel_size = ep
+    model_provider.expert_tensor_parallel_size = etp
+    model_provider.pipeline_dtype = dtype
+    model_provider.params_dtype = dtype
+    if use_cpu:
+        model_provider.use_cpu_initialization = True
+
+
+def _configure_model_config(
+    model_config,
+    *,
+    tp: int,
+    pp: int,
+    ep: int,
+    etp: int,
+    dtype: torch.dtype,
+    use_cpu: bool = False,
+) -> None:
+    """Apply distributed parallelism and dtype settings to a builder config."""
+    _configure_model_provider(model_config.transformer, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype, use_cpu=use_cpu)
+
+
+def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
+    """Generate a bridge-specific pipeline layout when the model requires one.
+
+    A bridge returns ``None`` when the default pipeline split already applies.
+    """
+    if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
+        return False
+    num_layers = bridge.hf_pretrained.config.num_hidden_layers
+    # The layout must match the model being built, which may omit the checkpoint's MTP layers.
+    model_config = getattr(model_provider, "transformer", model_provider)
+    mtp_layers = getattr(model_config, "mtp_num_layers", None) or 0
+    layout = bridge._model_bridge.generate_pipeline_layout(num_layers, pp, mtp_layers)
+    if layout is None:
+        return False
+    model_provider.pipeline_model_parallel_layout = layout
+    from megatron.bridge.utils.common_utils import print_rank_0
+
+    print_rank_0(f"Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp_layers} MTP)")
+    return True
+
+
+def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
+    """Build tokenizer metadata for a saved Megatron checkpoint."""
+    tokenizer_kwargs: dict[str, object] = {}
+    if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
+        tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs() or {}
+    if trust_remote_code:
+        tokenizer_kwargs["trust_remote_code"] = True
+    if bridge.hf_model_revision is not None:
+        tokenizer_kwargs["revision"] = bridge.hf_model_revision
+    return tokenizer_kwargs

@@ -57,6 +57,9 @@ from megatron.core.transformer.cuda_graphs import (
     VisionTECudaGraphHelper,
     get_vision_cuda_graph_seq_length,
 )
+from megatron.core.transformer.cuda_graphs import (
+    delete_cuda_graphs as delete_local_cuda_graphs,
+)
 from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
     get_attr_wrapped_model,
@@ -102,6 +105,7 @@ from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
 from megatron.bridge.training.utils.mlflow_utils import end_active_mlflow_run
 from megatron.bridge.training.utils.train_utils import (
+    accumulate_zero_token_step,
     calc_params_l2_norm,
     logical_and_across_model_parallel_group,
     prepare_forward_step_func,
@@ -173,6 +177,9 @@ def train(
     timers = global_state.timers
     straggler_timer = global_state.straggler_timer
     energy_monitor = global_state.energy_monitor
+    # This decision must be identical across DP ranks, including when one local
+    # dense SFT batch reaches the configured maximum and another is shorter.
+    flops_require_global_reduce = flop_utils.requires_global_flops_reduce(config.dataset)
 
     # Prepare forward_step_func (check signature and inject state if needed).
     # This is done once to prevent creating new partial objects every iteration.
@@ -494,7 +501,7 @@ def train(
         global_state._flops_vision_merged_token_sum = 0
         global_state._flops_cross_seqlen_sum = 0
         global_state._flops_cross_seqlen_product_sum = 0
-        global_state._flops_requires_global_reduce = False
+        global_state._flops_requires_global_reduce = flops_require_global_reduce
         global_state.global_batch_packing_num_microbatches = None
 
         (
@@ -616,10 +623,9 @@ def train(
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
         # Resolve this step's data-parallel-global FLOPS sequence stats and fold the
-        # step's FLOPS into the running total. Dense BSHD batches extrapolate exact
-        # fixed-length stats from the local DP rank; THD batches request one exact SUM
-        # all-reduce over the pure DP group because packed sub-sequence lengths can
-        # differ by rank.
+        # step's FLOPS into the running total. Only known fixed-length pretraining
+        # extrapolates local stats; SFT/custom batches and packed metadata request
+        # one exact SUM over pure DP because lengths can differ by rank.
         flops_stats = flop_utils.resolve_global_flops_runtime_stats(
             global_state,
             data_parallel_size=dp_size,
@@ -1051,6 +1057,10 @@ def train_step(
         # Average loss across microbatches.
         loss_reduced = {}
 
+        # Tracks whether any key saw an empty global token count this step. Kept on
+        # device so the hot path stays free of a host sync; read at log_interval.
+        zero_token_step = None
+
         for key in losses_reduced[0].keys():
             val = [x[key].view(-1) for x in losses_reduced]
             if val[0].numel() == 2:
@@ -1059,6 +1069,8 @@ def train_step(
                 val = torch.vstack(val).sum(dim=0)
                 dp_cp_group = get_data_distribution_group(pg_collection, cfg.model, with_context_parallel=True)
                 torch.distributed.all_reduce(val, group=dp_cp_group)
+                is_empty = val[1] == 0
+                zero_token_step = is_empty if zero_token_step is None else zero_token_step | is_empty
                 loss_reduced[key] = torch.where(val[1] > 0, val[0] / val[1], torch.zeros_like(val[0]))
             elif val[0].numel() == 1:
                 # legacy behavior, we average over the number of microbatches
@@ -1066,6 +1078,10 @@ def train_step(
                 loss_reduced[key] = val
             else:
                 raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+
+        if zero_token_step is not None:
+            accumulate_zero_token_step(global_state, zero_token_step)
+
         return (
             loss_reduced,
             skipped_iter,
@@ -1772,6 +1788,9 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper | None):
     # delete_cuda_graphs() asserts. Mirrors the guard in upstream mcore training.py.
     if cuda_graph_helper is not None and cuda_graph_helper.graphs_created():
         cuda_graph_helper.delete_cuda_graphs()
+
+    # Cleanup per-layer CUDA graphs owned by MCore CudaGraphManager (cuda_graph_impl="local").
+    delete_local_cuda_graphs()
 
     # Run GC to collect the freshed object
     gc.collect()

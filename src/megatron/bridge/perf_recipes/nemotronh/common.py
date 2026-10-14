@@ -25,7 +25,6 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import nemotron_3_ultra_pretrain_config
-from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     MixedPrecisionConfig,
@@ -60,11 +59,6 @@ def _apply_nemotron_3_nano_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
-
-
-def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
-    cfg.train.global_batch_size = global_batch_size
-    return cfg
 
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
@@ -210,6 +204,27 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
 
     # DDP bucketing
     cfg.ddp.num_buckets = 48
+
+
+def _apply_nemotron_3_ultra_gtp(cfg: ConfigContainer) -> None:
+    """Apply rack-local dense GTP settings for Nemotron 3 Ultra on GB300.
+
+    Dense weights are sharded across one 64-GPU NVLink domain. Routed-expert
+    weights remain unsharded by GTP because EP64 already spans that domain;
+    this avoids expert-weight all-gathers across racks.
+    """
+    cfg.dist.use_megatron_fsdp = False
+    cfg.ddp.use_megatron_fsdp = False
+
+    # GTP is controlled through the user-facing total weight-shard counts.
+    # TP1 x GTP64 gives one dense-weight shard per GPU within a GB300 rack.
+    cfg.model.tensor_parallel_num_weight_shards = _GB300_NVLINK_DOMAIN_GPUS
+    cfg.model.expert_tensor_parallel_num_weight_shards = cfg.model.expert_tensor_parallel_size
+
+    # GTP currently supports only one distributed-optimizer instance.
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
 
 
 def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:

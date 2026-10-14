@@ -38,10 +38,10 @@ def _offline_recipes(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
 def test_proxy_preserves_parent_except_depth_and_layout(precision: str) -> None:
     parent_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_256gpu_vr200_{precision}_config"
+        deepseek, f"deepseek_v3_pretrain_256gpu_vrnvl72_{precision}_config"
     )
     proxy_fn: Callable[[], ConfigContainer] = getattr(
-        deepseek, f"deepseek_v3_pretrain_64gpu_vr200_{precision}_proxy_config"
+        deepseek, f"deepseek_v3_pretrain_64gpu_vrnvl72_{precision}_proxy_config"
     )
     parent = parent_fn()
     proxy = proxy_fn()
@@ -111,7 +111,7 @@ def test_proxy_preserves_parent_except_depth_and_layout(precision: str) -> None:
 
 @pytest.mark.parametrize("precision", ["fp8mx", "nvfp4"])
 def test_proxy_overlap_setup_without_pipeline_parallelism(monkeypatch: pytest.MonkeyPatch, precision: str) -> None:
-    cfg = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_vr200_{precision}_proxy_config")()
+    cfg = getattr(deepseek, f"deepseek_v3_pretrain_64gpu_vrnvl72_{precision}_proxy_config")()
     # Validate the topology without requiring the GPU libraries in this unit test.
     monkeypatch.setattr("megatron.bridge.training.comm_overlap.is_te_min_version", lambda *_: True)
     monkeypatch.setattr("megatron.bridge.training.comm_overlap.is_torch_min_version", lambda *_: True)
@@ -137,7 +137,7 @@ def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.Mon
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts" / "performance"))
     from utils.utils import get_perf_recipe_by_name, list_available_config_variants
 
-    cfg = get_perf_recipe_by_name("deepseek_v3", "pretrain", 64, "vr200", precision, config_variant="proxy")
+    cfg = get_perf_recipe_by_name("deepseek_v3", "pretrain", 64, "vrnvl72", precision, config_variant="proxy")
     assert cfg.train.global_batch_size == 4096
     assert cfg.model.num_layers == 13
     assert cfg.model.pipeline_model_parallel_size == 1
@@ -147,7 +147,7 @@ def test_proxy_is_available_through_performance_selector(monkeypatch: pytest.Mon
     assert "proxy" in list_available_config_variants(
         model_family_name="deepseek",
         model_recipe_name="deepseek_v3",
-        gpu="vr200",
+        gpu="vrnvl72",
         compute_dtype=precision,
         task="pretrain",
     )

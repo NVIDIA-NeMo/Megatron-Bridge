@@ -192,7 +192,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def _build_qwen3_30b_a3b_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -308,7 +308,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def _build_qwen3_30b_a3b_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the Qwen3 30B-A3B 8-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
@@ -368,7 +368,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
 
 def _build_qwen3_235b_a22b_gb300_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP BF16 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -418,6 +418,10 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # PyTorch 2.14 prints a C++ warning on every deprecated CUDAGraph.register_generator_state() call.
+        # TE layer-graph capture with PP>1 makes thousands per rank, and the stderr flood can stall ranks
+        # past the NCCL timeout, so keep only C++ errors.
+        "TORCH_CPP_LOG_LEVEL": "ERROR",
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # NCCL EP dispatcher mode and one GPU per rank.
@@ -484,7 +488,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
 
 def _build_qwen3_235b_a22b_gb300_fp8mx() -> ConfigContainer:
-    """Shared HybridEP MXFP8 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VR200 alias."""
+    """Shared HybridEP MXFP8 base for the Qwen3 235B-A22B 256-GPU GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.bias_activation_fusion = True
@@ -625,7 +629,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_full_iteration_config() -> Config
 
 
 def _build_qwen3_235b_a22b_gb300_nvfp4() -> ConfigContainer:
-    """Shared HybridEP NVFP4 base (full-iteration CG, A2A overlap) for the GB300 recipe and its VR200 alias."""
+    """Shared HybridEP NVFP4 base (full-iteration CG, A2A overlap) for the GB300 recipe and its VRNVL72 alias."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False

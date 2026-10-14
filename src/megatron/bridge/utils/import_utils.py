@@ -17,7 +17,10 @@
 
 
 import importlib
+import importlib.metadata
+import importlib.util
 import logging
+import sys
 import traceback
 from contextlib import contextmanager
 from typing import Tuple
@@ -420,3 +423,39 @@ def is_torch_min_version(version, check_equality=True):
     if check_equality:
         return get_torch_version() >= PkgVersion(version)
     return get_torch_version() > PkgVersion(version)
+
+
+def get_distribution_version(name: str) -> str | None:
+    """Return the installed version of a distribution without importing it.
+
+    Args:
+        name: Distribution name as installed, e.g. ``"nvidia-cudnn-frontend"``.
+
+    Returns:
+        The version from the package metadata, or None when the distribution is not installed.
+    """
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def is_module_available(name: str) -> bool:
+    """Return whether a module can be found, without executing it.
+
+    A module already in ``sys.modules`` counts as available unless its entry is None (the import-blocking idiom),
+    even when it has no ``__spec__``. Otherwise this uses ``importlib.util.find_spec``: a top-level module is located
+    but not imported. For a dotted name, the parent packages are imported first, as ``find_spec`` requires.
+
+    Args:
+        name: Module name, e.g. ``"cutlass"``.
+
+    Returns:
+        True if the module can be found, False otherwise.
+    """
+    if name in sys.modules:
+        return sys.modules[name] is not None
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False

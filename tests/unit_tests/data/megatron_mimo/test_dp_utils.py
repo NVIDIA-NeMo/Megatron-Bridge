@@ -8,6 +8,7 @@ import torch.distributed as dist
 from megatron.bridge.data.megatron_mimo.dp_utils import (
     get_megatron_mimo_dp_info,
     get_megatron_mimo_sampling_info,
+    real_token_lengths,
     slice_batch_for_megatron_mimo,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
@@ -425,3 +426,22 @@ class TestPatchPackedVisualSlice:
         sliced = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
         enc = sliced["modality_inputs"]["images"]["vision_encoder"]
         assert enc["encoder_meta"] == "fixed-string"
+
+
+class TestRealTokenLengths:
+    def test_counts_mask_ones_per_sample(self):
+        input_ids = torch.tensor([[5, 6, 0, 0], [5, 6, 7, 8]])
+        mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 1]])
+        assert real_token_lengths(input_ids, attention_mask=mask).tolist() == [2, 4]
+
+    def test_pad_valued_real_token_still_counts(self):
+        # pad_token == eos_token tokenizers: a real token equal to the pad id must not be dropped.
+        input_ids = torch.tensor([[5, 0, 0, 0]])
+        mask = torch.tensor([[1, 1, 0, 0]])
+        assert real_token_lengths(input_ids, attention_mask=mask).tolist() == [2]
+
+    @pytest.mark.parametrize("mask", [None, torch.ones(3, 4), torch.ones(4), torch.ones(2, 3)])
+    def test_rejects_missing_or_mismatched_mask(self, mask):
+        input_ids = torch.zeros(2, 4, dtype=torch.int64)
+        with pytest.raises(ValueError, match="attention_mask"):
+            real_token_lengths(input_ids, attention_mask=mask)
