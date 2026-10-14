@@ -193,7 +193,7 @@ runs:
             export BASH_ENV=/dev/null
           fi
 
-          timeout $(( ${{ inputs.timeout }} * 60 ))s bash -- "tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/$1.sh" || EXIT_CODE=$?
+          timeout $(( ${{ inputs.timeout }} * 60 ))s bash "tests/${{ inputs.is_unit_test == 'true' && 'unit_tests' || format('functional_tests/launch_scripts/{0}', inputs.script_dir) }}/$1.sh" || EXIT_CODE=$?
 
           if [[ "$EXIT_CODE" -eq 124 ]]; then
             echo "::error:: Test timed out after ${{ inputs.timeout }} minutes. Please reach out to the PIC."
