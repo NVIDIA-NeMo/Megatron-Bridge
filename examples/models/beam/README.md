@@ -35,7 +35,7 @@ bounded pretraining recipe keep the published router bias fixed and add no auxil
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained(
-    "reflection/Beam-1.0-501B-A23B", revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"
+    "reflection/Beam-1.0-501B-A23B", revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"  # pragma: allowlist secret
 )
 model_config = bridge.get_model_config()
 
@@ -169,13 +169,13 @@ the dataset offline while the other ranks wait.
   --pretrained_checkpoint work/models/beam/iter_0000000 \
   --max_steps 100 --seq_length 8192 --lr 5e-6 --min_lr 0 --warmup_iters 10 \
   'dataset.hf_dataset.split="train[:10000]"' \
-  '++tokenizer.hf_tokenizer_kwargs.revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"' \
   dataset.enable_offline_packing=true dataset.hf_output_root=work/data/beam-tulu3-8k \
   +dataset.offline_packing_specs.pad_seq_to_mult=8 scheduler.lr_decay_iters=100 \
   model.transformer.moe_router_force_load_balancing=false \
   checkpoint.save_optim=false checkpoint.save_rng=false \
   --save_dir work/results/beam-sft --save_interval 100 \
-  dist.distributed_timeout_minutes=120
+  dist.distributed_timeout_minutes=120 \
+  '++tokenizer.hf_tokenizer_kwargs.revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"'  # pragma: allowlist secret
 ```
 
 For 64K sequences, keep the SFT recipe and switch to all-to-all context parallelism of 8 at TP1:
@@ -191,11 +191,11 @@ model.transformer.expert_model_parallel_size=64 +dataset.offline_packing_specs.p
   --pretrained_checkpoint work/models/beam/iter_0000000 \
   --max_steps 100 --seq_length 8192 --lr 1e-4 --min_lr 0 --warmup_iters 10 \
   'dataset.hf_dataset.split="train[:10000]"' \
-  '++tokenizer.hf_tokenizer_kwargs.revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"' \
   dataset.enable_offline_packing=true dataset.hf_output_root=work/data/beam-tulu3-8k-pad2 \
   +dataset.offline_packing_specs.pad_seq_to_mult=2 scheduler.lr_decay_iters=100 \
   model.transformer.moe_router_force_load_balancing=false \
-  --save_dir work/results/beam-peft --save_interval 100
+  --save_dir work/results/beam-peft --save_interval 100 \
+  '++tokenizer.hf_tokenizer_kwargs.revision="3ea13c81833d9a523ed4bdc4152a33edd16bbd30"'  # pragma: allowlist secret
 ```
 
 The adapter checkpoint holds 208 LoRA matrices (52 attention layers x 2 projections x 2 matrices).

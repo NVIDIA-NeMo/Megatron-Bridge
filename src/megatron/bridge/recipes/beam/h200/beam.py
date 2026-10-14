@@ -35,11 +35,11 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 BEAM_HF_MODEL_ID = "reflection/Beam-1.0-501B-A23B"
-BEAM_HF_MODEL_REVISION = "3ea13c81833d9a523ed4bdc4152a33edd16bbd30"
+BEAM_HF_MODEL_REVISION = "3ea13c81833d9a523ed4bdc4152a33edd16bbd30"  # pragma: allowlist secret
 
 # qwen3_30b_a3b_convergence_v2 data selection: Tulu 3 train[:10000] at a pinned dataset revision.
 TULU3_SPLIT = "train[:10000]"
-TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"
+TULU3_REVISION = "b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"  # pragma: allowlist secret
 CONVERGENCE_V2_SEQ_LENGTH = 8192
 CONVERGENCE_V2_GLOBAL_BATCH_SIZE = 8
 
