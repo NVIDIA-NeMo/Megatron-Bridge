@@ -79,7 +79,7 @@ unverified.
 Add `pretrain_fsdp` as an optional hardware-scoped item when a first-class
 Megatron FSDP performance recipe exists for the exact model variant. Record
 the FSDP result under `pretrain_fsdp.<hardware>`. Keep it separate from
-checkpoint-resume and tuned non-FSDP `pretrain_performance` results. Do not
+checkpoint-resume and non-FSDP `pretrain_performance` results. Do not
 embed a baseline, control, computed delta, or relative speedup under another
 item; agents can derive valid comparisons from the standalone commands,
 resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
@@ -151,10 +151,14 @@ the public command. It must not override micro batch size. Record raw point
 metrics only; derive aggregate throughput and scaling efficiency when reading
 the card rather than storing comparison payloads.
 
-A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
-performance recipe exists for that hardware. Its item status states whether
-the card's benchmark run has been verified; an `unverified` leaf still records
-the existence of the recipe. If the card has no concrete performance leaf,
+A concrete `pretrain_performance.<hardware>` leaf means a canonical performance
+recipe exists for that hardware, including one explicitly marked **early,
+unoptimized**. Its item status states whether the card's benchmark run has been
+verified; an `unverified` leaf still records the existence of the recipe.
+Existence or functional verification alone does not justify a tuned/optimized
+claim: require measured performance meeting the readiness guidance below and
+preserve any early, unoptimized label in the summary.
+If the card has no concrete performance leaf,
 start `summary` with this exact disclaimer before the functional-support
 summary:
 
@@ -430,9 +434,9 @@ For the final verification-card recipe, no recompute and selective recompute
 on cheap supported modules are both appropriate starting choices. Choose by
 measured memory headroom and steady-state performance; selective recompute
 does not require a no-recompute OOM first. Full recompute is acceptable
-temporarily for diagnostic bring-up, but can severely reduce
-throughput. Retain it only when target-scale measurements show no recompute
-and supported selective boundaries still fail to fit. Record memory/OOM
+temporarily for diagnostic bring-up, but can severely reduce throughput.
+Retain it only when target-scale measurements show no recompute and supported
+selective boundaries still fail to fit. Record memory/OOM
 evidence, boundaries tested, and steady-state performance cost in the recipe's
 supporting record; keep public card metrics standalone as required below.
 
@@ -820,6 +824,14 @@ verified, record this metric as `null` alongside its other training metrics.
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
 leaves, including every verified precision variant.
+
+For any new recipe used by a card, apply the
+[performance-readiness guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes):
+aim for roughly 200 model TFLOP/s/GPU on H100 or 400 on GB200. Use the measured
+steady-state training metrics for the intended workload. If performance is
+severely below the target, withhold the recipe or mark it **early, unoptimized**
+in the recipe, card summary, and PR, with its measured performance and limits.
+Functional verification alone does not establish that a recipe is optimized.
 
 Record raw metrics for each run only. Do not store comparison payloads,
 throughput or memory deltas, speedups, or prose ranking one performance run

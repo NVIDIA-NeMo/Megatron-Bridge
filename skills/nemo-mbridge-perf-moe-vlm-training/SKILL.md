@@ -76,12 +76,23 @@ For library, performance, and verification-card recipes, **no recompute and
 selective recompute on cheap supported modules are both appropriate starting
 choices**. Choose using measured memory headroom and steady-state performance
 at target scale; selective recompute does not require a no-recompute OOM first.
-Full recompute can severely reduce throughput. It is acceptable temporarily during memory-constrained diagnostic
-bring-up, but a successful bring-up run does not justify publishing it as the
-default. Retain full recompute only when target-scale measurements show that
+Full recompute can severely reduce throughput. It is acceptable temporarily
+during memory-constrained diagnostic bring-up, but a successful bring-up run
+does not justify publishing it as the default. Retain full recompute only when target-scale measurements show that
 no recompute and supported selective boundaries still fail to fit. Document
 the per-rank memory peaks/OOM evidence, boundaries tested, and steady-state
 performance cost.
+
+### Check performance before publishing
+
+Every new recipe needs measured steady-state performance on its intended
+workload and allocation: aim for roughly **200 model TFLOP/s/GPU on H100** or
+**400 on GB200**. For VLMs, use realistic multimodal input. If performance is
+severely below these approximate targets, withhold the recipe or clearly mark
+it **early, unoptimized** in the recipe and its public documentation/card and
+PR. Follow the [recipe publication guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes)
+for the measurement details; a successful full-recompute bring-up does not
+waive this requirement.
 
 ## Key Tuning Knobs
 

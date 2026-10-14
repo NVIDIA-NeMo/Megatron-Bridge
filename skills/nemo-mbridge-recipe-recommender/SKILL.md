@@ -42,6 +42,21 @@ index details:
    only the execution/performance mapping. Do not trade convergence semantics
    for throughput without calling it a new experiment.
 
+## Performance Readiness for New Recipes
+
+Before publishing any new library, performance, or verification-card training
+recipe, measure steady-state model TFLOP/s/GPU on its intended workload and
+GPU allocation. Aim for roughly **200 TFLOP/s/GPU on H100** and **400
+TFLOP/s/GPU on GB200**. These are approximate readiness targets, not exact
+pass/fail cutoffs; completing a run alone does not establish decent performance.
+
+If measured performance is severely below the target, either withhold the
+recipe until it is improved or clearly label it **early, unoptimized** in the
+recipe docstring, accompanying public documentation/card, and PR description.
+Record the measured throughput, hardware, precision, workload, and GPU layout
+alongside the limitation. Do not present it as a tuned recommendation or change
+the intended training workload or convergence settings merely to meet a target.
+
 ## Configuration Layers and Change Control
 
 Separate training semantics from their hardware mapping before recommending or
