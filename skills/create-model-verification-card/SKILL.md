@@ -39,12 +39,24 @@ Record the public HF model name in commands, its immutable revision in
 `model.hf_revision`, and the minimum supported Transformers version in
 `model.min_transformers_version`. Do not introduce an HF snapshot path.
 
-Record only two execution-environment facts: the public base container
-identifier and the exact Bridge commit used for verification. Put them in
+Record only two execution-environment facts: the base container provenance
+and the exact Bridge commit used for verification. Put them in
 `verification_environment.base_container` and
 `verification_environment.bridge_commit`. If the run mounted a checkout over
-the container, record the mounted checkout commit. Never substitute a private
-image path for the public base container identifier.
+the container, record the mounted checkout commit.
+
+For a public image, use its `nvcr.io/nvidia/nemo:<tag>` or
+`nvcr.io/nvidia/pytorch:<tag>` identifier. When qualification used a non-public
+release candidate, use the strict sanitized form
+`NeMo 26.10 RC4 (non-public release candidate)` or the corresponding `PyTorch`
+label. The grammar is product, `YY.MM` (month 01–12), a positive `RC` number,
+and the mandatory `(non-public release candidate)` suffix. This records the
+actual product/release candidate without claiming public availability or a
+pullable image. It is not a substitute for exact private run provenance.
+Never publish the private registry/path, invent a public tag, or add arbitrary
+text to this label; ordinary privacy and caller-denylist checks still apply.
+This form supports prerelease qualification across models and does not change
+any verification status or numerical evidence requirement.
 
 The top-level Bridge commit is the default for every item leaf. If one verified
 item was run from a different clean checkout, put that exact 40-hex commit in
@@ -900,7 +912,8 @@ entry in the generator's `MODEL_PAGE_PATHS` table.
   use `fp8_mx` and `nvfp4` only for training leaves that ran in those modes.
   For a multi-variant FSDP container, put precision on each variant.
 - Pin a public immutable HF revision, minimum Transformers version, public base
-  container, and exact Bridge verification commit; use an item override only
+  container or sanitized non-public release-candidate provenance, and exact
+  Bridge verification commit; use an item override only
   for a verified workload run from a different clean commit.
 - Use the public model name in commands.
 - Include commands and concrete expected results for verified items.

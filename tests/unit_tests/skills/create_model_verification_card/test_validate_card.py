@@ -795,3 +795,60 @@ def test_resume_reference_only_warm_start(resume_initialization, expected_errors
     )
 
     assert errors == expected_errors
+
+
+@pytest.mark.parametrize(
+    "base_container",
+    [
+        "nvcr.io/nvidia/nemo:26.10",
+        "nvcr.io/nvidia/pytorch:26.10-py3",
+        "NeMo 26.10 RC4 (non-public release candidate)",
+        "PyTorch 27.01 RC12 (non-public release candidate)",
+    ],
+)
+def test_base_container_accepts_public_image_or_sanitized_rc(base_container):
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+    card = yaml.safe_load(card_path.read_text())
+    card["verification_environment"]["base_container"] = base_container
+    assert validator._validate_card(card, yaml.safe_dump(card), ()) == []
+
+
+@pytest.mark.parametrize(
+    "base_container",
+    [
+        "NeMo 26.10 RC4",
+        "NeMo 26.10 RC4 (public release candidate)",
+        "NeMo 26.00 RC4 (non-public release candidate)",
+        "NeMo 26.13 RC4 (non-public release candidate)",
+        "NeMo 2026.10 RC4 (non-public release candidate)",
+        "NeMo 26.10 RC0 (non-public release candidate)",
+        "NeMo 26.10 RC04 (non-public release candidate)",
+        "NeMo 26.10 RC4 (non-public release candidate) extra",
+        "NeMo 26.10 RC4 (non-public release candidate) /private/image.sqsh",
+        "NeMo 26.10 RC4 (non-public release candidate) registry.invalid/team/image:tag",
+        "NeMo 26.10 RC4 (non-public release candidate)\n",
+        "Other 26.10 RC4 (non-public release candidate)",
+        "registry.invalid/team/nemo:26.10.rc4",
+        None,
+    ],
+)
+def test_base_container_rejects_malformed_or_private_rc(base_container):
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+    card = yaml.safe_load(card_path.read_text())
+    card["verification_environment"]["base_container"] = base_container
+    errors = validator._validate_card(card, yaml.safe_dump(card), ())
+    assert any(error.startswith("/verification_environment/base_container:") for error in errors)
+
+
+def test_sanitized_rc_does_not_bypass_privacy_or_caller_denylist():
+    validator = _load_validator()
+    card_path = REPO_ROOT / "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+    card = yaml.safe_load(card_path.read_text())
+    card["verification_environment"]["base_container"] = "NeMo 26.10 RC4 (non-public release candidate)"
+    errors = validator._validate_card(card, yaml.safe_dump(card), ("NeMo",))
+    assert "/: matched caller-supplied deny term #1" in errors
+    card["summary"] += " registry.invalid/team/nemo:26.10.rc4"
+    errors = validator._validate_card(card, yaml.safe_dump(card), ())
+    assert "/: concrete registry references are forbidden" in errors

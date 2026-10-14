@@ -61,7 +61,7 @@ Create the output directory first. The
 uses the public `scripts/training/train.sh` launcher with this same recipe.
 Supply scheduler configuration through the launcher's normal external setup.
 Do not select a different `--dataset` preset: it would replace the prepared
-Energon dataset configuration. `--dryrun` resolves the launch configuration
+Energon dataset configuration. `--dry-run` resolves the launch configuration
 without allocating the model; it is not a runtime or correctness check.
 
 Defaults preserve the measured training settings: **64 GB200 GPUs, TP8/SP,

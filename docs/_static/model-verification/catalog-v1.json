@@ -10542,7 +10542,7 @@
     },
     {
       "architecture": "Qwen4ExpForConditionalGeneration",
-      "base_container": "NeMo 26.10 RC4",
+      "base_container": "NeMo 26.10 RC4 (non-public release candidate)",
       "bridge_commit": "228077d7b63b13d8b3b7f276c78f53c8110c57ac",
       "entries": [
         {

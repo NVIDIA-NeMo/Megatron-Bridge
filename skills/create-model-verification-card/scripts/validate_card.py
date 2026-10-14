@@ -186,6 +186,11 @@ HF_ID_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
 VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
 PUBLIC_BASE_CONTAINER_RE = re.compile(r"nvcr\.io/nvidia/(?:nemo|pytorch):[A-Za-z0-9._-]+")
+# Release provenance only, deliberately not an image reference or pull target.
+SANITIZED_RC_BASE_CONTAINER_RE = re.compile(
+    r"(?:NeMo|PyTorch) [0-9]{2}\.(?:0[1-9]|1[0-2]) RC[1-9][0-9]* "
+    r"\(non-public release candidate\)"
+)
 URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 IPV4_RE = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
@@ -2038,10 +2043,14 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             errors=errors,
         )
         base_container = environment.get("base_container")
-        if not isinstance(base_container, str) or PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is None:
+        if not isinstance(base_container, str) or not (
+            PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container)
+            or SANITIZED_RC_BASE_CONTAINER_RE.fullmatch(base_container)
+        ):
             errors.append(
                 f"{_pointer('verification_environment', 'base_container')}: "
-                "expected a public NVIDIA NeMo or PyTorch container"
+                "expected a public NVIDIA NeMo or PyTorch container, or a sanitized label such as "
+                "'NeMo 26.10 RC4 (non-public release candidate)'"
             )
         bridge_commit = environment.get("bridge_commit")
         if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
