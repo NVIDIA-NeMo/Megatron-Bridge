@@ -225,6 +225,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).to_megatron_provider(
         load_weights=False
     )
+    cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.model.calculate_per_token_loss = True
     cfg.ddp.average_in_collective = False
 
@@ -234,11 +235,11 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.offload_modules = None
     cfg.model.seq_length = 131072
-    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.context_parallel_size = 8
     cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
@@ -275,10 +276,13 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 200
     cfg.scheduler.lr_decay_iters = 300000
     cfg.scheduler.lr_wsd_decay_iters = 300000
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.overlap_param_gather = True
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
-        overlap_grad_reduce=False,
-        overlap_param_gather=False,
+        overlap_grad_reduce=True,
+        overlap_param_gather=True,
         overlap_param_gather_with_optimizer_step=False,
         overlap_moe_expert_parallel_comm=False,
         delay_wgrad_compute=False,
@@ -304,7 +308,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return 128K BF16 Qwen3.5-VL SFT with TP2/CP8/EP16 on 32 GB200 GPUs.
+    """Return 128K BF16 Qwen3.5-VL SFT with TP1/CP8/EP16 on 32 GB200 GPUs.
 
     Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
     Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
@@ -322,7 +326,7 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_bf16_config() -> ConfigContai
 
 
 def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Return packed CLEVR2 128K MXFP8 SFT with BF16 parameter communication.
+    """Return packed CLEVR2 128K MXFP8 SFT with FP8 parameter gather and CuTeDSL.
 
     Override with ``"dataset.path=$CLEVR2_ENERGON"`` to select the prepared
     Nemotron Image Training v3 ``clevr_2`` Energon shards, and supply a
@@ -336,8 +340,19 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_gb200_fp8mx_config() -> ConfigConta
     """
     cfg = _qwen35_vl_35b_a3b_long_context_common()
     cfg.mixed_precision = bf16_with_mxfp8_mixed()
-    cfg.mixed_precision.fp8_param_gather = False
-    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.checkpoint.load_main_params_from_ckpt = True
+    cfg.checkpoint.load_optim = False
+    cfg.checkpoint.load_rng = False
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_single_grouped_weight = True
+    cfg.env_vars = {
+        **cfg.env_vars,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": 1,
+        "NVTE_GROUPED_LINEAR_SINGLE_PARAM": 1,
+    }
     return cfg
 
 

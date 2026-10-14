@@ -13,7 +13,9 @@ from megatron.bridge.recipes.qwen.gb200 import qwen35
 
 
 pytestmark = pytest.mark.unit
+_BF16 = qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config
 _MXFP8 = qwen35.qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config
+_RECIPES = [_BF16, _MXFP8]
 
 
 @pytest.fixture
@@ -49,7 +51,8 @@ def hf_config(monkeypatch):
     return config, calls
 
 
-def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch):
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch, recipe_func):
     config, calls = hf_config
     original = deepcopy(config.to_dict())
     training_module = importlib.import_module("megatron.bridge.training.config")
@@ -58,7 +61,7 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
         torch.cuda, "get_device_properties", lambda index: SimpleNamespace(major=10, name="NVIDIA GB200")
     )
 
-    cfg = _MXFP8()
+    cfg = recipe_func()
     cfg.validate()
 
     assert config.to_dict() == original
@@ -72,6 +75,7 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.recompute_modules == ["gdn_norm_out", "moe"]
+    assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
     assert cfg.dataset.hf_dataset.dataset_name == "coderforge"
     assert cfg.dataset.hf_dataset.load_kwargs == {"revision": qwen35._CODERFORGE_REVISION}
     assert cfg.dataset.dataset_root is None
@@ -108,19 +112,40 @@ def test_verified_mxfp8_kernel_and_parameter_settings(hf_config):
     assert cfg.env_vars["NVTE_GROUPED_LINEAR_SINGLE_PARAM"] == 1
 
 
+def test_bf16_recipe_has_no_mxfp8_kernel_or_checkpoint_requirements(hf_config):
+    cfg = _BF16()
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.fp8 is None
+    assert cfg.mixed_precision.fp8_param_gather is False
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert cfg.checkpoint.load_main_params_from_ckpt is False
+    assert cfg.model.moe_use_grouped_tensor is False
+    assert cfg.model.use_transformer_engine_op_fuser is False
+    assert cfg.model.moe_mlp_glu_interleave_size is None
+    assert cfg.model.moe_single_grouped_weight is False
+    for name in (
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP",
+        "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL",
+        "NVTE_GROUPED_LINEAR_SINGLE_PARAM",
+    ):
+        assert name not in cfg.env_vars
+
+
 @pytest.mark.parametrize("seq_length", [0, -16, 15, 131073])
-def test_invalid_sequence_length_fails_before_hub_access(hf_config, seq_length):
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_invalid_sequence_length_fails_before_hub_access(hf_config, seq_length, recipe_func):
     _, calls = hf_config
     with pytest.raises(ValueError, match="positive and divisible by 16"):
-        _MXFP8(seq_length)
+        recipe_func(seq_length)
     assert calls == []
 
 
-def test_local_text_config_uses_matching_tokenizer(hf_config, monkeypatch):
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_local_text_config_uses_matching_tokenizer(hf_config, monkeypatch, recipe_func):
     config, _ = hf_config
     monkeypatch.setattr(qwen35.AutoConfig, "from_pretrained", lambda *_args, **_kwargs: config.text_config)
 
-    cfg = _MXFP8(1024, hf_path="local-text-checkpoint", hf_revision=None)
+    cfg = recipe_func(1024, hf_path="local-text-checkpoint", hf_revision=None)
 
     assert cfg.tokenizer.tokenizer_model == "local-text-checkpoint"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"revision": None}
@@ -128,31 +153,35 @@ def test_local_text_config_uses_matching_tokenizer(hf_config, monkeypatch):
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 1024
 
 
-def test_wrong_model_type_is_rejected(hf_config):
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_wrong_model_type_is_rejected(hf_config, recipe_func):
     config, _ = hf_config
     config.text_config.model_type = "qwen3_5_text"
     with pytest.raises(ValueError, match="Expected a Qwen3.5 MoE"):
-        _MXFP8()
+        recipe_func()
 
 
 @pytest.mark.parametrize("seq_length", [16, 32768, 65536, 131072])
-def test_aligned_context_lengths(hf_config, seq_length):
-    cfg = _MXFP8(seq_length)
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_aligned_context_lengths(hf_config, seq_length, recipe_func):
+    cfg = recipe_func(seq_length)
     assert cfg.model.seq_length == cfg.dataset.seq_length == seq_length
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == seq_length
 
 
-def test_context_exceeding_model_limit_is_rejected(hf_config):
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_context_exceeding_model_limit_is_rejected(hf_config, recipe_func):
     config, _ = hf_config
     with pytest.raises(ValueError, match="max_position_embeddings"):
-        _MXFP8(config.text_config.max_position_embeddings + 16)
+        recipe_func(config.text_config.max_position_embeddings + 16)
 
 
-def test_public_runner_finds_unique_text_recipe(hf_config, monkeypatch):
+@pytest.mark.parametrize("recipe_func", _RECIPES)
+def test_public_runner_finds_unique_text_recipe(hf_config, monkeypatch, recipe_func):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[3] / "scripts/training"))
     runner = importlib.import_module("recipe_runner")
-    assert runner.find_library_recipe(_MXFP8.__name__) is _MXFP8
-    assert runner.find_benchmark_recipe(_MXFP8.__name__) is None
-    cfg = runner.load_recipe(_MXFP8.__name__)
+    assert runner.find_library_recipe(recipe_func.__name__) is recipe_func
+    assert runner.find_benchmark_recipe(recipe_func.__name__) is None
+    cfg = runner.load_recipe(recipe_func.__name__)
     assert cfg.model.mtp_num_layers == 1
     assert cfg.dataset.hf_dataset.dataset_name == "coderforge"

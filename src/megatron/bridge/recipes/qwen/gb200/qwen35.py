@@ -37,27 +37,13 @@ _QWEN35_35B_A3B_INSTRUCT_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  
 _CODERFORGE_REVISION = "060fca96cf723b2ebab3181e9e59fafd273df3cb"  # pragma: allowlist secret
 
 
-def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
-    seq_length: int = 131072,
+def _qwen35_text_35b_a3b_long_context_common(
+    seq_length: int,
     *,
-    hf_path: str = "Qwen/Qwen3.5-35B-A3B",
-    hf_revision: str | None = _QWEN35_35B_A3B_INSTRUCT_REVISION,
+    hf_path: str,
+    hf_revision: str | None,
 ) -> ConfigContainer:
-    """MXFP8 text SFT with packed chat data, TP1/CP8/EP16 and one MTP layer.
-
-    Set a pretrained text checkpoint before training. The default CoderForge
-    source is normalized and packed by the dataset builder. Model config and
-    tokenizer share a pinned revision; use ``hf_revision=None`` for an extracted
-    local causal-LM checkpoint. No vision model is constructed.
-
-    Args:
-        seq_length: Packed token budget, a positive multiple of 16 for CP8.
-        hf_path: HF model ID or extracted local text checkpoint.
-        hf_revision: Matching model/tokenizer revision, or None for local inputs.
-
-    Returns:
-        Training configuration with MXFP8 parameter gather and CuTeDSL grouped MLP.
-    """
+    """Build the shared 16-GB200 text-only long-context SFT configuration."""
     if seq_length <= 0 or seq_length % 16:
         raise ValueError("seq_length must be positive and divisible by 16 for CP8.")
     cfg = _sft_common()
@@ -71,6 +57,7 @@ def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
         text_config.tie_word_embeddings = hf_config.tie_word_embeddings
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
     cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.tokenizer.tokenizer_model = hf_path
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": hf_revision}
 
@@ -90,10 +77,6 @@ def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_pad_uneven_dispatch_inputs = True
     cfg.model.moe_router_fusion = True
-    cfg.model.moe_use_grouped_tensor = True
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-    cfg.model.moe_single_grouped_weight = True
 
     # Pad each runtime segment to 2*CP, not each conversation to seq_length.
     # Physical and logical cu_seqlens remain distinct for attention and MTP.
@@ -122,8 +105,6 @@ def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
         lr_warmup_iters=200, lr_decay_iters=300000, max_lr=2e-5, min_lr=2e-6
     )
     cfg.optimizer.overlap_param_gather = True
-    cfg.mixed_precision = bf16_with_mxfp8_mixed()
-    cfg.checkpoint.load_main_params_from_ckpt = True
     cfg.checkpoint.load_optim = False
     cfg.checkpoint.load_rng = False
     cfg.ddp.use_distributed_optimizer = True
@@ -139,11 +120,71 @@ def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
+    }
+    cfg.checkpoint.load = None
+    return cfg
+
+
+def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_bf16_config(
+    seq_length: int = 131072,
+    *,
+    hf_path: str = "Qwen/Qwen3.5-35B-A3B",
+    hf_revision: str | None = _QWEN35_35B_A3B_INSTRUCT_REVISION,
+) -> ConfigContainer:
+    """BF16 text SFT with packed chat data, TP1/CP8/EP16 and one MTP layer.
+
+    Set a pretrained text checkpoint before training. The default CoderForge
+    source is normalized and packed by the dataset builder. Model config and
+    tokenizer share a pinned revision; use ``hf_revision=None`` for an extracted
+    local causal-LM checkpoint. No vision model is constructed.
+
+    Args:
+        seq_length: Packed token budget, a positive multiple of 16 for CP8.
+        hf_path: HF model ID or extracted local text checkpoint.
+        hf_revision: Matching model/tokenizer revision, or None for local inputs.
+
+    Returns:
+        Training configuration with BF16 compute and parameter communication.
+    """
+    cfg = _qwen35_text_35b_a3b_long_context_common(seq_length, hf_path=hf_path, hf_revision=hf_revision)
+    cfg.mixed_precision = bf16_mixed()
+    return cfg
+
+
+def qwen35_text_35b_a3b_sft_long_context_16gpu_gb200_fp8mx_config(
+    seq_length: int = 131072,
+    *,
+    hf_path: str = "Qwen/Qwen3.5-35B-A3B",
+    hf_revision: str | None = _QWEN35_35B_A3B_INSTRUCT_REVISION,
+) -> ConfigContainer:
+    """MXFP8 text SFT with packed chat data, TP1/CP8/EP16 and one MTP layer.
+
+    Set a pretrained text checkpoint before training. The default CoderForge
+    source is normalized and packed by the dataset builder. Model config and
+    tokenizer share a pinned revision; use ``hf_revision=None`` for an extracted
+    local causal-LM checkpoint. No vision model is constructed.
+
+    Args:
+        seq_length: Packed token budget, a positive multiple of 16 for CP8.
+        hf_path: HF model ID or extracted local text checkpoint.
+        hf_revision: Matching model/tokenizer revision, or None for local inputs.
+
+    Returns:
+        Training configuration with MXFP8 parameter gather and CuTeDSL grouped MLP.
+    """
+    cfg = _qwen35_text_35b_a3b_long_context_common(seq_length, hf_path=hf_path, hf_revision=hf_revision)
+    cfg.mixed_precision = bf16_with_mxfp8_mixed()
+    cfg.checkpoint.load_main_params_from_ckpt = True
+    cfg.model.moe_use_grouped_tensor = True
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_single_grouped_weight = True
+    cfg.env_vars = {
+        **cfg.env_vars,
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "CUDNN_FE_GROUPED_GEMM_DYNAMIC_MNKL": 1,
         "NVTE_GROUPED_LINEAR_SINGLE_PARAM": 1,
     }
-    cfg.checkpoint.load = None
     return cfg
 
 
