@@ -63,7 +63,7 @@ def test_hf_vision_rope_preserves_three_axes_and_frequency_ladder(head_dim, axis
 
 
 def test_vision_rope_correction_is_version_gated_and_idempotent(monkeypatch):
-    active = transformers.__version__ == "5.17.0"
+    active = transformers.__version__ in ("5.17.0", "5.18.0", "5.19.0")
     symbol = (
         "MiniMaxM3VLVisionRotaryEmbedding"
         if hasattr(modeling, "MiniMaxM3VLVisionRotaryEmbedding")
@@ -74,7 +74,7 @@ def test_vision_rope_correction_is_version_gated_and_idempotent(monkeypatch):
     assert patch_minimax_m3_vision_rope() is active
     assert getattr(modeling, symbol) is original
     assert bool(getattr(original, "_bridge_3d_rope", False)) is active
-    for version in ("5.15.1", "5.16.1", "5.17.1", "5.18.0"):
+    for version in ("5.15.1", "5.16.1", "5.17.1", "5.18.1", "5.19.1", "5.20.0"):
         monkeypatch.setattr(transformers, "__version__", version)
         assert patch_minimax_m3_vision_rope() is False
         assert getattr(modeling, symbol) is original
