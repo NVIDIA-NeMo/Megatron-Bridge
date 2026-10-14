@@ -2909,6 +2909,7 @@ def _load_checkpoint_from_path(
         - num_floating_point_operations_so_far: The total FLOPs computed so far.
     """
     cfg = state.cfg
+    wrapped_model = model
     model = unwrap_model(model)
     pg_collection = pg_collection or get_pg_collection(model)
     ckpt_format = cfg.checkpoint.ckpt_format
@@ -3337,13 +3338,14 @@ def _load_checkpoint_from_path(
         load_strict = False if is_peft_resume else strict
 
         if len(model) == 1:
-            _load_model_state_dict(model[0], state_dict["model"], load_strict)
+            # MFSDP V2's adapter also refreshes BF16 compute weights after loading main weights.
+            _load_model_state_dict(wrapped_model[0], state_dict["model"], load_strict)
         else:
             for i in range(len(model)):
                 model_key = "model%d" % i
                 if model_key not in state_dict:
                     continue
-                _load_model_state_dict(model[i], state_dict[model_key], load_strict)
+                _load_model_state_dict(wrapped_model[i], state_dict[model_key], load_strict)
 
     checkpoint_version = get_checkpoint_version()
     print_rank_0(f" checkpoint version {checkpoint_version}")
