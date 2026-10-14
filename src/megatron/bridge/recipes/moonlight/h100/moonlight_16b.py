@@ -21,7 +21,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS, DETERMINISM_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -403,7 +403,13 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_deterministic_config() -> ConfigConta
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        **DETERMINISM_ENV_VARS,
+        # Determinism (same values as apply_determinism_overrides).
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NCCL_EP_HT_EM_AG_SCAN_MODE": "1",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+        "MAMBA_DETERMINISTIC": "1",
+        "CAUSAL_CONV1D_DETERMINISTIC": "1",
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
