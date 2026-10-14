@@ -49,7 +49,7 @@ from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubm
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.moe.moe_layer import MoELayer, te_checkpoint
+from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -58,7 +58,7 @@ from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
     TransformerLayerSubmodules,
 )
-from megatron.core.transformer.utils import is_layer_window_attention
+from megatron.core.transformer.utils import is_layer_window_attention, precision_aware_checkpoint
 from megatron.core.typed_torch import apply_module
 from megatron.core.utils import deprecate_inference_params, get_pg_rank
 from torch import Tensor
@@ -1447,19 +1447,10 @@ class Gemma4MoELayer(MoELayer):
             return output, mlp_bias
 
         if self.moe_layer_recompute and self.training:
-            if self.config.fp8 or self.config.fp4:
-                return te_checkpoint(
-                    custom_forward,
-                    False,
-                    tensor_parallel.random.get_cuda_rng_tracker,
-                    self.tp_group,
-                    expert_input,
-                    shared_expert_input,
-                    router_input,
-                )
-            return tensor_parallel.checkpoint(
+            return precision_aware_checkpoint(
                 custom_forward,
-                False,
+                self.config,
+                self.tp_group,
                 expert_input,
                 shared_expert_input,
                 router_input,

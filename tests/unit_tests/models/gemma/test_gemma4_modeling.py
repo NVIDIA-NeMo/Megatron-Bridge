@@ -2231,7 +2231,8 @@ class TestGemma4MoEHelpers:
             calls.append(("tensor_parallel", distribute_saved_activations))
             return function(*args)
 
-        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.te_checkpoint", fake_te_checkpoint)
+        # precision_aware_checkpoint imports te_checkpoint lazily from the TE extension.
+        monkeypatch.setattr("megatron.core.extensions.transformer_engine.te_checkpoint", fake_te_checkpoint)
         monkeypatch.setattr(tensor_parallel, "checkpoint", fake_tensor_parallel_checkpoint)
 
         layer = object.__new__(Gemma4MoELayer)
