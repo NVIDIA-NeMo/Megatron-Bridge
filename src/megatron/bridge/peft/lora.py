@@ -60,6 +60,11 @@ def get_lora_plus_config_overrides(
     and only the base LR is tuned. Standard overrides (bias/1-D ``wd_mult=0.0``,
     decoupled LR) are preserved as the starting point.
 
+    When the ratio differs from 1, use ``SchedulerConfig.lr_warmup_init=0``.
+    Megatron-Core uses a shared warmup initial rate, so a nonzero value breaks
+    the ratio. Bridge's ``setup_optimizer`` rejects that combination; callers
+    constructing a Megatron-Core scheduler directly must ensure this themselves.
+
     Args:
         config: base optimizer config; ``lr`` / ``min_lr`` are A's learning rates.
         lora_plus_ratio: ``lr_B / lr_A`` (e.g. 16.0). Must be > 0.
