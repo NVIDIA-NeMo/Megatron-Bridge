@@ -12,12 +12,10 @@ summary: >
   non-cached legacy full-prefix path. CPU import and CPU export run single-process on a host with well over 1 TB of
   memory and their round trip is exact as well; each requests one runtime GPU because Transformer Engine constructs
   Beam's attention layers only when CUDA is available, so the launcher's GPU-less distributed CPU export does not
-  work for Beam. The CPU items ran on a B300 host; every other item ran on H200. Pretrain, checkpoint resume, SFT and
-  the SFT export ran at the recorded bridge commit; the other items ran at its ancestor 757805c, and the commits in
-  between change only documentation and add the HF inference verifier's --max-gpu-memory-gib option. Loading the
-  full fine-tuned export in
-  Transformers on one 8x H200 node needs that cap: device_map auto otherwise fills each GPU with seven decoder layers,
-  and the load-time stacking of per-expert tensors then runs out of GPU memory. The verification runs fetched the
+  work for Beam. The CPU items ran on a B300 host; every other item ran on H200. Loading the full fine-tuned export
+  in Transformers on one 8x H200 node needs the HF inference verifier's --max-gpu-memory-gib cap: device_map auto
+  otherwise fills each GPU with seven decoder layers, and the load-time stacking of per-expert tensors then runs out
+  of GPU memory. The verification runs fetched the
   pinned revision under the repository's earlier, private name, which the Hub redirects to
   reflection/Beam-1.0-501B-A23B; the revision is the same.
 
@@ -54,6 +52,7 @@ items:
   hf_to_megatron_cpu:
     status: verified
     precision: bf16
+    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1
       --hf-model reflection/Beam-1.0-501B-A23B
@@ -71,6 +70,7 @@ items:
   hf_to_megatron_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu --nodes 2
       --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
@@ -87,6 +87,7 @@ items:
   megatron_to_hf_cpu:
     status: verified
     precision: bf16
+    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 1
       --hf-model reflection/Beam-1.0-501B-A23B
@@ -105,6 +106,7 @@ items:
   megatron_to_hf_gpu:
     status: verified
     precision: bf16
+    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu --nodes 2
       --gpus-per-node 8 --hf-model reflection/Beam-1.0-501B-A23B
@@ -123,6 +125,7 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
+    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
     command: >
       ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8 --task model-comparison
       --hf_model_path reflection/Beam-1.0-501B-A23B
@@ -141,6 +144,7 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
     command: >
       ./scripts/inference/infer.sh --nodes 2 --gpus-per-node 8
       --task legacy-full-prefix-generation
@@ -285,6 +289,7 @@ items:
     H200:
       status: verified
       precision: bf16
+      bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 8
@@ -330,6 +335,7 @@ items:
     H200:
       status: verified
       precision: bf16
+      bridge_commit: 757805c7cb81d4a56849b80507206e6b8cb57a07  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
