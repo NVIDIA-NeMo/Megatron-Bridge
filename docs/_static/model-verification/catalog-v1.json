@@ -1122,7 +1122,7 @@
           "workflow": "checkpoint_resume"
         },
         {
-          "bridge_commit": "3ecb452af619bef88083e10a7738362df8f5d0bf",
+          "bridge_commit": "b53e66c47b9704dd16ce399865bea4f4f004e53b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -1137,15 +1137,15 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-pretrain-performance-gb200",
-          "expected_result": "On 128 GB200, PP1/EP64/CP1/TP1/DP2 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.\n",
+          "expected_result": "On 128 GB200, PP1/EP32/CP1/TP1/DP4 with GBS/MBS 2048/1, FP8-MX, HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps with finite losses, no skipped or NaN iterations, and all five metrics recorded. This benchmark uses forced routing, a static expert-rank capacity, paged stash, and a different batch/objective contract, so its metrics must not be compared with natural-routing library pretraining as convergence evidence.\n",
           "hardware": "GB200",
-          "last_verified": "2026-08-06",
+          "last_verified": "2026-10-14",
           "metrics": {
-            "final_loss": 3.62683,
-            "initial_loss": 13.5875,
-            "last_10_steps_model_tflops_per_gpu_avg": 731.4,
-            "last_10_steps_step_time_ms_avg": 8134.6,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 8056.45
+            "final_loss": 4.25929,
+            "initial_loss": 12.59972,
+            "last_10_steps_model_tflops_per_gpu_avg": 731.83,
+            "last_10_steps_step_time_ms_avg": 8146.44,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 8061.248
           },
           "precision": "fp8_mx",
           "source_pointer": "items.pretrain_performance.GB200",
