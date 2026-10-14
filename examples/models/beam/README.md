@@ -147,15 +147,15 @@ Hardware-qualified library recipes are defined under [`recipes/beam`](../../../s
 | Recipe | Layout | Purpose |
 | --- | --- | --- |
 | `beam_pretrain_128gpu_h200_bf16_config` | 16 nodes, TP2 / EP128, SP | Bounded pretraining; BF16 gradients and Adam moments with FP32 master weights |
-| `beam_sft_128gpu_h200_bf16_config` | 16 nodes, TP8 / PP2 / EP64, SP | Full SFT under `qwen3_30b_a3b_convergence_v2` (8K packs, GBS 8, DP 8) |
-| `beam_peft_16gpu_h200_bf16_config` | 2 nodes, TP2 / EP16, SP | LoRA (rank 8, alpha 16) on `linear_qkv` and `linear_proj` under the same contract |
+| `beam_sft_128gpu_h200_bf16_config` | 16 nodes, TP8 / PP2 / EP64, SP | Full SFT on 8K packed sequences, GBS 8, DP 8 |
+| `beam_peft_16gpu_h200_bf16_config` | 2 nodes, TP2 / EP16, SP | LoRA (rank 8, alpha 16) on `linear_qkv` and `linear_proj`, 8K packed sequences, GBS 8 |
 
 All three recipes resolve the model and tokenizer from the pinned Hub revision; pass `hf_path` to use a local
 checkpoint instead. They use the all-to-all MoE dispatcher and full recompute. Use expert parallelism first: the
 experts hold about 493B of the 501B parameters, so pipeline parallelism does not lower the memory floor. All-to-all
 context parallelism needs the KV heads per tensor-parallel rank to be divisible by the context-parallel size, so CP8
-runs at TP1. With context parallelism, SFT switches to per-token loss normalization, which is why the
-convergence-contract SFT layout reaches DP8 without it.
+runs at TP1. With context parallelism, SFT switches to per-token loss normalization, which is why the 8K SFT
+layout reaches DP8 without it.
 
 All training commands below start from the imported Megatron checkpoint, keep Beam's routing natural
 (`model.transformer.moe_router_force_load_balancing=false`), and raise the collective timeout because rank 0 packs
