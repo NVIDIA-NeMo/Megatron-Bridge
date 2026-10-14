@@ -73,6 +73,8 @@ _VRNVL72_ALIASES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config"),
     ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_64gpu_vrnvl72_nvfp4_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config"),
+    ("deepseek.vrnvl72.deepseek_v3", "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_bf16_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_fp8mx_config"),
     ("qwen.vrnvl72.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config"),

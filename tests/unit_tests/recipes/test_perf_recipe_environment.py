@@ -47,6 +47,8 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "TORCHINDUCTOR_WORKER_START",
 }
 _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
     "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
