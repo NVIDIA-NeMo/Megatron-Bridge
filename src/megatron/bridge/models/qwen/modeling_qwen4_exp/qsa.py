@@ -102,6 +102,14 @@ class QSASelection:
     all_selected: bool
 
 
+@dataclass(frozen=True)
+class _DenseQSASelection:
+    """Shape-proven causal selection, with no indexer tensors to materialize."""
+
+
+_DENSE_QSA_SELECTION = _DenseQSASelection()
+
+
 @dataclass
 class QSAIndexerSubmodules:
     """Submodules of the QSA indexer."""
@@ -446,10 +454,10 @@ class QSACoreAttention(torch.nn.Module):
             pg_collection=pg_collection,
             **kwargs,
         )
-        self._selection: Optional[QSASelection] = None
+        self._selection: QSASelection | _DenseQSASelection | None = None
         self.sparse_backend = os.environ.get("MCORE_QSA_SPARSE_BACKEND", "flex")
 
-    def set_selection(self, selection: Optional[QSASelection]) -> None:
+    def set_selection(self, selection: QSASelection | _DenseQSASelection | None) -> None:
         """Register the block selection consumed by the next forward call."""
         self._selection = selection
 
@@ -539,7 +547,9 @@ class QSACoreAttention(torch.nn.Module):
                 "QSACoreAttention.forward called without a block selection; "
                 "QwenSparseSelfAttention must run the indexer first."
             )
-        if selection.all_selected and not self.config.qsa_force_sparse:
+        if isinstance(selection, _DenseQSASelection) and self.config.qsa_force_sparse:
+            raise RuntimeError("Shape-only QSA selection cannot be used with forced sparse attention.")
+        if isinstance(selection, _DenseQSASelection) or (selection.all_selected and not self.config.qsa_force_sparse):
             return self.dense_core_attention(
                 query,
                 key,
@@ -575,7 +585,7 @@ def build_qsa_dense_mask(selection: QSASelection, seq_len: int) -> Tensor:
 class QwenSparseSelfAttention(Qwen3VLSelfAttention):
     """Gated GQA self-attention whose keys/values are selected per query by a QSA indexer.
 
-    The indexer runs on the layer input first; its selection is handed to the
+    The indexer runs unless the physical sequence shape proves dense selection; its result is handed to the
     :class:`QSACoreAttention` core-attention module, after which the standard
     :class:`SelfAttention` forward (QKV projection, QK-norm, RoPE, core attention, output gate,
     output projection) proceeds unchanged.
@@ -611,6 +621,21 @@ class QwenSparseSelfAttention(Qwen3VLSelfAttention):
             pg_collection=self.pg_collection,
         )
 
+    def _can_skip_indexer(self, hidden_states: Tensor) -> bool:
+        """Prove every document fits the budget using only the physical sequence shape.
+
+        For THD this is deliberately conservative: the full packed length bounds
+        every document, so no device scalar or document-boundary read is needed.
+        The partial current block is always visible and does not consume top-k.
+        """
+        if self.config.qsa_force_sparse:
+            return False
+        sequence_length = hidden_states.shape[0]
+        if self.config.sequence_parallel:
+            sequence_length *= get_pg_size(self.pg_collection.tp)
+        limit = self.indexer.block_topk * self.indexer.compress_ratio + self.indexer.compress_ratio - 1
+        return 0 < sequence_length <= limit
+
     def forward(
         self,
         hidden_states: Tensor,
@@ -627,10 +652,17 @@ class QwenSparseSelfAttention(Qwen3VLSelfAttention):
         *,
         inference_params: BaseInferenceContext | None = None,
     ) -> tuple[Tensor, Tensor | None]:
-        """Run the indexer, register its selection, then the regular attention forward."""
+        """Register a shape-proven dense or indexed selection, then run regular attention."""
         if inference_context is not None or inference_params is not None:
             raise NotImplementedError("QwenSparseSelfAttention does not support inference contexts yet.")
-        selection = self.indexer(hidden_states, rotary_pos_emb, packed_seq_params)
+        assert rotary_pos_emb is not None, "QSA requires rotary position embeddings"
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+            assert hidden_states.shape[1] == 1, "THD packing flattens the batch into a single row"
+        selection = (
+            _DENSE_QSA_SELECTION
+            if self._can_skip_indexer(hidden_states)
+            else self.indexer(hidden_states, rotary_pos_emb, packed_seq_params)
+        )
         self.core_attention.set_selection(selection)
         attention_forward = Qwen3VLSelfAttention.forward if self.config.qwen4_mrope else SelfAttention.forward
         return attention_forward(

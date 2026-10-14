@@ -423,9 +423,9 @@ class TestQwen4ExpFlops:
 
     def test_hand_count_and_runtime_tokens(self):
         # Four GRs: down16x3 + up3x16 + inject16x2; output mixer: no inject.
-        # One PLE: key4x16 + value4x8. QSA: forward-only8x12, not six FLOPs/weight.
+        # One PLE: key4x16 + value4x8. Shape-proven QSA shortcut skips its indexer.
         cfg = self.config()
-        per_token = 6 * (4 * (48 + 48 + 32) + 48 + 48 + 64 + 32) + 2 * 96
+        per_token = 6 * (4 * (48 + 48 + 32) + 48 + 48 + 64 + 32)
         for tokens in (0, 3, 13):
             assert Qwen4ExpModelConfig._get_additional_transformer_flops(cfg, seqlen_sum=tokens) == tokens * per_token
 
@@ -442,7 +442,7 @@ class TestQwen4ExpFlops:
             seq_length=2048,
             linear_attention_freq=4,
         )
-        expected = 3837788160 + 196608000 + 39321600
+        expected = 3837788160 + 196608000
         assert Qwen4ExpModelConfig._get_additional_transformer_flops(cfg, seqlen_sum=16384) == 16384 * expected
 
     def test_optional_ple_and_indexer_are_not_counted(self):
@@ -465,5 +465,5 @@ class TestQwen4ExpFlops:
             warnings.simplefilter("error")
             assert (
                 Qwen4ExpModelConfig._get_additional_transformer_flops(self.config(seq_length=11), seqlen_sum=11)
-                == 11 * 4416
+                == 11 * 4224
             )

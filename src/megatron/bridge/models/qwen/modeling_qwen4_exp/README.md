@@ -35,12 +35,26 @@ The local implementation preserves both contracts and bounds reduction memory.
 
 The builder supports a text decoder with tensor and sequence
 parallelism, PP=CP=1, and no virtual pipeline stages. It rejects cached
-inference, padding masks, activation recomputation, CUDA graphs, FP8, and MTP.
+inference, padding masks, full activation recomputation, CUDA graphs, FP8, and MTP.
+Selective recomputation accepts only `moe_act` and `shared_experts`, using the
+native grouped-MoE implementation without expert overlap or CPU offloading.
+Set `recompute_granularity="selective"` and explicitly supply those modules;
+vision recomputation remains disabled. The recipe leaves recomputation disabled
+unless memory pressure requires it.
 Use THD packing for document boundaries. Full VLM conversion includes the vision
 patch embedding, positional embedding, transformer blocks, and patch merger.
 The VLM combines visual embeddings before the hybrid decoder while PLE retains
 the raw token IDs. MRoPE uses each token's multimodal positions, including the
 QSA pooled-block indexer.
+
+When the physical sequence length proves that every causal block fits in the
+QSA selection budget, attention skips the indexer and uses the dense backend.
+This avoids indexer projections, pooling, selection, and its sequence-parallel
+gather while retaining all checkpoint parameters. Packed sequences use a
+conservative bound on their total length; `qsa_force_sparse=True` preserves the
+explicit selector path. With budget 2048 and compression ratio 4, the shortcut
+applies through length 2051. Analytical FLOPs exclude indexer projections when
+this shortcut applies.
 
 Use `AutoBridge.from_hf_pretrained(path).get_model_config()` to configure the
 model and `bridge.get_model(config, wrap_with_ddp=False)` to construct/load it.
