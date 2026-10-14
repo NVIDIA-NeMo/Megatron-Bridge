@@ -64,18 +64,18 @@ except (ImportError, ModuleNotFoundError):
 try:
     from utils.nvcre_bridge import (
         BRIDGE_POD_ROOT,
-        MCORE_SUBMODULE,
         WORKSPACE_MOUNT,
         WORKSPACE_VOLUME,
+        LocalBridge,
         bridge_init_container,
         local_bridge_source,
     )
 except (ImportError, ModuleNotFoundError):
     from .utils.nvcre_bridge import (
         BRIDGE_POD_ROOT,
-        MCORE_SUBMODULE,
         WORKSPACE_MOUNT,
         WORKSPACE_VOLUME,
+        LocalBridge,
         bridge_init_container,
         local_bridge_source,
     )
@@ -177,6 +177,17 @@ def _bridge_source_mount(in_container_script_dir: str) -> str:
     return f"{BRIDGE_SOURCE_DIR}:{target}"
 
 
+def _resolve_local_bridge(nvcre_use_mbridge_commit: bool, nvcre_namespace: Optional[str]) -> Optional[LocalBridge]:
+    """The checkout the pods should run for ``--nvcre_use_mbridge_commit``, or None when the flag is off."""
+    if not nvcre_use_mbridge_commit:
+        return None
+    if nvcre_namespace is None:
+        raise ValueError("--nvcre_use_mbridge_commit requires --nvcre_namespace.")
+    local_bridge = local_bridge_source(REPO_ROOT)
+    logger.info("Pods will run Megatron-Bridge %s@%s from the init container", local_bridge.url, local_bridge.commit)
+    return local_bridge
+
+
 def _build_nemorun_script(
     *,
     script_path: str,
@@ -184,16 +195,10 @@ def _build_nemorun_script(
     args: List[str],
     kubeflow_namespace: Optional[str],
     custom_env_vars: Dict[str, str],
-    include_mcore: bool = False,
 ) -> run.Script:
-    """Build the rank-local task and apply optional Kubeflow NUMA binding.
-
-    ``include_mcore`` puts the checkout's bundled Megatron-LM ahead of the image's on ``PYTHONPATH``.
-    """
+    """Build the rank-local task and apply optional Kubeflow NUMA binding."""
     in_container_repo_root = Path(script_dir).parents[1]
     python_path = [script_dir, str(in_container_repo_root / "src")]
-    if include_mcore:
-        python_path.append(str(in_container_repo_root / MCORE_SUBMODULE))
     task = run.Script(
         path=script_path,
         entrypoint="python",
@@ -684,18 +689,7 @@ def main(
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
     # On NVCRE, --nvcre_use_mbridge_commit has an init container clone this checkout's commits into the pod.
-    local_bridge = None
-    if nvcre_use_mbridge_commit:
-        if nvcre_namespace is None:
-            logger.warning("--nvcre_use_mbridge_commit only applies with --nvcre_namespace; ignoring it.")
-        else:
-            local_bridge = local_bridge_source(REPO_ROOT)
-            logger.info(
-                "Pods will run Megatron-Bridge %s@%s (Megatron-LM %s) from the init container",
-                local_bridge.url,
-                local_bridge.commit,
-                local_bridge.mcore_commit,
-            )
+    local_bridge = _resolve_local_bridge(nvcre_use_mbridge_commit, nvcre_namespace)
     if kubeflow_namespace or nvcre_namespace:
         bridge_root = BRIDGE_POD_ROOT if local_bridge else "/opt/Megatron-Bridge"
         in_container_script_dir = f"{bridge_root}/scripts/performance"
@@ -865,7 +859,6 @@ def main(
         args=_filter_run_script_args(sys.argv[1:]),
         kubeflow_namespace=kubeflow_namespace,
         custom_env_vars=custom_env_vars,
-        include_mcore=bool(local_bridge and local_bridge.mcore_commit),
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))

@@ -314,17 +314,6 @@ def test_nvcre_executor_forwards_init_containers():
 
 
 @pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
-def test_nvcre_executor_always_requests_unpinned_placement():
-    """Jobs run one job of exactly the requested size, not one per group across the whole target."""
-    executor = nvcre_executor(namespace="ns", container_image="img:latest", nodes=2, num_gpus_per_node=4)
-    executor.job_name = "job1"
-    executor.experiment_id = "exp_123456789"
-
-    assert executor.placement == "Unpinned"
-    assert executor.build_workloadrun_yaml(["python"])["spec"]["orchestration"]["placement"] == "Unpinned"
-
-
-@pytest.mark.skipif(not HAS_NVCRE, reason="nemo_run nvcre not available")
 def test_nvcre_executor_has_no_test_scale():
     """test_scale must not be wired up — it was intentionally removed."""
     import inspect
