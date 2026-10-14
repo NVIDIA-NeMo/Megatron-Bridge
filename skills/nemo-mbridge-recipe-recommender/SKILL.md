@@ -261,10 +261,14 @@ For an MoE recipe on a fixed allocation, use this practical order:
    is a common first candidate on one 8-GPU node, and EP=32 is a common first
    candidate on a 32-GPU allocation. These are starting points, not universal
    defaults: EP shards expert weights only, not dense layers or activations.
-3. Prefer architecture-specific selective recompute. For Qwen3.5 GDN layers,
-   verify `gdn_norm_out` on the exact Megatron Core revision instead of
-   assuming `core_attn` covers the GDN peak. Use full-layer recompute only when
-   the targeted boundaries still do not make the complete step fit.
+3. For final library, benchmark, and verification-card recipes, start with no
+   recompute when it fits; otherwise use the narrowest measured selective
+   boundaries. Full recompute is acceptable temporarily for diagnostic bring-up,
+   but can severely reduce throughput. Retain it only when target-scale
+   measurements show no recompute and supported selective boundaries still fail
+   to fit; document memory/OOM evidence and steady-state performance cost. For
+   Qwen3.5 GDN layers, verify `gdn_norm_out` on the exact Megatron Core revision
+   instead of assuming `core_attn` covers the GDN peak.
 4. After a stable baseline completes optimizer initialization and several
    steady steps, inspect W&B memory and confirm every rank's peak allocated and
    reserved memory in the runtime logs; rank 0 can miss the hot EP or PP rank.
@@ -275,10 +279,10 @@ For an MoE recipe on a fixed allocation, use this practical order:
    time with healthy loss and no skipped/NaN iterations. Leave headroom for
    checkpointing, evaluation, routing imbalance, and optional CUDA graphs.
 
-On EP=8, a large expert footprint can remain capacity-limited enough to need
-full recompute. EP=32 usually reduces expert-weight pressure substantially,
-making selective recompute a better candidate, but Qwen3.5 GDN coverage and
-the hot rank's measured peak still decide.
+EP=8 can leave less memory headroom than EP=32, but EP size alone does not
+justify full recompute. Measure the hot rank and supported Qwen3.5 GDN
+boundaries; retry no recompute or narrower selective recompute when a larger
+EP reduces expert-weight pressure.
 
 ### Batch Size Tuning
 

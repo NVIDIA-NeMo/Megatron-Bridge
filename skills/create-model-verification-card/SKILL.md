@@ -426,6 +426,14 @@ hardware. It may vary across models or be tuned for throughput:
   provided routing, capacity, token dropping, and auxiliary losses are
   unchanged.
 
+For the final verification-card recipe, use no recompute when it fits;
+otherwise use the narrowest measured selective boundaries. Full recompute is
+acceptable temporarily for diagnostic bring-up, but can severely reduce
+throughput. Retain it only when target-scale measurements show no recompute
+and supported selective boundaries still fail to fit. Record memory/OOM
+evidence, boundaries tested, and steady-state performance cost in the recipe's
+supporting record; keep public card metrics standalone as required below.
+
 Treat micro batch size and gradient-accumulation layout as execution
 fingerprints. They may be tuned while global batch size, global batch
 membership/order, loss normalization, optimizer-step boundaries, and total

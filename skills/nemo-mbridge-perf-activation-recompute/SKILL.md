@@ -19,14 +19,14 @@ Activation recompute (activation checkpointing) trades additional forward work d
 ## Quick Decision Guide
 
 1. Confirm the pressure is real allocation, not allocator fragmentation. Compare `max_memory_allocated()` with `max_memory_reserved()` on every rank.
-2. Keep an explicit no-recompute control when the workload fits. Under selective granularity, `recompute_modules=[]` is valid and useful for this comparison.
-3. Select the first boundary from the architecture and observed peak:
+2. Start final library, performance, and verification-card recipes with no recompute when the workload fits. Keep an explicit no-recompute control. Under selective granularity, `recompute_modules=[]` is valid and useful for this comparison.
+3. When no recompute does not fit, select the narrowest supported boundary from the architecture and observed peak:
    - **Standard attention:** `core_attn` is the common first candidate. It is strongest when unfused attention materializes score/probability tensors. With Transformer Engine fused or Flash Attention, compare it against `[]` because those backends already rematerialize attention internals.
    - **Multi-Latent Attention (MLA):** start with `mla_up_proj` when expanded Q/K/V projections dominate. Add `core_attn` only when the attention-core state still matters.
    - **Grouped MoE:** start with `moe_act` when the expert intermediate activation dominates; add `layernorm` when norm outputs are material. Use whole `moe` recompute only after accounting for the extra expert compute and communication it replays.
    - **Dense FFN:** `mlp` can save the whole dense-MLP activation region, but it usually costs more compute than a narrow output-discard boundary.
 4. Change one label at a time. Record per-rank allocated/reserved peaks plus steady-state step time or throughput; do not infer a global module ranking from one recipe.
-5. Use full-layer recompute only when targeted selective boundaries do not make the workload fit. Full recompute has the broadest memory effect and the largest replay cost.
+5. Full-layer recompute is allowed temporarily for diagnostic bring-up. Retain it in a final recipe only when target-scale measurements show that no recompute and supported selective boundaries still fail to fit; document the memory/OOM evidence, boundaries tested, and steady-state performance cost. Full recompute can severely reduce throughput and must not become the default from a bring-up success alone.
 6. Treat CUDA graphs, FP8, context-parallel communication, and overlap features as compatibility constraints, not afterthoughts.
 
 Megatron Core's `cpu_offloading=True` is an alternative when PCIe/NVLink transfer overhead is preferable to replayed compute. It cannot be combined with activation recompute and is not compatible with pipeline parallelism greater than one.
@@ -91,10 +91,11 @@ These are candidate patterns, not an ordering guarantee. Peak attribution and ma
   `gdn_norm_out`, and current Bridge recipes demonstrate it in a selective
   list. Verify that label and the recipe's complete layer mix on the exact
   revision rather than describing Qwen3.5 selective recompute as unsupported.
-- If the selected Qwen3.5 boundaries still OOM after optimizer initialization,
-  full-layer recompute is the valid capacity fallback. This is more likely at
-  lower EP because EP shards expert weights but not dense or activation state;
-  it is not proof that the selective boundary itself is broken.
+- If no recompute and the supported Qwen3.5 selective boundaries still OOM at
+  target scale, full-layer recompute is the capacity fallback under the evidence
+  requirement above. Test through optimizer initialization and steady steps.
+  OOM is more likely at lower EP because EP shards expert weights but not dense
+  or activation state; it is not proof that the selective boundary itself is broken.
 
 ## Measurement Contract
 
@@ -137,7 +138,8 @@ iteration 2. Time and throughput are means over iterations 11--20.
 | `moe_act` | 35.941 | 466.26 | 75.50 | -1.85% | +1.99% |
 | `layernorm`, `moe_act` | 35.949 | 506.53 | 70.27 | -1.83% | +10.79% |
 
-For this exact workload, `moe_act` is the best first boundary: it recovered
+For this exact workload, no recompute fits and is preferred. If additional
+headroom is needed, `moe_act` is the best first tested boundary: it recovered
 nearly as much allocated memory as `mla_up_proj` for less replay cost.
 `mla_up_proj` is the next candidate if its roughly 39 MB additional reduction
 matters. Adding `mlp` to `mla_up_proj` or `layernorm` to `moe_act` did not
@@ -180,11 +182,12 @@ is used here.
 ### Cross-model conclusion
 
 These measurements do not define one ranking. Moonlight fit with an empty
-control and favored narrow `moe_act`; Nemotron required broad whole-`moe`
-recompute; historical dense Llama evidence found whole-`mlp` replay costly and
-lacked an empty control. The correct first candidate is therefore the narrowest
-boundary implicated by the architecture and peak, followed by broader replay
-only when the narrow choice does not pass the complete step.
+control, so no recompute is preferred; narrow `moe_act` is a candidate when
+additional headroom is needed. Nemotron required broad whole-`moe` recompute;
+historical dense Llama evidence found whole-`mlp` replay costly and lacked an
+empty control. Start with no recompute when it fits, then the narrowest boundary
+implicated by the architecture and peak, broadening only when the narrow choice
+does not pass the complete step.
 
 ## Compatibility and Validation
 

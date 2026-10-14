@@ -70,6 +70,18 @@ The smaller Qwen3.5-style multimodal experiments reinforce the same lessons:
 - you can sweep MBS, recompute, and CUDA-graph scope together
 - the goal is best steady-state throughput, not easiest bring-up
 
+### Choose recompute for the final recipe
+
+For library, performance, and verification-card recipes, start with **no
+recompute when it fits**; otherwise use the narrowest supported selective
+boundaries measured to fit at target scale. Full recompute can severely reduce
+throughput. It is acceptable temporarily during memory-constrained diagnostic
+bring-up, but a successful bring-up run does not justify publishing it as the
+default. Retain full recompute only when target-scale measurements show that
+no recompute and supported selective boundaries still fail to fit. Document
+the per-rank memory peaks/OOM evidence, boundaries tested, and steady-state
+performance cost.
+
 ## Key Tuning Knobs
 
 1. **Keep TP as small as memory permits**: prefer activation recompute over
@@ -86,17 +98,20 @@ The smaller Qwen3.5-style multimodal experiments reinforce the same lessons:
    or output-layer weights, and the final choice must respect PP/DP rank layout
    and the hardware topology.
 
-3. **Prefer selective activation recompute after fit is established**: use full
-   recompute to get a memory-constrained configuration running, then replace it
-   with the narrowest supported selective modules. This usually recovers more
-   throughput than adding TP solely for activation memory.
+3. **Use no recompute when it fits, then measured selective recompute**: if
+   temporary full recompute was used for bring-up, test no recompute and the
+   narrowest supported selective boundaries before recommending a recipe.
+   Measure memory and steady-state throughput rather than carrying the
+   diagnostic setting forward.
 
    Qwen3.5/Qwen3.6 requires special care. Megatron-Core supports the targeted
    `gdn_norm_out` recompute module, but that does not checkpoint the complete GDN
-   recurrence. If `core_attn`, `gdn_norm_out`, and `moe_act` still do not provide
-   enough headroom—commonly with smaller EP such as EP8—retain full recompute
-   rather than claiming unsupported GDN selective coverage. Larger EP, such as
-   EP32, can reduce expert-weight pressure enough to retry the selective policy.
+   recurrence. Test supported boundaries such as `core_attn`, `gdn_norm_out`,
+   and `moe_act` on the pinned revision. Smaller EP such as EP8 can leave less
+   headroom, but neither EP size nor incomplete GDN coverage alone justifies
+   full recompute: apply the target-scale evidence requirement above. Larger
+   EP, such as EP32, can reduce expert-weight pressure enough to retry no
+   recompute or a narrower selective policy.
 
 4. **Prefer HybridEP, then measure against AllToAll**: HybridEP is the default
    candidate when the topology supports it. Within one 8-GPU NVLink domain in
@@ -123,9 +138,13 @@ Use this order so each measurement answers one question:
 
 1. Select the largest topology-compatible EP that usefully shards the experts.
 2. Minimize TP while retaining enough memory for non-expert weights.
-3. Start with full recompute if needed to obtain a stable real-data run.
-4. Replace full recompute with supported selective modules and remeasure memory.
-5. Inspect per-rank peak allocated and reserved memory in the experiment logger.
+3. Establish a stable real-data run. Temporary full recompute is allowed for
+   diagnostic bring-up when memory fit is uncertain.
+4. Select the final recipe by testing no recompute first, then the narrowest
+   supported selective boundaries needed to fit at target scale. Retain full
+   recompute only under the documented exception above.
+5. Measure per-rank peak allocated/reserved memory and steady-state step time
+   or throughput through optimizer initialization and multiple complete steps.
 6. If there is headroom, increase MBS; if TP was used for activation pressure,
    lower TP and remeasure. Change one of these two controls at a time.
 7. Compare HybridEP with AllToAll on the same topology and precision.
@@ -144,7 +163,7 @@ fits is the baseline; it is not automatically the performance recipe.
 TP=1  CP=1  PP=1
 EP sized to the expert topology, often large
 Dispatcher: HybridEP on GB200-class systems
-Recompute: start with full, then relax toward selective recompute
+Recompute: none when it fits; otherwise the narrowest measured selective boundaries
 ```
 
 ### 3D-parallel GB200 path
@@ -163,7 +182,7 @@ CUDA Graph: start narrow, then widen only after the real-data path is stable
 | HybridEP on GB200 | strong default | strong default once topology is stable |
 | CUDA graphs | useful after bring-up | useful, but more scope-sensitive |
 | Freeze vision | natural fit | possible, but less often used as the headline perf path |
-| Selective recompute | recommended | recommended |
+| Selective recompute | when no recompute does not fit | when no recompute does not fit |
 
 ## Pitfalls
 
