@@ -1101,7 +1101,7 @@ if __name__ == "__main__":
         task=args.task,
         compute_dtype=args.compute_dtype,
         gpu=args.gpu,
-        hf_token=args.hf_token or os.environ.get("HF_TOKEN"),
+        hf_token=args.hf_token,
         offline=args.offline,
         # Force detach for Nvcre — llmb-run polls for completion via nvcrectl
         detach=True if args.nvcre_namespace else args.detach,
