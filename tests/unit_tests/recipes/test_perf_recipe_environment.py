@@ -65,6 +65,7 @@ _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
     "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config",
     "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config",
     "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config",
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config",
 }
 
 
