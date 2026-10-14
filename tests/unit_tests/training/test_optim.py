@@ -1090,6 +1090,16 @@ class TestLoraPlusWarmupValidation:
     def test_supported_combinations_reach_optimizer(self, ratio, initial_lr):
         self._setup(lambda cfg: get_lora_plus_config_overrides(cfg, ratio), initial_lr=initial_lr)
 
+    @pytest.mark.parametrize("bound", ["max_lr", "min_lr"])
+    @pytest.mark.parametrize("omitted_group", ["in", "out"])
+    def test_equal_effective_bounds_with_partial_overrides(self, bound, omitted_group):
+        overrides = {
+            ParamKey(name="*.linear_in.weight"): ParamGroupOverride(max_lr=3e-4, min_lr=3e-5),
+            ParamKey(name="*.linear_out.weight"): ParamGroupOverride(max_lr=3e-4, min_lr=3e-5),
+        }
+        del overrides[ParamKey(name=f"*.linear_{omitted_group}.weight")][bound]
+        self._setup(lambda cfg: overrides, initial_lr=3e-5)
+
     @pytest.mark.parametrize(
         "overrides",
         [

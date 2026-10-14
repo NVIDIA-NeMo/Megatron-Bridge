@@ -94,7 +94,10 @@ def setup_optimizer(
         if (
             lora_a is not None
             and lora_b is not None
-            and (lora_a.get("max_lr") != lora_b.get("max_lr") or lora_a.get("min_lr") != lora_b.get("min_lr"))
+            and (
+                lora_a.get("max_lr", optimizer_config.lr) != lora_b.get("max_lr", optimizer_config.lr)
+                or lora_a.get("min_lr", optimizer_config.min_lr) != lora_b.get("min_lr", optimizer_config.min_lr)
+            )
         ):
             raise ValueError(
                 "LoRA+ with different A/B learning rates requires SchedulerConfig.lr_warmup_init=0. "
