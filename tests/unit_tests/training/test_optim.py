@@ -937,6 +937,35 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
 
         assert synced is True
 
+    @pytest.mark.unit
+    @pytest.mark.parametrize("has_hdo", [False, True])
+    def test_nested_chained_optimizers(self, has_hdo):
+        """Nested Muon-style chains skip non-HDO leaves and sync every HDO leaf."""
+        from megatron.core.optimizer.optimizer import ChainedOptimizer
+
+        model_params = [torch.full((2,), value, dtype=torch.bfloat16) for value in (3.0, 7.0)]
+        masters = [torch.zeros(2, dtype=torch.float32) for _ in model_params]
+        leaves = [
+            _FakeDistribOpt(model_param=param, shard_main_param=master, inner=_FakeHDO())
+            if has_hdo
+            else _PlainDistribOpt()
+            for param, master in zip(model_params, masters)
+        ]
+        nested = object.__new__(ChainedOptimizer)
+        nested.chained_optimizers = [_PlainDistribOpt(), leaves[1]]
+        optimizer = object.__new__(ChainedOptimizer)
+        optimizer.chained_optimizers = [leaves[0], nested]
+
+        with patch(
+            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
+            _FakeHDO,
+        ):
+            assert sync_hybrid_device_optimizer_fp32_master_copies(optimizer) is has_hdo
+
+        for param, master in zip(model_params, masters):
+            expected = param.float() if has_hdo else torch.zeros_like(master)
+            assert torch.equal(master, expected)
+
 
 class TestGetLoraPlusConfigOverrides:
     """Tests for ``get_lora_plus_config_overrides`` (LoRA+ A/B LR split)."""

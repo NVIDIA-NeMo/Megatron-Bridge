@@ -446,7 +446,14 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
         return False
 
     def _sync_one(distrib_opt: MegatronOptimizer) -> bool:
-        """Sync the three FP32 master levels for one DistributedOptimizer wrapping an HDO."""
+        """Sync HDO leaves without accessing a chained optimizer's single-leaf property."""
+        sub_optimizers = getattr(distrib_opt, "chained_optimizers", None)
+        if isinstance(sub_optimizers, (list, tuple)):
+            synced = False
+            for sub_opt in sub_optimizers:
+                synced |= _sync_one(sub_opt)
+            return synced
+
         inner = getattr(distrib_opt, "optimizer", None)
         if not isinstance(inner, HybridDeviceOptimizer):
             return False
@@ -499,11 +506,7 @@ def sync_hybrid_device_optimizer_fp32_master_copies(optimizer: MegatronOptimizer
 
         return True
 
-    synced = False
-    sub_optimizers = getattr(optimizer, "chained_optimizers", None)
-    sub_optimizers = sub_optimizers if isinstance(sub_optimizers, (list, tuple)) else [optimizer]
-    for sub_opt in sub_optimizers:
-        synced |= _sync_one(sub_opt)
+    synced = _sync_one(optimizer)
 
     if synced:
         G_LOGGER.info(
