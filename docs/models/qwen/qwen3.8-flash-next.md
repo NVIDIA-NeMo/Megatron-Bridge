@@ -86,10 +86,10 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
-    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="unverified" data-entry="qwen3-8-flash-next-sft-gb200" aria-controls="qwen3-8-flash-next-sft-gb200" aria-pressed="false">
+    <button type="button" class="verification-combination" data-capability="sft" data-precision="bf16" data-hardware="GB200" data-status="verified" data-entry="qwen3-8-flash-next-sft-gb200" aria-controls="qwen3-8-flash-next-sft-gb200" aria-pressed="false">
       <span class="verification-combination-heading">
         <strong>SFT · GB200</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </span>
       <span class="verification-combination-meta">BF16</span>
     </button>
@@ -234,35 +234,35 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
     <article id="qwen3-8-flash-next-sft-gb200" class="verification-model-detail" data-entry-detail="qwen3-8-flash-next-sft-gb200" tabindex="-1">
       <header class="verification-model-detail-heading">
         <h4>SFT · GB200</h4>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--verified" title="Verified">✓ Verified</span>
       </header>
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB200</dd></div>
         <div><dt>Precision</dt><dd>BF16</dd></div>
-        <div><dt>Last verified</dt><dd>—</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-14</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>None</dd>
+            <dd>0.3097828</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>None</dd>
+            <dd>0.2084261</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>None ms</dd>
+            <dd>1,403.240 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>None TFLOP/s/GPU</dd>
+            <dd>7.750 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>None tokens/s/GPU</dd>
+            <dd>182.435 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -278,7 +278,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>Pending execution of this public recipe command. Supply the full local HF checkpoint at the pinned model revision and the 8,192 complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py from nvidia/Nemotron-Image-Training-v3 ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. Recipe defaults are 64 GB200 GPUs, TP8/SP, EP64, ETP1/PP1/CP1, sequence 2048, MBS1/GBS8, BF16 with FP32 gradient reduction, and constant LR 1e-6. Require finite losses, zero skipped/NaN iterations, and a saved resolved configuration. Historical training from the recorded Bridge base with Transformers 5.16.1 completed 5,349 steps on this bounded subset: first loss 0.310870707035, final loss 0.01342209149, first-ten mean 0.311553779, and last-ten mean 0.017778902. These are historical loss observations, not verification of the new public command or generalization evidence. Historical model TFLOP/s/GPU was not reliably captured; standard loss and iteration-time logging are enabled for the rerun. Logged TFLOP/s uses an analytical matrix-work estimate including gated-residual and PLE projections and the forward-only QSA indexer projection. At sequence 2048 QSA skips its score matmul. Norms, activations, lookups, PLE depthwise convolution, communication, and duplicated parallel work are outside this estimate; it is not hardware-counter throughput or MFU.
+        <p>Completed 100 optimizer steps with the full HF checkpoint at the pinned model revision and the 8,192 complete image conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py from nvidia/Nemotron-Image-Training-v3 ECD revision 7656391d4d4cb11ec3722b34f10d499435de0460. Recipe defaults are 64 GB200 GPUs, TP8/SP, EP64, ETP1/PP1/CP1, sequence 2048, MBS1/GBS8, BF16 with FP32 gradient reduction, and constant LR 1e-6. All 100 losses and gradient norms were finite, with zero skipped/NaN iterations and a clean exit. The runtime-synchronized configuration was saved at setup entry. Timing and throughput are early, unoptimized functional observations. Historical training from the recorded Bridge base with Transformers 5.16.1 completed 5,349 steps on this bounded subset: first loss 0.310870707035, final loss 0.01342209149, first-ten mean 0.311553779, and last-ten mean 0.017778902. These are historical loss observations, separate from this public-command verification and not generalization evidence. Historical model TFLOP/s/GPU was not reliably captured. Logged TFLOP/s uses an analytical matrix-work estimate including gated-residual and PLE projections and the forward-only QSA indexer projection. At sequence 2048 QSA skips its score matmul. Norms, activations, lookups, PLE depthwise convolution, communication, and duplicated parallel work are outside this estimate; it is not hardware-counter throughput or MFU.
 </p>
       </section>
     </article>

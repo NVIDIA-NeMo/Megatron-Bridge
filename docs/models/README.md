@@ -193,7 +193,7 @@ Choose a model to inspect its recorded import/export, training, and precision co
       </a>
       <a class="verification-model-link" href="qwen/qwen3.8-flash-next.html#verified-qwen3.8-flash-next">
         <strong title="Qwen/Qwen3.8-Flash-Next">Qwen3.8-Flash-Next</strong>
-        <span class="verification-status verification-status--unverified" title="Unverified">○ Unverified</span>
+        <span class="verification-status verification-status--partial" title="Partial">◐ Partial</span>
       </a>
     </div>
   </section>

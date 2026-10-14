@@ -77,8 +77,8 @@ The standard SFT path loads the full checkpoint and refreshes optimizer master
 parameters before the first step. Each step logs loss, pre-clipping gradient
 norm, skipped/NaN counts, iteration time, and estimated model TFLOP/s/GPU.
 TensorBoard logging is enabled when its output path is supplied. Save the
-post-setup config and complete keyed step records. Record initial/final loss
-and average step time and TFLOP/s over the same final ten steps in the card;
+runtime-synchronized configuration produced at setup entry and complete keyed
+step records. Record initial/final loss and average step time and TFLOP/s over the same final ten steps in the card;
 derive token-slot throughput as `2048 * 8 / (step_seconds * 64)`.
 TFLOP/s uses Bridge's analytical matrix-work estimate, not hardware counters
 or MFU. It includes GDN, dense attention, MoE, logits, vision, gated-residual
@@ -97,9 +97,14 @@ Initial/final loss was **0.31087 / 0.01342**; first/last ten-step mean loss was
 The [loss curve](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6354#issuecomment-6160448312)
 remains valid evidence from that run. It did not capture trustworthy TFLOP/s.
 
-That run used the previous verification driver. The new standard-runner command
-requires a fresh run before its metrics can be marked verified. The old
-per-rank sampled-gradient/update callback and deadline controller are not part
-of the library recipe. Repeated-subset training does not establish held-out
-quality or HF/backward/parallelism parity; gradient spikes (maximum230.02 before
-clipping) remain unexplained. **Performance optimization remains future work.**
+A separate run of the public `train.sh` command completed **100 optimizer
+steps** from Bridge commit `99188699f92108885b7f8823f87029369d2eb447`.
+Loss was **0.3097828 / 0.2084261**, with zero skipped or NaN iterations and a
+clean exit. Over the final ten steps, mean time was **1,403.24 ms**, mean
+analytical throughput was **7.75 TFLOP/s/GPU**, and derived token-slot throughput
+was **182.43 tokens/s/GPU**. These are early, unoptimized measurements.
+The earlier run used the previous verification driver; its per-rank sampled
+gradient/update callback and deadline controller are not part of the library
+recipe. Repeated-subset training does not establish held-out quality or
+HF/backward/parallelism parity; historical gradient spikes (maximum230.02
+before clipping) remain unexplained. **Performance optimization remains future work.**
