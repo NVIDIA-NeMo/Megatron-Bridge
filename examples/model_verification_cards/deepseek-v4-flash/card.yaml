@@ -490,7 +490,7 @@ items:
         final_loss: 4.25929
         last_10_steps_step_time_ms_avg: 8146.440
         last_10_steps_model_tflops_per_gpu_avg: 731.830
-        last_10_steps_tokens_per_second_per_gpu_avg: 8061.248
+        last_10_steps_tokens_per_second_per_gpu_avg: 8044.741
       expected_result: >
         On 128 GB200, PP1/EP32/CP1/TP1/DP4 with GBS/MBS 2048/1, FP8-MX,
         HybridEP dispatch, and full-iteration CUDA graphs completes 50 steps
