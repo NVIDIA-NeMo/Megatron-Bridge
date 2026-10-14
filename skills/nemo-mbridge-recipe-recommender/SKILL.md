@@ -44,18 +44,24 @@ index details:
 
 ## Performance Readiness for New Recipes
 
-Before publishing any new library, performance, or verification-card training
-recipe, measure steady-state model TFLOP/s/GPU on its intended workload and
-GPU allocation. Aim for roughly **200 TFLOP/s/GPU on H100** and **400
-TFLOP/s/GPU on GB200**. These are approximate readiness targets, not exact
-pass/fail cutoffs; completing a run alone does not establish decent performance.
+Before publishing a new **pretraining library recipe** under
+`src/megatron/bridge/recipes/`, measure steady-state model TFLOP/s/GPU on its
+intended workload and GPU allocation. For BF16, aim for roughly **200
+TFLOP/s/GPU on H100** and **400 TFLOP/s/GPU on GB200**. These are approximate
+readiness targets, not exact pass/fail cutoffs. This requirement excludes SFT,
+PEFT, and long-context SFT; it assesses the base pretraining library recipe,
+not a `perf_recipes` benchmark or its result. For other precisions or hardware
+such as B200/GB300, establish a workload-matched measured target rather than
+silently reusing the BF16 H100/GB200 numbers.
 
 If measured performance is severely below the target, either withhold the
 recipe until it is improved or clearly label it **early, unoptimized** in the
 recipe docstring, accompanying public documentation/card, and PR description.
 Record the measured throughput, hardware, precision, workload, and GPU layout
-alongside the limitation. Do not present it as a tuned recommendation or change
-the intended training workload or convergence settings merely to meet a target.
+alongside the limitation. In a card, include the label in both the summary and
+the affected training item's `expected_result` so generated pages display it.
+Do not present it as a tuned recommendation or change the intended training
+workload or convergence settings merely to meet a target.
 
 ## Configuration Layers and Change Control
 
@@ -282,8 +288,11 @@ For an MoE recipe on a fixed allocation, use this practical order:
    performance; selective recompute does not require a no-recompute OOM first.
    Full recompute is acceptable temporarily for diagnostic bring-up,
    but can severely reduce throughput. Retain it only when target-scale
-   measurements show no recompute and supported selective boundaries still fail
-   to fit; document memory/OOM evidence and steady-state performance cost. For
+   measurements show that lighter choices still fail to fit, or matched runs
+   show better end-to-end throughput with full recompute (for example, by
+   enabling larger MBS or lower TP). Keep the workload, GBS, and convergence
+   settings fixed; document layout changes, memory evidence, and steady-state
+   performance for the alternatives tested. For
    Qwen3.5 GDN layers, verify `gdn_norm_out` on the exact Megatron Core revision
    instead of assuming `core_attn` covers the GDN peak.
 4. After a stable baseline completes optimizer initialization and several

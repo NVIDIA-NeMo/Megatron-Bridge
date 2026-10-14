@@ -156,8 +156,10 @@ recipe exists for that hardware, including one explicitly marked **early,
 unoptimized**. Its item status states whether the card's benchmark run has been
 verified; an `unverified` leaf still records the existence of the recipe.
 Existence or functional verification alone does not justify a tuned/optimized
-claim: require measured performance meeting the readiness guidance below and
-preserve any early, unoptimized label in the summary.
+claim: require workload-appropriate measured performance and preserve any
+early, unoptimized label in both the summary and the affected item's
+`expected_result` so generated pages display it. The library-pretraining
+readiness targets below are not benchmark-recipe acceptance thresholds.
 If the card has no concrete performance leaf,
 start `summary` with this exact disclaimer before the functional-support
 summary:
@@ -435,9 +437,12 @@ on cheap supported modules are both appropriate starting choices. Choose by
 measured memory headroom and steady-state performance; selective recompute
 does not require a no-recompute OOM first. Full recompute is acceptable
 temporarily for diagnostic bring-up, but can severely reduce throughput.
-Retain it only when target-scale measurements show no recompute and supported
-selective boundaries still fail to fit. Record memory/OOM
-evidence, boundaries tested, and steady-state performance cost in the recipe's
+Retain it only when target-scale measurements show lighter choices still fail
+to fit, or matched runs show better end-to-end throughput with full recompute,
+for example through larger MBS or lower TP. Keep the workload, GBS, and
+convergence settings fixed; validate recipe-owned MBS/layout changes in the
+recipe rather than overriding batch size in the card. Record memory evidence,
+boundaries/layouts tested, and steady-state performance in the recipe's
 supporting record; keep public card metrics standalone as required below.
 
 Treat micro batch size and gradient-accumulation layout as execution
@@ -825,12 +830,16 @@ Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
 leaves, including every verified precision variant.
 
-For any new recipe used by a card, apply the
-[performance-readiness guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes):
-aim for roughly 200 model TFLOP/s/GPU on H100 or 400 on GB200. Use the measured
-steady-state training metrics for the intended workload. If performance is
-severely below the target, withhold the recipe or mark it **early, unoptimized**
-in the recipe, card summary, and PR, with its measured performance and limits.
+For a new **pretraining library recipe** used by a card's `pretrain` item,
+apply the [performance-readiness guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes):
+for BF16, aim for roughly 200 model TFLOP/s/GPU on H100 or 400 on GB200 using
+steady-state metrics from the intended library workload. SFT, PEFT, and
+long-context SFT are excluded. A `pretrain_performance` benchmark result does
+not satisfy this library-recipe requirement. For other hardware/precisions,
+use a workload-matched measured target as described in that guidance.
+If performance is severely below the target, withhold the library recipe or
+mark it **early, unoptimized** in the recipe, card summary, affected `pretrain`
+item's `expected_result`, and PR, with its measured performance and limits.
 Functional verification alone does not establish that a recipe is optimized.
 
 Record raw metrics for each run only. Do not store comparison payloads,

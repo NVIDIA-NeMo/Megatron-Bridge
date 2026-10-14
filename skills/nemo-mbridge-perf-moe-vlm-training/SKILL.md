@@ -78,21 +78,26 @@ choices**. Choose using measured memory headroom and steady-state performance
 at target scale; selective recompute does not require a no-recompute OOM first.
 Full recompute can severely reduce throughput. It is acceptable temporarily
 during memory-constrained diagnostic bring-up, but a successful bring-up run
-does not justify publishing it as the default. Retain full recompute only when target-scale measurements show that
-no recompute and supported selective boundaries still fail to fit. Document
-the per-rank memory peaks/OOM evidence, boundaries tested, and steady-state
-performance cost.
+does not justify publishing it as the default. Retain full recompute only when
+target-scale measurements show that no recompute and supported selective
+boundaries still fail to fit, or matched runs show better end-to-end throughput
+with full recompute, for example through larger MBS or lower TP. Keep the
+workload, GBS, and convergence settings fixed. Document layout changes,
+per-rank memory peaks/OOM evidence, boundaries tested, and steady-state
+performance for the alternatives tested.
 
 ### Check performance before publishing
 
-Every new recipe needs measured steady-state performance on its intended
-workload and allocation: aim for roughly **200 model TFLOP/s/GPU on H100** or
-**400 on GB200**. For VLMs, use realistic multimodal input. If performance is
-severely below these approximate targets, withhold the recipe or clearly mark
-it **early, unoptimized** in the recipe and its public documentation/card and
-PR. Follow the [recipe publication guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes)
-for the measurement details; a successful full-recompute bring-up does not
-waive this requirement.
+Every new **pretraining library recipe** needs measured steady-state
+performance on its intended workload and allocation. For BF16, aim for roughly
+**200 model TFLOP/s/GPU on H100** or **400 on GB200**. For VLMs, use realistic
+multimodal input. These targets assess the base library recipe, not a
+`perf_recipes` benchmark; SFT/PEFT and long-context SFT are excluded. If
+performance is severely below the target, withhold the recipe or clearly mark
+it **early, unoptimized** in the recipe, public documentation/card, and PR.
+Follow the [recipe publication guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes)
+for other hardware/precisions and visible card labels. A successful
+full-recompute bring-up does not waive this requirement.
 
 ## Key Tuning Knobs
 
@@ -175,7 +180,7 @@ fits is the baseline; it is not automatically the performance recipe.
 TP=1  CP=1  PP=1
 EP sized to the expert topology, often large
 Dispatcher: HybridEP on GB200-class systems
-Recompute: none or cheap supported selective modules; measure memory and throughput
+Recompute: none or cheap selective by default; full only with measured fit/throughput justification
 ```
 
 ### 3D-parallel GB200 path

@@ -26,7 +26,7 @@ Activation recompute (activation checkpointing) trades additional forward work d
    - **Grouped MoE:** start with `moe_act` when the expert intermediate activation dominates; add `layernorm` when norm outputs are material. Use whole `moe` recompute only after accounting for the extra expert compute and communication it replays.
    - **Dense FFN:** `mlp` can save the whole dense-MLP activation region, but it usually costs more compute than a narrow output-discard boundary.
 4. Change one label at a time. Record per-rank allocated/reserved peaks plus steady-state step time or throughput; do not infer a global module ranking from one recipe.
-5. Full-layer recompute is allowed temporarily for diagnostic bring-up. Retain it in a final recipe only when target-scale measurements show that no recompute and supported selective boundaries still fail to fit; document the memory/OOM evidence, boundaries tested, and steady-state performance cost. Full recompute can severely reduce throughput and must not become the default from a bring-up success alone.
+5. Full-layer recompute is allowed temporarily for diagnostic bring-up. Retain it in a final recipe only when target-scale measurements show that no recompute and supported selective boundaries still fail to fit, or matched runs show better end-to-end throughput with full recompute (for example, by enabling larger MBS or lower TP). Document the memory/OOM evidence, boundaries and layouts tested, and steady-state performance of the alternatives. Full recompute can severely reduce throughput and must not become the default from a bring-up success alone.
 6. Treat CUDA graphs, FP8, context-parallel communication, and overlap features as compatibility constraints, not afterthoughts.
 
 Megatron Core's `cpu_offloading=True` is an alternative when PCIe/NVLink transfer overhead is preferable to replayed compute. It cannot be combined with activation recompute and is not compatible with pipeline parallelism greater than one.
@@ -108,7 +108,14 @@ For every candidate, capture:
 - steady-state step time or throughput after warmup;
 - a short convergence or numerical-sanity check appropriate to the task.
 
-Use a matched no-recompute control and change one recompute choice at a time. Peak memory from different jobs, backends, or parallel layouts is not a module-ranking benchmark.
+Use a matched no-recompute control when it fits and change one recompute choice
+at a time to isolate its effect. For a throughput-driven full-recompute choice,
+also compare viable no-recompute/selective layouts with the full-recompute
+layout, including any larger MBS or lower TP it enables. Keep hardware,
+workload, precision, GBS, and convergence settings fixed; record all execution
+changes and check loss. Compare useful tokens/s/GPU or complete step time,
+not replayed FLOPs. Such a layout comparison supports the final recipe choice,
+not a ranking of individual modules or checkpoint boundaries.
 
 Do not call a candidate successful merely because it advances farther than the
 control. Run through optimizer-state initialization and multiple steady-state
@@ -186,7 +193,8 @@ control, and cheap selective `moe_act` offered additional headroom at modest
 cost. Nemotron required broad whole-`moe` recompute; historical dense Llama
 evidence found whole-`mlp` replay costly and lacked an empty control. Start with
 no recompute or cheap selective boundaries, choose by measured memory and
-performance, and broaden only as needed to pass the complete step.
+performance, and broaden only when measured capacity or end-to-end throughput
+benefits justify the replay cost.
 
 ## Compatibility and Validation
 
