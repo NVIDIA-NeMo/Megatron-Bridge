@@ -269,8 +269,8 @@ items:
         sequence_packing: offline
         moe_dispatcher: hybridep
       command: >
-        ./scripts/training/train.sh --nodes 24 --gpus-per-node 8
-        --recipe nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 8
+        --recipe nemotron_3_ultra_sft_384gpu_h100_bf16_openmathinstruct2_packed_config
         --mode sft --wait
         --pretrained_checkpoint work/model-verification/nemotron-3-ultra-550b-a55b/imported-megatron/iter_0000000
         --max_steps 100
@@ -296,7 +296,7 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
         last_10_steps_tokens_per_second_per_gpu_avg: null
       expected_result: >
-        The public 192-H100 packed OpenMathInstruct-2 full-SFT recipe must use
+        The public 384-H100 packed OpenMathInstruct-2 full-SFT recipe must use
         the pinned dataset revision and bounded train_1M first-ten-percent
         selection, complete 100 optimizer steps at sequence length 4096 and
         GBS/MBS 128/1, and preserve pad_seq_to_mult 2. This published Ultra

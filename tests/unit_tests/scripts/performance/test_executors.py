@@ -199,9 +199,9 @@ def test_recipe_env_vars_are_exported_and_forced_into_container(tmp_path):
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-def test_vr200_slurm_executor_uses_two_gpus_per_numa_node(tmp_path):
+def test_vrnvl72_slurm_executor_uses_two_gpus_per_numa_node(tmp_path):
     executor = slurm_executor(
-        gpu="vr200",
+        gpu="vrnvl72",
         account="test",
         partition="test",
         log_dir=str(tmp_path),

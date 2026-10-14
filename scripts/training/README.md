@@ -107,6 +107,9 @@ through configurable library recipes. Explicit benchmark dataset replacement rem
 Five legacy duplicate names resolve to the benchmark definition; their library workloads remain available through
 the corresponding generic recipe aliases. New recipe names should be unique across both packages.
 
+Benchmark recipe names that use the deprecated `vr200` hardware name resolve to the renamed `vrnvl72` recipe with a
+warning.
+
 Text recipes default to `llm_step`; all recipes infer their modality-specific forward step from the same registry.
 Pass `--step-func NAME` to override that selection. Common training,
 sequence-length, parallelism, optimization, and checkpoint fields also have convenience flags such as
@@ -340,8 +343,8 @@ populate the executor's `additional_parameters` and are not forwarded to the
 training command or its srun step.
 
 Use `-lmc FREQ`, `--peak-mem-clk FREQ`, or `--peak_mem_clk FREQ` to lock the GPU memory clock to a fixed frequency in
-MHz once per node before training. VR200 benchmark recipes default to `4752`; other recipes leave the memory clock
-unlocked. Pass `-lmc -1` to disable the VR200 default explicitly.
+MHz once per node before training. VRNVL72 benchmark recipes default to `4752`; other recipes leave the memory clock
+unlocked. Pass `-lmc -1` to disable the VRNVL72 default explicitly.
 
 The compact launcher does not add rank-command prefixes or infer target-specific
 allocation and NUMA policies. Configure those explicitly for the target.

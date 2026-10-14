@@ -273,8 +273,9 @@ class TestCudaGraphCleanup:
         ):
             _finish_train(state, checkpoint_manager)
 
+    @patch("megatron.bridge.training.train.delete_local_cuda_graphs")
     @patch("megatron.bridge.training.train.gc.collect")
-    def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect):
+    def test_delete_cuda_graphs_restores_full_graph_state(self, mock_collect, mock_delete_local):
         """Cleanup must leave reusable full-graph mappings for the next training run."""
         from megatron.core.full_cuda_graph import FullCudaGraphWrapper
         from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
@@ -301,6 +302,7 @@ class TestCudaGraphCleanup:
         assert OptimizerCudaGraphWrapper.result is None
         assert OptimizerCudaGraphWrapper.curr_iteration == 0
         helper.delete_cuda_graphs.assert_not_called()
+        mock_delete_local.assert_called_once_with()
         mock_collect.assert_called_once()
 
 
@@ -1651,6 +1653,16 @@ def test_train_step_token_weighted_loss(
         assert mock_reduce.call_args.kwargs["group"] is dp_cp
     else:
         mock_reduce.assert_not_called()
+
+    # A substituted zero is indistinguishable from a real 0.0 loss, so the step is
+    # counted to keep an all-masked global batch visible at log time.
+    token_total = sum(mb[1] for mb in microbatches if len(mb) == 2) + remote[1]
+    recorded = getattr(global_state, "_zero_token_iters", None)
+    if len(microbatches[0]) == 2:
+        assert recorded.item() == int(token_total == 0)
+    else:
+        # The legacy microbatch-mean path has no denominator to guard.
+        assert recorded is None
 
 
 @pytest.mark.parametrize("dp_rank", [0, 1])

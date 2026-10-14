@@ -137,7 +137,7 @@ override-dependencies = [
     "sqlparse>=0.6.0,<1",                                   # CVE-2026-59894
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt==0.46.0rc1",
+    "nvidia-modelopt==0.47.0",
     "urllib3>=2.6.3",                                       # To address CVE-2026-21441
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
@@ -171,7 +171,7 @@ requires-dist = []
 # MCore pin's metadata so a lock-only operation never invokes the build backend.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.20.2+6ea2a74a"
+version = "2.20.2+44f31bbe"
 requires-dist = [
     "pydantic<2.14",
     "importlib-metadata>=1.0",
