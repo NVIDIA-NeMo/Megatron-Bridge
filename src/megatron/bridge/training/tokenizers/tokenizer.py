@@ -100,13 +100,14 @@ def _resolve_hf_tokenizer_revision(config: TokenizerConfig) -> TokenizerConfig:
     if not isinstance(tokenizer_model, str) or _is_local_tokenizer_path(tokenizer_model):
         return config
 
-    from huggingface_hub import snapshot_download
+    from huggingface_hub import constants, snapshot_download
 
     snapshot_path = snapshot_download(
         repo_id=tokenizer_model,
         revision=revision,
         allow_patterns=list(_HF_TOKENIZER_SNAPSHOT_ALLOW_PATTERNS),
         ignore_patterns=list(_HF_MODEL_WEIGHT_IGNORE_PATTERNS),
+        local_files_only=constants.HF_HUB_OFFLINE,
     )
 
     resolved_config = copy(config)

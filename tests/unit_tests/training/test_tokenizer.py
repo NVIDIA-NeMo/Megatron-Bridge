@@ -152,6 +152,59 @@ class TestTokenizers:
 
         mock_snapshot_download.assert_not_called()
 
+    @pytest.mark.parametrize("cached", [True, False])
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    def test_pinned_hf_tokenizer_offline_cache(self, mock_build_mcore_tokenizer, monkeypatch, tmp_path, cached):
+        from huggingface_hub import HfApi, constants
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        revision = "a" * 40
+        snapshot = tmp_path / "models--example--tokenizer" / "snapshots" / revision
+        if cached:
+            snapshot.mkdir(parents=True)
+            (snapshot / "config.json").write_text("{}")
+        monkeypatch.setattr(constants, "HF_HUB_CACHE", str(tmp_path))
+        monkeypatch.setattr(constants, "HF_HUB_OFFLINE", True)
+
+        def reject_network(*args, **kwargs):
+            raise AssertionError("Offline tokenizer resolution attempted a Hub API request")
+
+        monkeypatch.setattr(HfApi, "repo_info", reject_network)
+        monkeypatch.setattr(HfApi, "list_repo_tree", reject_network)
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="example/tokenizer",
+            hf_tokenizer_kwargs={"revision": revision},
+        )
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        if cached:
+            assert build_tokenizer(config) is sentinel.tokenizer
+            resolved = mock_build_mcore_tokenizer.call_args.args[0]
+            assert resolved.tokenizer_model == str(snapshot)
+            assert resolved.hf_tokenizer_kwargs == {"revision": revision}
+        else:
+            with pytest.raises(LocalEntryNotFoundError):
+                build_tokenizer(config)
+            mock_build_mcore_tokenizer.assert_not_called()
+        assert config.tokenizer_model == "example/tokenizer"
+
+    @pytest.mark.parametrize("offline", [False, True])
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_pinned_hf_tokenizer_preserves_hub_mode(
+        self, mock_snapshot_download, mock_build_mcore_tokenizer, monkeypatch, offline
+    ):
+        from huggingface_hub import constants
+
+        monkeypatch.setattr(constants, "HF_HUB_OFFLINE", offline)
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="example/tokenizer",
+            hf_tokenizer_kwargs={"revision": "a" * 40},
+        )
+        build_tokenizer(config)
+        assert mock_snapshot_download.call_args.kwargs["local_files_only"] is offline
+
     @patch("megatron.core.tokenizers.text.libraries.TikTokenTokenizer")
     @pytest.mark.parametrize("pattern", ["v1"])
     @pytest.mark.parametrize("num_special_tokens", [2000])
