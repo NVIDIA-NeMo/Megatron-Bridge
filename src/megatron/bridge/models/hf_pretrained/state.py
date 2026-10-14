@@ -14,6 +14,7 @@
 
 import fnmatch
 import json
+import os
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -21,6 +22,7 @@ from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 from typing import (
+    Any,
     Dict,
     Iterable,
     List,
@@ -464,6 +466,16 @@ class SafeTensorsStateSource(StateSource):
         self.key_prefix = key_prefix
         self.revision = revision
         self.hub_kwargs = dict(hub_kwargs or {})
+        # Small tensors (block/weight scales) are cached per source instance and
+        # safe_open handles are reused: export_hf_weights() re-quantizes every weight
+        # against its original HF scale and asks for the scales one key at a time, which
+        # otherwise re-opens the shard file per key on every refit (~150k opens for
+        # DeepSeek-V4-Pro). Both can be disabled through environment variables.
+        self._small_tensor_cache: Dict[str, torch.Tensor] = {}
+        self._open_handles: Dict[str, Any] = {}
+        self._cache_small = os.environ.get("MBRIDGE_STATE_CACHE_SMALL_TENSORS", "1") == "1"
+        self._reuse_handles = os.environ.get("MBRIDGE_STATE_REUSE_HANDLES", "1") == "1"
+        self._small_numel = int(os.environ.get("MBRIDGE_STATE_SMALL_TENSOR_NUMEL", str(16 * 1024 * 1024)))
         self._lazy_hub = key_prefix is not None or hub_kwargs is not None
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
@@ -635,6 +647,23 @@ class SafeTensorsStateSource(StateSource):
         self._keys_cache = sorted(list(all_keys))
         return self._keys_cache
 
+    def _get_handle(self, file_path: Path):
+        """Return a safe_open handle for ``file_path``, reused across calls when enabled."""
+        from safetensors import safe_open
+
+        if not self._reuse_handles:
+            return safe_open(file_path, framework="pt", device="cpu")
+        key = str(file_path)
+        handle = self._open_handles.get(key)
+        if handle is None:
+            handle = safe_open(file_path, framework="pt", device="cpu")
+            self._open_handles[key] = handle
+        return handle
+
+    def _maybe_cache(self, key: str, tensor: torch.Tensor) -> None:
+        if self._cache_small and tensor.numel() <= self._small_numel:
+            self._small_tensor_cache[key] = tensor
+
     def load_tensors(self, keys_to_load: List[str]) -> Dict[str, torch.Tensor]:
         if not keys_to_load:
             return {}
@@ -647,6 +676,15 @@ class SafeTensorsStateSource(StateSource):
         loaded_tensors = {}
         remaining_keys = set(keys_to_load)
         key_to_filename_map = self.key_to_filename_map
+
+        if self._cache_small:
+            for key in list(remaining_keys):
+                cached = self._small_tensor_cache.get(key)
+                if cached is not None:
+                    loaded_tensors[key] = cached
+                    remaining_keys.discard(key)
+            if not remaining_keys:
+                return loaded_tensors
 
         max_retries = 3
 
@@ -672,12 +710,14 @@ class SafeTensorsStateSource(StateSource):
                 )
                 if file_path.exists():
                     for attempt in range(max_retries):
-                        with safe_open(file_path, framework="pt", device="cpu") as f:
+                        f = self._get_handle(file_path)
+                        if True:  # the handle may be shared across calls; do not close it here
                             file_keys = set(f.keys())
                             for key in keys_in_file:
                                 source_key = (self.key_prefix or "") + key
                                 if source_key in file_keys and key not in loaded_tensors:
                                     loaded_tensors[key] = f.get_tensor(source_key)
+                                    self._maybe_cache(key, loaded_tensors[key])
                                     remaining_keys.discard(key)
                         still_missing = [k for k in keys_in_file if k in remaining_keys]
                         if not still_missing:
