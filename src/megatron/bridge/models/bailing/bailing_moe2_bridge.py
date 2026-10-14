@@ -48,6 +48,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 # Register the Bailing MoE V2 config and model classes with transformers Auto classes.
@@ -78,6 +79,7 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:

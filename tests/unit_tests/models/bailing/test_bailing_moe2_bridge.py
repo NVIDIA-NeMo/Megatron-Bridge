@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from megatron.bridge.models.bailing.bailing_moe2_bridge import BailingMoeV2Bridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 pytestmark = pytest.mark.unit
@@ -70,6 +71,7 @@ class TestBailingMoeV2BuilderConfig:
         assert "provider_bridge" not in BailingMoeV2Bridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert BailingMoeV2Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert BailingMoeV2Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):

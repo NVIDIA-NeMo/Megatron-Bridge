@@ -50,6 +50,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -90,6 +91,7 @@ class Exaone4Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     # Megatron Core applies llama3 RoPE scaling with these fixed values; only the factor is configurable.

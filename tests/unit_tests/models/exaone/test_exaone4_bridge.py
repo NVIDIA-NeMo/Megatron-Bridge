@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
 from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -207,6 +208,7 @@ class TestExaone4BuilderConfig:
         assert "provider_bridge" not in Exaone4Bridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert Exaone4Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert Exaone4Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):
