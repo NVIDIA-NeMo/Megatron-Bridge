@@ -59,7 +59,7 @@ def checkout(tmp_path: Path) -> Path:
         ("ssh://git@gitlab.example.com:2222/o/r.git", "https://gitlab.example.com/o/r.git"),
         ("git@gitlab.example.com:o/sub/r.git", "https://gitlab.example.com/o/sub/r.git"),
         # credentials must never end up in the WorkloadRun spec
-        ("https://user:secret-token@github.com/o/r.git", "https://github.com/o/r.git"),
+        ("https://user:secret-token@github.com/o/r.git", "https://github.com/o/r.git"),  # pragma: allowlist secret
         ("https://gitlab.example.com:8443/o/r.git", "https://gitlab.example.com:8443/o/r.git"),
     ],
 )

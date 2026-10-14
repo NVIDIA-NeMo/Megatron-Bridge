@@ -762,7 +762,7 @@ def parse_cli_args():
         type=str,
         help="Per-job timeout passed to Nvcre orchestration (e.g. '12h').",
         required=False,
-        default="24h",
+        default="12h",
     )
 
     nvcre_args.add_argument(

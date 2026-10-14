@@ -382,7 +382,7 @@ def nvcre_executor(
     volumes: Optional[list] = None,
     volume_mounts: Optional[list] = None,
     init_containers: Optional[list] = None,
-    timeout_per_job: str = "24h",
+    timeout_per_job: str = "12h",
     kubeconfig: Optional[str] = None,
     kube_context: Optional[str] = None,
     gang_scheduler_name: Optional[str] = None,
@@ -403,7 +403,7 @@ def nvcre_executor(
         volume_mounts: Additional Kubernetes volume mount specs.
         init_containers: Kubernetes init container specs emitted as the WorkloadRun's ``spec.initContainers``
             (e.g. to clone a pinned Megatron-Bridge into a shared volume that replaces the image's copy).
-        timeout_per_job: Maximum wall-clock time per job (e.g. ``"24h"``).
+        timeout_per_job: Maximum wall-clock time per job (e.g. ``"12h"``).
         kubeconfig: Path to the kubeconfig file. Defaults to the cluster default.
         kube_context: Kubernetes context to use from the kubeconfig.
         gang_scheduler_name: Name of the gang scheduler (e.g. ``"kai-scheduler"``).

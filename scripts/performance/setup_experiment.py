@@ -610,7 +610,7 @@ def main(
     nvcre_volumes_json: Optional[str] = None,
     nvcre_volume_mounts_json: Optional[str] = None,
     nvcre_use_mbridge_commit: bool = False,
-    nvcre_timeout_per_job: str = "24h",
+    nvcre_timeout_per_job: str = "12h",
     nvcre_kubeconfig: Optional[str] = None,
     nvcre_kube_context: Optional[str] = None,
     nvcre_gang_scheduler_name: Optional[str] = None,
