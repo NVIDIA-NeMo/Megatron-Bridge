@@ -23,6 +23,8 @@ from megatron.bridge.training.config import ConfigContainer
 def deepseek_v4_flash_pretrain_128gpu_vrnvl72_fp8mx_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 128× VRNVL72, MXFP8 (alias of GB300)."""
     cfg = deepseek_v4_flash_pretrain_128gpu_gb300_fp8mx_config()
+    cfg.model.expert_model_parallel_size = 32
+    cfg.train.micro_batch_size = 2
 
     # Rubin's grouped GLU kernel does not support DeepSeek V4's SwiGLU clamp parameters. This is a
     # benchmark-only override that preserves the lower-memory CutDSL fusion and full CUDA graph.

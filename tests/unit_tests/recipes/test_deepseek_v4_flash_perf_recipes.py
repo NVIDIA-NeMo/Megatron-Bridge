@@ -45,7 +45,7 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.expert_model_parallel_size == 64
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.pipeline_model_parallel_layout is None
@@ -115,7 +115,7 @@ def test_deepseek_v4_flash_128gpu_gb200_fp8mx_config() -> None:
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
 
@@ -126,14 +126,14 @@ def test_deepseek_v4_flash_128gpu_gb300_fp8mx_config() -> None:
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.virtual_pipeline_model_parallel_size is None
-    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.expert_model_parallel_size == 64
     assert cfg.train.global_batch_size == 2048
-    assert cfg.train.micro_batch_size == 2
+    assert cfg.train.micro_batch_size == 1
     assert cfg.model.recompute_modules == ["mla_up_proj"]
     assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_hybridep_num_sms is None
     assert is_full_iteration_cuda_graph(cfg.model)
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
 
 
 def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> None:
@@ -146,7 +146,12 @@ def test_deepseek_v4_flash_128gpu_vrnvl72_fp8mx_disables_clamp_for_cutedsl() -> 
     assert vrnvl72_cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
     assert vrnvl72_cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
     assert is_full_iteration_cuda_graph(vrnvl72_cfg.model)
+    assert vrnvl72_cfg.model.expert_model_parallel_size == 32
+    assert vrnvl72_cfg.train.micro_batch_size == 2
 
+    gb300_cfg.model.expert_model_parallel_size = 32
+    gb300_cfg.train.micro_batch_size = 2
+    gb300_cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = 32
     gb300_cfg.model.activation_func_clamp_value = None
     gb300_cfg.model.use_transformer_engine_op_fuser = True
     gb300_cfg.model.moe_use_grouped_tensor = True
