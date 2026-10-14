@@ -23,6 +23,7 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m2.minimax_m2_bridge import (
     MiniMaxM2Bridge,
@@ -535,6 +536,7 @@ class TestMiniMaxM2BuilderConfig:
         assert "provider_bridge" not in MiniMaxM2Bridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert MiniMaxM2Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert MiniMaxM2Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):

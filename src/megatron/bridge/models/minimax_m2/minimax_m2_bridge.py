@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.minimax_m2.minimax_m2_provider import minimax_m2_layer_spec
 
 
@@ -132,6 +133,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
     USE_MODEL_CONFIG_FOR_CONVERSION = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:

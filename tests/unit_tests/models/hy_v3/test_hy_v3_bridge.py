@@ -58,6 +58,7 @@ class TestHYV3Bridge:
         assert "provider_bridge" not in HYV3Bridge.__dict__
 
     def test_conversion_uses_builder_config(self):
+        assert HYV3Bridge.MODEL_CONFIG_CLASS is BridgeGPTModelConfig
         assert HYV3Bridge.USE_MODEL_CONFIG_FOR_CONVERSION is True
 
     def test_hf_config_to_model_config_uses_direct_mapping(self):
