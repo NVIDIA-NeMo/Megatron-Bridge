@@ -196,8 +196,8 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def _build_qwen3_30b_a3b_gb200_bf16() -> ConfigContainer:
-    """Shared HybridEP BF16 base for the Qwen3 30B-A3B 8-GPU and 32-GPU GB200 recipes."""
+def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 8× GB200, BF16, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.bias_activation_fusion = True
@@ -228,16 +228,6 @@ def _build_qwen3_30b_a3b_gb200_bf16() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    return cfg
-
-
-def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Qwen3 30B-A3B pretrain: 8× GB200, BF16, EP=8, NCCL EP."""
-    cfg = _build_qwen3_30b_a3b_gb200_bf16()
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -249,8 +239,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
@@ -313,7 +306,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
 
 
 def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
-    """Qwen3 30B-A3B pretrain benchmark: GB200 MXFP8 recipe plus benchmark overrides, NCCL EP."""
+    """Qwen3 30B-A3B pretrain benchmark: GB200 MXFP8 recipe plus benchmark overrides."""
     cfg = _qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config()
 
     _benchmark_common(cfg)
@@ -321,10 +314,6 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     # Full-iteration graphs remain benchmark-only because they alter natural-routing auxiliary loss.
     _enable_hybridep_full_iteration_mxfp8(cfg)
     cfg.model.recompute_modules = []
-    _enable_ncclep(cfg)
-    # Device-side expert token counts: the legacy grouped MLP path syncs tokens_per_expert to the
-    # host every layer, which serializes the CPU behind the GPU when dispatch is fast.
-    cfg.model.moe_use_grouped_tensor = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -336,8 +325,11 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # NCCL EP dispatcher mode.
-        "NCCL_EP_HT_EM_PULL_PUSH": 1,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
         "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
@@ -662,7 +654,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 def qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32× GB200, BF16, legacy-scaled GBS."""
-    cfg = _with_global_batch_size(_build_qwen3_30b_a3b_gb200_bf16(), 2048)
+    cfg = _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config(), 2048)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,

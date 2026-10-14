@@ -227,7 +227,7 @@ class TestPerfConfigIntegration:
                 ("megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe:qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"),
                 {
                     "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-                    "NCCL_EP_HT_EM_PULL_PUSH": 1,
+                    "NVLINK_DOMAIN_SIZE": 72,
                     "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
                 },
             ),

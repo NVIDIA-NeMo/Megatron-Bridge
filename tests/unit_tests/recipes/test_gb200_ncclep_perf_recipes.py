@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Every GB200 MoE perf recipe switched to NCCL EP carries the full NCCL EP stack, and the GB200 recipes
-left on HybridEP, several of which share a base with a switched recipe, do not pick it up."""
+"""The GB200 DeepSeek, Nemotron 3 and Qwen3 235B perf recipes switched to NCCL EP carry the full NCCL EP
+stack, and the GB200 recipes left on HybridEP, several of which share a base with a switched recipe, do not
+pick it up."""
 
 import importlib
 
@@ -26,23 +27,19 @@ pytestmark = pytest.mark.unit
 
 _NCCL_EP_ENV = {"NCCL_EP_HT_EM_PULL_PUSH": 1}
 
-# (module under megatron.bridge.perf_recipes, recipe factory) for the GB200 recipes defaulted to NCCL EP.
+# (module under megatron.bridge.perf_recipes, recipe factory) for the GB200 recipes switched to NCCL EP.
 _GB200_NCCLEP_RECIPES = (
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_bf16_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8mx_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_nvfp4_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config"),
     ("deepseek.gb200.deepseek_v4", "deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_config"),
-    ("gpt_oss.gb200.gpt_oss", "gpt_oss_120b_pretrain_64gpu_gb200_bf16_config"),
-    ("gpt_oss.gb200.gpt_oss", "gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb200_fp8mx_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb200_bf16_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_config"),
-    ("qwen.gb200.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config"),
-    ("qwen.gb200.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"),
     ("qwen.gb200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config"),
     ("qwen.gb200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config"),
     ("qwen.gb200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_large_scale_config"),
@@ -50,8 +47,8 @@ _GB200_NCCLEP_RECIPES = (
 )
 
 # GB200 recipes that stay on HybridEP. Most build on the same base or parent recipe as a recipe above (the
-# shared DeepSeek and Qwen3 30B BF16 builders, the Nemotron 3 Nano parents of the Lightning recipes, the FP8-CS
-# parents of the NVFP4 recipes), so the NCCL EP overlay must not leak into them.
+# shared DeepSeek V3 BF16 builder, the Nemotron 3 Nano parents of the Lightning recipes, the Qwen3 235B FP8-CS
+# parent of its NVFP4 recipe), so the NCCL EP overlay must not leak into them.
 _GB200_HYBRIDEP_RECIPES = (
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8cs_config"),
     ("deepseek.gb200.deepseek_v3", "deepseek_v3_pretrain_256gpu_gb200_fp8mx_partial_cg_dev_config"),
@@ -62,10 +59,6 @@ _GB200_HYBRIDEP_RECIPES = (
     ("nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb200_fp8mx_fsdp_config"),
     ("nemotronh.gb200.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb200_nvfp4_config"),
-    ("qwen.gb200.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config"),
-    ("qwen.gb200.qwen3_moe", "qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config"),
-    ("qwen.gb200.qwen3_moe", "qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config"),
-    ("qwen.gb200.qwen3_moe", "qwen3_30b_a3b_pretrain_32gpu_gb200_fp8cs_config"),
     ("qwen.gb200.qwen3_moe", "qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config"),
     ("qwen.gb200.qwen3_moe", "qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_full_iteration_config"),
 )
