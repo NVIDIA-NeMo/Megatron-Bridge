@@ -61,6 +61,25 @@ try:
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
+try:
+    from utils.nvcre_bridge import (
+        BRIDGE_POD_ROOT,
+        WORKSPACE_MOUNT,
+        WORKSPACE_VOLUME,
+        LocalBridge,
+        bridge_init_container,
+        local_bridge_source,
+    )
+except (ImportError, ModuleNotFoundError):
+    from .utils.nvcre_bridge import (
+        BRIDGE_POD_ROOT,
+        WORKSPACE_MOUNT,
+        WORKSPACE_VOLUME,
+        LocalBridge,
+        bridge_init_container,
+        local_bridge_source,
+    )
+
 SCRIPT_DIR = Path(__file__).parent.resolve()
 REPO_ROOT = SCRIPT_DIR.parents[1]
 BRIDGE_SOURCE_DIR = REPO_ROOT / "src" / "megatron" / "bridge"
@@ -88,22 +107,31 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
       into the training entrypoint's Hydra override parser.
+    * ``--offline`` — controls HF Hub access on the launcher node only; offline
+      behaviour in the rank-local script is governed by the ``HF_HUB_OFFLINE``
+      environment variable, not by this flag.
 
-    All of these take a value, passed either as ``--flag value`` (two tokens) or
-    ``--flag=value`` (one token).
+    Value-taking flags are passed as ``--flag value`` or ``--flag=value``.
+    Boolean flags (no following value) are listed in ``_LAUNCHER_ONLY_BOOL``.
     """
+    _LAUNCHER_ONLY_BOOL = {"--offline", "--dryrun", "-d", "--nvcre_use_mbridge_commit"}
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag in (
-            "-lgc",
-            "-lmc",
-            "-vb",
-            "--additional_slurm_params",
-            "--csp",
-            "--enable_vboost",
-            "--lock_gpu_freq",
-            "--peak_mem_clk",
-        ) or flag.startswith("--kubeflow_")
+        return (
+            flag
+            in (
+                "-lgc",
+                "-lmc",
+                "-vb",
+                "--additional_slurm_params",
+                "--csp",
+                "--enable_vboost",
+                "--lock_gpu_freq",
+                "--peak_mem_clk",
+            )
+            or flag.startswith("--kubeflow_")
+            or flag.startswith("--nvcre_")
+        )
 
     filtered_args = []
     skip_next = False
@@ -111,6 +139,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     for arg in argv:
         if skip_next:
             skip_next = False
+            continue
+        if arg in _LAUNCHER_ONLY_BOOL:
             continue
         if _is_launcher_only(arg.split("=", 1)[0]):
             skip_next = "=" not in arg
@@ -147,6 +177,17 @@ def _bridge_source_mount(in_container_script_dir: str) -> str:
     return f"{BRIDGE_SOURCE_DIR}:{target}"
 
 
+def _resolve_local_bridge(nvcre_use_mbridge_commit: bool, nvcre_namespace: Optional[str]) -> Optional[LocalBridge]:
+    """The checkout the pods should run for ``--nvcre_use_mbridge_commit``, or None when the flag is off."""
+    if not nvcre_use_mbridge_commit:
+        return None
+    if nvcre_namespace is None:
+        raise ValueError("--nvcre_use_mbridge_commit requires --nvcre_namespace.")
+    local_bridge = local_bridge_source(REPO_ROOT)
+    logger.info("Pods will run Megatron-Bridge %s@%s from the init container", local_bridge.url, local_bridge.commit)
+    return local_bridge
+
+
 def _build_nemorun_script(
     *,
     script_path: str,
@@ -157,10 +198,11 @@ def _build_nemorun_script(
 ) -> run.Script:
     """Build the rank-local task and apply optional Kubeflow NUMA binding."""
     in_container_repo_root = Path(script_dir).parents[1]
+    python_path = [script_dir, str(in_container_repo_root / "src")]
     task = run.Script(
         path=script_path,
         entrypoint="python",
-        env={"PYTHONPATH": f"{script_dir}:{in_container_repo_root / 'src'}:$PYTHONPATH"},
+        env={"PYTHONPATH": ":".join([*python_path, "$PYTHONPATH"])},
         args=args,
     )
     if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
@@ -472,6 +514,23 @@ def maybe_increase_n_attempts_on_flaky_failure(
     return n_attempts
 
 
+def _nvcre_env_vars(custom_env_vars: Dict[str, str], hf_token_secret_name: Optional[str]) -> Dict[str, str]:
+    """Build the plain env-var dict for an NVCRE executor.
+
+    When an HF token secret is configured, HF_TOKEN is stripped from the plain
+    env (it may have arrived via cluster_config environment: or --env flags) and
+    injected via secret_env_vars instead, so the token never appears as a plain
+    value in the WorkloadRun manifest. HF connectivity is always enabled so the
+    pod can reach HuggingFace regardless of any --offline flag passed for
+    launcher-side setup.
+    """
+    env = custom_env_vars.copy()
+    if hf_token_secret_name:
+        env.pop("HF_TOKEN", None)
+        env.update({"HF_HUB_OFFLINE": "0", "TRANSFORMERS_OFFLINE": "0"})
+    return env
+
+
 def main(
     use_recipes: bool,
     model_family_name: str,
@@ -542,6 +601,22 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
+    nvcre_namespace: Optional[str] = None,
+    nvcre_image_pull_secret: Optional[str] = None,
+    nvcre_workdir_pvc: Optional[str] = None,
+    nvcre_workdir_pvc_path: str = "/nemo_run",
+    nvcre_workdir_local_path: Optional[str] = None,
+    nvcre_node_selector_json: Optional[str] = None,
+    nvcre_volumes_json: Optional[str] = None,
+    nvcre_volume_mounts_json: Optional[str] = None,
+    nvcre_use_mbridge_commit: bool = False,
+    nvcre_timeout_per_job: str = "12h",
+    nvcre_kubeconfig: Optional[str] = None,
+    nvcre_kube_context: Optional[str] = None,
+    nvcre_gang_scheduler_name: Optional[str] = None,
+    nvcre_hf_token_secret_name: Optional[str] = None,
+    nvcre_hf_token_secret_key: str = "token",
+    deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -594,7 +669,7 @@ def main(
         # runs. Creating the dir from the launcher would either fail (PVC
         # not present) or create a useless dir on the launcher's local FS.
         # Let the trainer container create its own dirs on first write.
-        if kubeflow_namespace is None:
+        if kubeflow_namespace is None and nvcre_namespace is None:
             save_dir_path.mkdir(parents=True, exist_ok=True)
             save_dir_mount = f"{save_dir_path}:{save_dir_path}"
             if save_dir_mount not in custom_mounts:
@@ -613,8 +688,11 @@ def main(
     # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
-    if kubeflow_namespace:
-        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+    # On NVCRE, --nvcre_use_mbridge_commit has an init container clone this checkout's commits into the pod.
+    local_bridge = _resolve_local_bridge(nvcre_use_mbridge_commit, nvcre_namespace)
+    if kubeflow_namespace or nvcre_namespace:
+        bridge_root = BRIDGE_POD_ROOT if local_bridge else "/opt/Megatron-Bridge"
+        in_container_script_dir = f"{bridge_root}/scripts/performance"
         in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
         in_container_script_dir = str(SCRIPT_DIR)
@@ -634,11 +712,13 @@ def main(
     if peak_mem_clk == -1:
         peak_mem_clk = None
 
-    if kubeflow_namespace:
+    if kubeflow_namespace or nvcre_namespace:
         if enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None:
             logger.warning(
-                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow."
+                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow/NVCRE."
             )
+
+    if kubeflow_namespace:
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -670,6 +750,35 @@ def main(
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
+    elif nvcre_namespace is not None:
+        try:
+            from utils.executors import nvcre_executor
+        except ImportError:
+            from .utils.executors import nvcre_executor
+        init_containers = [bridge_init_container(local_bridge, container_image)] if local_bridge else None
+        extra_volumes = [dict(WORKSPACE_VOLUME)] if local_bridge else []
+        extra_mounts = [dict(WORKSPACE_MOUNT)] if local_bridge else []
+        executor = nvcre_executor(
+            namespace=nvcre_namespace,
+            container_image=container_image,
+            nodes=-(num_gpus // -gpus_per_node),
+            num_gpus_per_node=gpus_per_node,
+            image_pull_secret=nvcre_image_pull_secret,
+            workdir_pvc=nvcre_workdir_pvc,
+            workdir_pvc_path=nvcre_workdir_pvc_path,
+            workdir_local_path=nvcre_workdir_local_path,
+            node_selector=json.loads(nvcre_node_selector_json) if nvcre_node_selector_json else None,
+            volumes=(json.loads(nvcre_volumes_json) if nvcre_volumes_json else []) + extra_volumes,
+            volume_mounts=(json.loads(nvcre_volume_mounts_json) if nvcre_volume_mounts_json else []) + extra_mounts,
+            init_containers=init_containers,
+            timeout_per_job=nvcre_timeout_per_job,
+            kubeconfig=nvcre_kubeconfig,
+            kube_context=nvcre_kube_context,
+            gang_scheduler_name=nvcre_gang_scheduler_name,
+        )
+        executor.env_vars = _nvcre_env_vars(custom_env_vars, nvcre_hf_token_secret_name)
+        if nvcre_hf_token_secret_name:
+            executor.secret_env_vars["HF_TOKEN"] = (nvcre_hf_token_secret_name, nvcre_hf_token_secret_key)
     else:
         executor = slurm_executor(
             gpu=gpu,
@@ -788,14 +897,16 @@ def main(
                 logger.info("dryrun requested: exiting")
                 return
 
-            job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
-
-            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
-
             if detach:
+                # For detached runs (e.g. Nvcre), skip status polling — the
+                # caller (llmb-run) polls for completion via nvcrectl.
                 is_finished_experiment = True
                 is_testing_passed = True
                 break
+
+            job_dir, job_status = get_job_dir_and_status_from_run(exp_name)
+
+            terminal_failure = job_status not in ["SUCCEEDED", "SUBMITTED", "PENDING", "RUNNING"]
 
             log_file_paths = list(Path(f"{job_dir}").glob("log*.out"))
             ensure_logs_where_written(log_file_paths)
@@ -992,7 +1103,8 @@ if __name__ == "__main__":
         gpu=args.gpu,
         hf_token=args.hf_token,
         offline=args.offline,
-        detach=args.detach,
+        # Force detach for Nvcre — llmb-run polls for completion via nvcrectl
+        detach=True if args.nvcre_namespace else args.detach,
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
@@ -1069,6 +1181,22 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
+        nvcre_namespace=args.nvcre_namespace,
+        nvcre_image_pull_secret=args.nvcre_image_pull_secret,
+        nvcre_workdir_pvc=args.nvcre_workdir_pvc,
+        nvcre_workdir_pvc_path=args.nvcre_workdir_pvc_path,
+        nvcre_workdir_local_path=args.nvcre_workdir_local_path,
+        nvcre_node_selector_json=args.nvcre_node_selector_json,
+        nvcre_volumes_json=args.nvcre_volumes_json,
+        nvcre_volume_mounts_json=args.nvcre_volume_mounts_json,
+        nvcre_use_mbridge_commit=args.nvcre_use_mbridge_commit,
+        nvcre_timeout_per_job=args.nvcre_timeout_per_job,
+        nvcre_kubeconfig=args.nvcre_kubeconfig,
+        nvcre_kube_context=args.nvcre_kube_context,
+        nvcre_gang_scheduler_name=args.nvcre_gang_scheduler_name,
+        nvcre_hf_token_secret_name=args.nvcre_hf_token_secret_name,
+        nvcre_hf_token_secret_key=args.nvcre_hf_token_secret_key,
+        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,
