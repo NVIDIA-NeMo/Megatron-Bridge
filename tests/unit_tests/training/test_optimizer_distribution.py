@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 """Regression tests for optimizer selection, DDP layout and checkpoint state."""
 
 from types import SimpleNamespace

@@ -324,7 +324,11 @@ def test_distributed_model_build_obeys_gtp_lifecycle(mock_configure, mock_classi
     cfg = SimpleNamespace(
         model=model_config,
         ddp=object(),
-        optimizer=SimpleNamespace(overlap_param_gather_with_optimizer_step=False),
+        optimizer=SimpleNamespace(
+            optimizer="adam",
+            overlap_param_gather_with_optimizer_step=False,
+            use_layer_wise_distributed_optimizer=False,
+        ),
         dist=DistributedInitConfig(
             use_megatron_fsdp=False,
             use_torch_fsdp2=False,

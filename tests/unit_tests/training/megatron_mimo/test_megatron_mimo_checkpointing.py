@@ -54,6 +54,16 @@ def test_megatron_mimo_runtime_config_update_resolves_eval_batch_size_defaults()
     cfg.validation.eval_global_batch_size = None
     cfg.validation.eval_micro_batch_size = None
     cfg.profiling = None
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.optimizer = "adam"
+    cfg.optimizer.use_distributed_optimizer = False
+    cfg.optimizer.use_layer_wise_distributed_optimizer = False
+    cfg.optimizer.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
 
     megatron_mimo_runtime_config_update(cfg)
 

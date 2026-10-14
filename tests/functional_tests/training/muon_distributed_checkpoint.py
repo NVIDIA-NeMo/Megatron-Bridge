@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 """Two-GPU numerical and save/resume regression for distributed optimizers.
 
 Run with torch.distributed.run. Each case uses a fresh process; --compare checks
