@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [10/15/2026] [**Muse-Spark-Open-816B-A42B**](examples/models/muse_spark_open/README.md) is now supported! Megatron Bridge adds checkpoint conversion, inference, and GB200 training recipes for the 816B-total / 42B-active vision-and-audio-language MoE model: pretraining, full SFT, long-context SFT at 32K and 64K with context parallelism, LoRA, and image-text SFT and LoRA, with HybridEP MoE dispatch. See the [examples README](examples/models/muse_spark_open/README.md) and the [verification card](examples/model_verification_cards/muse-spark-open-816b-a42b/card.yaml) for details.
+
 - [08/19/2026] **Megatron Bridge 0.6.0 released!** Highlights include GLM-5.2 with cuDNN fused DSA for 128K THD-packed context-parallel training, new LLM/VLM/diffusion models, more reliable VLM data and sequence packing, improved checkpoint and LoRA workflows, unified training and conversion launchers, and refreshed performance recipes. Huge thanks to our community contributors! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.6.0).
 
 - [08/11/2026] **NVIDIA Nemotron 3.5 Lightning is released!** Read the technical blog [here](https://developer.nvidia.com/blog/nvidia-nemotron-3-5-lightning-delivers-fast-accurate-specialized-task-execution-for-long-running-agents/). See the [Nemotron 3.5 Lightning README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_5_lightning/README.md) for details.
