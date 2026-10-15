@@ -242,6 +242,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
 | [**Muse Glimmer**](docs/models/muse_glimmer/muse-glimmer.md) | Muse Glimmer 30B |
+| [**Muse Spark Open**](docs/models/muse_spark_open/muse-spark-open.md) | Muse-Spark-Open-816B-A42B |
 | [**Nemotron**](docs/models/nemotron/index.md) | Nemotron-3 Nano, Nemotron-3 Super, Nemotron-3 Ultra, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
 | [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |

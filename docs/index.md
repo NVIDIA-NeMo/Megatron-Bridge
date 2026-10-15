@@ -52,6 +52,7 @@ models/mistral/index.md
 models/mimo/index.md
 models/moonlight/index.md
 models/muse_glimmer/muse-glimmer.md
+models/muse_spark_open/muse-spark-open.md
 models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md
