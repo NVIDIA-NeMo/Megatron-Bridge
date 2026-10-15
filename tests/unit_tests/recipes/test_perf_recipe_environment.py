@@ -48,6 +48,8 @@ _DEEPSEEK_NON_BASELINE_ENV_NAMES = {
     "TORCHINDUCTOR_WORKER_START",
 }
 _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
+    "deepseek_v3_pretrain_4gpu_vrnvl72_fp8mx_proxy_config",
+    "deepseek_v3_pretrain_4gpu_vrnvl72_nvfp4_proxy_config",
     "deepseek_v3_pretrain_64gpu_vrnvl72_fp8mx_proxy_config",
     "deepseek_v3_pretrain_128gpu_vrnvl72_fp8mx_config",
     "deepseek_v3_pretrain_256gpu_vrnvl72_fp8mx_config",
@@ -64,6 +66,7 @@ _VRNVL72_CUDNN_LAYERNORM_RECIPES = {
     "nemotron_3_5_lightning_pretrain_8gpu_vrnvl72_fp8mx_config",
     "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config",
     "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config",
+    "qwen35_vl_35b_a3b_pretrain_8gpu_vrnvl72_fp8mx_config",
 }
 
 

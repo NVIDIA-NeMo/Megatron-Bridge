@@ -70,6 +70,35 @@ The smaller Qwen3.5-style multimodal experiments reinforce the same lessons:
 - you can sweep MBS, recompute, and CUDA-graph scope together
 - the goal is best steady-state throughput, not easiest bring-up
 
+### Choose recompute for the final recipe
+
+For library, performance, and verification-card recipes, **no recompute and
+selective recompute on cheap supported modules are both appropriate starting
+choices**. Choose using measured memory headroom and steady-state performance
+at target scale; selective recompute does not require a no-recompute OOM first.
+Full recompute can severely reduce throughput. It is acceptable temporarily
+during memory-constrained diagnostic bring-up, but a successful bring-up run
+does not justify publishing it as the default. Retain full recompute only when
+target-scale measurements show that no recompute and supported selective
+boundaries still fail to fit, or matched runs show better end-to-end throughput
+with full recompute, for example through larger MBS or lower TP. Keep the
+workload, GBS, and convergence settings fixed. Document layout changes,
+per-rank memory peaks/OOM evidence, boundaries tested, and steady-state
+performance for the alternatives tested.
+
+### Check performance before publishing
+
+Every new **pretraining library recipe** needs measured steady-state
+performance on its intended workload and allocation. For BF16, aim for roughly
+**200 model TFLOP/s/GPU on H100** or **400 on GB200**. For VLMs, use realistic
+multimodal input. These targets assess the base library recipe, not a
+`perf_recipes` benchmark; SFT/PEFT and long-context SFT are excluded. If
+performance is severely below the target, withhold the recipe or clearly mark
+it **early, unoptimized** in the recipe, public documentation/card, and PR.
+Follow the [recipe publication guidance](../nemo-mbridge-recipe-recommender/SKILL.md#performance-readiness-for-new-recipes)
+for other hardware/precisions and visible card labels. A successful
+full-recompute bring-up does not waive this requirement.
+
 ## Key Tuning Knobs
 
 1. **Keep TP as small as memory permits**: prefer activation recompute over
@@ -86,17 +115,20 @@ The smaller Qwen3.5-style multimodal experiments reinforce the same lessons:
    or output-layer weights, and the final choice must respect PP/DP rank layout
    and the hardware topology.
 
-3. **Prefer selective activation recompute after fit is established**: use full
-   recompute to get a memory-constrained configuration running, then replace it
-   with the narrowest supported selective modules. This usually recovers more
-   throughput than adding TP solely for activation memory.
+3. **Use no recompute or cheap selective recompute**: if temporary full
+   recompute was used for bring-up, evaluate these lighter choices before
+   recommending a recipe; broaden selective boundaries only as needed for fit.
+   Measure memory and steady-state throughput rather than carrying the
+   diagnostic setting forward.
 
    Qwen3.5/Qwen3.6 requires special care. Megatron-Core supports the targeted
    `gdn_norm_out` recompute module, but that does not checkpoint the complete GDN
-   recurrence. If `core_attn`, `gdn_norm_out`, and `moe_act` still do not provide
-   enough headroom—commonly with smaller EP such as EP8—retain full recompute
-   rather than claiming unsupported GDN selective coverage. Larger EP, such as
-   EP32, can reduce expert-weight pressure enough to retry the selective policy.
+   recurrence. Test supported boundaries such as `core_attn`, `gdn_norm_out`,
+   and `moe_act` on the pinned revision. Smaller EP such as EP8 can leave less
+   headroom, but neither EP size nor incomplete GDN coverage alone justifies
+   full recompute: apply the target-scale evidence requirement above. Larger
+   EP, such as EP32, can reduce expert-weight pressure enough to retry no
+   recompute or a narrower selective policy.
 
 4. **Prefer HybridEP, then measure against AllToAll**: HybridEP is the default
    candidate when the topology supports it. Within one 8-GPU NVLink domain in
@@ -123,9 +155,13 @@ Use this order so each measurement answers one question:
 
 1. Select the largest topology-compatible EP that usefully shards the experts.
 2. Minimize TP while retaining enough memory for non-expert weights.
-3. Start with full recompute if needed to obtain a stable real-data run.
-4. Replace full recompute with supported selective modules and remeasure memory.
-5. Inspect per-rank peak allocated and reserved memory in the experiment logger.
+3. Establish a stable real-data run. Temporary full recompute is allowed for
+   diagnostic bring-up when memory fit is uncertain.
+4. Select the final recipe using no recompute or cheap supported selective
+   boundaries, measuring their memory/performance tradeoff at target scale.
+   Retain full recompute only under the documented exception above.
+5. Measure per-rank peak allocated/reserved memory and steady-state step time
+   or throughput through optimizer initialization and multiple complete steps.
 6. If there is headroom, increase MBS; if TP was used for activation pressure,
    lower TP and remeasure. Change one of these two controls at a time.
 7. Compare HybridEP with AllToAll on the same topology and precision.
@@ -144,7 +180,7 @@ fits is the baseline; it is not automatically the performance recipe.
 TP=1  CP=1  PP=1
 EP sized to the expert topology, often large
 Dispatcher: HybridEP on GB200-class systems
-Recompute: start with full, then relax toward selective recompute
+Recompute: none or cheap selective by default; full only with measured fit/throughput justification
 ```
 
 ### 3D-parallel GB200 path
@@ -163,7 +199,7 @@ CUDA Graph: start narrow, then widen only after the real-data path is stable
 | HybridEP on GB200 | strong default | strong default once topology is stable |
 | CUDA graphs | useful after bring-up | useful, but more scope-sensitive |
 | Freeze vision | natural fit | possible, but less often used as the headline perf path |
-| Selective recompute | recommended | recommended |
+| Cheap selective recompute | appropriate alongside no recompute | appropriate alongside no recompute |
 
 ## Pitfalls
 

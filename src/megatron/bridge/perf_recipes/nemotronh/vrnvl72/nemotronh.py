@@ -260,8 +260,8 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config(*, num_gpus: int = 256
     """Nemotron 3 Ultra pretrain: 256× VRNVL72, NVFP4 (alias of GB300).
 
     Args:
-        num_gpus: Launch GPU count used to size HSDP optimizer instances.
-            Defaults to the canonical 256-GPU benchmark allocation.
+        num_gpus: Retained for compatibility; sharding is rack-local and the
+            distributed-optimizer instance count is fixed at one.
     """
     cfg = nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(num_gpus=num_gpus)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
@@ -275,11 +275,8 @@ def nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config(*, num_gpus: int = 256
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
-        # Use 64 HybridEP ranks within the 72-GPU NVLink domain.
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-        "NVLINK_DOMAIN_SIZE": 72,
-        "USE_MNNVL": 1,
+        # NCCL EP dispatcher mode and one GPU per rank.
+        "NCCL_EP_HT_EM_PULL_PUSH": 1,
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
