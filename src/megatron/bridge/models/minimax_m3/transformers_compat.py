@@ -20,10 +20,7 @@ import torch
 import transformers
 
 
-_AFFECTED_TRANSFORMERS_VERSIONS = ("5.17.0", "5.18.0", "5.19.0")
-
-
-if transformers.__version__ in _AFFECTED_TRANSFORMERS_VERSIONS:
+if transformers.__version__ == "5.17.0":
     from transformers.models.minimax_m3_vl.modeling_minimax_m3_vl import (
         MiniMaxM3VLVisionRotaryEmbedding as _HFVisionRotaryEmbedding,
     )
@@ -57,18 +54,20 @@ if transformers.__version__ in _AFFECTED_TRANSFORMERS_VERSIONS:
 
 
 def patch_minimax_m3_vision_rope() -> bool:
-    """Preserve 3D vision RoPE and dtype-stable frequencies on affected releases.
+    """Restore partial 3D vision RoPE on Transformers 5.17.0 only.
 
     Transformers PR #48105 changed the frequency ladder to 2D and dropped the
     width coordinate from the T/H/W position IDs. Keep the released checkpoint's
-    partial 3D rotation on 5.17.0. Releases 5.18.0 and 5.19.0 restore the geometry
-    but round their frequency buffers during model.half()/bfloat16(). Recomputing
-    frequencies in FP32 preserves the earlier Bridge behavior after those casts.
+    partial 3D rotation on 5.17.0. Transformers PR #49164 restores the geometry
+    in 5.18+. Leave those releases unpatched: their native buffer-based frequency
+    calculation can differ after model.half()/bfloat16() from the FP32-per-forward
+    calculation used here. That precision difference is accepted; it is not the
+    missing-axis/incorrect-geometry bug this compatibility patch addresses.
     Replacing the class affects new MiniMax models only. Import Bridge before
     constructing HF MiniMax models; existing instances retain their old numerical
     behavior and should be reconstructed before serialization.
     """
-    if transformers.__version__ not in _AFFECTED_TRANSFORMERS_VERSIONS:
+    if transformers.__version__ != "5.17.0":
         return False
 
     from transformers.models.minimax_m3_vl import modeling_minimax_m3_vl as modeling
