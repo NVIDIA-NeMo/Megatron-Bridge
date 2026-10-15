@@ -393,11 +393,12 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_mfsdp2_config() -> ConfigContainer:
     cfg.comm_overlap.delay_wgrad_compute = False
 
     # Recompute not needed.
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_modules = []
+    # cfg.model.recompute_granularity = None
+    # cfg.model.recompute_modules = []
+    # cfg.model.recompute_modules = ["layernorm", "mla_up_proj"]
 
-    cfg.train.micro_batch_size = 1
-    cfg.train.global_batch_size = 64
+    cfg.train.micro_batch_size = 2
+    cfg.train.global_batch_size = 128
     return cfg
 
 
