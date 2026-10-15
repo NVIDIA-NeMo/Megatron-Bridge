@@ -1154,7 +1154,7 @@
           "workflow": "pretrain_performance"
         },
         {
-          "bridge_commit": "c93251151adeeadbae3ff2a2bf5ee7a1c34cff01",
+          "bridge_commit": "b53e66c47b9704dd16ce399865bea4f4f004e53b",
           "command_topologies": [
             {
               "gpus_per_node": "4",
@@ -1170,15 +1170,15 @@
           "dimensions": {},
           "enabled_features": {},
           "entry_id": "deepseek-v4-flash-pretrain-performance-gb300",
-          "expected_result": "On exactly 128 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 2048/1, and sequence length 4096. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.59616 to 3.160061; the final ten steps average 7840.320 ms, 759.280 TFLOP/s/GPU, and 8358.842 tokens/s/GPU. The resolved configuration persists.\n",
+          "expected_result": "On exactly 128 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP32/ETP1, GBS/MBS 2048/2, and sequence length 4096. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.58323 to 3.277285; the final ten steps average 7322.520 ms, 814.830 TFLOP/s/GPU, and 8949.924 tokens/s/GPU. The resolved configuration persists.\n",
           "hardware": "GB300",
-          "last_verified": "2026-08-13",
+          "last_verified": "2026-10-14",
           "metrics": {
-            "final_loss": 3.160061,
-            "initial_loss": 12.59616,
-            "last_10_steps_model_tflops_per_gpu_avg": 759.28,
-            "last_10_steps_step_time_ms_avg": 7840.32,
-            "last_10_steps_tokens_per_second_per_gpu_avg": 8358.842
+            "final_loss": 3.277285,
+            "initial_loss": 12.58323,
+            "last_10_steps_model_tflops_per_gpu_avg": 814.83,
+            "last_10_steps_step_time_ms_avg": 7322.52,
+            "last_10_steps_tokens_per_second_per_gpu_avg": 8949.924
           },
           "precision": "fp8_mx",
           "source_pointer": "items.pretrain_performance.GB300",

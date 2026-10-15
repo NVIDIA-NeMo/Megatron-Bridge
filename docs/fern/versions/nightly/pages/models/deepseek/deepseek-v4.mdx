@@ -489,30 +489,30 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       <dl class="verification-model-detail-meta">
         <div><dt>Hardware</dt><dd>GB300</dd></div>
         <div><dt>Precision</dt><dd>FP8 MX</dd></div>
-        <div><dt>Last verified</dt><dd>2026-08-13</dd></div>
+        <div><dt>Last verified</dt><dd>2026-10-14</dd></div>
       </dl>
       <section class="verification-recorded-metrics">
         <h5>Recorded metrics</h5>
         <dl class="verification-metric-list">
           <div>
             <dt>Initial loss</dt>
-            <dd>12.59616</dd>
+            <dd>12.58323</dd>
           </div>
           <div>
             <dt>Final loss</dt>
-            <dd>3.160061</dd>
+            <dd>3.277285</dd>
           </div>
           <div>
             <dt>Step time · last 10 avg</dt>
-            <dd>7,840.320 ms</dd>
+            <dd>7,322.520 ms</dd>
           </div>
           <div>
             <dt>Model throughput · last 10 avg</dt>
-            <dd>759.280 TFLOP/s/GPU</dd>
+            <dd>814.830 TFLOP/s/GPU</dd>
           </div>
           <div>
             <dt>Token throughput · last 10 avg</dt>
-            <dd>8,358.842 tokens/s/GPU</dd>
+            <dd>8,949.924 tokens/s/GPU</dd>
           </div>
         </dl>
       </section>
@@ -528,7 +528,7 @@ Choose a workflow, precision, and exact recorded combination. The command and ex
       </section>
       <section class="verification-expected-result">
         <h5>Expected result</h5>
-        <p>On exactly 128 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP64/ETP1, GBS/MBS 2048/1, and sequence length 4096. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.59616 to 3.160061; the final ten steps average 7840.320 ms, 759.280 TFLOP/s/GPU, and 8358.842 tokens/s/GPU. The resolved configuration persists.</p>
+        <p>On exactly 128 GB300s, the canonical MXFP8 mock-data recipe completes exactly 50 optimizer steps at TP1/PP1/CP1/EP32/ETP1, GBS/MBS 2048/2, and sequence length 4096. All 50 keyed rows have finite loss with zero skipped or NaN iterations. Loss moves from 12.58323 to 3.277285; the final ten steps average 7322.520 ms, 814.830 TFLOP/s/GPU, and 8949.924 tokens/s/GPU. The resolved configuration persists.</p>
       </section>
     </article>
   </div>
