@@ -63,6 +63,21 @@ _ULTRA_NVL8_RECIPES = (
     ("nemotronh.b300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config"),
 )
 
+# Qwen3 235B NVL8 recipes and MXFP8 large-scale variants.
+_QWEN3_NVL8_RECIPES = tuple(
+    (f"qwen.{hardware}.qwen3_moe", f"qwen3_235b_a22b_pretrain_{gpus}gpu_{hardware}_{precision}_config")
+    for hardware in ("b200", "b300")
+    for gpus, precision in (
+        (64, "bf16"),
+        (64, "fp8mx"),
+        (64, "nvfp4"),
+        (256, "bf16"),
+        (256, "fp8mx"),
+        (256, "fp8mx_large_scale"),
+        (256, "nvfp4"),
+    )
+)
+
 # VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
 _VRNVL72_NCCLEP_RECIPES = (
     ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
@@ -98,7 +113,9 @@ _VRNVL72_ALIASES = (
 # every recipe module that is already loaded, so a lazy import inside a test would escape the patch.
 _RECIPE_MODULES = {
     module_name: importlib.import_module(f"megatron.bridge.perf_recipes.{module_name}")
-    for module_name in sorted({name for name, _ in (*_GB300_NCCLEP_RECIPES, *_ULTRA_NVL8_RECIPES, *_VRNVL72_ALIASES)})
+    for module_name in sorted(
+        {name for name, _ in (*_GB300_NCCLEP_RECIPES, *_ULTRA_NVL8_RECIPES, *_QWEN3_NVL8_RECIPES, *_VRNVL72_ALIASES)}
+    )
 }
 
 
@@ -112,7 +129,9 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("module_name", "factory_name"), (*_GB300_NCCLEP_RECIPES, *_ULTRA_NVL8_RECIPES, *_VRNVL72_NCCLEP_RECIPES), ids=lambda value: value
+    ("module_name", "factory_name"),
+    (*_GB300_NCCLEP_RECIPES, *_ULTRA_NVL8_RECIPES, *_QWEN3_NVL8_RECIPES, *_VRNVL72_NCCLEP_RECIPES),
+    ids=lambda value: value,
 )
 def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory_name: str) -> None:
     cfg = _build(module_name, factory_name)
@@ -121,7 +140,7 @@ def test_moe_perf_recipes_default_to_the_nccl_ep_stack(module_name: str, factory
     assert cfg.model.moe_flex_dispatcher_backend == "ncclep"
     # Device-side expert token counts; the legacy grouped-MLP path host-syncs tokens_per_expert per layer.
     assert cfg.model.moe_use_grouped_tensor is True
-    # EP64 crosses NVL8 domains: the runtime's single-LSA-team pull/push mode must be disabled.
+    # Ultra EP64 crosses NVL8 domains; Qwen3 EP8 targets one domain per EP group.
     expected_pull_push = 0 if (module_name, factory_name) in _ULTRA_NVL8_RECIPES else 1
     assert cfg.env_vars["NCCL_EP_HT_EM_PULL_PUSH"] == expected_pull_push
     assert cfg.env_vars.keys().isdisjoint(HYBRID_EP_ENV_NAMES)
@@ -199,3 +218,31 @@ def test_ultra_nvl8_perf_recipes_use_full_fsdp(module_name: str, factory_name: s
 
     exports = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
     assert getattr(exports, factory_name) is getattr(_RECIPE_MODULES[module_name], factory_name)
+
+
+@pytest.mark.parametrize(("module_name", "factory_name"), _QWEN3_NVL8_RECIPES, ids=lambda value: value)
+def test_qwen3_235b_nvl8_preserves_layout_and_graphs(module_name: str, factory_name: str) -> None:
+    cfg = _build(module_name, factory_name)
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 8
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.seq_length == cfg.dataset.seq_length == 4096
+    assert cfg.train.micro_batch_size == (1 if ".b200." in module_name else 2)
+    assert cfg.train.global_batch_size == (
+        512 if "large_scale" in factory_name else (2048 if "64gpu" in factory_name else 8192)
+    )
+
+    full_iteration = "256gpu" in factory_name and ("fp8mx" in factory_name or "nvfp4" in factory_name)
+    assert cfg.model.cuda_graph_impl == ("full_iteration" if full_iteration else "none")
+    if full_iteration:
+        assert cfg.model.moe_expert_rank_capacity_factor == 1.5
+        assert cfg.model.moe_paged_stash is True
+        assert cfg.model.use_transformer_engine_op_fuser is True
+        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+        assert cfg.comm_overlap.delay_wgrad_compute is True
+        assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    if "nvfp4" in factory_name:
+        assert cfg.comm_overlap.tp_comm_overlap is False
