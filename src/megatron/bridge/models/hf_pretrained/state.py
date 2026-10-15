@@ -661,8 +661,13 @@ class SafeTensorsStateSource(StateSource):
         return handle
 
     def _maybe_cache(self, key: str, tensor: torch.Tensor) -> None:
+        # Keep a private copy: callers may modify the tensors they get back in place.
         if self._cache_small and tensor.numel() <= self._small_numel:
-            self._small_tensor_cache[key] = tensor
+            self._small_tensor_cache[key] = tensor.clone()
+
+    def _invalidate_handle(self, file_path: Path) -> None:
+        """Drop a reused handle so the next access re-reads the shard header (e.g. after a retry)."""
+        self._open_handles.pop(str(file_path), None)
 
     def load_tensors(self, keys_to_load: List[str]) -> Dict[str, torch.Tensor]:
         if not keys_to_load:
@@ -681,7 +686,7 @@ class SafeTensorsStateSource(StateSource):
             for key in list(remaining_keys):
                 cached = self._small_tensor_cache.get(key)
                 if cached is not None:
-                    loaded_tensors[key] = cached
+                    loaded_tensors[key] = cached.clone()
                     remaining_keys.discard(key)
             if not remaining_keys:
                 return loaded_tensors
@@ -727,6 +732,8 @@ class SafeTensorsStateSource(StateSource):
                                 f"Retry {attempt + 1}/{max_retries}: {len(still_missing)} keys "
                                 f"not found in {filename}, retrying after delay..."
                             )
+                            # the shard may be replaced meanwhile; do not retry on a stale header
+                            self._invalidate_handle(file_path)
                             time.sleep(1.0 * (attempt + 1))
 
         if remaining_keys and self.key_prefix is None:
