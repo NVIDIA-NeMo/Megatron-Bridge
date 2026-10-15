@@ -44,6 +44,7 @@ import argparse
 import logging
 import os
 import sys
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
@@ -235,7 +236,7 @@ def run_export(
         logger.info("MIMO -> HF export complete (wrote %s)", hf_path)
 
 
-def _init_distributed() -> None:
+def _init_distributed(distributed_timeout_minutes: int) -> None:
     """Initialize ``torch.distributed`` from torchrun environment variables."""
     if dist.is_initialized():
         return
@@ -247,7 +248,14 @@ def _init_distributed() -> None:
         backend = "nccl"
     else:
         backend = "gloo"
-    dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+    # Inactive component ranks can wait while rank 0 writes an entire route.
+    # Large checkpoints on shared storage can exceed NCCL's default timeout.
+    dist.init_process_group(
+        backend=backend,
+        rank=rank,
+        world_size=world_size,
+        timeout=timedelta(minutes=distributed_timeout_minutes),
+    )
 
 
 _DTYPE_MAP = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}
@@ -256,6 +264,16 @@ _DTYPE_MAP = {"float32": torch.float32, "float16": torch.float16, "bfloat16": to
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
     """Shared CLI flags between import and export subcommands."""
     parser.add_argument("--hf-model", required=True, help="HuggingFace model ID or local path.")
+    parser.add_argument(
+        "--distributed-timeout-minutes",
+        type=int,
+        default=120,
+        help=(
+            "Process-group timeout in minutes (default: 120). Must cover a full route's export, "
+            "including checkpoint I/O. Increase for large models on slow storage. "
+            "Only applies when this CLI initializes the default process group."
+        ),
+    )
     parser.add_argument(
         "--component",
         action="append",
@@ -328,9 +346,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     logging.basicConfig(level=getattr(logging, args.log_level))
+    if args.distributed_timeout_minutes <= 0:
+        parser.error("--distributed-timeout-minutes must be positive")
     torch_dtype = _DTYPE_MAP[args.torch_dtype]
 
-    _init_distributed()
+    _init_distributed(args.distributed_timeout_minutes)
     try:
         if args.command == "import":
             run_import(

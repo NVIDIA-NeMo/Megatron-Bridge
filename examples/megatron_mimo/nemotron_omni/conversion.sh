@@ -34,6 +34,8 @@ WORKSPACE=${WORKSPACE:-/workspace}
 MEGATRON_PATH=${MEGATRON_PATH:-"${WORKSPACE}/nemotron-omni-mimo"}
 HF_PATH=${HF_PATH:-"${WORKSPACE}/nemotron-omni-mimo-export-hf"}
 TORCH_DTYPE=${TORCH_DTYPE:-bfloat16}
+# Idle ranks may wait for a whole route to be written to shared storage.
+DISTRIBUTED_TIMEOUT_MINUTES=${DISTRIBUTED_TIMEOUT_MINUTES:-120}
 
 LANGUAGE_TP=${LANGUAGE_TP:-2}
 LANGUAGE_DP=${LANGUAGE_DP:-1}
@@ -54,6 +56,7 @@ if [[ "${PHASE}" == import || "${PHASE}" == all ]]; then
         --component "images=tp=${VISION_TP},dp=${VISION_DP},rank_offset=0" \
         --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},ep=${LANGUAGE_EP},etp=${LANGUAGE_ETP},rank_offset=${VISION_RANKS}" \
         --torch-dtype "${TORCH_DTYPE}" \
+        --distributed-timeout-minutes "${DISTRIBUTED_TIMEOUT_MINUTES}" \
         --trust-remote-code
 fi
 
@@ -68,5 +71,6 @@ if [[ "${PHASE}" == export || "${PHASE}" == all ]]; then
         --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},ep=${LANGUAGE_EP},etp=${LANGUAGE_ETP},rank_offset=0" \
         --component "images=tp=${VISION_TP},dp=${VISION_DP},rank_offset=${LANGUAGE_RANKS}" \
         --torch-dtype "${TORCH_DTYPE}" \
+        --distributed-timeout-minutes "${DISTRIBUTED_TIMEOUT_MINUTES}" \
         --trust-remote-code
 fi
