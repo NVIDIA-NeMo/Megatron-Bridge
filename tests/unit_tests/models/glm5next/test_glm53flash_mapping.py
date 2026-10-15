@@ -84,7 +84,7 @@ def test_mtp_final_layernorm_round_trips_through_the_mtp_shared_head_norm():
 
 @pytest.mark.parametrize("gate_lower_bound", [-5.0, -1.0])
 @pytest.mark.parametrize("kda_disable_fp8", [False, True])
-def test_glm53_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
+def test_glm5next_provider_precision_contract(gate_lower_bound, kda_disable_fp8):
     config_module = pytest.importorskip("transformers.models.glm5_next.configuration_glm5_next")
     config = config_module.Glm5NextConfig(
         text_config={
