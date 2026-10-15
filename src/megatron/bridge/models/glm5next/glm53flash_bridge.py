@@ -76,25 +76,33 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _glm53_text_config(hf_config):
+def _glm5next_text_config(hf_config):
     """Return the nested text_config for the GLM-5.3-Flash VLM."""
     text_config = getattr(hf_config, "text_config", None)
     return text_config if text_config is not None else hf_config
 
 
-def _glm53_layer_types(hf_config) -> list[str]:
-    """Per-HF-layer attention type: 'linear_attention' (KDA) or 'deepseek_sparse_attention' (DSA)."""
-    text_config = _glm53_text_config(hf_config)
+def _glm5next_layer_types(hf_config) -> list[str]:
+    """Return the normalized per-layer attention types used by the bridge.
+
+    Transformers 5.19 normalizes the DSA layer name from
+    ``deepseek_sparse_attention`` to ``indexed_attention``.  Keep both spellings
+    at the config boundary; the provider mapping below uses the canonical HF
+    spelling.
+    """
+    text_config = _glm5next_text_config(hf_config)
     layer_types = list(getattr(text_config, "layer_types", []))
     num_layers = text_config.num_hidden_layers
     if len(layer_types) != num_layers:
         raise ValueError(f"layer_types has {len(layer_types)} entries, but num_hidden_layers is {num_layers}.")
-    return layer_types
+    return [
+        "deepseek_sparse_attention" if layer_type == "indexed_attention" else layer_type for layer_type in layer_types
+    ]
 
 
-def _glm53_mlp_layer_types(hf_config) -> list[str]:
+def _glm5next_mlp_layer_types(hf_config) -> list[str]:
     """Per-HF-layer MLP type: 'dense' or 'sparse'."""
-    text_config = _glm53_text_config(hf_config)
+    text_config = _glm5next_text_config(hf_config)
     mlp_types = getattr(text_config, "mlp_layer_types", None)
     if mlp_types is None:
         first_k_dense = getattr(text_config, "first_k_dense_replace", min(3, text_config.num_hidden_layers))
@@ -237,7 +245,7 @@ class _EhProjSplitMapping(MegatronParamMapping[torch.Tensor]):
 # ---------------------------------------------------------------------------
 
 
-def glm53_hybrid_stack_spec(config: HybridMLAModelProvider) -> ModuleSpec:
+def glm5next_hybrid_stack_spec(config: HybridMLAModelProvider) -> ModuleSpec:
     """Return the Hybrid stack with MLA q/kv norms wired into the DSA spec."""
     stack_spec = deepcopy(get_default_hybrid_stack_spec(config))
     dsa_submodules = stack_spec.submodules.dsa_layer.submodules
@@ -469,7 +477,7 @@ class GLM53FlashBridge(MegatronModelBridge):
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM):
         hf_config = hf_pretrained.config
-        text_config = _glm53_text_config(hf_config)
+        text_config = _glm5next_text_config(hf_config)
 
         # Build base provider kwargs from the nested text_config (the VLM top-level
         # config lacks hidden_size/num_layers/etc. that the text sub-model owns).
@@ -514,8 +522,8 @@ class GLM53FlashBridge(MegatronModelBridge):
         provider.actual_vocab_size = text_config.vocab_size
 
         # ---- Hybrid layer pattern ----
-        attn_types = _glm53_layer_types(hf_config)
-        mlp_types = _glm53_mlp_layer_types(hf_config)
+        attn_types = _glm5next_layer_types(hf_config)
+        mlp_types = _glm5next_mlp_layer_types(hf_config)
         attn_sym = {
             "linear_attention": Symbols.KDA,
             "deepseek_sparse_attention": Symbols.DS_ATTENTION,
@@ -535,7 +543,7 @@ class GLM53FlashBridge(MegatronModelBridge):
         main_pattern = "".join(pattern_chars)
         provider.hybrid_layer_pattern = main_pattern
         provider.num_layers = len(main_pattern)
-        provider.hybrid_stack_spec = glm53_hybrid_stack_spec
+        provider.hybrid_stack_spec = glm5next_hybrid_stack_spec
         provider.moe_layer_freq = moe_layer_freq
 
         # ---- MLA geometry (NoPE) ----
@@ -670,9 +678,9 @@ class GLM53FlashBridge(MegatronModelBridge):
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         hf_config = self.hf_config
-        text_config = _glm53_text_config(hf_config)
-        attn_types = _glm53_layer_types(hf_config)
-        mlp_types = _glm53_mlp_layer_types(hf_config)
+        text_config = _glm5next_text_config(hf_config)
+        attn_types = _glm5next_layer_types(hf_config)
+        mlp_types = _glm5next_mlp_layer_types(hf_config)
         num_hf_layers = text_config.num_hidden_layers
 
         mapping_list = [
