@@ -24,7 +24,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 # Bound the processor workaround to the releases whose loading behavior we tested.
 # Future releases use their own loader and surface errors rather than silently
 # dropping a required VLM artifact during conversion/export.
-_PROCESSOR_ADAPTER_RELEASES = ("5.19.0", "5.20.0")
+_PROCESSOR_ADAPTER_RELEASES = ("5.18.0", "5.19.0", "5.20.0")
 
 
 class Nemotron35VLPretrained(PreTrainedCausalLM):
@@ -44,8 +44,8 @@ class Nemotron35VLPretrained(PreTrainedCausalLM):
         # uses it: native exports have no remote CausalLM registration.
         if self._uses_remote_model():
             return super()._get_auto_model_class()
-        if Version(transformers.__version__) < Version("5.19.0"):
-            raise ValueError("Native Super-VL requires Transformers >=5.19.0; use trust_remote_code=True otherwise.")
+        if Version(transformers.__version__) < Version("5.18.0"):
+            raise ValueError("Native Super-VL requires Transformers >=5.18.0; use trust_remote_code=True otherwise.")
         return AutoModelForImageTextToText
 
     def _load_processor(self) -> ProcessorMixin | None:
@@ -53,8 +53,8 @@ class Nemotron35VLPretrained(PreTrainedCausalLM):
             return super()._load_processor()
 
         version = Version(transformers.__version__)
-        if version < Version("5.19.0"):
-            raise ValueError("Native Super-VL requires Transformers >=5.19.0; use trust_remote_code=True otherwise.")
+        if version < Version("5.18.0"):
+            raise ValueError("Native Super-VL requires Transformers >=5.18.0; use trust_remote_code=True otherwise.")
 
         processor_cls = AutoProcessor
         if version.base_version in _PROCESSOR_ADAPTER_RELEASES and getattr(self.config, "audio_config", None) is None:

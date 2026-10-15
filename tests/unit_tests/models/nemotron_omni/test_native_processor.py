@@ -77,7 +77,7 @@ def test_model_loader_selection_preserves_shared_behavior(wrapper_cls, remote, r
 @pytest.mark.unit
 def test_native_model_loader_version_and_filtered_text_guards():
     wrapper = Nemotron35VLPretrained("unused")
-    with patch.object(transformers, "__version__", "5.18.0"):
+    with patch.object(transformers, "__version__", "5.17.0"):
         with pytest.raises(ValueError, match="trust_remote_code=True"):
             wrapper.model
     wrapper._text_only = True
@@ -111,7 +111,7 @@ def test_remote_model_loader_on_older_transformers():
 def test_native_processor_version_bounds():
     wrapper = Nemotron35VLPretrained("unused", trust_remote_code=False)
     with (
-        patch.object(transformers, "__version__", "5.18.0"),
+        patch.object(transformers, "__version__", "5.17.0"),
         pytest.raises(ValueError, match="trust_remote_code=True"),
     ):
         wrapper.processor
