@@ -150,6 +150,12 @@ from megatron.bridge.models.muse_glimmer import (
     MuseGlimmerModelBuilder,
     MuseGlimmerModelConfig,
 )
+from megatron.bridge.models.muse_spark_open import (
+    MuseSparkBridge,
+    MuseSparkModel,
+    MuseSparkModelBuilder,
+    MuseSparkModelConfig,
+)
 from megatron.bridge.models.nemotron_omni import (
     Nemotron35SuperVLBridge,
     NemotronOmniBridge,
@@ -274,6 +280,10 @@ __all__ = [
     "MuseGlimmerModel",
     "MuseGlimmerModelBuilder",
     "MuseGlimmerModelConfig",
+    "MuseSparkBridge",
+    "MuseSparkModel",
+    "MuseSparkModelBuilder",
+    "MuseSparkModelConfig",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",

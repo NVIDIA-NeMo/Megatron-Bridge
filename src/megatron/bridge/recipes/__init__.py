@@ -55,6 +55,7 @@ from megatron.bridge.recipes.moonlight import *
 from megatron.bridge.recipes.moonlight.h100 import *
 from megatron.bridge.recipes.muse_glimmer import *
 from megatron.bridge.recipes.muse_glimmer.h100 import *
+from megatron.bridge.recipes.muse_spark_open import *
 from megatron.bridge.recipes.nemotronh import *
 from megatron.bridge.recipes.nemotronh.h100 import *
 from megatron.bridge.recipes.nemotronh_multimodal import *
