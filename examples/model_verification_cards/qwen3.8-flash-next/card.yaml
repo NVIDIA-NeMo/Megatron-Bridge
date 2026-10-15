@@ -2,12 +2,14 @@
 title: qwen3_8_flash_next
 summary: >
   Performance disclaimer: this card does not record a canonical pretrain performance result; reported timing and throughput metrics are functional verification observations, not standalone optimized performance results.
-  The public BF16 image SFT recipe completed 100 steps on 64 GB200 GPUs using
+  The selected BF16 image SFT configuration completed 100 native-loader steps
+  on 64 GB200 GPUs with TP4 and HybridEP using
   an 8,192-sample Nemotron-Image-Training-v3 ECD subset. A separate historical
   run completed 5,349 steps; its loss curve remains valid. Historical
   language-only import and ten-step pretraining observations are retained
   separately. HF numerical parity,
-  checkpoint roundtrips, resume, and optimized performance remain unverified.
+  checkpoint roundtrips, resume, and numerical equivalence of the optimized
+  configuration remain unverified.
 verification_index:
   model_level:
     unverified: [hf_to_megatron_cpu, hf_to_megatron_gpu, megatron_to_hf_cpu, megatron_to_hf_gpu, manual_forward_pass, inference]
@@ -114,9 +116,10 @@ items:
   sft:
     GB200:
       status: verified
-      bridge_commit: 99188699f92108885b7f8823f87029369d2eb447  # pragma: allowlist secret
+      bridge_commit: 62f79249661338ea921f00d927d704bde10833cb  # pragma: allowlist secret
       precision: bf16
-      enabled_features: {}
+      enabled_features:
+        moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 16 --gpus-per-node 4
         --recipe qwen38_flash_next_sft_64gpu_gb200_bf16_config --mode sft
@@ -128,34 +131,51 @@ items:
         logger.tensorboard_dir=work/model-verification/qwen3.8-flash-next/sft/tensorboard
       last_verified: 2026-10-14
       metrics:
-        initial_loss: 0.3097828
-        final_loss: 0.2084261
-        last_10_steps_step_time_ms_avg: 1403.24
-        last_10_steps_model_tflops_per_gpu_avg: 7.75
-        last_10_steps_tokens_per_second_per_gpu_avg: 182.4349362902996
+        initial_loss: 0.350771963596344
+        final_loss: 0.16749770939350128
+        last_10_steps_step_time_ms_avg: 1525.19
+        last_10_steps_model_tflops_per_gpu_avg: 14.26
+        last_10_steps_tokens_per_second_per_gpu_avg: 335.6958805132475
       expected_result: >
-        Completed 100 optimizer steps with the full HF checkpoint at the pinned
-        model revision and the 8,192 complete image conversations prepared by
-        scripts/data/prepare_nemotron_image_v3_subset.py
+        Completed 100 native Energon-loader optimizer steps with the full HF
+        checkpoint at the pinned model revision and 8,192 complete image
+        conversations prepared by scripts/data/prepare_nemotron_image_v3_subset.py
         from nvidia/Nemotron-Image-Training-v3 ECD revision
-        7656391d4d4cb11ec3722b34f10d499435de0460. Recipe defaults are 64 GB200
-        GPUs, TP8/SP, EP64, ETP1/PP1/CP1, sequence 2048, MBS1/GBS8, BF16 with
-        FP32 gradient reduction, and constant LR 1e-6. All 100 losses and gradient
-        norms were finite, with zero skipped/NaN iterations and a clean exit.
-        The runtime-synchronized configuration was saved at setup entry.
-        Timing and throughput are early, unoptimized functional observations.
+        7656391d4d4cb11ec3722b34f10d499435de0460. The measured source commit used
+        explicit configuration overrides now represented by the recipe defaults.
+        The command requires the updated recipe defaults and is the public
+        launcher equivalent of that native training workload, not a new execution
+        of those defaults. The recorded bridge_commit identifies the measured
+        runtime source; at that historical commit, the settings below must be
+        supplied as overrides rather than using its earlier TP8 recipe defaults.
+        Settings are 64 GB200 GPUs, TP4/SP, EP64, ETP1/PP1/CP1, padded sequence
+        2048, MBS1/GBS16, BF16 with FP32 gradient reduction, constant LR 1e-6,
+        HybridEP dispatch, fused permutation including HybridEP integration,
+        fused router, bias activation, and gradient accumulation. Recomputation,
+        CUDA graphs, and shared-expert overlap are disabled. All 100 losses and
+        gradient norms were finite, with zero skipped/NaN iterations and a clean
+        exit. The runtime-synchronized configuration was saved at setup entry.
+        These are functional observations from one native-loader run. A separate
+        same-input 40-step comparison against the earlier TP8 configuration had
+        maximum absolute loss difference 0.008722812 and preclip gradient-norm
+        difference 28.2429, beginning at step one; numerical equivalence remains
+        unresolved. No matched native-loader speedup is claimed.
+        Historical public-command verification at commit
+        99188699f92108885b7f8823f87029369d2eb447 used TP8/GBS8 and allgather:
+        loss 0.3097828 to 0.2084261, final-ten mean 1403.24 ms,
+        7.75 analytical TFLOP/s/GPU and 182.43 token slots/s/GPU.
         Historical training from the recorded Bridge base with Transformers
         5.16.1 completed 5,349 steps on this bounded subset: first loss
         0.310870707035, final loss 0.01342209149, first-ten mean 0.311553779,
-        and last-ten mean 0.017778902. These are historical loss observations,
-        separate from this public-command verification and not generalization
-        evidence. Historical model TFLOP/s/GPU was not reliably captured.
-        Logged TFLOP/s
-        uses an analytical matrix-work estimate including gated-residual and PLE
-        projections and the forward-only QSA indexer projection. At sequence
-        2048 QSA skips its score matmul. Norms, activations, lookups, PLE
-        depthwise convolution, communication, and duplicated parallel work are
-        outside this estimate; it is not hardware-counter throughput or MFU.
+        and last-ten mean 0.017778902. The historical loss curve remains valid;
+        repeated-subset training is not generalization evidence. Historical
+        model TFLOP/s/GPU was not reliably captured.
+        Token throughput counts padded slots, not supervised tokens. Logged
+        TFLOP/s uses an analytical matrix-work estimate including gated-residual
+        and PLE projections. At sequence 2048 the dense QSA path bypasses the
+        indexer. Norms, activations, lookups, PLE depthwise convolution,
+        communication, and duplicated parallel work are outside this estimate;
+        it is not hardware-counter throughput or MFU.
 
   sft_export_inference:
     GB200:

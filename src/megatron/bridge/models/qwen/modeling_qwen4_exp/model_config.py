@@ -51,7 +51,7 @@ class Qwen4ExpTransformerConfig(TransformerConfig):
     ple_seed: int = 1234
     ple_eos_token_id: int | None = None
     ple_unigram_vocab_size: int | None = None
-    # Decoder-only selective recomputation must not implicitly enable ViT recomputation.
+    # Keep the vision builder on the qualified no-recompute path.
     vision_recompute_granularity: str | None = None
 
 
@@ -77,7 +77,10 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
             raise NotImplementedError("Qwen4-Exp currently requires PP=CP=1.")
         if self.virtual_pipeline_model_parallel_size is not None:
             raise NotImplementedError("Qwen4-Exp virtual pipeline stages are not supported.")
-        self._validate_qwen4_recompute()
+        if self.cuda_graph_impl != "none" or self.recompute_granularity is not None:
+            raise NotImplementedError("Qwen4-Exp CUDA graphs and activation recomputation are not supported yet.")
+        if self.vision_recompute_granularity is not None:
+            raise NotImplementedError("Qwen4-Exp vision recomputation is not supported yet.")
         if self.mhc_recompute_layer_num is not None:
             raise NotImplementedError("Core mHC recomputation is not supported by Qwen4-Exp gated residuals.")
         if self.mtp_num_layers or self.fp8:
@@ -124,40 +127,6 @@ class Qwen4ExpModelConfig(ModelConfigOverrideMixin, HybridModelConfig, ModelConf
                 raise ValueError("PLE embedding width must be divisible by its n-gram head count.")
             if min(self.ple_conv_kernel_size, self.ple_ngram_vocab_size_base, self.ple_ngram_vocab_divisible_by) < 1:
                 raise ValueError("PLE convolution and vocabulary dimensions must be positive.")
-
-    def _validate_qwen4_recompute(self) -> None:
-        if self.cuda_graph_impl != "none":
-            raise NotImplementedError("Qwen4-Exp CUDA graphs are not supported yet.")
-        if self.vision_recompute_granularity is not None:
-            raise NotImplementedError("Qwen4-Exp vision recomputation is not supported yet.")
-        if self.recompute_granularity is None:
-            return
-        modules = self.recompute_modules
-        if (
-            self.recompute_granularity != "selective"
-            or not isinstance(modules, (list, tuple))
-            or not modules
-            or any(module not in ("moe_act", "shared_experts") for module in modules)
-        ):
-            raise NotImplementedError("Qwen4-Exp selective recomputation supports only moe_act and shared_experts.")
-        if self.recompute_method is not None or self.recompute_num_layers is not None:
-            raise ValueError("Qwen4-Exp selective recomputation cannot specify method or num_layers.")
-        if not self.num_moe_experts or not self.moe_grouped_gemm:
-            raise ValueError("Qwen4-Exp selective recomputation requires grouped MoE experts.")
-        if "shared_experts" in modules and not self.moe_shared_expert_intermediate_size:
-            raise ValueError("shared_experts recomputation requires a shared expert.")
-        if any(
-            getattr(self, name)
-            for name in (
-                "moe_shared_expert_overlap",
-                "overlap_moe_expert_parallel_comm",
-                "delay_wgrad_compute",
-                "cpu_offloading",
-                "fine_grained_activation_offloading",
-                "distribute_saved_activations",
-            )
-        ):
-            raise NotImplementedError("Qwen4-Exp selective recomputation does not support overlap or offloading.")
 
     def finalize(self) -> None:
         """Resolve transformer settings and validate the supported hybrid architecture."""

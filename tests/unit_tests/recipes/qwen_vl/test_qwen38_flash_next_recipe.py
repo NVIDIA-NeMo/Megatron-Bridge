@@ -51,3 +51,28 @@ def test_full_vl_recipe_roundtrip_and_weight_initialization_contract(full_hf_con
     assert type(restored.dataset.task_encoder) is type(cfg.dataset.task_encoder)
     assert restored.dataset.task_encoder.hf_processor_revision == revision
     assert restored.logger.log_throughput
+
+    # Defaults reproduce the measured native-loader configuration, before and
+    # after serialization. Disabled recomputation does not activate the Core
+    # default recompute_modules list.
+    for config in (cfg, restored):
+        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.expert_model_parallel_size == 64
+        assert config.model.expert_tensor_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.context_parallel_size == 1
+        assert config.model.sequence_parallel
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.gradient_accumulation_fusion
+        assert config.model.bias_activation_fusion
+        assert config.model.moe_permute_fusion
+        assert config.model.moe_permute_fusion_into_hybridep
+        assert config.model.moe_router_fusion
+        assert not config.model.moe_shared_expert_overlap
+        assert config.model.recompute_granularity is None
+        assert config.model.cuda_graph_impl == "none"
+        assert config.train.micro_batch_size == 1
+        assert config.train.global_batch_size == 16
+        assert config.dataset.pad_to_max_length
+        assert config.dataset.seq_length == 2048

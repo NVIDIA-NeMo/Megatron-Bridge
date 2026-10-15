@@ -35,12 +35,7 @@ The local implementation preserves both contracts and bounds reduction memory.
 
 The builder supports a text decoder with tensor and sequence
 parallelism, PP=CP=1, and no virtual pipeline stages. It rejects cached
-inference, padding masks, full activation recomputation, CUDA graphs, FP8, and MTP.
-Selective recomputation accepts only `moe_act` and `shared_experts`, using the
-native grouped-MoE implementation without expert overlap or CPU offloading.
-Set `recompute_granularity="selective"` and explicitly supply those modules;
-vision recomputation remains disabled. The recipe leaves recomputation disabled
-unless memory pressure requires it.
+inference, padding masks, activation recomputation, CUDA graphs, FP8, and MTP.
 Use THD packing for document boundaries. Full VLM conversion includes the vision
 patch embedding, positional embedding, transformer blocks, and patch merger.
 The VLM combines visual embeddings before the hybrid decoder while PLE retains

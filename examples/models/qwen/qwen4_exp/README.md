@@ -1,7 +1,9 @@
 # Qwen3.8-Flash-Next image SFT
 
-**Early recipe: performance is unoptimized.** This applies to throughput and
-resource efficiency. The measured training loss remains valid.
+**Selected configuration: TP4 with HybridEP and fusions.** A 100-step native
+training run completed with finite loss. Same-input numerical differences from
+the earlier configuration remain unresolved; this is functional training
+evidence, not a parity result. Historical loss curves remain valid.
 
 The library recipe
 [`qwen38_flash_next_sft_64gpu_gb200_bf16_config`](../../../../src/megatron/bridge/recipes/qwen_vl/qwen38_flash_next.py)
@@ -64,14 +66,18 @@ Do not select a different `--dataset` preset: it would replace the prepared
 Energon dataset configuration. `--dry-run` resolves the launch configuration
 without allocating the model; it is not a runtime or correctness check.
 
-Defaults preserve the measured training settings: **64 GB200 GPUs, TP8/SP,
-EP64, expert TP1, PP1, CP1**, sequence2048, microbatch1, global batch8, BF16
+Defaults preserve the measured training settings: **64 GB200 GPUs, TP4/SP,
+EP64, expert TP1, PP1, CP1**, sequence2048, microbatch1, global batch16, BF16
 parameters, FP32 gradient reduction, distributed Adam with constant LR1e-6,
 weight decay0, clip1, and seed1234. The image limits are65,536–262,144 pixels.
-Sequences are unpacked and runtime finalization pads to2048 for EP. Auxiliary
-MoE loss and dropout are disabled. Allgather dispatch, grouped GEMM, and
-unfused permutation are used, with no overlap, recomputation, or CUDA graphs.
-No evaluation or checkpoint saving is enabled.
+Sequences are unpacked and explicitly padded to2048. Auxiliary MoE loss and
+dropout are disabled. HybridEP flex dispatch and grouped GEMM are enabled with
+permutation fusion, permutation fusion into HybridEP, router fusion,
+bias-activation fusion, and gradient-accumulation fusion. Shared-expert overlap,
+gradient-reduction/parameter-gather overlap, recomputation, and CUDA graphs are disabled.
+No evaluation or checkpoint saving is enabled. HybridEP requires the 64-rank
+expert group to fit a supported NVLink domain; confirm placement and backend
+availability before using this configuration.
 
 The standard SFT path loads the full checkpoint and refreshes optimizer master
 parameters before the first step. Each step logs loss, pre-clipping gradient
@@ -79,11 +85,11 @@ norm, skipped/NaN counts, iteration time, and estimated model TFLOP/s/GPU.
 TensorBoard logging is enabled when its output path is supplied. Save the
 runtime-synchronized configuration produced at setup entry and complete keyed
 step records. Record initial/final loss and average step time and TFLOP/s over the same final ten steps in the card;
-derive token-slot throughput as `2048 * 8 / (step_seconds * 64)`.
+derive token-slot throughput as `2048 * 16 / (step_seconds * 64)`.
 TFLOP/s uses Bridge's analytical matrix-work estimate, not hardware counters
 or MFU. It includes GDN, dense attention, MoE, logits, vision, gated-residual
-and PLE projections, and the forward-only QSA indexer projection. At the recipe's
-sequence length2048 the QSA selector skips its score matrix multiplication.
+and PLE projections. At the recipe's sequence length2048, the dense QSA path
+bypasses the indexer.
 Norms, activations, embedding lookups, PLE depthwise convolution, communication,
 and duplicated work across parallel ranks are outside the matrix estimate.
 Longer or forced-sparse QSA configurations warn that their estimate is approximate.
@@ -97,14 +103,32 @@ Initial/final loss was **0.31087 / 0.01342**; first/last ten-step mean loss was
 The [loss curve](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/6354#issuecomment-6160448312)
 remains valid evidence from that run. It did not capture trustworthy TFLOP/s.
 
-A separate run of the public `train.sh` command completed **100 optimizer
+A historical baseline run of the public `train.sh` command completed **100 optimizer
 steps** from Bridge commit `99188699f92108885b7f8823f87029369d2eb447`.
 Loss was **0.3097828 / 0.2084261**, with zero skipped or NaN iterations and a
 clean exit. Over the final ten steps, mean time was **1,403.24 ms**, mean
 analytical throughput was **7.75 TFLOP/s/GPU**, and derived token-slot throughput
-was **182.43 tokens/s/GPU**. These are early, unoptimized measurements.
-The earlier run used the previous verification driver; its per-rank sampled
+was **182.43 tokens/s/GPU**. These are early, unoptimized TP8/GBS8 allgather measurements.
+The 5,349-step run used the previous verification driver; its per-rank sampled
 gradient/update callback and deadline controller are not part of the library
 recipe. Repeated-subset training does not establish held-out quality or
 HF/backward/parallelism parity; historical gradient spikes (maximum230.02
-before clipping) remain unexplained. **Performance optimization remains future work.**
+before clipping) remain unexplained.
+
+The selected configuration completed **100 native Energon-loader steps** from
+commit `62f79249661338ea921f00d927d704bde10833cb` with TP4/GBS16, HybridEP, and the
+five fusions listed above. Its explicit run overrides are now recipe defaults;
+the public command above expresses the same workload. Loss was
+**0.350771964 / 0.167497709**, with zero skipped or nonfinite updates and a clean
+exit. Final-ten mean time was **1,525.19 ms**, mean analytical throughput
+**14.26 TFLOP/s/GPU**, and padded token-slot throughput **335.70 tokens/s/GPU**.
+This native-loader run did not use canonical batch replay or profiling. It has
+no input-matched native-loader baseline, so these numbers do not establish a
+native-loader speedup over the historical GBS8 run.
+
+A separate 40-step comparison used identical canonical global batches at GBS16.
+Against its TP8 baseline, the selected TP4 combination had maximum absolute
+loss difference **0.008722812** and preclip gradient-norm difference **28.2429**.
+Differences began at step one and remain unexplained. Finite training and faster
+measured execution do not establish numerical equivalence. Recomputation stays
+disabled; this recipe does not claim qualified shared-expert recomputation.

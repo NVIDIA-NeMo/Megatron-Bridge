@@ -143,6 +143,8 @@ def native_qsa_cuda(tmp_path):
             qsa_indexer_compress_ratio=4,
             apply_rope_fusion=False,
         )
+        config.finalize()
+        assert callable(config.init_method) and callable(config.output_layer_init_method)
         backend = get_backend_from_config(config)
         norm = backend.layer_norm(rms_norm=True, for_qk=True)
         modules = qsa.QwenSparseSelfAttentionSubmodules(

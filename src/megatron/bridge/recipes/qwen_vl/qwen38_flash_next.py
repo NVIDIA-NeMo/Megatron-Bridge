@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-"""Early Qwen3.8-Flash-Next image SFT recipe; performance is unoptimized."""
+"""Qwen3.8-Flash-Next image SFT with the measured TP4/HybridEP configuration."""
 
 from megatron.bridge.data.builders.energon import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 from megatron.bridge.models import AutoBridge
@@ -36,10 +36,11 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     *,
     hf_path: str = "Qwen/Qwen3.8-Flash-Next",
 ) -> ConfigContainer:
-    """Return full-model image SFT on 64 GB200 GPUs with TP8/SP and EP64.
+    """Return full-model image SFT on 64 GB200 GPUs with TP4/SP and EP64.
 
-    Early recipe: performance is unoptimized. Its optimizer/data settings come
-    from the 5,349-step Nemotron-Image-Training-v3 ECD subset run. Use the shared
+    This configuration completed 100 native-loader steps with HybridEP and
+    fusions. Same-input numerical differences from the earlier TP8 baseline
+    remain unresolved; this is functional training evidence. Use the shared
     Qwen VL forward step through ``scripts/training/run_recipe.py``. Supply
     ``dataset.path`` and ``checkpoint.pretrained_checkpoint`` at launch; the
     latter accepts the full local Hugging Face checkpoint. Standard finetuning
@@ -47,7 +48,7 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
 
     Prepare complete sequence-2048 samples with
     ``scripts/data/prepare_nemotron_image_v3_subset.py``. Packing, checkpoint
-    saving, evaluation, and performance optimizations are disabled. Standard
+    saving, evaluation, recomputation, and CUDA graphs are disabled. Standard
     training logs record loss, gradient norm, iteration time, and estimated
     model TFLOP/s/GPU. This recipe is not a numerical-parity test.
 
@@ -61,15 +62,20 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     revision = "de4b8e4d43b917e7706784d8bb445c9af86a3540"  # pragma: allowlist secret
     model = AutoBridge.from_hf_pretrained(hf_path, revision=revision, text_only=False).get_model_config()
     model.perform_initialization = False
-    model.tensor_model_parallel_size = 8
+    model.tensor_model_parallel_size = 4
     model.expert_model_parallel_size = 64
     model.expert_tensor_parallel_size = 1
     model.pipeline_model_parallel_size = model.context_parallel_size = 1
     model.sequence_parallel = True
     model.seq_length = 2048
-    model.gradient_accumulation_fusion = False
-    model.moe_token_dispatcher_type = "allgather"
-    model.moe_permute_fusion = model.moe_shared_expert_overlap = False
+    model.gradient_accumulation_fusion = True
+    model.bias_activation_fusion = True
+    model.moe_token_dispatcher_type = "flex"
+    model.moe_flex_dispatcher_backend = "hybridep"
+    model.moe_permute_fusion = True
+    model.moe_permute_fusion_into_hybridep = True
+    model.moe_router_fusion = True
+    model.moe_shared_expert_overlap = False
     model.moe_grouped_gemm = True
     model.moe_aux_loss_coeff = 0.0
     model.hidden_dropout = model.attention_dropout = 0.0
@@ -99,7 +105,7 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
         do_validation=False,
         enable_in_batch_packing=False,
         packing_buffer_size=None,
-        pad_to_max_length=False,
+        pad_to_max_length=True,
         pad_to_multiple_of=8,
         shuffle_buffer_size=100,
     )
@@ -107,7 +113,7 @@ def qwen38_flash_next_sft_64gpu_gb200_bf16_config(
     precision.grad_reduce_in_fp32 = True
     cfg = ConfigContainer(
         model=model,
-        train=TrainingConfig(train_iters=1000000, micro_batch_size=1, global_batch_size=8),
+        train=TrainingConfig(train_iters=1000000, micro_batch_size=1, global_batch_size=16),
         validation=ValidationConfig(eval_iters=0, eval_interval=1000000 + 1),
         optimizer=OptimizerConfig(
             optimizer="adam",
