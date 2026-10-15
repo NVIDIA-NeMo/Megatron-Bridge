@@ -720,9 +720,11 @@ class _FakeDynamicVisionModel(nn.Module):
         self.hidden_size = hidden_size
         self.patch_dim = patch_dim
         self.seen = {}
+        self.calls = []
 
     def forward(self, images, *, imgs_sizes, packed_seq_params, num_frames):
         self.seen = {"images": images, "imgs_sizes": imgs_sizes, "num_frames": num_frames}
+        self.calls.append(None if num_frames is None else [int(value) for value in num_frames])
         patches = sum(
             (int(height) // self.patch_dim) * (int(width) // self.patch_dim) for height, width in imgs_sizes.tolist()
         )
@@ -737,16 +739,47 @@ class _FakeTemporalDynamicVisionModel(_FakeDynamicVisionModel):
     def forward(self, images, *, imgs_sizes, packed_seq_params, num_frames):
         del packed_seq_params
         self.seen = {"images": images, "imgs_sizes": imgs_sizes, "num_frames": num_frames}
-        grouped_sizes = torch.stack((imgs_sizes[0], imgs_sizes[1], imgs_sizes[1]))
-        self.returned_num_frames = torch.tensor([1, 2], dtype=num_frames.dtype, device=num_frames.device)
+        frame_counts = [int(value) for value in num_frames]
+        self.calls.append(frame_counts)
+
+        grouped_sizes = []
+        returned_num_frames = []
+        frame_start = 0
+        for frame_count in frame_counts:
+            if frame_count == 1:
+                grouped_sizes.append(imgs_sizes[frame_start])
+                returned_num_frames.append(1)
+            else:
+                for tubelet_start in range(0, frame_count, self.temporal_patch_dim):
+                    grouped_sizes.append(imgs_sizes[frame_start + tubelet_start])
+                returned_num_frames.append((frame_count + self.temporal_patch_dim - 1) // self.temporal_patch_dim)
+            frame_start += frame_count
+        grouped_sizes = torch.stack(grouped_sizes)
+        self.returned_num_frames = torch.tensor(returned_num_frames, dtype=num_frames.dtype, device=num_frames.device)
         patches = sum(
             (int(height) // self.patch_dim) * (int(width) // self.patch_dim)
             for height, width in grouped_sizes.tolist()
         )
-        encoded = torch.arange(patches * self.hidden_size, dtype=torch.float32).reshape(
-            1, patches, self.hidden_size
-        )
+        encoded = torch.arange(patches * self.hidden_size, dtype=torch.float32).reshape(1, patches, self.hidden_size)
         return encoded + self.scale, grouped_sizes, self.returned_num_frames
+
+
+class _BatchSensitiveDynamicVisionModel(_FakeDynamicVisionModel):
+    """Makes every output depend on the current call's packed patch count."""
+
+    def __init__(self, hidden_size: int, patch_dim: int):
+        super().__init__(hidden_size, patch_dim)
+        self.patch_counts = []
+
+    def forward(self, images, *, imgs_sizes, packed_seq_params, num_frames):
+        del packed_seq_params, num_frames
+        patch_count = images.shape[1]
+        self.patch_counts.append(patch_count)
+        return (
+            torch.arange(patch_count * self.hidden_size, dtype=torch.float32)
+            .reshape(1, patch_count, self.hidden_size)
+            .add(patch_count)
+        )
 
 
 class _RecordingLinearProjection(nn.Module):
@@ -759,6 +792,19 @@ class _RecordingLinearProjection(nn.Module):
     def forward(self, hidden_states):
         self.row_counts.append(hidden_states.shape[0])
         return self.linear(hidden_states)
+
+
+class _BatchSensitiveProjection(nn.Module):
+    """Makes projector output depend on the current media row count."""
+
+    def __init__(self):
+        super().__init__()
+        self.config = SimpleNamespace(fp8=None)
+        self.row_counts = []
+
+    def forward(self, hidden_states):
+        self.row_counts.append(hidden_states.shape[0])
+        return hidden_states + hidden_states.shape[0]
 
 
 def test_dynamic_encode_projects_once_per_media_and_keeps_video_tubelets_together():
@@ -786,12 +832,133 @@ def test_dynamic_encode_projects_once_per_media_and_keeps_video_tubelets_togethe
     )
     projected.sum().backward()
 
-    assert model.vision_model.returned_num_frames.tolist() == [1, 2]
+    assert model.vision_model.calls == [[1], [3]]
+    assert model.vision_model.returned_num_frames.tolist() == [2]
     assert model.vision_projection.row_counts == [1, 4]
     assert projected.shape == (5, 3)
     assert model.vision_model.scale.grad is not None
     assert torch.count_nonzero(model.vision_model.scale.grad) > 0
     assert torch.count_nonzero(model.vision_projection.linear.weight.grad) > 0
+
+
+def test_dynamic_encode_keeps_non_temporal_video_frames_in_one_media_call():
+    hidden_size = 2
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.vision_dp_over_cp = False
+    model.vision_model = _FakeDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = _RecordingLinearProjection(hidden_size * 4, 3)
+
+    sizes = torch.tensor([[32, 32]] * 3, dtype=torch.int32)
+    images = torch.randn(1, 12, 3 * patch_dim**2)
+    projected = model._encode_images(
+        images,
+        sizes,
+        vision_packed_seq_params=None,
+        num_frames=torch.tensor([3], dtype=torch.int32),
+    )
+
+    assert model.vision_model.calls == [[3]]
+    assert model.vision_projection.row_counts == [3]
+    assert projected.shape == (3, 3)
+
+
+def test_multiframe_media_bypasses_vision_dp_over_cp(monkeypatch):
+    from megatron.bridge.models.nemotron_omni import modeling_nemotron_omni as modeling
+
+    hidden_size = 2
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.vision_dp_over_cp = True
+    model.vision_model = _FakeTemporalDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = _RecordingLinearProjection(hidden_size * 4, 3)
+
+    def unexpected_cp_call(*_args, **_kwargs):
+        raise AssertionError("multi-frame media must bypass vision DP over CP")
+
+    monkeypatch.setattr(modeling, "split_to_context_parallel_ranks_dynamic_res", unexpected_cp_call)
+    monkeypatch.setattr(modeling, "gather_from_context_parallel_ranks_dynamic_res", unexpected_cp_call)
+
+    sizes = torch.tensor([[32, 32], [32, 64], [32, 64], [32, 64]], dtype=torch.int32)
+    patch_count = sum((int(height) // patch_dim) * (int(width) // patch_dim) for height, width in sizes)
+    projected = model._encode_images(
+        torch.randn(1, patch_count, 3 * patch_dim**2),
+        sizes,
+        vision_packed_seq_params=None,
+        num_frames=torch.tensor([1, 3], dtype=torch.int32),
+    )
+
+    assert model.vision_model.calls == [[1], [3]]
+    assert model.vision_projection.row_counts == [1, 4]
+    assert projected.shape == (5, 3)
+
+
+@pytest.mark.parametrize(
+    "num_frames",
+    (
+        torch.tensor([0, 2], dtype=torch.int32),
+        torch.tensor([1], dtype=torch.int32),
+    ),
+)
+def test_dynamic_encode_rejects_invalid_media_frame_counts(num_frames):
+    hidden_size = 2
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.vision_dp_over_cp = False
+    model.vision_model = _FakeDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = nn.Identity()
+
+    with pytest.raises(ValueError, match="positive counts covering every image/frame"):
+        model._encode_images(
+            torch.randn(1, 8, 3 * patch_dim**2),
+            torch.tensor([[32, 32], [32, 32]], dtype=torch.int32),
+            vision_packed_seq_params=None,
+            num_frames=num_frames,
+        )
+
+
+def test_dynamic_encode_retained_media_is_invariant_to_appended_media():
+    hidden_size = 2
+    patch_dim = 16
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    nn.Module.__init__(model)
+    model.patch_dim = patch_dim
+    model.vision_dp_over_cp = False
+    model.vision_model = _BatchSensitiveDynamicVisionModel(hidden_size, patch_dim)
+    model.vision_projection = _BatchSensitiveProjection()
+
+    first_sizes = torch.tensor([[32, 32]], dtype=torch.int32)
+    first_images = torch.randn(1, 4, 3 * patch_dim**2)
+    first_only = model._encode_images(
+        first_images,
+        first_sizes,
+        vision_packed_seq_params=None,
+        num_frames=torch.tensor([1], dtype=torch.int32),
+    )
+
+    second_sizes = torch.tensor([[32, 64]], dtype=torch.int32)
+    second_images = torch.randn(1, 8, 3 * patch_dim**2)
+    model.vision_model.patch_counts.clear()
+    model.vision_projection.row_counts.clear()
+    first_then_second = model._encode_images(
+        torch.cat((first_images, second_images), dim=1),
+        torch.cat((first_sizes, second_sizes), dim=0),
+        vision_packed_seq_params=None,
+        num_frames=torch.tensor([1, 1], dtype=torch.int32),
+    )
+
+    # The fake tower changes numerically with its input batch shape.  Exact
+    # prefix equality therefore proves that the retained first image was sent
+    # through the complete vision path in the same one-media call both times.
+    assert model.vision_model.patch_counts == [4, 8]
+    assert model.vision_projection.row_counts == [1, 2]
+    assert torch.equal(first_then_second[: first_only.shape[0]], first_only)
 
 
 def test_sharded_encode_projects_locally_then_gathers_the_global_features():
@@ -846,7 +1013,7 @@ def test_sharded_encode_projects_locally_then_gathers_the_global_features():
     # The tower must see this rank's shard, including the frame counts the
     # splitter recomputed for it rather than the microbatch-wide ones.
     assert model.vision_model.seen["images"].shape[1] == 1
-    assert model.vision_model.seen["num_frames"] is local_num_frames
+    assert torch.equal(model.vision_model.seen["num_frames"], local_num_frames)
     # A 1x1 placeholder grid only survives pixel shuffle once padded to 2x2.
     assert encoded.shape == (1, 5)
     # Width 5 is the projector's output, so the gather ran on projected

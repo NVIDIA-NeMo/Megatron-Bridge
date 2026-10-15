@@ -157,46 +157,58 @@ def _project_multimodal_embeddings(
     return projected.reshape(*input_shape, projected.shape[-1])
 
 
-def _project_multimodal_embeddings_by_media(
-    projection: torch.nn.Module,
-    embedding_chunks: list[torch.Tensor],
-    media_chunk_counts: Optional[torch.Tensor | list[int]],
-) -> torch.Tensor:
-    """Project each scheduler media item with its original token-row batch size.
+def _split_dynamic_inputs_by_media(
+    images: torch.Tensor,
+    imgs_sizes: torch.Tensor,
+    num_frames: Optional[torch.Tensor | list[int]],
+    *,
+    patch_dim: int,
+) -> list[tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor | list[int]]]]:
+    """Split packed RADIO patches at original scheduler-media boundaries.
 
-    Dynamic RADIO returns one shuffled feature chunk per image or temporal
-    tubelet. ``media_chunk_counts`` contains the number of those chunks that
-    belong to each original media item (one for a still image, one or more for a
-    video). Keeping a video's tubelets together matches rollout preprocessing
-    while avoiding a single GEMM whose row count changes with the number of
-    independent images packed by the learner.
+    ``imgs_sizes`` has one row per still image or video frame, whereas
+    ``num_frames`` has one entry per original media item.  A video's frames
+    must remain in one group so temporal tubelet construction and every
+    batch-shape-sensitive vision operation match the rollout request.
     """
 
-    if not embedding_chunks:
-        raise ValueError("Cannot project an empty list of multimodal embedding chunks")
-
-    if media_chunk_counts is None:
-        chunk_counts = [1] * len(embedding_chunks)
-    elif torch.is_tensor(media_chunk_counts):
-        chunk_counts = [int(value) for value in media_chunk_counts.reshape(-1).tolist()]
-    else:
-        chunk_counts = [int(value) for value in media_chunk_counts]
-
-    if any(count <= 0 for count in chunk_counts) or sum(chunk_counts) != len(embedding_chunks):
+    frame_patch_counts = [
+        (int(height) // patch_dim) * (int(width) // patch_dim) for height, width in imgs_sizes.tolist()
+    ]
+    if sum(frame_patch_counts) != images.shape[1]:
         raise ValueError(
-            "Projected-media chunk counts must be positive and cover every RADIO chunk: "
-            f"counts={chunk_counts}, chunks={len(embedding_chunks)}."
+            "Dynamic RADIO patch count does not match imgs_sizes: "
+            f"patches={images.shape[1]}, expected={sum(frame_patch_counts)}."
         )
 
-    projected_media = []
-    chunk_start = 0
-    for chunk_count in chunk_counts:
-        media_embeddings = torch.cat(
-            embedding_chunks[chunk_start : chunk_start + chunk_count], dim=0
+    if num_frames is None:
+        media_frame_counts = [1] * len(frame_patch_counts)
+    elif torch.is_tensor(num_frames):
+        media_frame_counts = [int(value) for value in num_frames.reshape(-1).tolist()]
+    else:
+        media_frame_counts = [int(value) for value in num_frames]
+    if any(count <= 0 for count in media_frame_counts) or sum(media_frame_counts) != len(frame_patch_counts):
+        raise ValueError(
+            "num_frames must contain positive counts covering every image/frame: "
+            f"counts={media_frame_counts}, frames={len(frame_patch_counts)}."
         )
-        projected_media.append(_project_multimodal_embeddings(projection, media_embeddings))
-        chunk_start += chunk_count
-    return torch.cat(projected_media, dim=0)
+
+    frame_chunks = torch.split(images, frame_patch_counts, dim=1)
+    media_groups = []
+    frame_start = 0
+    for frame_count in media_frame_counts:
+        frame_end = frame_start + frame_count
+        media_images = torch.cat(frame_chunks[frame_start:frame_end], dim=1)
+        media_sizes = imgs_sizes[frame_start:frame_end]
+        if num_frames is None:
+            media_num_frames = None
+        elif torch.is_tensor(num_frames):
+            media_num_frames = torch.tensor([frame_count], dtype=num_frames.dtype, device=num_frames.device)
+        else:
+            media_num_frames = [frame_count]
+        media_groups.append((media_images, media_sizes, media_num_frames))
+        frame_start = frame_end
+    return media_groups
 
 
 class NemotronOmniModel(MegatronModule):
@@ -490,6 +502,82 @@ class NemotronOmniModel(MegatronModule):
             temporal_patch_size=temporal_patch_size,
         )
 
+    def _encode_dynamic_media(
+        self,
+        images: torch.Tensor,
+        imgs_sizes: torch.Tensor,
+        num_frames: Optional[torch.Tensor | list[int]],
+        *,
+        shard_vision: bool,
+    ) -> torch.Tensor:
+        """Run one original media item through RADIO, shuffle, and projector.
+
+        Keeping the complete per-media pipeline in one call makes a retained
+        image's embeddings independent of images appended by later agent tool
+        returns.  Multiple frames/tubelets of one video intentionally stay in
+        the same call.
+        """
+
+        vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes, self.patch_dim)
+        vision_output = self.vision_model(
+            images,
+            imgs_sizes=imgs_sizes,
+            packed_seq_params=vision_packed_seq_params,
+            num_frames=num_frames,
+        )
+        use_temporal = getattr(self.vision_model, "temporal_patch_dim", 1) > 1
+        if use_temporal:
+            encoded, encoded_sizes, media_tubelet_counts = vision_output
+        else:
+            encoded = vision_output
+            encoded_sizes = imgs_sizes
+
+        if torch.is_tensor(encoded_sizes):
+            sizes = [(int(height), int(width)) for height, width in encoded_sizes.tolist()]
+        else:
+            sizes = [(int(height), int(width)) for height, width in encoded_sizes]
+        if use_temporal:
+            if torch.is_tensor(media_tubelet_counts):
+                tubelet_counts = [int(value) for value in media_tubelet_counts.reshape(-1).tolist()]
+            else:
+                tubelet_counts = [int(value) for value in media_tubelet_counts]
+            if len(tubelet_counts) != 1 or sum(tubelet_counts) != len(sizes):
+                raise ValueError(
+                    "A per-media RADIO call must return one tubelet count covering every output size: "
+                    f"counts={tubelet_counts}, sizes={len(sizes)}."
+                )
+        class_tokens = self.vision_model.class_token_len if getattr(self.vision_model, "add_class_token", False) else 0
+        patch_counts = [(height // self.patch_dim) * (width // self.patch_dim) for height, width in sizes]
+        expected_encoded_rows = sum(patch_count + class_tokens for patch_count in patch_counts)
+        if encoded.shape[-2] != expected_encoded_rows:
+            raise ValueError(
+                "RADIO output length does not match its per-frame sizes and class tokens: "
+                f"rows={encoded.shape[-2]}, expected={expected_encoded_rows}."
+            )
+        chunks = torch.split(
+            encoded.squeeze(0),
+            [patch_count + class_tokens for patch_count in patch_counts],
+            dim=0,
+        )
+
+        shuffled = []
+        for chunk, (height, width) in zip(chunks, sizes, strict=True):
+            grid_height = height // self.patch_dim
+            grid_width = width // self.patch_dim
+            features = chunk[class_tokens:].unsqueeze(0)
+            if shard_vision:
+                features, grid_height, grid_width = _pad_patch_grid_to_even(
+                    features, height=grid_height, width=grid_width
+                )
+            shuffled.append(
+                _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
+            )
+
+        return _project_multimodal_embeddings(
+            self.vision_projection,
+            torch.cat(shuffled, dim=0),
+        )
+
     def _encode_images(
         self,
         images: torch.Tensor,
@@ -517,6 +605,18 @@ class NemotronOmniModel(MegatronModule):
                 )
 
             shard_vision = self.vision_dp_over_cp
+            if shard_vision and num_frames is not None:
+                frame_counts = (
+                    [int(value) for value in num_frames.reshape(-1).tolist()]
+                    if torch.is_tensor(num_frames)
+                    else [int(value) for value in num_frames]
+                )
+                if any(frame_count > 1 for frame_count in frame_counts):
+                    # MCore's CP splitter may partition one video at tubelet
+                    # boundaries. That changes the RADIO batch shape relative
+                    # to rollout. Replicate multi-frame media on every CP rank
+                    # until the splitter can preserve whole-media boundaries.
+                    shard_vision = False
             num_padded_ranks = 0
             if shard_vision:
                 (
@@ -536,44 +636,29 @@ class NemotronOmniModel(MegatronModule):
                 if local_num_frames is not None:
                     num_frames = local_num_frames
 
-            vision_output = self.vision_model(
-                images,
-                imgs_sizes=imgs_sizes,
-                packed_seq_params=vision_packed_seq_params,
-                num_frames=num_frames,
-            )
-            if use_temporal:
-                encoded, imgs_sizes, num_frames = vision_output
-            else:
-                encoded = vision_output
-            sizes = [(int(height), int(width)) for height, width in imgs_sizes.tolist()]
-            class_tokens = (
-                self.vision_model.class_token_len if getattr(self.vision_model, "add_class_token", False) else 0
-            )
-            patch_counts = [(height // self.patch_dim) * (width // self.patch_dim) for height, width in sizes]
-            chunks = torch.split(
-                encoded.squeeze(0),
-                [patch_count + class_tokens for patch_count in patch_counts],
-                dim=0,
-            )
-            chunks = [chunk[class_tokens:] for chunk in chunks]
-            shuffled = []
-            for chunk, (height, width) in zip(chunks, sizes):
-                grid_height = height // self.patch_dim
-                grid_width = width // self.patch_dim
-                features = chunk.unsqueeze(0)
-                if shard_vision:
-                    features, grid_height, grid_width = _pad_patch_grid_to_even(
-                        features, height=grid_height, width=grid_width
-                    )
-                shuffled.append(
-                    _pixel_shuffle_dynamic_resolution(features, height=grid_height, width=grid_width).squeeze(0)
-                )
+            if shard_vision and local_num_frames is None:
+                # The non-temporal MCore splitter does not preserve original
+                # video ownership metadata.  Its existing contract treats each
+                # local frame as an independent media item.
+                num_frames = None
 
-            projected = _project_multimodal_embeddings_by_media(
-                self.vision_projection,
-                shuffled,
+            media_groups = _split_dynamic_inputs_by_media(
+                images,
+                imgs_sizes,
                 num_frames,
+                patch_dim=self.patch_dim,
+            )
+            projected = torch.cat(
+                [
+                    self._encode_dynamic_media(
+                        media_images,
+                        media_sizes,
+                        media_num_frames,
+                        shard_vision=shard_vision,
+                    )
+                    for media_images, media_sizes, media_num_frames in media_groups
+                ],
+                dim=0,
             )
 
             if shard_vision:
