@@ -146,6 +146,7 @@ def test_sharded_load_uses_device_map_without_moving_model(monkeypatch):
         trust_remote_code=True,
         dtype="bfloat16",
         device_map="auto",
+        tp_plan=None,
         device="cuda",
         require_gpu_only=True,
     )
@@ -301,6 +302,7 @@ def test_runtime_supports_explicit_multi_gpu_device_map(
     args = SimpleNamespace(
         device="cuda",
         device_map=device_map,
+        tp_plan=None,
         dtype="bfloat16",
         hf_model="exported-model",
         image="image.png",

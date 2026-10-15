@@ -21,6 +21,9 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.transformer.moe.router import TopKRouter
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _cu_seqlens_for_cp_partition,
@@ -35,6 +38,7 @@ from megatron.bridge.training.gpt_step import (
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 
 
 class _Iterator:
@@ -743,6 +747,97 @@ class TestGetBatch:
 
     @pytest.mark.unit
     @pytest.mark.parametrize("cp_size", [1, 2, 8])
+    @pytest.mark.parametrize("config_kind", ["provider", "builder"])
+    @pytest.mark.parametrize("has_input_ids", [False, True])
+    @pytest.mark.parametrize("configured_seq_length", [32, 128])
+    def test_forward_common_counts_full_dense_sequence_under_cp(
+        self, monkeypatch, cp_size, config_kind, has_input_ids, configured_seq_length
+    ):
+        """The same dense batch has the same FLOPs with either model-config API."""
+        model_fields = dict(num_layers=2, hidden_size=16, num_attention_heads=2, ffn_hidden_size=32)
+        if config_kind == "builder":
+            model_cfg = BridgeGPTModelConfig(
+                transformer=TransformerConfig(**model_fields), seq_length=configured_seq_length
+            )
+            runtime_config = model_cfg.transformer
+            assert not hasattr(runtime_config, "seq_length")
+        else:
+            model_cfg = GPTModelProvider(**model_fields, seq_length=configured_seq_length)
+            runtime_config = model_cfg
+        tokens = torch.arange(32 // cp_size).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.ones_like(tokens, dtype=torch.float32)
+        model = _RecordingModel()
+        model.config = runtime_config
+        state = Mock()
+        state.cfg = _make_cfg()
+        state.cfg.model = model_cfg
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
+        )
+        get_batch_mock = Mock(return_value=(tokens if has_input_ids else None, labels, loss_mask, None, tokens, None))
+
+        _forward_step_common(state, _Iterator({}), model, _get_batch_fn=get_batch_mock)
+
+        assert state._flops_seqlen_sum == 32
+        assert state._flops_seqlen_sq_sum == 32**2
+        assert model.forward_kwargs["labels"] is labels
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("cp_size", [1, 2])
+    def test_forward_common_keeps_scheduler_flops_totals(self, monkeypatch, cp_size):
+        """Global-batch packing batches leave the scheduler's FLOPs totals untouched.
+
+        train_step seeds the accumulators with the scheduler's DP-global totals, so
+        accumulating the CP-local pack again here would double count.
+        """
+        tokens = torch.arange(32 // cp_size).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.ones_like(tokens, dtype=torch.float32)
+        scheduled = PackedSeqParams(qkv_format="thd", cu_seqlens_q=torch.tensor([0, 32], dtype=torch.int32))
+        model = _RecordingModel()
+        state = Mock()
+        state.cfg = _make_cfg()
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 90_000
+        state._flops_requires_global_reduce = True
+        config = type(
+            "Config",
+            (),
+            {"is_hybrid_model": False, "mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False},
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection(cp_size=cp_size)
+        )
+        accumulate_spy = Mock(wraps=accumulate_flops_metadata)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.accumulate_flops_metadata", accumulate_spy)
+        get_batch_mock = Mock(
+            return_value=(tokens, labels, loss_mask, None, tokens.clone(), {"packed_seq_params": scheduled})
+        )
+        custom_builder = Mock(side_effect=AssertionError("Scheduler parameters must not be rebuilt"))
+
+        _forward_step_common(
+            state,
+            _Iterator({}),
+            model,
+            _get_batch_fn=get_batch_mock,
+            _get_packed_seq_params_fn=custom_builder,
+        )
+
+        custom_builder.assert_not_called()
+        accumulate_spy.assert_not_called()
+        assert state._flops_seqlen_sum == 1000
+        assert state._flops_seqlen_sq_sum == 90_000
+        assert state._flops_requires_global_reduce is True
+        assert model.forward_kwargs["packed_seq_params"] is scheduled
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("cp_size", [1, 2, 8])
     @pytest.mark.parametrize("metadata_format", ["current", "legacy"])
     @pytest.mark.parametrize("vp_stage", [None, 0, 1])
     @pytest.mark.parametrize("return_schedule_plan", [False, True])
@@ -883,6 +978,82 @@ class TestGetBatch:
         get_packed_seq_params_mock.assert_called_once_with(packed_seq_metadata)
         assert "cu_seqlens" not in get_packed_seq_params_mock.call_args.args[0]
         assert "cu_seqlens_argmin" not in get_packed_seq_params_mock.call_args.args[0]
+
+    @pytest.mark.unit
+    def test_forward_common_preserves_dsv4_builder_with_padding_mask(self, monkeypatch):
+        """DSv4 finalizes CP routes while router padding stays out of packed parameters."""
+        from megatron.bridge.models.deepseek import deepseek_v4_step
+
+        tokens = torch.arange(8).unsqueeze(0)
+        labels = tokens + 1
+        loss_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0]])
+        padding_mask = torch.tensor([[False, False, False, False, False, False, False, True]])
+        packed_seq_metadata = {
+            "cu_seqlens_q": torch.tensor([0, 7, 7], dtype=torch.int32),
+            "cu_seqlens_kv": torch.tensor([0, 7, 7], dtype=torch.int32),
+            "cu_seqlens_q_padded": torch.tensor([0, 8, 8], dtype=torch.int32),
+            "cu_seqlens_kv_padded": torch.tensor([0, 8, 8], dtype=torch.int32),
+            "max_seqlen_q": torch.tensor(8, dtype=torch.int32),
+            "max_seqlen_kv": torch.tensor(8, dtype=torch.int32),
+            "pad_between_seqs": torch.tensor(True),
+            "cp_partition_mode": "contiguous",
+            "padding_mask": padding_mask,
+        }
+        model = _RecordingModel(pre_process=False)
+        state = Mock()
+        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": True,
+                "mtp_num_layers": 0,
+                "overlap_moe_expert_parallel_comm": False,
+                "sequence_parallel": False,
+                "cuda_graph_impl": "transformer_engine",
+                "cuda_graph_modules": ["attn"],
+                "cuda_graph_scope": None,
+                "num_moe_experts": 8,
+            },
+        )()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_packed_seq_params",
+            Mock(side_effect=AssertionError("DSv4 must use its custom packed-parameter builder")),
+        )
+        initial_params, finalized_params = object(), object()
+        build_params = Mock(return_value=initial_params)
+        finalize_params = Mock(return_value=finalized_params)
+        monkeypatch.setattr(deepseek_v4_step, "get_packed_seq_params", build_params)
+        monkeypatch.setattr(deepseek_v4_step, "finalize_packed_seq_params", finalize_params)
+        custom_builder = Mock(wraps=deepseek_v4_step._get_dsv4_packed_seq_params)
+        get_batch_mock = Mock(return_value=(tokens, labels, loss_mask, None, tokens.clone(), packed_seq_metadata))
+
+        output, returned_loss_mask = _forward_step_common(
+            state,
+            _Iterator({}),
+            model,
+            _get_batch_fn=get_batch_mock,
+            _get_packed_seq_params_fn=custom_builder,
+        )
+
+        custom_builder.assert_called_once()
+        callback_metadata = custom_builder.call_args.args[0]
+        assert "padding_mask" not in callback_metadata
+        assert callback_metadata["total_tokens"] == tokens.size(1)
+        build_params.assert_called_once_with(
+            {key: value for key, value in packed_seq_metadata.items() if key != "padding_mask"}
+        )
+        finalize_params.assert_called_once_with(initial_params)
+        assert "total_tokens" not in packed_seq_metadata
+        assert packed_seq_metadata["padding_mask"] is padding_mask
+        assert output is model.output
+        assert returned_loss_mask is loss_mask
+        assert model.forward_kwargs["packed_seq_params"] is finalized_params
+        assert model.forward_kwargs["padding_mask"] is padding_mask
 
     @pytest.mark.parametrize(
         ("return_schedule_plan", "expert_bias"),

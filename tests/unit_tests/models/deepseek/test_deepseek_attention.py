@@ -34,7 +34,6 @@ from megatron.bridge.models.deepseek.attention import (
     get_deepseek_decoder_block_spec,
     replace_mla_self_attention,
 )
-from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge
 
 
@@ -104,14 +103,13 @@ class TestMLASelfAttentionWithoutQueryNorm:
 class TestDeepSeekBridgesUseTheSpecHelper:
     """The bridges behind the affected models must route through the corrected spec builder.
 
-    `deepseek-ai/DeepSeek-V2-Lite` goes through DeepSeekV2Bridge and
-    `kakaocorp/kanana-2-30b-a3b-thinking` through DeepSeekV3Bridge, and both ship
+    `kakaocorp/kanana-2-30b-a3b-thinking` uses DeepSeekV3Bridge and ships
     `q_lora_rank: null`.
     """
 
-    @pytest.mark.parametrize("bridge_cls", [DeepSeekV2Bridge, DeepSeekV3Bridge])
+    @pytest.mark.parametrize("bridge_cls", [DeepSeekV3Bridge])
     def test_provider_bridge_installs_the_spec_helper(self, bridge_cls, monkeypatch):
-        """Both bridges must build their decoder block through get_deepseek_decoder_block_spec."""
+        """The bridge must build its decoder block through get_deepseek_decoder_block_spec."""
         provider = SimpleNamespace()
         monkeypatch.setattr(
             MegatronModelBridge,
@@ -241,7 +239,7 @@ class TestStandaloneMTPStage:
 
         assert layer_spec.submodules.self_attention.module is MLASelfAttention
 
-    @pytest.mark.parametrize("bridge_cls", [DeepSeekV2Bridge, DeepSeekV3Bridge])
+    @pytest.mark.parametrize("bridge_cls", [DeepSeekV3Bridge])
     def test_bridges_register_the_mtp_transform(self, bridge_cls, monkeypatch):
         """Without this the MTP layer on a standalone stage regains the query norm."""
         provider = SimpleNamespace()

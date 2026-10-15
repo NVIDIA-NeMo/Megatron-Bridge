@@ -578,8 +578,9 @@ def normalize_chat_conversation(
     """Normalize supported text-chat schemas to OpenAI-style messages.
 
     Rows may use ``messages``, singular ``conversation``, or legacy plural
-    ``conversations`` with ``from``/``value`` keys. Null OpenAI message content
-    is converted to an empty string before chat-template rendering.
+    ``conversations`` with ``from``/``value`` keys. Null message content is
+    converted to an empty string before chat-template rendering, in either
+    supported schema.
     """
     if isinstance(example_or_conversation, Mapping):
         source = example_or_conversation
@@ -611,7 +612,13 @@ def normalize_chat_conversation(
             continue
         if "from" in turn and "value" in turn:
             role = str(turn["from"]).lower()
-            normalized.append({"role": _LEGACY_CHAT_ROLE_ALIASES.get(role, role), "content": turn["value"]})
+            value = turn["value"]
+            normalized.append(
+                {
+                    "role": _LEGACY_CHAT_ROLE_ALIASES.get(role, role),
+                    "content": "" if value is None else value,
+                }
+            )
             continue
         raise ValueError("Chat turns must contain role/content or legacy from/value fields.")
 
@@ -796,6 +803,7 @@ def tokenize_chat_example(
     warn_on_all_masked: bool = True,
     loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
     return_final_assistant_start: bool = False,
+    final_assistant_span: Literal["content", "turn"] = "content",
 ) -> TokenizedConversation:
     """Render, tokenize, and construct the assistant mask for one chat row.
 
@@ -807,6 +815,8 @@ def tokenize_chat_example(
     """
     if loss_mode not in {"assistant", "last_turn", "full"}:
         raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
+    if final_assistant_span not in {"content", "turn"}:
+        raise ValueError("final_assistant_span must be content or turn.")
     conversation = normalize_chat_conversation(example_or_conversation)
     template_kwargs = chat_template_kwargs_from_example(example_or_conversation)
     if not template_kwargs.get("tools") and tool_schemas is not None:
@@ -847,12 +857,21 @@ def tokenize_chat_example(
     generation_assistant_start = None
     last_turn_start = None
     if return_final_assistant_start and selected_template_owner is not None and selected_tokenize_kwargs is not None:
-        generation_assistant_start = _infer_terminal_assistant_content_start(
-            selected_template_owner,
-            conversation,
-            selected_tokenize_kwargs,
-            input_ids.tolist(),
-        )
+        if final_assistant_span == "turn":
+            generation_assistant_start = _infer_final_assistant_start(
+                selected_template_owner,
+                conversation,
+                selected_tokenize_kwargs,
+                input_ids.tolist(),
+                terminal_only=True,
+            )
+        else:
+            generation_assistant_start = _infer_terminal_assistant_content_start(
+                selected_template_owner,
+                conversation,
+                selected_tokenize_kwargs,
+                input_ids.tolist(),
+            )
     if loss_mode == "last_turn" and selected_template_owner is not None and selected_tokenize_kwargs is not None:
         last_turn_start = _infer_final_assistant_start(
             selected_template_owner,
@@ -1446,8 +1465,10 @@ def _assistant_mask_from_conversation_turns(
         if role in rendered_turn_end_roles:
             content_end = after_end = turn_limit
             if turn_index + 1 < len(conversation):
+                # Only this turn's payload renders between ``content_start`` and the next role
+                # header, so a marker quoted in any other turn cannot shift that boundary.
                 boundary_tokens_in_payload = _conversation_contains_boundary_tokens(
-                    example_or_conversation, tokenizer, boundary_config
+                    example_or_conversation, tokenizer, boundary_config, turns=[turn]
                 )
                 if boundary_tokens_in_payload is not False:
                     return None
@@ -1567,8 +1588,14 @@ def _conversation_contains_boundary_tokens(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
     tokenizer: Any,
     boundary_config: AssistantMaskBoundaryConfig,
+    *,
+    turns: Sequence[Mapping[str, Any]] | None = None,
 ) -> bool | None:
-    """Return whether rendered conversation payloads contain structural token sequences."""
+    """Return whether rendered conversation payloads contain structural token sequences.
+
+    ``turns`` restricts the scan to those turns instead of the whole conversation. Template
+    kwargs are always scanned.
+    """
     token_sequences = [
         *(_token_map_from_boundary_config(boundary_config.role_start_tokens).values()),
         *(_token_map_from_boundary_config(boundary_config.role_end_tokens).values()),
@@ -1579,10 +1606,8 @@ def _conversation_contains_boundary_tokens(
             if (token_ids := _as_token_id_list(raw_token_ids))
         ),
     ]
-    payloads: list[Any] = [
-        {key: value for key, value in turn.items() if key != "role"}
-        for turn in _conversation_from_example(example_or_conversation)
-    ]
+    scanned_turns = _conversation_from_example(example_or_conversation) if turns is None else turns
+    payloads: list[Any] = [{key: value for key, value in turn.items() if key != "role"} for turn in scanned_turns]
     payloads.append(chat_template_kwargs_from_example(example_or_conversation))
     return _value_contains_token_sequence(payloads, tokenizer, token_sequences)
 

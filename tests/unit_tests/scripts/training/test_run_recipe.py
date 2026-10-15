@@ -194,6 +194,7 @@ def test_model_selection_requires_mode_when_it_cannot_be_inferred():
         ("gpt_oss_20b_pretrain_config", "pretrain"),
         ("llama3_8b_sft_8gpu_gb200_bf16_config", "sft"),
         ("llama3_70b_peft_8gpu_gb200_bf16_config", "lora"),
+        ("qwen3_30b_a3b_dpo_8gpu_h100_bf16_config", "dpo"),
     ],
 )
 def test_conventional_recipe_name_infers_mode(recipe_name, mode):
@@ -496,10 +497,11 @@ def test_library_only_canonical_name_applies_runtime_environment_without_restart
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch):
+@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
+def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch, env_name):
     module, handles = _load_module()
-    monkeypatch.delenv("NVTE_CPU_OFFLOAD_V1", raising=False)
-    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    monkeypatch.delenv(env_name, raising=False)
+    config = SimpleNamespace(env_vars={env_name: 1})
     handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
@@ -511,10 +513,11 @@ def test_library_recipe_bootstraps_unset_import_time_environment(monkeypatch):
     handles.recipe_runner.apply_runtime_environment.assert_not_called()
 
 
-def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch):
+@pytest.mark.parametrize("env_name", ["NVTE_CPU_OFFLOAD_V1", "NVTE_CUTEDSL_FUSED_GROUPED_MLP"])
+def test_library_recipe_preserves_explicit_import_time_environment(monkeypatch, env_name):
     module, handles = _load_module()
-    monkeypatch.setenv("NVTE_CPU_OFFLOAD_V1", "0")
-    config = SimpleNamespace(env_vars={"NVTE_CPU_OFFLOAD_V1": 1})
+    monkeypatch.setenv(env_name, "0")
+    config = SimpleNamespace(env_vars={env_name: 1})
     handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", "deepseek_v4_flash_pretrain_config", "--mode", "pretrain"])
@@ -616,7 +619,7 @@ def test_benchmark_ep_override_updates_hybridep_topology_environment(monkeypatch
     module.main(
         [
             "--recipe",
-            "qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config",
+            "qwen3_235b_a22b_pretrain_256gpu_vrnvl72_nvfp4_config",
             "--mode",
             "pretrain",
             "--dry-run",
@@ -646,7 +649,7 @@ def test_benchmark_recipe_weak_scales_noncanonical_world_size(monkeypatch):
     module.main(
         [
             "--recipe",
-            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
             "--mode",
             "pretrain",
         ]
@@ -682,7 +685,7 @@ def test_benchmark_recipe_weak_scales_by_data_parallel_ratio_after_topology_over
     module.main(
         [
             "--recipe",
-            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
             "--mode",
             "pretrain",
             "--tensor_model_parallel_size",
@@ -744,7 +747,7 @@ def test_benchmark_recipe_explicit_global_batch_size_disables_weak_scaling(monke
     module.main(
         [
             "--recipe",
-            "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+            "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
             "--mode",
             "pretrain",
             "--global_batch_size",
@@ -772,7 +775,7 @@ def test_benchmark_recipe_rejects_world_size_incompatible_with_model_parallelism
         module.main(
             [
                 "--recipe",
-                "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+                "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
                 "--mode",
                 "pretrain",
             ]
@@ -796,7 +799,7 @@ def test_benchmark_recipe_rejects_fractional_weak_scaled_global_batch_size(monke
         module.main(
             [
                 "--recipe",
-                "nemotronh_56b_pretrain_64gpu_b300_fp8cs_config",
+                "nemotron_3_super_pretrain_64gpu_b300_fp8mx_config",
                 "--mode",
                 "pretrain",
             ]
@@ -1535,3 +1538,15 @@ def test_config_container_overrides_are_forwarded_directly():
     )
     handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_dpo_mode_selects_dpo_recipe_step_and_train_loop():
+    module, handles = _load_module()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(["--model", "qwen3_30b_a3b", "--mode", "dpo"])
+
+    handles.recipe_runner.load_recipe.assert_called_once_with("qwen3_30b_a3b_dpo_config", peft_scheme=None)
+    handles.recipe_runner.load_forward_step.assert_called_once_with("dpo_step", mode="dpo")
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "dpo"

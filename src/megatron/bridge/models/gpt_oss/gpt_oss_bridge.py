@@ -17,15 +17,20 @@ from typing import Dict, Mapping, Optional, Tuple, Union
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.utils import unwrap_model
+from torch.distributed._tensor import DTensor
 from transformers import GptOssForCausalLM
 
+from megatron.bridge.models.conversion.gtp import _get_mapping_shape
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     QKVMapping,
     _align_expert_weight_to_shape,
+    _LooseGatedMLPMapping,
 )
+from megatron.bridge.models.conversion.peft_bridge import MegatronModel
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -52,6 +57,32 @@ class GPTOSSBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    def _get_fused_adapter_linear_out_slices(
+        self,
+        megatron_model: list[MegatronModel],
+        base_hf_weight_names: list[str],
+        linear_out_tensor: torch.Tensor,
+        is_expert: bool = False,
+    ) -> dict[str, torch.Tensor] | None:
+        """Put expert LoRA-B output rows in HF's alternating gate/up order."""
+        if is_expert and len(base_hf_weight_names) == 1 and base_hf_weight_names[0].endswith(".experts.gate_up_proj"):
+            # Adapter tasks use generic parallel mappings, bypassing the base
+            # weight's GPT-OSS permutation. Reorder B's output rows, but keep
+            # factors in [out, rank] form: only the base weight is transposed.
+            # Materialization concatenates expert-TP shards, each of which has
+            # its own [gate, up] halves. Permute within each shard before joining.
+            config = unwrap_model(megatron_model)[0].config
+            expert_tp_size = config.expert_tensor_parallel_size or 1
+            shards = torch.chunk(linear_out_tensor, expert_tp_size, dim=0)
+            return {
+                base_hf_weight_names[0]: torch.cat(
+                    [GPTOSSMLPGateUpProjMapping._uninterleave(shard) for shard in shards], dim=0
+                )
+            }
+        return super()._get_fused_adapter_linear_out_slices(
+            megatron_model, base_hf_weight_names, linear_out_tensor, is_expert=is_expert
+        )
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
@@ -283,6 +314,11 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     def __init__(self, megatron_param: str, hf_param: str, permute_dims: Optional[Tuple[int, ...]] = None):
         super().__init__(megatron_param, hf_param, permute_dims)
         self.allow_hf_name_mismatch = True
+        self._gated_mapping = _LooseGatedMLPMapping(
+            megatron_param=self.megatron_param,
+            gate=f"{self.hf_param}.gate",
+            up=f"{self.hf_param}.up",
+        )
 
     @property
     def group_key(self) -> str:
@@ -292,7 +328,8 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
     def _interleave(gate_up_proj):
         return torch.cat((gate_up_proj[::2, ...], gate_up_proj[1::2, ...]), dim=0)
 
-    def _uninterleave(self, elem):
+    @staticmethod
+    def _uninterleave(elem: torch.Tensor) -> torch.Tensor:
         gate, up = torch.chunk(elem, 2, dim=0)
         output = torch.empty_like(elem)
         output[::2, ...] = gate
@@ -304,13 +341,37 @@ class GPTOSSMLPGateUpProjMapping(AutoMapping):
         expert_weight = hf_weights[global_expert_number] if hf_weights.ndim >= 2 else hf_weights
         normalized_param = self._normalize_expert_param_name(self.megatron_param)
         _, target_param = get_module_and_param_from_name(megatron_module, normalized_param)
-        expert_weight = _align_expert_weight_to_shape(expert_weight, target_param.shape, "gate_up_proj")
-        return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)
+        target_shape = list(_get_mapping_shape(target_param))
+        if not isinstance(target_param, DTensor):
+            target_shape[0] *= self.tp_size
+        expert_weight = _align_expert_weight_to_shape(expert_weight, target_shape, "gate_up_proj")
+        if self.permute_dims is not None:
+            return super().hf_to_megatron(self._interleave(expert_weight), megatron_module)
+        return self._gated_mapping.hf_to_megatron(
+            {"gate": expert_weight[::2, ...], "up": expert_weight[1::2, ...]}, megatron_module
+        )
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        if megatron_weights is None:
+        if self.permute_dims is not None:
+            if megatron_weights is not None:
+                megatron_weights = self._uninterleave(megatron_weights)
+                if megatron_weights.ndim == 2:
+                    megatron_weights = megatron_weights.t()
+                megatron_weights = megatron_weights.contiguous()
             return super().megatron_to_hf(megatron_weights, megatron_module)
-        megatron_weights = self._uninterleave(megatron_weights)
-        if len(megatron_weights.shape) == 2:
-            megatron_weights = megatron_weights.transpose(0, 1)
-        return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
+        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        is_bias = self.hf_param.endswith("_bias")
+        result = {}
+        for name, gate in converted.items():
+            if not name.endswith(".gate"):
+                continue
+            base_name = name.removesuffix(".gate")
+            up = converted[f"{base_name}.up"]
+            # Reconstruct alternating gate/up rows only after TP and EP gathering.
+            # EP may add a leading expert axis; keep it intact for grouped export.
+            if is_bias:
+                interleaved = torch.stack((gate, up), dim=-1).flatten(-2, -1)
+            else:
+                interleaved = torch.stack((gate, up), dim=-2).flatten(-3, -2).transpose(-1, -2)
+            result[base_name] = interleaved.contiguous()
+        return result

@@ -106,11 +106,16 @@ class FakeLoRA:
 
 
 class _ToyExperts(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, transposed: bool = False):
         super().__init__()
-        self.is_transposed = True
-        self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 6, 4))
-        self.down_proj = torch.nn.Parameter(torch.zeros(2, 4, 3))
+        if transposed:
+            # GPT-OSS style: (experts, in_features, out_features)
+            self.is_transposed = True
+            self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 4, 6))
+            self.down_proj = torch.nn.Parameter(torch.zeros(2, 3, 4))
+        else:
+            self.gate_up_proj = torch.nn.Parameter(torch.zeros(2, 6, 4))
+            self.down_proj = torch.nn.Parameter(torch.zeros(2, 4, 3))
 
     def forward(self, x):
         return x
@@ -124,27 +129,31 @@ class _ToySelfAttention(torch.nn.Module):
 
 
 class _ToyMLP(torch.nn.Module):
-    def __init__(self, with_packed_experts: bool = False):
+    def __init__(self, with_packed_experts: bool = False, transposed_experts: bool = False):
         super().__init__()
         self.gate_proj = torch.nn.Linear(32, 32, bias=False)
         if with_packed_experts:
-            self.experts = _ToyExperts()
+            self.experts = _ToyExperts(transposed=transposed_experts)
 
 
 class _ToyLayer(torch.nn.Module):
-    def __init__(self, with_packed_experts: bool = False):
+    def __init__(self, with_packed_experts: bool = False, transposed_experts: bool = False):
         super().__init__()
         self.self_attn = _ToySelfAttention()
-        self.mlp = _ToyMLP(with_packed_experts=with_packed_experts)
+        self.mlp = _ToyMLP(with_packed_experts=with_packed_experts, transposed_experts=transposed_experts)
 
 
 class _ToyAdapterModel(torch.nn.Module):
     _keys_to_ignore_on_load_unexpected = (r"^mtp.*",)
 
-    def __init__(self, *, model_name_or_path: str, with_packed_experts: bool = False):
+    def __init__(
+        self, *, model_name_or_path: str, with_packed_experts: bool = False, transposed_experts: bool = False
+    ):
         super().__init__()
         self.model = torch.nn.Module()
-        self.model.layers = torch.nn.ModuleList([_ToyLayer(with_packed_experts=with_packed_experts)])
+        self.model.layers = torch.nn.ModuleList(
+            [_ToyLayer(with_packed_experts=with_packed_experts, transposed_experts=transposed_experts)]
+        )
         self.config = {"tie_word_embeddings": False}
         self.model_name_or_path = model_name_or_path
 
@@ -159,6 +168,14 @@ def _adapter_export(name: str, tensor: torch.Tensor) -> HFWeightTuple:
     """Build a raw adapter export record."""
 
     return HFWeightTuple(param_name=name, weight=tensor)
+
+
+def _param_wrapper_delta(lora_a: torch.Tensor, lora_b: torch.Tensor, num_experts: int) -> torch.Tensor:
+    """Per-expert ``[E, out, in]`` delta as PEFT's ParamWrapper reconstructs it from packed factors."""
+
+    lora_a = lora_a.reshape(num_experts, -1, lora_a.shape[-1])
+    lora_b = lora_b.reshape(lora_b.shape[0], -1, num_experts)
+    return torch.einsum("o r e, e r i -> e o i", lora_b, lora_a)
 
 
 class TestBuildAdapterConfigDict:
@@ -398,26 +415,23 @@ class TestSaveHfAdapter:
             "model.layers.0.mlp.experts.gate_up_proj",
         ]
 
-        expected_gate_up_a = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_b], dim=0)
-        expected_gate_up_b = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_a], dim=1)
-        expected_down_a = torch.cat([chunk.transpose(0, 1) for chunk in down_b], dim=0)
-        expected_down_b = torch.cat([chunk.transpose(0, 1) for chunk in down_a], dim=1)
-
+        gate_up_prefix = "base_model.model.model.layers.0.mlp.experts.base_layer"
+        down_prefix = "base_model.model.model.layers.0.mlp.experts"
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_A.weight"],
-            expected_gate_up_a,
+            _param_wrapper_delta(
+                adapter_state[f"{gate_up_prefix}.lora_A.weight"],
+                adapter_state[f"{gate_up_prefix}.lora_B.weight"],
+                num_experts=2,
+            ),
+            torch.bmm(gate_up_b, gate_up_a),
         )
         torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_B.weight"],
-            expected_gate_up_b,
-        )
-        torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.lora_A.weight"],
-            expected_down_a,
-        )
-        torch.testing.assert_close(
-            adapter_state["base_model.model.model.layers.0.mlp.experts.lora_B.weight"],
-            expected_down_b,
+            _param_wrapper_delta(
+                adapter_state[f"{down_prefix}.lora_A.weight"],
+                adapter_state[f"{down_prefix}.lora_B.weight"],
+                num_experts=2,
+            ),
+            torch.bmm(down_b, down_a),
         )
 
     def test_convert_linear_module_adapter_stays_module_target(self):
@@ -948,8 +962,11 @@ class TestSaveHfAdapter:
             "model.layers.0.mlp.experts.gate_up_proj": 1,
         }
 
-    def test_save_packed_expert_adapter_uses_target_parameters(self, tmp_path):
-        peft = pytest.importorskip("peft", reason="peft library not installed")
+    @pytest.mark.parametrize("transposed_experts", [False, True], ids=["qwen_layout", "gpt_oss_layout"])
+    def test_save_packed_expert_adapter_uses_target_parameters(self, tmp_path, transposed_experts):
+        # PEFT < 0.19 does not swap in/out features for non-transposed 3D expert parameters.
+        peft = pytest.importorskip("peft", minversion="0.19.0", reason="peft>=0.19 not installed")
+        from peft.tuners.lora.layer import ParamWrapper
         from safetensors.torch import load_file
 
         from megatron.bridge.peft.lora import LoRA
@@ -994,6 +1011,7 @@ class TestSaveHfAdapter:
         mock_bridge.hf_pretrained = _ToyAdapterModel(
             model_name_or_path="test/packed-experts",
             with_packed_experts=True,
+            transposed_experts=transposed_experts,
         )
 
         with patch("torch.distributed.is_initialized", return_value=False):
@@ -1023,27 +1041,22 @@ class TestSaveHfAdapter:
             "base_model.model.model.layers.0.mlp.experts.base_layer.lora_B.weight",
         }
 
-        expected_gate_up_a = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_b], dim=0)
-        expected_gate_up_b = torch.cat([chunk.transpose(0, 1) for chunk in gate_up_a], dim=1)
-        expected_down_a = torch.cat([chunk.transpose(0, 1) for chunk in down_b], dim=0)
-        expected_down_b = torch.cat([chunk.transpose(0, 1) for chunk in down_a], dim=1)
-
-        torch.testing.assert_close(
-            state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_A.weight"],
-            expected_gate_up_a,
-        )
-        torch.testing.assert_close(
-            state["base_model.model.model.layers.0.mlp.experts.base_layer.lora_B.weight"],
-            expected_gate_up_b,
-        )
-        torch.testing.assert_close(state["base_model.model.model.layers.0.mlp.experts.lora_A.weight"], expected_down_a)
-        torch.testing.assert_close(state["base_model.model.model.layers.0.mlp.experts.lora_B.weight"], expected_down_b)
-
         loaded = peft.PeftModel.from_pretrained(
-            _ToyAdapterModel(model_name_or_path="test/packed-experts", with_packed_experts=True),
+            _ToyAdapterModel(
+                model_name_or_path="test/packed-experts",
+                with_packed_experts=True,
+                transposed_experts=transposed_experts,
+            ),
             output_dir,
         )
-        assert loaded is not None
+        expected_deltas = {"gate_up_proj": torch.bmm(gate_up_b, gate_up_a), "down_proj": torch.bmm(down_b, down_a)}
+        wrappers = [module for module in loaded.modules() if isinstance(module, ParamWrapper)]
+        assert sorted(wrapper.parameter_name for wrapper in wrappers) == ["down_proj", "gate_up_proj"]
+        for wrapper in wrappers:
+            expected = expected_deltas[wrapper.parameter_name] * wrapper.scaling["default"]
+            if transposed_experts:
+                expected = expected.transpose(1, 2)
+            torch.testing.assert_close(wrapper.get_delta_weight("default"), expected)
 
 
 # ---------------------------------------------------------------------------
