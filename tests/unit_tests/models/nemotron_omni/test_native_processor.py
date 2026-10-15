@@ -25,15 +25,72 @@ def test_only_super_vl_selects_wrapper():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "wrapper_cls,remote,remote_registration,loader_name",
+    [
+        (Nemotron35VLPretrained, False, True, "AutoModelForImageTextToText"),
+        (Nemotron35VLPretrained, True, True, "AutoModelForCausalLM"),
+        (Nemotron35VLPretrained, True, False, "AutoModelForImageTextToText"),
+        (PreTrainedCausalLM, False, False, "AutoModelForCausalLM"),
+        (PreTrainedCausalLM, True, False, "AutoModelForCausalLM"),
+    ],
+)
+def test_model_loader_selection_preserves_shared_behavior(wrapper_cls, remote, remote_registration, loader_name):
+    wrapper = wrapper_cls(
+        "unused", device="cpu", torch_dtype=torch.bfloat16, trust_remote_code=remote, revision="pinned"
+    )
+    config = SimpleNamespace(auto_map={"AutoModelForCausalLM": "modeling.RemoteVL"} if remote_registration else {})
+    generation_config = SimpleNamespace()
+    wrapper.config = config
+    wrapper.generation_config = generation_config
+    with (
+        patch.object(transformers, "__version__", "5.19.0"),
+        patch.object(transformers.AutoModelForCausalLM, "from_pretrained") as causal_load,
+        patch.object(transformers.AutoModelForImageTextToText, "from_pretrained") as vl_load,
+    ):
+        selected, unused = (
+            (vl_load, causal_load) if loader_name == "AutoModelForImageTextToText" else (causal_load, vl_load)
+        )
+        assert wrapper.model is selected.return_value.to.return_value
+        selected.assert_called_once_with(
+            "unused", trust_remote_code=remote, revision="pinned", torch_dtype=torch.bfloat16, config=config
+        )
+        selected.return_value.to.assert_called_once_with("cpu")
+        assert wrapper.model.generation_config is generation_config
+        unused.assert_not_called()
+
+
+@pytest.mark.unit
+def test_native_model_loader_version_and_filtered_text_guards():
+    wrapper = Nemotron35VLPretrained("unused")
+    with patch.object(transformers, "__version__", "5.18.0"):
+        with pytest.raises(ValueError, match="trust_remote_code=True"):
+            wrapper.model
+    wrapper._text_only = True
+    assert wrapper._get_auto_model_class() is transformers.AutoModelForCausalLM
+    with pytest.raises(NotImplementedError, match="standalone HF export"):
+        wrapper.model
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize("version", ["5.17.0", "5.19.0", "5.20.0"])
 def test_remote_processor_unchanged(version):
     wrapper = Nemotron35VLPretrained("unused", trust_remote_code=True)
+    wrapper.config = SimpleNamespace(auto_map={"AutoModelForCausalLM": "modeling.RemoteVL"})
     with (
         patch.object(transformers, "__version__", version),
         patch.object(PreTrainedCausalLM, "_load_processor") as load,
     ):
         assert wrapper.processor is load.return_value
         load.assert_called_once_with()
+
+
+@pytest.mark.unit
+def test_remote_model_loader_on_older_transformers():
+    wrapper = Nemotron35VLPretrained("unused", trust_remote_code=True)
+    wrapper.config = SimpleNamespace(auto_map={"AutoModelForCausalLM": "modeling.RemoteVL"})
+    with patch.object(transformers, "__version__", "5.17.0"):
+        assert wrapper._get_auto_model_class() is transformers.AutoModelForCausalLM
 
 
 @pytest.mark.unit
@@ -106,7 +163,8 @@ def processor_source(tmp_path):
 
 
 @pytest.mark.unit
-def test_native_processor_load_save_reload(processor_source, tmp_path):
+@pytest.mark.parametrize("trust_remote_code", [False, True])
+def test_native_processor_load_save_reload(processor_source, tmp_path, trust_remote_code):
     wrapper = Nemotron35VLPretrained(processor_source)
     wrapper.config = SimpleNamespace(audio_config=None)
     before = (processor_source / "preprocessor_config.json").read_bytes()
@@ -120,7 +178,7 @@ def test_native_processor_load_save_reload(processor_source, tmp_path):
     output = tmp_path / "export"
     processor.save_pretrained(output)
     assert (output / "processor_config.json").is_file()
-    reloaded = Nemotron35VLPretrained(output)
+    reloaded = Nemotron35VLPretrained(output, trust_remote_code=trust_remote_code)
     reloaded.config = SimpleNamespace(audio_config=None)
     result = reloaded.processor(text="<image>", images=[image], return_tensors="pt")
     for key in inputs:

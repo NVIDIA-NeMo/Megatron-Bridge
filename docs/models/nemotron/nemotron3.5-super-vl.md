@@ -25,9 +25,33 @@ The adapter is version-guarded to Transformers 5.19.0. Processor artifacts can b
 and reloaded through Bridge, but ordinary `AutoProcessor.from_pretrained` outside
 Bridge still encounters the native 5.19.0 audio-component requirement. This workaround
 does not imply standalone HF processor compatibility or full model forward parity.
-The wrapper's `hf_pretrained.model` accessor also still uses `AutoModelForCausalLM`;
-native Super VL requires `AutoModelForImageTextToText`. Safetensors-based conversion
-does not exercise that accessor. Native model loading/generation remains work in progress.
+The wrapper's `hf_pretrained.model` accessor selects `AutoModelForImageTextToText`
+for native Super VL and retains `AutoModelForCausalLM` for legacy remote-code
+loading. Ordinary text checkpoints continue to use `AutoModelForCausalLM`.
+Filtered text-only conversion views are not directly loadable for HF inference;
+load their standalone text exports instead. Full native forward parity remains
+a separate verification requirement.
+
+Known native HF 5.19.0 runtime limitations for this checkpoint:
+
+- The installed `mamba-ssm` execution path produced non-finite text logits in
+  verification. With that package unavailable to the HF process, the native
+  PyTorch fallback produced bitwise-identical source/export logits and identical
+  16-token greedy continuations on three prompts. This is a diagnostic runtime
+  condition, not an automatic Bridge workaround; do not remove dependencies
+  from a shared Megatron training environment.
+- Image/video inputs can be prepared with the Bridge processor adapter and
+  passed to the native HF model. This is **not** standalone HF processor support.
+  Native video forward currently fails because it concatenates an already-tensor
+  `pooler_output` as though it were a sequence. Video inference is not verified.
+- Native HF does not consume the source checkpoint's
+  `vision_projector.vision_final_layernorm` keys. The tested Base checkpoint has
+  identity affine values, but this does not validate loading non-identity values
+  from a fine-tuned checkpoint. Bridge preserves these source weights during
+  conversion; native HF visual reload remains a separate compatibility gap.
+
+These limitations and checks do not update or supersede the historical
+verification-card results below.
 
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 

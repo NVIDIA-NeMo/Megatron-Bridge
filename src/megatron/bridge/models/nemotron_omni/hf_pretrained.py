@@ -16,7 +16,7 @@
 
 import transformers
 from packaging.version import Version
-from transformers import AutoProcessor, ProcessorMixin
+from transformers import AutoModelForImageTextToText, AutoProcessor, ProcessorMixin
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -24,8 +24,26 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 class Nemotron35VLPretrained(PreTrainedCausalLM):
     """Keep native processor compatibility separate from legacy remote-code loading."""
 
+    def _uses_remote_model(self) -> bool:
+        """Check the checkpoint registration, not only permission to execute it."""
+        return self.trust_remote_code and bool(
+            (getattr(self.config, "auto_map", None) or {}).get("AutoModelForCausalLM")
+        )
+
+    def _get_auto_model_class(self) -> type:
+        """Use native VL registration while retaining the remote CausalLM mapping."""
+        if self._text_only:
+            return super()._get_auto_model_class()
+        # Permission to execute remote code does not imply that the checkpoint
+        # uses it: native exports have no remote CausalLM registration.
+        if self._uses_remote_model():
+            return super()._get_auto_model_class()
+        if Version(transformers.__version__) < Version("5.19.0"):
+            raise ValueError("Native Super-VL requires Transformers >=5.19.0; use trust_remote_code=True otherwise.")
+        return AutoModelForImageTextToText
+
     def _load_processor(self) -> ProcessorMixin | None:
-        if self.trust_remote_code or self.model_name_or_path is None:
+        if self.model_name_or_path is None or self._uses_remote_model():
             return super()._load_processor()
 
         version = Version(transformers.__version__)
