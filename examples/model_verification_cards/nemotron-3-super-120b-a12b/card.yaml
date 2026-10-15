@@ -734,7 +734,8 @@ items:
         sequence length 8192, with finite loss and zero skipped or NaN
         iterations; loss moved from 12.17656 to 0.01398012 and the final ten
         steps averaged 6357.940 ms, 873.330 TFLOP/s/GPU, and 10307.741
-        tokens/s/GPU. The recipe has since moved to the NCCL EP dispatcher and
+        tokens/s/GPU (mock data and forced routing make that loss a
+        finiteness check rather than convergence evidence). The recipe has since moved to the NCCL EP dispatcher and
         full-iteration CUDA graphs, and the published command no longer
         completes: it trains three steps and then fails at CUDA graph capture
         in the Megatron Core MoE router aux-loss scaling. Promote only after
