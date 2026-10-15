@@ -281,6 +281,10 @@ def _resolve_pretrained_wrapper_cls(
     supported architectures use :class:`PreTrainedCausalLM`.
     """
     architectures = getattr(config, "architectures", None) or []
+    if "NemotronH_Omni_Reasoning_V3" in architectures:
+        from megatron.bridge.models.nemotron_omni.hf_pretrained import Nemotron35VLPretrained
+
+        return Nemotron35VLPretrained
     if any(arch.endswith("ForTokenClassification") for arch in architectures):
         return PreTrainedTokenClassification
     if any(arch.endswith("ForMaskedLM") for arch in architectures):

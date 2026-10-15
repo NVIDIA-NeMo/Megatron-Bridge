@@ -12,6 +12,23 @@ The records below contain refreshed conversion, inference, and training verifica
 
 For language-only conversion and training without media components, see [the text-only companion guide](nemotron3.5-super-vl-text-only.md).
 
+## Native Hugging Face processor compatibility
+
+With Transformers 5.19.0, `AutoBridge.from_hf_pretrained(..., trust_remote_code=False)`
+uses a Bridge-local processor loading adapter for Super VL. It removes a legacy
+read-only video configuration field in memory and does not require an audio feature
+extractor for this audio-free model. The source checkpoint and installed Transformers
+code are not modified; image/video processing and token expansion use the native HF
+implementation. Remote-code loading remains available on older supported HF versions.
+
+The adapter is version-guarded to Transformers 5.19.0. Processor artifacts can be saved
+and reloaded through Bridge, but ordinary `AutoProcessor.from_pretrained` outside
+Bridge still encounters the native 5.19.0 audio-component requirement. This workaround
+does not imply standalone HF processor compatibility or full model forward parity.
+The wrapper's `hf_pretrained.model` accessor also still uses `AutoModelForCausalLM`;
+native Super VL requires `AutoModelForImageTextToText`. Safetensors-based conversion
+does not exercise that accessor. Native model loading/generation remains work in progress.
+
 <!-- BEGIN GENERATED VERIFIED CONFIGURATIONS -->
 
 ## Verified configurations
