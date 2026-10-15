@@ -2044,10 +2044,13 @@ class AutoBridge(Generic[MegatronModelT]):
                 if hf_path is None:
                     pretrained = self.hf_pretrained
                 else:
-                    pretrained = self._pretrained_wrapper_cls.from_pretrained(
-                        hf_path,
-                        trust_remote_code=self.trust_remote_code,
-                    )
+                    if self.text_only:
+                        pretrained = self._text_only_pretrained_from_path(hf_path)
+                    else:
+                        pretrained = self._pretrained_wrapper_cls.from_pretrained(
+                            hf_path,
+                            trust_remote_code=self.trust_remote_code,
+                        )
                     self._set_source_metadata(model_config, hf_model_id=hf_path, hf_model_revision=None)
                 model_config.pre_wrap_hooks[:] = [
                     partial(self._model_bridge.load_weights_hf_to_megatron, pretrained),
