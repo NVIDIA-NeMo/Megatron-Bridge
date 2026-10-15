@@ -40,6 +40,7 @@ _GB300_NCCLEP_RECIPES = (
     ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config"),
+    ("nemotronh.gb300.nemotronh", "nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
     ("nemotronh.gb300.nemotronh", "nemotron_3_5_lightning_pretrain_8gpu_gb300_bf16_config"),
@@ -55,7 +56,10 @@ _GB300_NCCLEP_RECIPES = (
 )
 
 # VRNVL72 aliases that share the GB300 NCCL EP builder instead of a HybridEP base.
-_VRNVL72_NCCLEP_RECIPES = (("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),)
+_VRNVL72_NCCLEP_RECIPES = (
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_fp8mx_config"),
+    ("nemotronh.vrnvl72.nemotronh", "nemotron_3_ultra_pretrain_256gpu_vrnvl72_nvfp4_config"),
+)
 
 # VRNVL72 aliases of the same recipes: they reuse the shared HybridEP builders and must not pick up NCCL EP.
 _VRNVL72_ALIASES = (
