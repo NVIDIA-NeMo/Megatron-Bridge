@@ -213,7 +213,10 @@ def test_pro_recipes_reject_unsupported_mcore(recipe_factory: Callable[[], Confi
     available = {field.name for field in fields(DeepSeekV4HybridModelProvider)}
     if set(_MCORE_CAPABILITIES) <= available:
         pytest.skip("Installed MCore declares the DSv4 development capabilities.")
-    with pytest.raises(RuntimeError, match="d211e50e888fcb8640ddc9923e98940800afcfd3"):
+    with pytest.raises(
+        RuntimeError,
+        match="d211e50e888fcb8640ddc9923e98940800afcfd3",  # pragma: allowlist secret
+    ):
         recipe_factory()
 
 
