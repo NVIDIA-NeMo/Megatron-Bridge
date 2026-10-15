@@ -2290,6 +2290,8 @@ class AutoBridge(Generic[MegatronModelT]):
         self,
         megatron_model: Union[MegatronModelT, List[MegatronModelT]],
         hf_path: str | Path | None = None,
+        *,
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> List["WeightConversionTask"]:
         """Get the conversion tasks for weight conversion between HuggingFace and Megatron formats.
 
@@ -2305,6 +2307,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 virtual pipeline stage) that participate in the conversion.
             hf_path: Optional path to load HF weights from. If None, uses weights
                 from the bridge's hf_pretrained instance.
+            exclude_param_patterns: Glob patterns for local parameter and persistent-buffer
+                names to exclude before mapping validation. Defaults to no exclusions.
 
         Returns:
             List[WeightConversionTask]: List of conversion tasks that would be executed.
@@ -2359,7 +2363,11 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
 
-        return self._model_bridge.build_conversion_tasks(pre_trained, megatron_model)
+        return self._model_bridge.build_conversion_tasks(
+            pre_trained,
+            megatron_model,
+            **({"exclude_param_patterns": exclude_param_patterns} if exclude_param_patterns else {}),
+        )
 
     def stream_weights_hf_to_megatron(
         self,

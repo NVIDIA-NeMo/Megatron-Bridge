@@ -110,9 +110,19 @@ _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
 def _named_conversion_parameters(
     model: torch.nn.Module,
     exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+    *,
+    exclude_param_patterns: tuple[str, ...] = (),
 ) -> Iterable[tuple[str, torch.Tensor]]:
     """Iterate parameters and persistent buffers outside excluded module subtrees."""
-    parameters = itertools.chain(model.named_parameters(), persistent_buffers(model))
+    parameters: Iterable[tuple[str, torch.Tensor]] = itertools.chain(
+        model.named_parameters(), persistent_buffers(model)
+    )
+    if exclude_param_patterns:
+        parameters = (
+            (name, tensor)
+            for name, tensor in parameters
+            if not any(fnmatch.fnmatchcase(name, pattern) for pattern in exclude_param_patterns)
+        )
     if not exclude_module_types:
         yield from parameters
         return
@@ -1068,10 +1078,16 @@ class MegatronModelBridge(
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         *,
         exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> List[str]:
         """Get all parameter names across all pipeline parallel ranks."""
         # Filtered discovery must neither reuse nor replace ordinary conversion's cache.
-        if not exclude_module_types and hasattr(self, "_cached_param_names") and hasattr(self, "_cached_param_owners"):
+        if (
+            not exclude_module_types
+            and not exclude_param_patterns
+            and hasattr(self, "_cached_param_names")
+            and hasattr(self, "_cached_param_owners")
+        ):
             return self._cached_param_names
 
         # Compute the result
@@ -1083,7 +1099,9 @@ class MegatronModelBridge(
         models_list = megatron_model if isinstance(megatron_model, list) else [megatron_model]
 
         for vp_stage, model in enumerate(models_list):
-            for local_param_name, _ in _named_conversion_parameters(model, exclude_module_types):
+            for local_param_name, _ in _named_conversion_parameters(
+                model, exclude_module_types, exclude_param_patterns=exclude_param_patterns
+            ):
                 if "_extra_state" in local_param_name:
                     continue
                 local_param_name = self._unwrap_name(local_param_name)
@@ -1118,7 +1136,7 @@ class MegatronModelBridge(
         # change this might cause a hang
         gathered_global_param_names = sorted(flattened_names, key=extract_sort_key)
 
-        if not exclude_module_types:
+        if not exclude_module_types and not exclude_param_patterns:
             self._cached_param_names = gathered_global_param_names
             self._cached_param_owners = param_owners
 
@@ -2323,6 +2341,7 @@ class MegatronModelBridge(
         weight_dtype: Optional[torch.dtype] = None,
         *,
         exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> List[WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
 
@@ -2330,6 +2349,8 @@ class MegatronModelBridge(
             weight_dtype: Export dtype recorded on each task. Overrides must forward it.
             exclude_module_types: Module types whose parameters and persistent buffers
                 are excluded from discovery. Remaining parameters still require mappings.
+            exclude_param_patterns: Glob patterns for local parameter and persistent-buffer
+                names to exclude before mapping validation. Defaults to no exclusions.
 
         The algorithm walks over every parameter of every destination model,
         asks the :class:`MegatronMappingRegistry` whether it has a mapping for that
@@ -2358,6 +2379,7 @@ class MegatronModelBridge(
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(
             megatron_model,
             **({"exclude_module_types": exclude_module_types} if exclude_module_types else {}),
+            **({"exclude_param_patterns": exclude_param_patterns} if exclude_param_patterns else {}),
         )
 
         # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
@@ -2379,7 +2401,9 @@ class MegatronModelBridge(
 
         pending_tasks: list[WeightConversionTask | None] = [None] * len(sorted_global_param_names_all_pp_ranks)
         for vp_stage, model in enumerate(megatron_model):
-            for local_name, _ in _named_conversion_parameters(model, exclude_module_types):
+            for local_name, _ in _named_conversion_parameters(
+                model, exclude_module_types, exclude_param_patterns=exclude_param_patterns
+            ):
                 if "_extra_state" in local_name or self._is_adapter_param_name(local_name):
                     continue
 

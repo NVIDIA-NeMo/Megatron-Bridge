@@ -214,6 +214,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         weight_dtype=None,
         *,
         exclude_module_types: tuple[type[torch.nn.Module], ...] = (),
+        exclude_param_patterns: tuple[str, ...] = (),
     ) -> List:
         """Override to synthesize virtual weight keys from INT4 quantized triplets.
 
@@ -242,6 +243,7 @@ class KimiK25VLBridge(MegatronModelBridge):
                 megatron_model,
                 weight_dtype=weight_dtype,
                 **({"exclude_module_types": exclude_module_types} if exclude_module_types else {}),
+                **({"exclude_param_patterns": exclude_param_patterns} if exclude_param_patterns else {}),
             )
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys

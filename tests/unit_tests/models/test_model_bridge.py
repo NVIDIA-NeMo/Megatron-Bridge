@@ -25,6 +25,7 @@ from transformers import PretrainedConfig
 from megatron.bridge.models.conversion import model_bridge as model_bridge_module
 from megatron.bridge.models.conversion import modelopt_utils
 from megatron.bridge.models.conversion import param_mapping as param_mapping_module
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import (
     HFSourcedWeightTuple,
@@ -40,6 +41,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 class DummyBridge(MegatronModelBridge):
@@ -1899,6 +1901,72 @@ def test_conversion_discovery_excludes_complete_module_subtrees():
     assert list(model_bridge_module._named_conversion_parameters(model.quantizer, (Excluded,))) == []
 
 
+@pytest.mark.parametrize("cached_names", [False, True])
+def test_fake_refit_excludes_weight_quantizer_state_before_validation(monkeypatch, cached_names):
+    implementation = DummyBridge()
+    model = torch.nn.Module()
+    model.config = SimpleNamespace(share_embeddings_and_output_weights=False)
+    model.projection = torch.nn.Module()
+    for index in range(2):
+        model.projection.register_parameter(f"weight{index}", torch.nn.Parameter(torch.ones(2, 2)))
+    model.projection.weight_quantizer = torch.nn.ModuleList([torch.nn.Module(), torch.nn.Module()])
+    for index, quantizer in enumerate(model.projection.weight_quantizer):
+        quantizer.register_buffer("_amax", torch.tensor(float(index + 1)))
+    for name in ("input_quantizer", "k_bmm_quantizer", "v_bmm_quantizer"):
+        quantizer = torch.nn.Module()
+        quantizer.register_buffer("_amax", torch.ones(1))
+        model.projection.add_module(name, quantizer)
+
+    retained_names = {
+        "projection.weight0",
+        "projection.weight1",
+        "projection.input_quantizer._amax",
+        "projection.k_bmm_quantizer._amax",
+        "projection.v_bmm_quantizer._amax",
+    }
+    monkeypatch.setenv("ENABLE_BRIDGE_QUANT_MAPPING", "0")
+    monkeypatch.setattr(
+        implementation,
+        "mapping_registry",
+        lambda: MegatronMappingRegistry(*(AutoMapping(name, f"hf.{name}") for name in sorted(retained_names))),
+    )
+    _patch(monkeypatch, "_get_pg_collection_from_model", lambda _models: None)
+    _patch(monkeypatch, "_get_pp_group", lambda _models: SimpleNamespace(size=lambda: 1))
+    _patch(monkeypatch, "_get_pp_rank", lambda _models: 0)
+    _patch(monkeypatch, "unwrap_model", lambda models: models)
+    _patch(monkeypatch, "_megatron_local_name_to_global", lambda _models, _config, name, _vp: name)
+    monkeypatch.setattr(
+        torch.distributed, "all_gather_object", lambda output, value, group: output.__setitem__(0, value)
+    )
+    pretrained = Mock(spec=PreTrainedCausalLM, config=PretrainedConfig())
+    pretrained.state.source.get_all_keys.return_value = [f"hf.{name}" for name in retained_names]
+
+    class ProjectionAutoBridge(AutoBridge):
+        @property
+        def _model_bridge(self):
+            return implementation
+
+    bridge = ProjectionAutoBridge(pretrained)
+    if cached_names:
+        implementation._megatron_global_param_names_all_pp_ranks([model])
+    original_buffers = dict(model.named_buffers())
+    original_cache = getattr(implementation, "_cached_param_names", None)
+    original_owners = getattr(implementation, "_cached_param_owners", None)
+
+    tasks = bridge.get_conversion_tasks(model, exclude_param_patterns=("*weight_quantizer*",))
+    assert {task.global_param_name for task in tasks} == retained_names
+    assert getattr(implementation, "_cached_param_names", None) is original_cache
+    assert getattr(implementation, "_cached_param_owners", None) is original_owners
+    assert dict(model.named_buffers()).keys() == original_buffers.keys()
+    assert all(dict(model.named_buffers())[name] is tensor for name, tensor in original_buffers.items())
+
+    with pytest.raises(ValueError, match=r"weight_quantizer\.0\._amax"):
+        bridge.get_conversion_tasks(model)
+    model.register_parameter("unmapped_weight", torch.nn.Parameter(torch.ones(1)))
+    with pytest.raises(ValueError, match="unmapped_weight"):
+        bridge.get_conversion_tasks(model, exclude_param_patterns=("*weight_quantizer*",))
+
+
 @pytest.mark.parametrize("model_family", ["kimi_k3", "kimi_k25"])
 def test_kimi_conversion_tasks_forward_module_exclusions(monkeypatch, model_family):
     from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
@@ -1911,10 +1979,11 @@ def test_kimi_conversion_tasks_forward_module_exclusions(monkeypatch, model_fami
     pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
     tasks = []
 
-    def build_tasks(_self, hf_pretrained, model, *, weight_dtype, exclude_module_types):
+    def build_tasks(_self, hf_pretrained, model, *, weight_dtype, exclude_module_types, exclude_param_patterns):
         assert model == []
         assert weight_dtype == torch.bfloat16
         assert exclude_module_types == (torch.nn.ReLU,)
+        assert exclude_param_patterns == ("*weight_quantizer*",)
         assert "expert.weight" in hf_pretrained.state.source.get_all_keys()
         return tasks
 
@@ -1923,7 +1992,11 @@ def test_kimi_conversion_tasks_forward_module_exclusions(monkeypatch, model_fami
 
     assert (
         bridge.build_conversion_tasks(
-            pretrained, [], weight_dtype=torch.bfloat16, exclude_module_types=(torch.nn.ReLU,)
+            pretrained,
+            [],
+            weight_dtype=torch.bfloat16,
+            exclude_module_types=(torch.nn.ReLU,),
+            exclude_param_patterns=("*weight_quantizer*",),
         )
         is tasks
     )
