@@ -225,6 +225,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, revision=_QWEN35_35B_A3B_REVISION).to_megatron_provider(
         load_weights=False
     )
+    cfg.model.gdn_kernel_backend = "transformer_engine"
     cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.model.calculate_per_token_loss = True
     cfg.ddp.average_in_collective = False
@@ -259,6 +260,7 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
         seq_length=cfg.model.seq_length,
         micro_batch_size=cfg.train.micro_batch_size,
         num_workers=2,
+        num_val_workers=1,
         shuffle_buffer_size=16,
         packing_buffer_size=16,
         dataset_kwargs={"image_decode_spec": "pilrgb"},
@@ -276,13 +278,13 @@ def _qwen35_vl_35b_a3b_long_context_common() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 200
     cfg.scheduler.lr_decay_iters = 300000
     cfg.scheduler.lr_wsd_decay_iters = 300000
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
-    cfg.optimizer.overlap_param_gather = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.optimizer.overlap_param_gather = False
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_overlap=False,
-        overlap_grad_reduce=True,
-        overlap_param_gather=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
         overlap_param_gather_with_optimizer_step=False,
         overlap_moe_expert_parallel_comm=False,
         delay_wgrad_compute=False,

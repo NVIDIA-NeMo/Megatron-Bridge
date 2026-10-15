@@ -22,6 +22,7 @@
 
 import importlib
 import inspect
+from dataclasses import fields
 from types import SimpleNamespace
 from typing import Callable
 
@@ -810,7 +811,12 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 32
         assert cfg.model.moe_hybridep_pad_uneven_dispatch_inputs is True
+        assert cfg.model.gdn_kernel_backend == "transformer_engine"
         assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
+        assert cfg.model.gdn_gated_output_norm_fusion is False
+        assert cfg.model.apply_rope_fusion is False
+        assert cfg.model.cuda_graph_impl == "none"
+        assert cfg.model.moe_router_force_load_balancing is False
         assert cfg.model.cross_entropy_fusion_impl == "te"
         assert cfg.model.recompute_granularity == "selective"
         assert cfg.model.recompute_modules == ["gdn_norm_out", "moe"]
@@ -832,6 +838,7 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert cfg.dataset.path is None  # Caller supplies prepared CLEVR2 shards.
         assert cfg.dataset.micro_batch_size == 1
         assert cfg.dataset.num_workers == 2
+        assert cfg.dataset.num_val_workers == 1
         assert cfg.dataset.shuffle_buffer_size == 16
         assert cfg.dataset.packing_buffer_size == 16
         assert cfg.dataset.dataset_kwargs == {"image_decode_spec": "pilrgb"}
@@ -845,11 +852,11 @@ def test_qwen35_vl_35b_a3b_gb200_long_context_precision_pair(monkeypatch: pytest
         assert encoder.max_visual_tokens == 2048
         assert cfg.mixed_precision.grad_reduce_in_fp32 is True
         assert cfg.ddp.grad_reduce_in_fp32 is True
-        assert cfg.ddp.overlap_grad_reduce is True
-        assert cfg.ddp.overlap_param_gather is True
-        assert cfg.optimizer.overlap_param_gather is True
-        assert cfg.comm_overlap.overlap_grad_reduce is True
-        assert cfg.comm_overlap.overlap_param_gather is True
+        assert cfg.ddp.overlap_grad_reduce is False
+        assert cfg.ddp.overlap_param_gather is False
+        assert cfg.optimizer.overlap_param_gather is False
+        assert cfg.comm_overlap.overlap_grad_reduce is False
+        assert cfg.comm_overlap.overlap_param_gather is False
         assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
         assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
         assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
@@ -1705,7 +1712,24 @@ def test_gb200_long_context_validates_with_real_provider(monkeypatch, recipe_fun
     config.dataset.path = "prepared-clevr2-energon"
     config.dataset.validate()
     config.validate()
+    config.comm_overlap.finalize()
+    config.comm_overlap.setup(config.model, config.optimizer, config.ddp)
     assert config.dataset.pad_to_max_length is True  # Derived for HybridEP.
+    assert {
+        "gdn_kernel_backend",
+        "gdn_pre_gated_delta_rule_fusion",
+        "gdn_gated_output_norm_fusion",
+    } <= {field.name for field in fields(config.model)}
+    assert config.model.gdn_kernel_backend == "transformer_engine"
+    assert config.ddp.overlap_grad_reduce is False
+    assert config.ddp.overlap_param_gather is False
+    assert config.optimizer.overlap_param_gather is False
+    assert config.optimizer.overlap_param_gather_with_optimizer_step is False
+    assert config.comm_overlap.overlap_grad_reduce is False
+    assert config.comm_overlap.overlap_param_gather is False
+    assert config.comm_overlap.overlap_param_gather_with_optimizer_step is False
+    assert config.model.overlap_moe_expert_parallel_comm is False
+    assert config.model.delay_wgrad_compute is False
 
     data_parallel_size = 32 // (
         config.model.tensor_model_parallel_size

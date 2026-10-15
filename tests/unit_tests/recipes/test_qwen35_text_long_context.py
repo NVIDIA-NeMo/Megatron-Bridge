@@ -2,6 +2,7 @@
 
 import importlib
 from copy import deepcopy
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -75,7 +76,18 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.recompute_modules == ["gdn_norm_out", "moe"]
+    assert {
+        "gdn_kernel_backend",
+        "gdn_pre_gated_delta_rule_fusion",
+        "gdn_gated_output_norm_fusion",
+    } <= {field.name for field in fields(cfg.model)}
+    assert cfg.model.gdn_kernel_backend == "transformer_engine"
     assert cfg.model.gdn_pre_gated_delta_rule_fusion is True
+    assert cfg.model.gdn_gated_output_norm_fusion is False
+    assert not any(name.startswith("vision_recompute_") for name in dir(cfg.model))
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.dataset.hf_dataset.dataset_name == "coderforge"
     assert cfg.dataset.hf_dataset.load_kwargs == {"revision": qwen35._CODERFORGE_REVISION}
     assert cfg.dataset.dataset_root is None
@@ -91,6 +103,13 @@ def test_text_long_context_validates_and_preserves_inputs(hf_config, monkeypatch
     assert cfg.scheduler.lr_warmup_iters == 200
     assert cfg.scheduler.lr_decay_iters == 300000
     assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.ddp.overlap_grad_reduce is False
+    assert cfg.ddp.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather is False
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
+    assert cfg.comm_overlap is None
+    assert cfg.model.overlap_moe_expert_parallel_comm is False
+    assert cfg.model.delay_wgrad_compute is False
 
 
 def test_verified_mxfp8_kernel_and_parameter_settings(hf_config):

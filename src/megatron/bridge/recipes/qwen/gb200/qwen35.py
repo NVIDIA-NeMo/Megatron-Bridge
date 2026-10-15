@@ -57,6 +57,7 @@ def _qwen35_text_35b_a3b_long_context_common(
         text_config.tie_word_embeddings = hf_config.tie_word_embeddings
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]
     cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
+    cfg.model.gdn_kernel_backend = "transformer_engine"
     cfg.model.gdn_pre_gated_delta_rule_fusion = True
     cfg.tokenizer.tokenizer_model = hf_path
     cfg.tokenizer.hf_tokenizer_kwargs = {"revision": hf_revision}
@@ -104,13 +105,13 @@ def _qwen35_text_35b_a3b_long_context_common(
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=200, lr_decay_iters=300000, max_lr=2e-5, min_lr=2e-6
     )
-    cfg.optimizer.overlap_param_gather = True
+    cfg.optimizer.overlap_param_gather = False
     cfg.checkpoint.load_optim = False
     cfg.checkpoint.load_rng = False
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 1,
