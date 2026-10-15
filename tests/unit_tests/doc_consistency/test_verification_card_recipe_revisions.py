@@ -11,9 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Check that the Nemotron 3.5 Lightning card's verified training recipes exist at the revisions it records.
+"""Check that verification cards record revisions that exist in the repository history.
 
-Each verified leaf must also be last verified no earlier than its recorded revision's commit date.
+The Nemotron 3.5 Lightning card's verified training recipes must exist at the revisions it records,
+and each verified leaf must be last verified no earlier than its recorded revision's commit date.
+Every verified K-EXAONE-2 item must record a revision that exists in the repository history.
 
 Uses only pytest, PyYAML, git and the standard library (no torch / megatron import).
 The revision check needs the recorded commits in the local git history; it skips only
@@ -35,6 +37,9 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 LIGHTNING_CARD = REPO_ROOT / "examples" / "model_verification_cards" / "nemotron-3.5-lightning" / "card.yaml"
+K_EXAONE_2_CARD = REPO_ROOT / "examples" / "model_verification_cards" / "k-exaone-2" / "card.yaml"
+# inference is re-pinned separately in #6294; remove it from this set once that lands.
+K_EXAONE_2_PENDING = {"items/inference"}
 
 
 def _verified_recipes(
@@ -53,6 +58,17 @@ def _verified_recipes(
                 yield path, tokens[tokens.index("--recipe") + 1], revision, verified_on
     for key, value in node.items():
         yield from _verified_recipes(value, revision, f"{path}/{key}", verified_on)
+
+
+def _verified_revisions(node: object, revision: str, path: str) -> Iterator[tuple[str, str]]:
+    """Yield (location, effective bridge_commit) for every verified leaf."""
+    if not isinstance(node, dict):
+        return
+    revision = node.get("bridge_commit", revision)
+    if node.get("status") == "verified":
+        yield path, revision
+    for key, value in node.items():
+        yield from _verified_revisions(value, revision, f"{path}/{key}")
 
 
 def _git(*args: str) -> subprocess.CompletedProcess:
@@ -116,3 +132,34 @@ def test_lightning_card_recipes_exist_at_their_recorded_revision() -> None:
         if verified_on is None or verified_on < _commit_date(revision)
     ]
     assert not predated, "verified leaves were last verified before their bridge_commit: " + "; ".join(predated)
+
+
+def test_verified_revisions_inherit_the_nearest_bridge_commit() -> None:
+    items = {
+        "inference": {"status": "verified"},
+        "manual_forward_pass": {"status": "verified", "bridge_commit": "item"},
+        "megatron_to_hf_gpu": {"status": "unverified", "bridge_commit": "other"},
+    }
+    assert sorted(_verified_revisions(items, "card", "items")) == [
+        ("items/inference", "card"),
+        ("items/manual_forward_pass", "item"),
+    ]
+
+
+def test_k_exaone_2_verified_items_record_reachable_revisions() -> None:
+    if shutil.which("git") is None:
+        pytest.skip("git is not available")
+    card = yaml.safe_load(K_EXAONE_2_CARD.read_text(encoding="utf-8"))
+    default = card["verification_environment"]["bridge_commit"]
+    leaves = [
+        leaf for leaf in _verified_revisions(card["items"], default, "items") if leaf[0] not in K_EXAONE_2_PENDING
+    ]
+    assert leaves, "the card records no verified item"
+    missing = [
+        f"{path}: {revision[:10]}"
+        for path, revision in leaves
+        if _git("cat-file", "-e", f"{revision}^{{commit}}").returncode
+    ]
+    if missing and _git("rev-parse", "--is-shallow-repository").stdout.strip() != "false":
+        pytest.skip("a recorded bridge_commit is not in this shallow checkout's git history")
+    assert not missing, "verified items record a bridge_commit missing from the repository: " + "; ".join(missing)
