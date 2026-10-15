@@ -454,35 +454,29 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv1_config() -> ConfigContainer:
 def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron-FSDP v2.
 
-    Deliberately built on the established 64-GPU FSDP recipe -- selective recompute, activation
-    offloading and ZeRO-3 -- rather than the ported 256-GPU perf tuning that the v1 variant uses.
-    That configuration is the memory-conservative one, and its ZeRO-3 dense sharding is what
-    MFSDP v2 requires anyway.
+    Carries the 256-GPU HSDP perf tuning (full-iteration CUDA graph, paged stash, op fuser,
+    comm overlap) via the shared 64-GPU overrides. HSDP's outer data-parallel axis does not
+    exist at 64 GPUs, so this stays plain FSDP (ZeRO-3), which MFSDP v2 requires anyway.
     """
-    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
+    cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv1_config()
 
-    # cfg.mixed_precision = _perf_precision("bf16")
-    cfg.model.recompute_modules = []
-    cfg.model.offload_modules = []
+    # Match the 256-GPU HSDP recipe exactly where the shared 64-GPU helper deviates from it.
+    cfg.model.moe_expert_rank_capacity_factor = 5
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
-    # cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-    # cfg.ddp.expert_data_parallel_sharding_strategy = None
-    # cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
-    # cfg.model.fine_grained_activation_offloading = True
-    # cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-    # cfg.model.offload_modules = ["core_attn", "attn_proj"]
-
-    # cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_impl = "full_iteration"
-    # cfg.model.cuda_graph_warmup_steps = 10
-
-    cfg.model.fine_grained_activation_offloading = False
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-
-
-    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     cfg.ddp.megatron_fsdp_version = 2
     return cfg
+
+    # --- previous 64-GPU fsdpv2 recipe body, kept for reference (unreachable) ---
+    # cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
+    # cfg.model.recompute_modules = []
+    # cfg.model.offload_modules = []
+    # cfg.model.cuda_graph_impl = "full_iteration"
+    # cfg.model.fine_grained_activation_offloading = False
+    # cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+    # cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+    # cfg.ddp.megatron_fsdp_version = 2
+    # return cfg
 
 
 def deepseek_v3_pretrain_4gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
@@ -521,7 +515,20 @@ def deepseek_v3_pretrain_4gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 2
     cfg.train.global_batch_size = 16
 
-    # _enable_ncclep(cfg)
+    # Full-iteration CUDA graphs need the whole settings bundle -- fixed expert capacity, the
+    # op fuser, paged stash -- which this helper owns. It selects HybridEP, so re-select NCCL EP
+    # after it.
+    _enable_deepseek_full_iteration(cfg)
+    _enable_ncclep(cfg)
+    # The helper turns on expert-parallel comm overlap, which selects the combined-1F1B
+    # schedule. Under Megatron-FSDP that registers an unshard pre-hook taking (module, args,
+    # kwargs), but the op fuser's fused-expert path calls every pre-hook as (module, args).
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # delay_wgrad_compute is only valid alongside that overlap.
+    cfg.comm_overlap.delay_wgrad_compute = False
+    # MXFP8 experts under a fixed capacity take the CuTe DSL fused grouped MLP, the only grouped
+    # GEMM that reads the ragged per-expert counts on device.
+    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
 
     return cfg
 
