@@ -319,15 +319,16 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config(*, num_gpus: int = 256) 
 
 
 def nemotron_3_ultra_pretrain_256gpu_gb300_nvfp4_config(*, num_gpus: int = 256) -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, NVFP4, Megatron-FSDP (HSDP).
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, NVFP4, GTP.
 
     TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + NVFP4 mixed
-    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
-    recompute + fine-grained activation offload of the expert MLP, MTP=2.
+    precision, dense GTP64, NCCLEP flex dispatcher with local attention/Mamba CUDA
+    graphs, CuteDSL fused grouped MLP, selective recompute + fine-grained activation
+    offload of the expert MLP, MTP=2.
 
     Args:
-        num_gpus: Launch GPU count used to size HSDP optimizer instances.
-            Defaults to the canonical 256-GPU benchmark allocation.
+        num_gpus: Retained for compatibility; sharding is rack-local and the
+            distributed-optimizer instance count is fixed at one.
     """
 
     expert_model_parallel_size = 64
