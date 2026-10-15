@@ -363,8 +363,8 @@ def _apply_deepseek_v3_64gpu_gb300_fp8mx_perf_overrides(cfg: ConfigContainer) ->
 
     # Held at the 256-GPU values rather than batch-scaled: these are 50-iteration throughput
     # runs on mock data, and 3e-7 is far below the rate that diverged in earlier runs.
-    cfg.optimizer.lr = 3e-7
-    cfg.optimizer.min_lr = 1e-7
+    # cfg.optimizer.lr = 3e-7
+    # cfg.optimizer.min_lr = 1e-7
 
     cfg.model.fp8_param_gather = True
     cfg.model.fp8_param = True
@@ -461,11 +461,11 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv1_config()
 
     # Match the 256-GPU HSDP recipe exactly where the shared 64-GPU helper deviates from it.
-    cfg.model.moe_expert_rank_capacity_factor = 5
-    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    # cfg.model.offload_modules = ["core_attn", "attn_proj"]
 
     cfg.ddp.megatron_fsdp_version = 2
-    return cfg
+    #return cfg
 
     # --- previous 64-GPU fsdpv2 recipe body, kept for reference (unreachable) ---
     # cfg = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
@@ -477,6 +477,26 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
     # cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
     # cfg.ddp.megatron_fsdp_version = 2
     # return cfg
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 64
+
+    # Full-iteration CUDA graphs need the whole settings bundle -- fixed expert capacity, the
+    # op fuser, paged stash -- which this helper owns. It selects HybridEP, so re-select NCCL EP
+    # after it.
+    _enable_deepseek_full_iteration(cfg)
+    _enable_ncclep(cfg)
+    # The helper turns on expert-parallel comm overlap, which selects the combined-1F1B
+    # schedule. Under Megatron-FSDP that registers an unshard pre-hook taking (module, args,
+    # kwargs), but the op fuser's fused-expert path calls every pre-hook as (module, args).
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # delay_wgrad_compute is only valid alongside that overlap.
+    cfg.comm_overlap.delay_wgrad_compute = False
+    # MXFP8 experts under a fixed capacity take the CuTe DSL fused grouped MLP, the only grouped
+    # GEMM that reads the ragged per-expert counts on device.
+    cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = 1
+
+    return cfg
 
 
 def deepseek_v3_pretrain_4gpu_gb300_fp8mx_fsdpv2_config() -> ConfigContainer:
