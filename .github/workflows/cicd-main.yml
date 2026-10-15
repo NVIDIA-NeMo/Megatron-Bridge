@@ -729,7 +729,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             matrix="{\"include\":[${entries%,}]}"
             echo "matrix_${tier,,}=${matrix}" | tee -a "$GITHUB_OUTPUT"
@@ -740,7 +742,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -978,7 +982,9 @@ jobs:
               name=$(basename "$f" .sh)
               timeout=$(get_timeout "$f")
               runner=$(get_runner "$f")
-              entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+              entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+                '{script: $script, timeout: $timeout, runner: $runner}')
+              entries="${entries}${entry},"
             done
             echo "matrix_gb200_${tier,,}={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
           done
@@ -988,7 +994,9 @@ jobs:
             name=$(basename "$f" .sh)
             timeout=$(get_timeout "$f")
             runner=$(get_runner "$f")
-            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+            entry=$(jq -cn --arg script "$name" --argjson timeout "$timeout" --arg runner "$runner" \
+              '{script: $script, timeout: $timeout, runner: $runner}')
+            entries="${entries}${entry},"
           done
           echo "matrix_gb200_flaky={\"include\":[${entries%,}]}" | tee -a "$GITHUB_OUTPUT"
 

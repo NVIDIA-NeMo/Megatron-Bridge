@@ -250,6 +250,7 @@ docker build \
 | `NEMO_EXPORT_DEPLOY_COMMIT` | NeMo Export-Deploy git commit SHA |
 | `NEMO_EVALUATOR_COMMIT` | NeMo Evaluator git commit SHA |
 | `NEMO_RUN_COMMIT` | NeMo Run git commit SHA |
+| `CUDNN_FRONTEND_GIT_REF` | Commit of [NVIDIA/cudnn-frontend](https://github.com/NVIDIA/cudnn-frontend) (`feat/1.29.0-megatron`) installed over the PyPI cuDNN frontend after the environment sync; empty keeps the PyPI wheel. Docker-only, outside `fw_pyproject.toml`; skipped when `PRESERVE_BASE_RUNTIME=True`. |
 
 ---
 
